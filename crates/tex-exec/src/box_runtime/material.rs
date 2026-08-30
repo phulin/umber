@@ -13,15 +13,18 @@ use crate::{ExecError, Mode, ModeNest};
 use crate::box_runtime::first_box_node;
 use crate::box_runtime::hmode::flush_pending_hchars;
 
-pub(crate) fn execute_scanned_unbox_with_error_context<G>(
+pub(crate) fn execute_scanned_unbox_with_error_context<G, F>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-    error_context: &str,
-) -> Result<(), ExecError> {
+    error_context: F,
+) -> Result<(), ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
     execute_scanned_unbox_impl(
         primitive,
         index,
@@ -33,15 +36,18 @@ pub(crate) fn execute_scanned_unbox_with_error_context<G>(
     )
 }
 
-fn execute_scanned_unbox_impl<G>(
+fn execute_scanned_unbox_impl<G, F>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-    error_context: &str,
-) -> Result<(), ExecError> {
+    error_context: F,
+) -> Result<(), ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
     let destructive = matches!(
         primitive,
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -53,15 +59,18 @@ fn execute_scanned_unbox_impl<G>(
     // nonvoid box in math mode before testing its horizontal/vertical kind.
     // In particular, a matching hbox still cannot be opened in an mlist.
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
-        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
+        let error_context = error_context(stores)?;
+        report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
         return Ok(());
     }
     let Some(node) = first_box_node(stores, Some(register)) else {
-        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
+        let error_context = error_context(stores)?;
+        report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
         return Ok(());
     };
     if !unbox_kind_matches(primitive, &node) {
-        report_incompatible_unbox(stores, diagnostic_effects, error_context)?;
+        let error_context = error_context(stores)?;
+        report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
         return Ok(());
     }
     let children = match node {
@@ -107,17 +116,20 @@ pub(crate) fn execute_scanned_saved_vertical_discards<G>(
     Ok(())
 }
 
-pub(crate) fn execute_delete_last<G>(
+pub(crate) fn execute_delete_last<G, F>(
     primitive: UnexpandablePrimitive,
-    error_context: String,
+    error_context: F,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
+) -> Result<(), ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     if is_outer_vertical(nest) {
-        execute_delete_last_outer_vertical(primitive, &error_context, stores, diagnostic_effects)?;
+        execute_delete_last_outer_vertical(primitive, error_context, stores, diagnostic_effects)?;
         return Ok(());
     }
     let current_list = nest.current_list();
@@ -141,12 +153,15 @@ pub(crate) fn execute_delete_last<G>(
     Ok(())
 }
 
-fn execute_delete_last_outer_vertical<G>(
+fn execute_delete_last_outer_vertical<G, F>(
     primitive: UnexpandablePrimitive,
-    error_context: &str,
+    error_context: F,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<(), ExecError> {
+) -> Result<(), ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
     let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
     else {
         // TeX82 §1105: `(mode=vmode)and(tail=head)` -- the contribution list
@@ -160,7 +175,8 @@ fn execute_delete_last_outer_vertical<G>(
         // glue; otherwise it is `\unskip` "following non-glue" and silently
         // succeeds, matching the one case tex.web exempts from the apology.
         if primitive != UnexpandablePrimitive::UnSkip || stores.page_has_last_glue() {
-            report_cannot_delete_from_page(primitive, error_context, stores, diagnostic_effects)?;
+            let error_context = error_context(stores)?;
+            report_cannot_delete_from_page(primitive, &error_context, stores, diagnostic_effects)?;
         }
         return Ok(());
     };

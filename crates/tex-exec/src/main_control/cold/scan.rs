@@ -1355,12 +1355,12 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::Unbox {
                 primitive,
                 index: register.index,
-                error_context: processor.error_context(),
+                error_context: processor.diagnostic_context_coordinate(),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
             Ok(ColdOperation::LastBox {
-                error_context: processor.error_context(),
+                error_context: processor.diagnostic_context_coordinate(),
             })
         }
         // TeX82's main-control dispatch on `abs(mode)+cur_cmd` (tex.web
@@ -1670,7 +1670,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::UnSkip),
         ) => Ok(ColdOperation::DeleteLast {
             primitive,
-            context: processor.error_context(),
+            context: processor.diagnostic_context_coordinate(),
         }),
         // TeX82 §1111's "Forbidden cases" (`vmode+ital_corr`) vs. §1112's
         // `hmode+ital_corr`/`mmode+ital_corr`. Mode legality is decided here
@@ -2540,7 +2540,7 @@ fn scan_align_error<G>(
         // alignment v-template has advanced or retired.
         None => Ok(ColdOperation::MisplacedAlignmentDelimiter {
             token,
-            context: processor.error_context(),
+            context: processor.diagnostic_context_coordinate(),
         }),
         Some(tex_state::token::Token::Char {
             cat: brace @ (Catcode::BeginGroup | Catcode::EndGroup),

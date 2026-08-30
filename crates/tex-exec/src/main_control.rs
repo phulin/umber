@@ -11880,7 +11880,7 @@ fn scan_unary_scalar_operation<G>(
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
             Ok(ColdOperation::SetInteractionModeValue {
                 value,
-                context: processor.error_context(),
+                context: processor.diagnostic_context_coordinate(),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {

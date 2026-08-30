@@ -231,6 +231,23 @@ pub struct CommandState<G> {
     pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
 }
 
+/// Compact coordinate for TeX82's live §310 input display.
+///
+/// It is valid only while both the command timeline owner and authoritative
+/// input-stack revision remain unchanged. It owns no strings, rows, or
+/// backing and therefore cannot prolong any input lifetime.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct DiagnosticContextCoordinate {
+    owner: u64,
+    input_revision: u64,
+    scalar_revision: u64,
+}
+
+/// A diagnostic coordinate no longer names the live input projection it was
+/// captured from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StaleDiagnosticContext;
+
 impl<G> Deref for CommandState<G> {
     type Target = CommandStateRoots<G>;
 
@@ -1434,6 +1451,32 @@ impl<G> CommandState<G> {
         )
     }
 
+    /// Captures the allocation-free live-input coordinate used until a real
+    /// diagnostic publication boundary asks for owned text.
+    #[must_use]
+    pub fn diagnostic_context_coordinate(&self) -> DiagnosticContextCoordinate {
+        DiagnosticContextCoordinate {
+            owner: self.timeline.owner_id(),
+            input_revision: self.input.levels.context_revision(),
+            scalar_revision: self.input.context_revision,
+        }
+    }
+
+    /// Materializes a previously captured live-input coordinate exactly once.
+    pub fn render_diagnostic_context(
+        &self,
+        coordinate: DiagnosticContextCoordinate,
+        stores: &tex_state::CommandContext<'_, G>,
+    ) -> Result<String, StaleDiagnosticContext> {
+        if coordinate.owner != self.timeline.owner_id()
+            || coordinate.input_revision != self.input.levels.context_revision()
+            || coordinate.scalar_revision != self.input.context_revision
+        {
+            return Err(StaleDiagnosticContext);
+        }
+        Ok(self.output_open_context(stores))
+    }
+
     /// Retains TeX82 §331's bottom terminal buffer for §310 after the
     /// startup acquisition level has been retired.
     pub fn set_terminal_context_line(&mut self, line: impl Into<String>) {
@@ -1446,6 +1489,7 @@ impl<G> CommandState<G> {
         }
         self.terminal_buffer_slots = line.chars().count();
         self.input.terminal_context_line = Some(line);
+        self.input.context_revision = self.input.context_revision.wrapping_add(1).max(1);
     }
 
     pub(crate) fn open_context_starts_with_print_ln(

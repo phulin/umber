@@ -11,16 +11,20 @@ use crate::{ExecError, Mode, ModeNest};
 
 use super::hmode::flush_pending_hchars;
 
-pub(crate) fn take_last_box<G>(
+pub(crate) fn take_last_box<G, F>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-    error_context: String,
-) -> Result<Option<Node>, ExecError> {
+    error_context: F,
+) -> Result<Option<Node>, ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     match nest.current_mode() {
         Mode::Math | Mode::DisplayMath => {
+            let error_context = error_context(stores)?;
             report_cannot_take_last_box(
                 stores,
                 diagnostic_effects,
@@ -33,6 +37,7 @@ pub(crate) fn take_last_box<G>(
         Mode::Vertical
             if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
         {
+            let error_context = error_context(stores)?;
             report_cannot_take_last_box(
                 stores,
                 diagnostic_effects,

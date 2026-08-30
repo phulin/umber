@@ -59,6 +59,17 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
     )
 }
 
+pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
+    command: &CommandMachine<'_, G>,
+    stores: &tex_state::CommandContext<'_, G>,
+    coordinate: tex_command::DiagnosticContextCoordinate,
+) -> Result<String, ExecError> {
+    command
+        .state
+        .render_diagnostic_context(coordinate, stores)
+        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+}
+
 /// Applies TeX82 §1055's unscoped box-register dimension mutation through
 /// the admitted durable/page-node bridge.
 pub(in crate::main_control) fn assign_box_dimension<G>(
@@ -656,7 +667,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                error_context,
+                |_| Ok(error_context),
             )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)

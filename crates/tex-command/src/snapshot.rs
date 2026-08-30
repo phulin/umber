@@ -228,6 +228,12 @@ impl<G> Default for CommandTimeline<G> {
     }
 }
 
+impl<G> CommandTimeline<G> {
+    pub(crate) const fn owner_id(&self) -> u64 {
+        self.owner
+    }
+}
+
 impl<G> fmt::Debug for CommandTimeline<G> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CommandTimeline(..)")

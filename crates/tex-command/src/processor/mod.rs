@@ -344,6 +344,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.output_open_context(self.state)
     }
 
+    /// Captures §82's live input display as a compact, allocation-free
+    /// coordinate for a later publication boundary in this episode.
+    #[must_use]
+    pub fn diagnostic_context_coordinate(&self) -> crate::DiagnosticContextCoordinate {
+        self.command.diagnostic_context_coordinate()
+    }
+
     /// Captures tex.web's live input `line` while a delivered command still
     /// owns its source level. Cold consumers retain this scalar when apply
     /// may run after the exhausted source has been retired.

@@ -142,6 +142,9 @@ pub(crate) struct InputStack<G> {
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
+    /// Monotonic runtime incarnation of the live diagnostic projection.
+    /// Compact publication coordinates validate this before reading rows.
+    context_revision: u64,
 }
 
 impl<G> Default for InputStack<G> {
@@ -164,6 +167,7 @@ impl<G> Default for InputStack<G> {
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
+            context_revision: 1,
         }
     }
 }
@@ -242,6 +246,14 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
+    fn note_context_mutation(&mut self) {
+        self.context_revision = self.context_revision.wrapping_add(1).max(1);
+    }
+
+    pub(crate) const fn context_revision(&self) -> u64 {
+        self.context_revision
+    }
+
     pub(crate) fn rehome_generated_source(
         &mut self,
         accepted: &[u8],
@@ -280,6 +292,7 @@ impl<G> InputStack<G> {
             rebound = true;
         });
         if rebound {
+            self.note_context_mutation();
             let root_slot = root_slot.expect("a rebound source owns its slot");
             self.source_lex_states
                 .for_each_value_mut(|_, state| state.rehome_offsets(root_slot, offsets));
@@ -378,7 +391,6 @@ impl<G> InputStack<G> {
             });
             self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         }
-
         for index in 0..self.top {
             if self.rows[index].source_context() != Some(id) {
                 continue;
@@ -391,6 +403,7 @@ impl<G> InputStack<G> {
             }
             self.rows[index].set_source_context(Some(replacement_id));
         }
+        self.note_context_mutation();
         true
     }
 
@@ -443,7 +456,9 @@ impl<G> InputStack<G> {
             self.touched[index] = self.interval;
             self.partially_captured[index] = self.interval;
         }
-        Some(mutate(source, slot))
+        let result = mutate(source, slot);
+        self.note_context_mutation();
+        Some(result)
     }
 
     pub(crate) fn mutate_top_tokens<R>(
@@ -458,7 +473,9 @@ impl<G> InputStack<G> {
         let InputLevel::Tokens(tokens) = &mut self.rows[index] else {
             unreachable!()
         };
-        Some(mutate(tokens))
+        let result = mutate(tokens);
+        self.note_context_mutation();
+        Some(result)
     }
 
     pub(crate) fn mutate_top_macro_argument<R>(
@@ -473,7 +490,9 @@ impl<G> InputStack<G> {
         let InputLevel::MacroArgument(argument) = &mut self.rows[index] else {
             unreachable!()
         };
-        Some(mutate(argument))
+        let result = mutate(argument);
+        self.note_context_mutation();
+        Some(result)
     }
 
     pub(crate) fn push(&mut self, value: InputLevel<G>) {
@@ -485,6 +504,7 @@ impl<G> InputStack<G> {
     }
 
     fn push_row(&mut self, value: InputLevel<G>) {
+        self.note_context_mutation();
         self.row_admissions = self.row_admissions.saturating_add(1);
         if self.top == self.rows.len() {
             self.rows.push(value);
@@ -527,6 +547,7 @@ impl<G> InputStack<G> {
             _ => None,
         };
         let result = project(&self.rows[index], source);
+        self.note_context_mutation();
         self.top = index;
         if !self.recording {
             let retired = self.rows.pop().expect("input top exists");
@@ -614,6 +635,7 @@ impl<G> InputStack<G> {
         self.partially_captured[index] = self.interval;
         self.source_owner_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        self.note_context_mutation();
         result
     }
 
@@ -655,6 +677,7 @@ impl<G> InputStack<G> {
             },
         );
         if restored {
+            self.note_context_mutation();
             self.top = mark.top as usize;
             self.next_interval();
         }
@@ -697,6 +720,7 @@ impl<G> InputStack<G> {
             inverse.swap(&mut (rows, displaced, source_lex, source_owners, source_slots));
         });
         self.top = mark.top as usize;
+        self.note_context_mutation();
         self.fork = Some(InputStackFork { accepted_top });
         self.next_interval();
     }
@@ -721,6 +745,7 @@ impl<G> InputStack<G> {
             },
         );
         self.top = fork.accepted_top;
+        self.note_context_mutation();
         self.next_interval();
     }
 
@@ -740,6 +765,7 @@ impl<G> InputStack<G> {
             },
         );
         self.next_interval();
+        self.note_context_mutation();
     }
 
     pub(crate) fn as_slice(&self) -> &[InputLevel<G>] {

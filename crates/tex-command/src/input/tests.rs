@@ -11,6 +11,43 @@ use crate::{
 
 use super::ErrorContextSelection;
 
+#[test]
+fn diagnostic_coordinate_allocates_only_when_published_and_rejects_stale_input() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        command.set_terminal_context_line("allocation-free coordinate");
+        super::reset_diagnostic_context_measurement();
+
+        let coordinate = command.diagnostic_context_coordinate();
+        let foreign = CommandState::<()>::default().diagnostic_context_coordinate();
+        assert_eq!(
+            super::diagnostic_context_measurement(),
+            super::DiagnosticContextMeasurement::default()
+        );
+
+        let stores = universe.command_context().expect("command context");
+        assert_eq!(
+            command.render_diagnostic_context(foreign, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+        let rendered = command
+            .render_diagnostic_context(coordinate, &stores)
+            .expect("live coordinate renders");
+        assert!(rendered.contains("allocation-free coordinate"));
+        let published = super::diagnostic_context_measurement();
+        assert_eq!(published.renders, 1);
+        assert_eq!(published.owned_allocations, 1);
+        assert!(published.owned_bytes >= rendered.len());
+
+        command.set_terminal_context_line("replacement context");
+        assert_eq!(
+            command.render_diagnostic_context(coordinate, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+        assert_eq!(super::diagnostic_context_measurement(), published);
+    });
+}
+
 fn selected_context_levels(level_count: usize, error_context_lines: i32) -> Vec<Option<usize>> {
     let mut selection = ErrorContextSelection::new(error_context_lines);
     let mut selected = Vec::new();

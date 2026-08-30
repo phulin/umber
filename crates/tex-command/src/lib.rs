@@ -173,8 +173,8 @@ pub use snapshot::{
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,
-    CommandSemanticDiagnostic, CommandStackUsage, CommandState, RunawayPrelude,
-    UnknownRegisteredSource,
+    CommandSemanticDiagnostic, CommandStackUsage, CommandState, DiagnosticContextCoordinate,
+    RunawayPrelude, StaleDiagnosticContext, UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
 pub use tex_state::token::Catcode;

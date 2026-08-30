@@ -89,6 +89,36 @@ pub(crate) struct InputState<G> {
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.
     pub(crate) force_eof: bool,
+    /// Runtime incarnation for context-visible scalars outside `levels`.
+    pub(crate) context_revision: u64,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DiagnosticContextMeasurement {
+    pub(crate) renders: usize,
+    pub(crate) owned_allocations: usize,
+    pub(crate) owned_bytes: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static DIAGNOSTIC_CONTEXT_MEASUREMENT: std::cell::Cell<DiagnosticContextMeasurement> =
+        const { std::cell::Cell::new(DiagnosticContextMeasurement {
+            renders: 0,
+            owned_allocations: 0,
+            owned_bytes: 0,
+        }) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_diagnostic_context_measurement() {
+    DIAGNOSTIC_CONTEXT_MEASUREMENT.set(DiagnosticContextMeasurement::default());
+}
+
+#[cfg(test)]
+pub(crate) fn diagnostic_context_measurement() -> DiagnosticContextMeasurement {
+    DIAGNOSTIC_CONTEXT_MEASUREMENT.get()
 }
 
 impl<G> Default for InputState<G> {
@@ -102,6 +132,7 @@ impl<G> Default for InputState<G> {
             next_level_identity: 0,
             next_source_identity: 0,
             force_eof: false,
+            context_revision: 1,
         }
     }
 }
@@ -549,7 +580,25 @@ impl<G> InputState<G> {
         attempt: &crate::attempt::AttemptArena<G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, None, stores, parameters, attempt, scratch)
+        let rendered = self.render_context_for_levels(
+            &self.levels,
+            None,
+            stores,
+            parameters,
+            attempt,
+            scratch,
+        );
+        #[cfg(test)]
+        DIAGNOSTIC_CONTEXT_MEASUREMENT.with(|measurement| {
+            let mut measurement = measurement.get();
+            measurement.renders = measurement.renders.saturating_add(1);
+            measurement.owned_allocations = measurement
+                .owned_allocations
+                .saturating_add(usize::from(rendered.capacity() != 0));
+            measurement.owned_bytes = measurement.owned_bytes.saturating_add(rendered.capacity());
+            DIAGNOSTIC_CONTEXT_MEASUREMENT.set(measurement);
+        });
+        rendered
     }
 
     /// Whether §312's first displayed level enters §314's unconditional

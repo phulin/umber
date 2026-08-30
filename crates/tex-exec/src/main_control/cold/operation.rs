@@ -518,7 +518,7 @@ pub(in crate::main_control) enum ColdOperation<
     /// delimiter and drop it without a backup or inserted brace.
     MisplacedAlignmentDelimiter {
         token: Token,
-        context: String,
+        context: tex_command::DiagnosticContextCoordinate,
     },
     /// TeX82 §1129's command-specific misplaced-alignment report.
     MisplacedAlignmentCommand {
@@ -653,7 +653,7 @@ pub(in crate::main_control) enum ColdOperation<
     /// primitive against the current list's tail).
     DeleteLast {
         primitive: UnexpandablePrimitive,
-        context: String,
+        context: tex_command::DiagnosticContextCoordinate,
     },
     /// TeX82 §1264's `new_interaction`: `\batchmode`/`\nonstopmode`/
     /// `\scrollmode`/`\errorstopmode` carry no operand of their own -- the
@@ -663,7 +663,7 @@ pub(in crate::main_control) enum ColdOperation<
     /// e-TeX 2.6 etex.ch §3736's assignable `\interactionmode` primitive.
     SetInteractionModeValue {
         value: i32,
-        context: String,
+        context: tex_command::DiagnosticContextCoordinate,
     },
     /// TeX82 §1112's `hmode+ital_corr: append_italic_correction` (the
     /// procedure itself is §1113) or its math-mode twin (§1112's
@@ -1051,7 +1051,7 @@ pub(in crate::main_control) enum ColdOperation<
     Unbox {
         primitive: UnexpandablePrimitive,
         index: u16,
-        error_context: String,
+        error_context: tex_command::DiagnosticContextCoordinate,
     },
     /// e-TeX 2.6 `etex.ch` [45.999]'s operand-free extensions of TeX82's
     /// `un_vbox` command. The selected saved list is detached and spliced
@@ -1059,7 +1059,7 @@ pub(in crate::main_control) enum ColdOperation<
     /// number is scanned.
     SavedVerticalDiscards(UnexpandablePrimitive),
     LastBox {
-        error_context: String,
+        error_context: tex_command::DiagnosticContextCoordinate,
     },
     Leaders {
         kind: GlueKind,

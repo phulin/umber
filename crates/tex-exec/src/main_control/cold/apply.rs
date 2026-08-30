@@ -408,9 +408,14 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::DeleteLast { primitive, context } => {
+            let state = &*command.state;
             crate::box_runtime::execute_delete_last(
                 primitive,
-                context,
+                |stores| {
+                    state
+                        .render_diagnostic_context(context, stores)
+                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                },
                 modes,
                 stores,
                 command.diagnostic_effects,
@@ -449,6 +454,7 @@ pub(in crate::main_control) fn apply<G>(
                 2 => tex_state::InteractionMode::Scroll,
                 3 => tex_state::InteractionMode::ErrorStop,
                 value => {
+                    let context = render_diagnostic_coordinate(command, stores, context)?;
                     crate::diagnostics::report_bad_interaction_mode_with_context(
                         stores,
                         command.diagnostic_effects,
@@ -2412,7 +2418,7 @@ pub(in crate::main_control) fn apply<G>(
                     stores,
                     command.diagnostic_effects,
                     command.fuel,
-                    error_context,
+                    |_| Ok(error_context),
                 )?;
                 boxes.pending_setbox = Some(PendingSetBox {
                     target,
@@ -2521,6 +2527,7 @@ pub(in crate::main_control) fn apply<G>(
             index,
             error_context,
         } => {
+            let state = &*command.state;
             crate::box_runtime::execute_scanned_unbox_with_error_context(
                 primitive,
                 index,
@@ -2528,7 +2535,11 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                &error_context,
+                |stores| {
+                    state
+                        .render_diagnostic_context(error_context, stores)
+                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                },
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -2543,12 +2554,17 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::LastBox { error_context } => {
+            let state = &*command.state;
             let node = crate::box_runtime::take_last_box(
                 modes,
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                error_context,
+                |stores| {
+                    state
+                        .render_diagnostic_context(error_context, stores)
+                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                },
             )?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -2739,6 +2755,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentDelimiter { token, context } => {
+            let context = render_diagnostic_coordinate(command, stores, context)?;
             crate::diagnostics::report_misplaced_alignment_delimiter(
                 stores,
                 command.diagnostic_effects,
