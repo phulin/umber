@@ -2784,6 +2784,10 @@ delivery mutates the brace depth, parameter candidate, expansion operand, and
 typed child edge in place. Synchronous success and failure return only their
 small semantic result; only an immutable-resource suspension moves the row
 into the recyclable typed scanner lane, and resumption restores that exact row.
+The resumed collector takes and decodes its parked expansion once before
+entering the resident replacement loop. Ordinary §477 iterations therefore
+reuse the one command destination without probing suspension state; only a
+new immutable-resource suspension constructs another typed parked expansion.
 
 The collector's parameter and replacement storage is also the only source for TeX82
 §306's partial runaway display. A scanner episode records the deferred-

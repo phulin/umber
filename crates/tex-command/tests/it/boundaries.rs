@@ -564,6 +564,11 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .nth(1)
         .and_then(|tail| tail.split("/// Splices a token-list result").next())
         .expect("locate expanded token-list collector");
+    let expansion = scanner
+        .split("fn drive_collector_expansion(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// TeX82 §477").next())
+        .expect("locate collector expansion step");
     let splice = scanner
         .split("fn append_direct_the_toks(")
         .nth(1)
@@ -590,13 +595,24 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         "only the stationary phase row may own replacement progress"
     );
     assert!(collector.contains("self.get_next_into(&mut destination)"));
-    assert!(collector.contains(".as_mut()"));
+    assert!(expansion.contains(".as_mut()"));
     assert!(collector.contains("clear_command_destination(&mut destination)"));
     assert!(collector.contains("pending_expansion.take()"));
-    assert!(collector.contains("PendingCollectorExpansion"));
-    assert!(collector.contains("self.expand_into(&mut destination, true)"));
-    assert!(collector.contains("command: destination.take()"));
-    assert!(collector.contains("self.append_direct_the_toks(collector, &mut expansion_operand)"));
+    let restore = collector
+        .find("pending_expansion.take()")
+        .expect("collector restores its parked expansion");
+    let steady_loop = collector.find("loop {").expect("steady collection loop");
+    assert!(restore < steady_loop);
+    assert!(
+        !collector[steady_loop..].contains("pending_expansion.take()"),
+        "steady replacement collection must not probe parked suspension state"
+    );
+    assert_eq!(scanner.matches("fn drive_collector_expansion(").count(), 1);
+    assert!(expansion.contains("PendingCollectorExpansion"));
+    assert!(expansion.contains("error.is_resource_suspension()"));
+    assert!(expansion.contains("self.expand_into(destination, true)"));
+    assert!(expansion.contains("command: destination.take()"));
+    assert!(expansion.contains("self.append_direct_the_toks(collector, expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"

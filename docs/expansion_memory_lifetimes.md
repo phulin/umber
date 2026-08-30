@@ -448,6 +448,9 @@ collector continuation retains only the typed child edge; direct `\the`,
 `\unexpanded`, and `\detokenize` collector phases retain their own command
 because they do not enter generic expansion. The destination therefore does
 not retain commands across a generation or act as a hidden result cache.
+On resume, the collector consumes and decodes its parked expansion once before
+entering the same resident loop. Synchronous iterations never inspect that
+owner, and only a fresh immutable-resource suspension reconstructs it.
 
 The same invocation keeps its complete `PendingScanToks` owner stationary in
 one local row. Opening installs `ReplacementProgress` into that row once;

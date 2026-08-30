@@ -352,6 +352,12 @@ enum CollectorExpansionRoute {
     Detokenize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CollectorExpansionOutcome {
+    Expanded,
+    Retained,
+}
+
 #[inline(always)]
 fn clear_command_destination<G>(destination: &mut Option<crate::CurrentCommand<G>>) {
     *destination = None;
@@ -1450,6 +1456,174 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    #[inline(always)]
+    fn drive_collector_expansion(
+        &mut self,
+        route: CollectorExpansionRoute,
+        episode: &ScannerEpisode,
+        collector: &mut ScanToksCollector,
+        destination: &mut Option<crate::CurrentCommand<G>>,
+        expansion_operand: &mut Option<crate::CurrentCommand<G>>,
+        pending_expansion: &mut Option<PendingCollectorExpansion<G>>,
+    ) -> Result<CollectorExpansionOutcome, CommandError> {
+        if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
+            // A resumed generic expansion restores its sole parked command
+            // into this destination itself. Every outcome either advances the
+            // collector or returns its failure.
+            return match self.expand_into(destination, true) {
+                Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
+                    clear_command_destination(destination);
+                    Ok(CollectorExpansionOutcome::Expanded)
+                }
+                Err(CommandError::OuterInMacroArgument) => {
+                    self.resume_scanner_episode_after_recovery(episode);
+                    clear_command_destination(destination);
+                    Ok(CollectorExpansionOutcome::Expanded)
+                }
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        *pending_expansion = Some(PendingCollectorExpansion {
+                            command: destination.take(),
+                            route,
+                            operand: None,
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                route,
+                            ),
+                        });
+                    }
+                    Err(error)
+                }
+            };
+        }
+
+        let command = destination
+            .as_mut()
+            .expect("direct collector expansion retains its command destination");
+        if route == CollectorExpansionRoute::The {
+            // TeX82 §478 handles `\the` directly in `scan_toks` instead of
+            // routing it through §380's ordinary expanded-fetch loop.
+            match self.append_direct_the_toks(collector, expansion_operand) {
+                Ok(true) => {
+                    clear_command_destination(destination);
+                    return Ok(CollectorExpansionOutcome::Expanded);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        let command = destination
+                            .take()
+                            .expect("collector suspension retains its command");
+                        *pending_expansion = Some(PendingCollectorExpansion {
+                            command: Some(command),
+                            route,
+                            operand: expansion_operand.take(),
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                route,
+                            ),
+                        });
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if route == CollectorExpansionRoute::Unexpanded {
+            match self.append_unexpanded(collector) {
+                Ok(()) => {
+                    clear_command_destination(destination);
+                    return Ok(CollectorExpansionOutcome::Expanded);
+                }
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        let command = destination
+                            .take()
+                            .expect("collector suspension retains its command");
+                        *pending_expansion = Some(PendingCollectorExpansion {
+                            command: Some(command),
+                            route,
+                            operand: None,
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                route,
+                            ),
+                        });
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if route == CollectorExpansionRoute::Detokenize {
+            match self.append_detokenize(collector) {
+                Ok(()) => {
+                    clear_command_destination(destination);
+                    return Ok(CollectorExpansionOutcome::Expanded);
+                }
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        let command = destination
+                            .take()
+                            .expect("collector suspension retains its command");
+                        *pending_expansion = Some(PendingCollectorExpansion {
+                            command: Some(command),
+                            route,
+                            operand: None,
+                            child: crate::execution_scratch::ChildContinuation::capture(
+                                &mut self.scanner_resume,
+                                route,
+                            ),
+                        });
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let protected = matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
+        if protected {
+            // e-TeX 2.6 change section [27.465] represents a protected macro
+            // as `relax/no_expand_flag` for this collector iteration.
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "protected_expansion_suppression",
+                    tokens: vec![self.observed_token(command.spelling())],
+                }),
+            );
+            command.suppress_expandable();
+            return Ok(CollectorExpansionOutcome::Retained);
+        }
+
+        // TeX82 §394 returns from a failed macro call after either an ordinary
+        // non-`\long` `\par` or §23's outer-validity recovery. Both return to
+        // §380's get_x_token loop, which this collector owns while active.
+        match self.expand_into(destination, true) {
+            Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
+                clear_command_destination(destination);
+                Ok(CollectorExpansionOutcome::Expanded)
+            }
+            Err(CommandError::OuterInMacroArgument) => {
+                self.resume_scanner_episode_after_recovery(episode);
+                clear_command_destination(destination);
+                Ok(CollectorExpansionOutcome::Expanded)
+            }
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    *pending_expansion = Some(PendingCollectorExpansion {
+                        command: destination.take(),
+                        route,
+                        operand: None,
+                        child: crate::execution_scratch::ChildContinuation::capture(
+                            &mut self.scanner_resume,
+                            route,
+                        ),
+                    });
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// TeX82 §477, "Scan and build the body of the token list".
     ///
     /// `macro_parameters` is §477's `macro_def` guard: only a macro
@@ -1472,213 +1646,78 @@ impl<G> CommandProcessor<'_, '_, G> {
             pending_expansion,
         } = progress;
         let mut destination = None;
-        loop {
-            let resumed_expansion = pending_expansion.take();
-            let (resumed_route, mut expansion_operand) =
-                if let Some(mut pending) = resumed_expansion {
-                    if let Some(command) = pending.command.take() {
-                        self.resume_current_command(&command);
-                        destination = Some(command);
-                    }
-                    if let Some(child) = pending.child.take() {
-                        let (key, child_destination) = child.restore();
-                        if child_destination != pending.route {
-                            return Err(CommandError::input_invariant());
-                        }
-                        self.scanner_resume = Some(key);
-                    }
-                    (Some(pending.route), pending.operand.take())
-                } else {
-                    let delivery = if expansion.is_expanded() {
-                        self.get_next_into(&mut destination)
-                    } else {
-                        self.get_token_into(&mut destination)
-                    };
-                    match delivery {
-                        Ok(crate::DeliveryStatus::Command) => {}
-                        Ok(crate::DeliveryStatus::End) => {
-                            return Err(CommandError::input_invariant());
-                        }
-                        Ok(_) => unreachable!("ordinary raw delivery has no side event"),
-                        Err(error) => return Err(error),
-                    }
-                    (None, None)
-                };
-            if expansion.is_expanded()
-                && (resumed_route.is_some()
-                    || destination.as_ref().is_some_and(is_expandable_command))
+
+        // A parked expansion exists only after a real resource suspension.
+        // Restore it once before entering §477's steady collection loop; the
+        // ordinary path below consequently never probes continuation state.
+        if let Some(mut pending) = pending_expansion.take() {
+            if let Some(command) = pending.command.take() {
+                self.resume_current_command(&command);
+                destination = Some(command);
+            }
+            if let Some(child) = pending.child.take() {
+                let (key, child_destination) = child.restore();
+                if child_destination != pending.route {
+                    return Err(CommandError::input_invariant());
+                }
+                self.scanner_resume = Some(key);
+            }
+            let mut expansion_operand = pending.operand.take();
+            if self.drive_collector_expansion(
+                pending.route,
+                episode,
+                collector,
+                &mut destination,
+                &mut expansion_operand,
+                pending_expansion,
+            )? != CollectorExpansionOutcome::Expanded
             {
-                let route = resumed_route.unwrap_or_else(|| {
-                    match destination
-                        .as_ref()
-                        .expect("command delivery initializes destination")
-                        .meaning_ref()
-                    {
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::The,
-                        )) => CollectorExpansionRoute::The,
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::Unexpanded,
-                        )) => CollectorExpansionRoute::Unexpanded,
-                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::Detokenize,
-                        )) => CollectorExpansionRoute::Detokenize,
-                        _ => CollectorExpansionRoute::Ordinary,
-                    }
-                });
-                if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
-                    // A resumed generic expansion restores its sole parked
-                    // command into this destination itself. Every outcome
-                    // either advances the collector or returns its failure.
-                    match self.expand_into(&mut destination, true) {
-                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(CommandError::OuterInMacroArgument) => {
-                            self.resume_scanner_episode_after_recovery(episode);
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(error) => {
-                            *pending_expansion = Some(PendingCollectorExpansion {
-                                command: destination.take(),
-                                route,
-                                operand: None,
-                                child: crate::execution_scratch::ChildContinuation::capture(
-                                    &mut self.scanner_resume,
-                                    route,
-                                ),
-                            });
-                            return Err(error);
-                        }
-                    }
+                return Err(CommandError::input_invariant());
+            }
+        }
+
+        loop {
+            let delivery = if expansion.is_expanded() {
+                self.get_next_into(&mut destination)
+            } else {
+                self.get_token_into(&mut destination)
+            };
+            match delivery {
+                Ok(crate::DeliveryStatus::Command) => {}
+                Ok(crate::DeliveryStatus::End) => {
+                    return Err(CommandError::input_invariant());
                 }
-                let command = destination
-                    .as_mut()
-                    .expect("direct collector expansion retains its command destination");
-                if route == CollectorExpansionRoute::The {
-                    // TeX82 §478 handles `\the` directly in `scan_toks`
-                    // instead of routing it through §380's ordinary
-                    // expanded-fetch loop. It therefore has only the raw
-                    // delivery produced by `get_next`; the resulting
-                    // `the_toks` splice is the canonical expansion event.
-                    match self.append_direct_the_toks(collector, &mut expansion_operand) {
-                        Ok(true) => {
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Ok(false) => {}
-                        Err(error) => {
-                            let command = destination
-                                .take()
-                                .expect("collector suspension retains its command");
-                            *pending_expansion = Some(PendingCollectorExpansion {
-                                command: Some(command),
-                                route,
-                                operand: expansion_operand,
-                                child: crate::execution_scratch::ChildContinuation::capture(
-                                    &mut self.scanner_resume,
-                                    route,
-                                ),
-                            });
-                            return Err(error);
-                        }
-                    }
-                }
-                if route == CollectorExpansionRoute::Unexpanded {
-                    match self.append_unexpanded(collector) {
-                        Ok(()) => {
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(error) => {
-                            let command = destination
-                                .take()
-                                .expect("collector suspension retains its command");
-                            *pending_expansion = Some(PendingCollectorExpansion {
-                                command: Some(command),
-                                route,
-                                operand: None,
-                                child: crate::execution_scratch::ChildContinuation::capture(
-                                    &mut self.scanner_resume,
-                                    route,
-                                ),
-                            });
-                            return Err(error);
-                        }
-                    }
-                }
-                if route == CollectorExpansionRoute::Detokenize {
-                    match self.append_detokenize(collector) {
-                        Ok(()) => {
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(error) => {
-                            let command = destination
-                                .take()
-                                .expect("collector suspension retains its command");
-                            *pending_expansion = Some(PendingCollectorExpansion {
-                                command: Some(command),
-                                route,
-                                operand: None,
-                                child: crate::execution_scratch::ChildContinuation::capture(
-                                    &mut self.scanner_resume,
-                                    route,
-                                ),
-                            });
-                            return Err(error);
-                        }
-                    }
-                }
-                let protected = matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
-                if protected {
-                    // e-TeX 2.6 change section [27.465] represents a
-                    // protected macro as `relax/no_expand_flag` for this
-                    // collector iteration. The spelling is retained, and
-                    // the reference instrumentation observes that exact
-                    // one-token suppression splice before the terminal
-                    // expanded delivery.
-                    observe!(
-                        self,
-                        CommandObservation::TokenList(TokenListRecord {
-                            transition: "splice",
-                            purpose: "protected_expansion_suppression",
-                            tokens: vec![self.observed_token(command.spelling())],
-                        }),
-                    );
-                    command.suppress_expandable();
-                }
-                if !protected {
-                    // TeX82 §394 returns from a failed macro call after
-                    // either an ordinary non-`\long` `\par` or §23's
-                    // outer-validity recovery. Both return to §380's
-                    // get_x_token loop; this inlined expanded collector is
-                    // that loop's owner while scan_toks is active.
-                    match self.expand_into(&mut destination, true) {
-                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(CommandError::OuterInMacroArgument) => {
-                            self.resume_scanner_episode_after_recovery(episode);
-                            clear_command_destination(&mut destination);
-                            continue;
-                        }
-                        Err(error) => {
-                            *pending_expansion = Some(PendingCollectorExpansion {
-                                command: destination.take(),
-                                route,
-                                operand: None,
-                                child: crate::execution_scratch::ChildContinuation::capture(
-                                    &mut self.scanner_resume,
-                                    route,
-                                ),
-                            });
-                            return Err(error);
-                        }
-                    }
+                Ok(_) => unreachable!("ordinary raw delivery has no side event"),
+                Err(error) => return Err(error),
+            }
+            if expansion.is_expanded() && destination.as_ref().is_some_and(is_expandable_command) {
+                let route = match destination
+                    .as_ref()
+                    .expect("command delivery initializes destination")
+                    .meaning_ref()
+                {
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::The,
+                    )) => CollectorExpansionRoute::The,
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::Unexpanded,
+                    )) => CollectorExpansionRoute::Unexpanded,
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::Detokenize,
+                    )) => CollectorExpansionRoute::Detokenize,
+                    _ => CollectorExpansionRoute::Ordinary,
+                };
+                let mut expansion_operand = None;
+                if self.drive_collector_expansion(
+                    route,
+                    episode,
+                    collector,
+                    &mut destination,
+                    &mut expansion_operand,
+                    pending_expansion,
+                )? == CollectorExpansionOutcome::Expanded
+                {
+                    continue;
                 }
             }
 
