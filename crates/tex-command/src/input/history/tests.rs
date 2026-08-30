@@ -22,7 +22,7 @@ fn word(ch: char) -> TracedTokenWord {
 
 fn assert_exact_direct_transition<G>(
     stack: &mut InputStack<G>,
-    mutate: impl Fn(&mut InputStack<G>),
+    mut mutate: impl FnMut(&mut InputStack<G>),
 ) {
     let checkpoint = stack.mark().expect("input checkpoint");
     stack.reset_cursor_mutation_counters();
@@ -87,7 +87,7 @@ fn cursor_position<G>(level: &InputLevel<G>) -> usize {
 #[test]
 fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transition() {
     crate::test_harness::with_universe(|universe| {
-        let context = universe.command_context().expect("command context");
+        let mut context = universe.command_context().expect("command context");
         let behavior = TokenBehavior::Ordinary;
         let retirement = RetirementBehavior::Pop;
         let trace = ReplayTrace::Inserted;
@@ -108,17 +108,24 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
 
         assert_exact_direct_transition(&mut stack, |stack| {
             let mut command = crate::command::CurrentCommand::empty();
+            let mut path_counters = crate::state::RawDeliveryPathCounters::default();
             let delivery = stack
-                .deliver_top_cursor_into(
+                .deliver_top_into(
+                    crate::CommandProfile::default(),
+                    false,
+                    true,
                     PackedTokenSources::new(&replay, &attempt),
                     &scratch,
                     command.empty_for_raw_delivery(),
                     7,
-                    &context,
+                    &mut context,
+                    &mut path_counters,
                 )
-                .expect("token cursor remains on top")
                 .expect("token delivery succeeds");
-            assert!(delivery.resolved.is_some());
+            assert!(matches!(
+                delivery,
+                crate::input::InputTopTransition::Delivered { .. }
+            ));
         });
     });
 }
@@ -126,7 +133,7 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
 #[test]
 fn macro_argument_mutation_uses_the_same_direct_transition() {
     crate::test_harness::with_universe(|universe| {
-        let context = universe.command_context().expect("command context");
+        let mut context = universe.command_context().expect("command context");
         let mut scratch = crate::execution_scratch::ExecutionScratch::default();
         let matching = scratch.begin_macro_match().expect("macro match");
         let mut buffer = scratch.begin_match_buffer(&matching).expect("match buffer");
@@ -161,17 +168,24 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
 
         assert_exact_direct_transition(&mut stack, |stack| {
             let mut command = crate::command::CurrentCommand::empty();
+            let mut path_counters = crate::state::RawDeliveryPathCounters::default();
             let delivery = stack
-                .deliver_top_cursor_into(
+                .deliver_top_into(
+                    crate::CommandProfile::default(),
+                    false,
+                    true,
                     PackedTokenSources::new(&replay, &attempt),
                     &scratch,
                     command.empty_for_raw_delivery(),
                     11,
-                    &context,
+                    &mut context,
+                    &mut path_counters,
                 )
-                .expect("macro argument remains on top")
                 .expect("macro-argument delivery succeeds");
-            assert!(delivery.resolved.is_some());
+            assert!(matches!(
+                delivery,
+                crate::input::InputTopTransition::Delivered { .. }
+            ));
         });
     });
 }

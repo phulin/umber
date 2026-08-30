@@ -1772,10 +1772,13 @@ node and update the head. Rejected probes restore the copied head, so the
 authoritative line remains singular and there is no parallel mutable
 character-index representation.
 
-Ordinary delivery selects the semantic top once. Source delivery lends its row
-and checked slot together, tokenizes into the caller's final command slot, and
-advances the row's compact position before ending that borrow. Stored-token and
-macro-argument delivery use corresponding typed top operations. Every row's
+Ordinary delivery selects and discriminates the semantic top once inside the
+authoritative `InputStack`. The source branch lends its row and checked slot
+together, tokenizes into the caller's final command slot, and advances the
+row's compact position before ending that borrow. Stored-token and macro-
+argument branches project their resident packed word and meaning into that same
+slot before the same top borrow ends. `next_raw_into` neither looks the top up
+again nor receives a token/cursor carrier. Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the
 current top's value. Reading the context is consequently one top-row read and

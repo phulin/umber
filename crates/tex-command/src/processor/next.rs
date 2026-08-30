@@ -263,6 +263,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                     continue;
                 }
+                InputTopTransition::OutParameter { .. } => {
+                    return error.fail(CommandError::input_invariant());
+                }
                 InputTopTransition::InvalidCharacter => {
                     self.report_recoverable(
                         INVALID_SOURCE_CHARACTER_DIAGNOSTIC,

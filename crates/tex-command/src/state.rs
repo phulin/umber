@@ -1118,7 +1118,7 @@ impl<G> CommandState<G> {
         )
     }
 
-    /// Resets the focused stored-token cursor mutation counters.
+    /// Resets the focused resident-input cursor mutation counters.
     #[doc(hidden)]
     #[cfg(any(test, feature = "profiling"))]
     pub fn profile_reset_input_cursor_mutation_counters(&mut self) {
@@ -1126,7 +1126,7 @@ impl<G> CommandState<G> {
     }
 
     /// Returns `(typed top accesses, first touches, coalesced transitions,
-    /// closure dispatches)` for the direct stored-token mutation boundary.
+    /// closure dispatches)` for the direct resident-input mutation boundary.
     #[doc(hidden)]
     #[cfg(any(test, feature = "profiling"))]
     #[must_use]

@@ -8,10 +8,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    CompactSourceStepQueries, CompactSourceTokenizationStep, InputLevel, InputLevelId,
-    PackedTokenSources, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    SourceControlSequenceKind, SourceNameClass, SourceToken, StoredReplayReason, TokenBehavior,
-    TokenCursor,
+    CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSources, PackedTokenSpanHandle,
+    ReplayTrace, RetirementBehavior, SourceControlSequenceKind, SourceNameClass, SourceToken,
+    StoredReplayReason, TokenBehavior, TokenCursor,
 };
 
 /// Result of one admission of the current input top.
@@ -19,6 +18,11 @@ pub(crate) enum InputTopTransition<'slot, G> {
     Delivered {
         resolved: crate::command::ResolvedCommand<'slot, G>,
         meaning_lookup: bool,
+    },
+    OutParameter {
+        slot: u8,
+        has_macro_lineage: bool,
+        active_source: Option<tex_state::SourceId>,
     },
     ParameterPushed(InputLevelId),
     InvalidCharacter,
@@ -244,199 +248,35 @@ impl<G> CommandState<G> {
     ) -> Result<InputTopTransition<'slot, G>, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
-        let (admitted_identity, out_parameter) = {
+        let transition = {
             let attempt = self.attempt.arena();
             let scratch = &self.scratch;
             let roots = &mut self.roots;
             let replay_lane = &roots.input.replay;
-            let Some(level) = roots.input.levels.last() else {
-                return Ok(InputTopTransition::Empty);
-            };
-            match level {
-                InputLevel::Source(_) => {
-                    if state.tracked_region_is_active() {
-                        let (source, slot) = roots
-                            .input
-                            .levels
-                            .top_source()
-                            .expect("the inspected source remains on top");
-                        super::observe_immutable_source(state, source, slot);
-                    }
-                    let mut queries = LiveSourceQueries {
-                        state,
-                        create_control_sequences,
-                    };
-                    let (
-                        identity,
-                        position,
-                        active_source,
-                        direct_source_line,
-                        step,
-                        frame_advanced,
-                    ) = roots
-                        .input
-                        .levels
-                        .mutate_top_source_lex(|source, slot| {
-                            let identity = source.identity();
-                            let position = slot.cursor.next_physical_offset;
-                            let step = match profile.character_mode() {
-                                crate::CharacterMode::EightBitExact => slot
-                                    .cursor
-                                    .next_compact_exact_byte_step(force_eof, &mut queries),
-                                crate::CharacterMode::UnicodeExtended => slot
-                                    .cursor
-                                    .next_compact_unicode_step(force_eof, &mut queries),
-                            };
-                            let direct_source_line = slot.cursor.line.as_ref().map(|line| {
-                                u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
-                            });
-                            let frame_advanced =
-                                !matches!(&step, CompactSourceTokenizationStep::Token(_))
-                                    || (source.frame.identity() == identity.0
-                                        && source.frame.advance().is_some());
-                            (
-                                identity,
-                                position,
-                                source.frame.source_id(),
-                                direct_source_line,
-                                step,
-                                frame_advanced,
-                            )
-                        })
-                        .expect("the inspected source remains on top");
-                    if !frame_advanced {
-                        return Err(());
-                    }
-                    match step {
-                        CompactSourceTokenizationStep::Token(token) => {
-                            let range = token.provenance.range();
-                            let origin = if range.end().saturating_sub(range.start()) == 1 {
-                                state.source_token_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            } else {
-                                state.source_range_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            };
-                            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
-                                token.word,
-                                origin,
-                                identity.0,
-                                position,
-                                sequence,
-                                Some(token.provenance),
-                                active_source,
-                                true,
-                                direct_source_line,
-                                false,
-                                state,
-                            );
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.source_direct = self
-                                    .raw_delivery_path_counters
-                                    .source_direct
-                                    .saturating_add(1);
-                            }
-                            return Ok(InputTopTransition::Delivered {
-                                resolved,
-                                meaning_lookup,
-                            });
-                        }
-                        CompactSourceTokenizationStep::InvalidCharacter => {
-                            return Ok(InputTopTransition::InvalidCharacter);
-                        }
-                        CompactSourceTokenizationStep::NeedLine => {
-                            return Ok(InputTopTransition::NeedLine(identity));
-                        }
-                        CompactSourceTokenizationStep::End => {
-                            return Ok(InputTopTransition::SourceExhausted(identity));
-                        }
-                    }
-                }
-                InputLevel::Tokens(_) => {
-                    let delivery = roots
-                        .input
-                        .levels
-                        .deliver_top_cursor_into(
-                            PackedTokenSources::new(replay_lane, attempt),
-                            scratch,
-                            destination,
-                            sequence,
-                            state,
-                        )
-                        .expect("the inspected token row remains on top")?;
-                    match (delivery.resolved, delivery.out_parameter) {
-                        (Some(resolved), None) => {
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.stored_direct = self
-                                    .raw_delivery_path_counters
-                                    .stored_direct
-                                    .saturating_add(1);
-                            }
-                            return Ok(InputTopTransition::Delivered {
-                                resolved,
-                                meaning_lookup: delivery.meaning_lookup,
-                            });
-                        }
-                        (None, Some(out_parameter)) => {
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.out_parameter_interceptions = self
-                                    .raw_delivery_path_counters
-                                    .out_parameter_interceptions
-                                    .saturating_add(1);
-                            }
-                            (delivery.identity, out_parameter)
-                        }
-                        (None, None) => {
-                            return Ok(InputTopTransition::TokenExhausted(delivery.identity));
-                        }
-                        (Some(_), Some(_)) => return Err(()),
-                    }
-                }
-                InputLevel::MacroArgument(_) => {
-                    let delivery = roots
-                        .input
-                        .levels
-                        .deliver_top_cursor_into(
-                            PackedTokenSources::new(replay_lane, attempt),
-                            scratch,
-                            destination,
-                            sequence,
-                            state,
-                        )
-                        .expect("the inspected macro row remains on top")?;
-                    let Some(resolved) = delivery.resolved else {
-                        return Ok(InputTopTransition::TokenExhausted(delivery.identity));
-                    };
-                    #[cfg(test)]
-                    {
-                        self.raw_delivery_path_counters.macro_argument_direct = self
-                            .raw_delivery_path_counters
-                            .macro_argument_direct
-                            .saturating_add(1);
-                    }
-                    return Ok(InputTopTransition::Delivered {
-                        resolved,
-                        meaning_lookup: delivery.meaning_lookup,
-                    });
-                }
-            }
+            roots.input.levels.deliver_top_into(
+                profile,
+                force_eof,
+                create_control_sequences,
+                PackedTokenSources::new(replay_lane, attempt),
+                scratch,
+                destination,
+                sequence,
+                state,
+                #[cfg(test)]
+                &mut self.raw_delivery_path_counters,
+            )?
         };
-
-        match self
-            .replay_out_parameter_after_admission(admitted_identity, false, out_parameter)
-            .map_err(|_| ())?
-        {
-            OutParameterReplay::Literal => Err(()),
-            OutParameterReplay::Pushed(level) => Ok(InputTopTransition::ParameterPushed(level)),
+        let InputTopTransition::OutParameter {
+            slot,
+            has_macro_lineage,
+            active_source,
+        } = transition
+        else {
+            return Ok(transition);
+        };
+        match self.replay_out_parameter_after_admission(has_macro_lineage, active_source, slot) {
+            Ok(OutParameterReplay::Pushed(level)) => Ok(InputTopTransition::ParameterPushed(level)),
+            Ok(OutParameterReplay::Literal) | Err(_) => Err(()),
         }
     }
 
@@ -769,48 +609,46 @@ impl<G> CommandState<G> {
         delivering_level: InputLevelId,
         slot: u8,
     ) -> Result<OutParameterReplay, ParameterReplayError> {
-        let (actual, delivered_by_parameter) = match self.input.levels.last() {
-            Some(level) => (
-                input_level_identity(level),
-                matches!(
-                    level,
-                    InputLevel::Tokens(TokenCursor {
-                        behavior: TokenBehavior::Parameter,
-                        ..
-                    })
+        let (actual, delivered_by_parameter, has_macro_lineage, active_source) =
+            match self.input.levels.last() {
+                Some(level) => (
+                    input_level_identity(level),
+                    matches!(
+                        level,
+                        InputLevel::Tokens(TokenCursor {
+                            behavior: TokenBehavior::Parameter,
+                            ..
+                        })
+                    ),
+                    matches!(level, InputLevel::Tokens(cursor) if cursor
+                        .frame
+                        .flags()
+                        .contains(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE)),
+                    level.source_context(),
                 ),
-            ),
-            None => return Err(ParameterReplayError::NoInput),
-        };
+                None => return Err(ParameterReplayError::NoInput),
+            };
         if actual != delivering_level {
             return Err(ParameterReplayError::LevelChanged {
                 expected: delivering_level,
                 actual,
             });
         }
-        self.replay_out_parameter_after_admission(delivering_level, delivered_by_parameter, slot)
+        if delivered_by_parameter {
+            return Ok(OutParameterReplay::Literal);
+        }
+        self.replay_out_parameter_after_admission(has_macro_lineage, active_source, slot)
     }
 
     fn replay_out_parameter_after_admission(
         &mut self,
-        _delivering_level: InputLevelId,
-        delivered_by_parameter: bool,
+        has_macro_lineage: bool,
+        active_source: Option<tex_state::SourceId>,
         slot: u8,
     ) -> Result<OutParameterReplay, ParameterReplayError> {
-        if delivered_by_parameter {
-            return Ok(OutParameterReplay::Literal);
-        }
         if !(1..=9).contains(&slot) {
             return Err(ParameterReplayError::InvalidSlot(slot));
         }
-
-        let has_macro_lineage = match self.input.levels.last() {
-            Some(InputLevel::Tokens(cursor)) => cursor
-                .frame
-                .flags()
-                .contains(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE),
-            Some(InputLevel::Source(_)) | Some(InputLevel::MacroArgument(_)) | None => false,
-        };
         if !has_macro_lineage {
             return Err(ParameterReplayError::NoMacroOwner);
         }
@@ -832,7 +670,7 @@ impl<G> CommandState<G> {
             RetirementBehavior::Pop,
             &trace,
         );
-        frame.set_source_context(self.input.levels.current_source_context());
+        frame.set_source_context(active_source);
         self.push_input_level(InputLevel::MacroArgument(super::MacroArgumentCursor {
             range,
             slot,
@@ -1236,9 +1074,9 @@ fn register_pending_source_backings<G>(
 }
 
 /// Live engine queries used while the one admitted source row is borrowed.
-struct LiveSourceQueries<'a, 'b, G> {
-    state: &'a mut tex_state::CommandContext<'b, G>,
-    create_control_sequences: bool,
+pub(super) struct LiveSourceQueries<'a, 'b, G> {
+    pub(super) state: &'a mut tex_state::CommandContext<'b, G>,
+    pub(super) create_control_sequences: bool,
 }
 
 impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {

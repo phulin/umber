@@ -235,13 +235,13 @@ impl<G> MacroArgumentCursor<G> {
         destination: crate::command::EmptyCommand<'slot, G>,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<Option<(crate::command::ResolvedCommand<'slot, G>, bool)>, ()> {
+    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
         let frame = self.frame;
         let position = frame.position();
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
-            return Ok(None);
+            return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
         };
-        let resolved = destination.write_resolved_delivery(
+        let (resolved, meaning_lookup) = destination.write_resolved_delivery(
             word.token_word(),
             word.origin(),
             frame.identity(),
@@ -259,7 +259,10 @@ impl<G> MacroArgumentCursor<G> {
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(Some(resolved))
+        Ok(super::InputTopTransition::Delivered {
+            resolved,
+            meaning_lookup,
+        })
     }
 }
 
@@ -284,26 +287,64 @@ impl<G> TokenCursor<G> {
         &mut self,
         sources: PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'slot, G>,
-        intercept_out_parameter: bool,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<Option<PackedTokenDelivery<'slot, G>>, ()> {
+    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
         let frame = self.frame;
         let position = frame.position();
-        let Some(delivery) = sources.deliver_at_into(
-            &self.span,
-            frame,
-            destination,
-            intercept_out_parameter,
-            sequence,
-            state,
-        ) else {
-            return Ok(None);
+        let index = position as usize;
+        let Some((word, origin, source_provenance)) = (match &self.span {
+            PackedTokenSpanHandle::Replay { replay, .. } => sources
+                .replay
+                .get(*replay, index)
+                .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
+            PackedTokenSpanHandle::MacroReplacement { definition, .. } => definition
+                .replacement_word(index)
+                .map(|word| (word, OriginId::UNKNOWN, None)),
+            PackedTokenSpanHandle::AttemptList { list, .. } => sources
+                .attempt
+                .token_word(*list, index)
+                .ok()
+                .map(|word| (word.token_word(), word.origin(), None)),
+            PackedTokenSpanHandle::DurableList { list, .. } => list
+                .word_at(index)
+                .map(|word| (word, OriginId::UNKNOWN, None)),
+        }) else {
+            return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
+        };
+        let delivery = if !matches!(self.behavior, TokenBehavior::Parameter)
+            && let Some(slot) = word.out_parameter_slot()
+        {
+            super::InputTopTransition::OutParameter {
+                slot,
+                has_macro_lineage: frame.flags().contains(InputFrameFlags::HAS_MACRO_LINEAGE),
+                active_source: frame.source_id(),
+            }
+        } else {
+            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+                word,
+                origin,
+                frame.identity(),
+                u64::from(position),
+                sequence,
+                source_provenance,
+                frame.source_id(),
+                false,
+                None,
+                frame
+                    .flags()
+                    .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+                state,
+            );
+            super::InputTopTransition::Delivered {
+                resolved,
+                meaning_lookup,
+            }
         };
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(Some(delivery))
+        Ok(delivery)
     }
 }
 
@@ -313,20 +354,6 @@ impl<G> TokenCursor<G> {
 /// The default command-delivery path writes into the caller's final
 /// [`crate::CurrentCommand`] instead.
 pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
-
-/// Result of one resident stored-token access.
-///
-/// The packed out-parameter fact is projected while the storage word is
-/// already resident and before the destination is written. Every other word
-/// resolves directly in the final command slot. This status is not a second
-/// token or command representation.
-pub(crate) enum PackedTokenDelivery<'slot, G> {
-    Command {
-        resolved: crate::command::ResolvedCommand<'slot, G>,
-        meaning_lookup: bool,
-    },
-    OutParameter(u8),
-}
 
 /// Typed lifetime handle for one immutable packed-token span.
 ///
@@ -415,67 +442,6 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 .word_at(index)
                 .map(|word| (word, OriginId::UNKNOWN, None)),
         }
-    }
-
-    /// Writes one canonical word through the admitted span handle.
-    ///
-    /// Safe Rust cannot store a self-reference into the owning command root,
-    /// so this small direct match is the sole storage-domain boundary. No
-    /// caller rebuilds a generic delivery object or repeats this routing.
-    #[inline(always)]
-    pub(crate) fn deliver_at_into<'slot>(
-        &self,
-        span: &PackedTokenSpanHandle<G>,
-        frame: PackedInputFrame,
-        destination: crate::command::EmptyCommand<'slot, G>,
-        intercept_out_parameter: bool,
-        sequence: u64,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<PackedTokenDelivery<'slot, G>> {
-        let position = frame.position();
-        let index = position as usize;
-        let (word, origin, source_provenance) = match span {
-            PackedTokenSpanHandle::Replay { replay, .. } => {
-                let (word, provenance) = self.replay.get(*replay, index)?;
-                (word.token_word(), word.origin(), provenance)
-            }
-            PackedTokenSpanHandle::MacroReplacement { definition, .. } => {
-                let word = definition.replacement_word(index)?;
-                (word, OriginId::UNKNOWN, None)
-            }
-            PackedTokenSpanHandle::AttemptList { list, .. } => {
-                let Ok(word) = self.attempt.token_word(*list, index) else {
-                    return None;
-                };
-                (word.token_word(), word.origin(), None)
-            }
-            PackedTokenSpanHandle::DurableList { list, .. } => {
-                let word = list.word_at(index)?;
-                (word, OriginId::UNKNOWN, None)
-            }
-        };
-        if intercept_out_parameter && let Some(slot) = word.out_parameter_slot() {
-            return Some(PackedTokenDelivery::OutParameter(slot));
-        }
-        let (resolved, meaning_lookup) = destination.write_resolved_delivery(
-            word,
-            origin,
-            frame.identity(),
-            u64::from(position),
-            sequence,
-            source_provenance,
-            frame.source_id(),
-            false,
-            None,
-            frame
-                .flags()
-                .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
-            state,
-        );
-        Some(PackedTokenDelivery::Command {
-            resolved,
-            meaning_lookup,
-        })
     }
 }
 

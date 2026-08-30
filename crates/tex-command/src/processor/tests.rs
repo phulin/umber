@@ -520,6 +520,12 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                 }
             );
             processor.command.profile_reset_raw_delivery_path_counters();
+            processor
+                .command
+                .profile_reset_input_cursor_mutation_counters();
+            processor
+                .command
+                .profile_reset_input_source_context_counters();
             assert_eq!(
                 processor
                     .get_next()
@@ -536,6 +542,14 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                 processor.command.profile_raw_delivery_path_counters(),
                 (1, 0, 0, 0)
             );
+            assert_eq!(
+                processor.command.profile_input_cursor_mutation_counters(),
+                (1, 0, 0, 0)
+            );
+            assert_eq!(
+                processor.command.profile_input_source_context_counters(),
+                (0, 0, 0, 1)
+            );
         }
 
         let ordinary = Token::Char {
@@ -545,6 +559,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [ordinary, Token::Param(1)]);
         command.profile_reset_raw_delivery_path_counters();
+        command.profile_reset_input_cursor_mutation_counters();
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
@@ -565,6 +580,10 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
         assert_eq!(
             processor.command.profile_raw_delivery_path_counters(),
             (0, 1, 0, 1)
+        );
+        assert_eq!(
+            processor.command.profile_input_cursor_mutation_counters(),
+            (2, 0, 0, 0)
         );
     });
 }

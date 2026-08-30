@@ -11,8 +11,8 @@ use crate::scalar_journal::{PackedJournal, PackedJournalMark};
 use crate::timeline::{PayloadHandle, PayloadSlab};
 
 use super::{
-    InputLevel, InputLevelInlineState, SourceLevel, SourceLevelExecutionState,
-    SourceLexExecutionState, SourceSlot, SourceSlotKey,
+    CompactSourceTokenizationStep, InputLevel, InputLevelInlineState, SourceLevel,
+    SourceLevelExecutionState, SourceLexExecutionState, SourceSlot, SourceSlotKey,
 };
 
 const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
@@ -28,11 +28,11 @@ pub(crate) struct InputSourceContextCounters {
     pub(crate) source_lex_slot_borrows: u64,
 }
 
-/// Profiling proof for the unified stored-token cursor mutation boundary.
+/// Profiling proof for the unified resident-input cursor mutation boundary.
 ///
 /// One call performs one typed top-row access. The first call in a checkpoint
-/// interval appends one inverse; later calls coalesce against it. The retired
-/// callback entry points have no dispatch counter to increment.
+/// interval appends the row's matching inverse; later calls coalesce against
+/// it. The resident transition has no callback dispatch to increment.
 #[cfg(any(test, feature = "profiling"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct InputCursorMutationCounters {
@@ -40,14 +40,6 @@ pub(crate) struct InputCursorMutationCounters {
     pub(crate) first_touch_transitions: u64,
     pub(crate) coalesced_transitions: u64,
     pub(crate) closure_dispatches: u64,
-}
-
-/// Copy-small facts produced by one direct stored-token cursor mutation.
-pub(crate) struct InputCursorDelivery<'slot, G> {
-    pub(crate) identity: super::InputLevelId,
-    pub(crate) resolved: Option<crate::command::ResolvedCommand<'slot, G>>,
-    pub(crate) meaning_lookup: bool,
-    pub(crate) out_parameter: Option<u8>,
 }
 
 struct InlineCursorRecorder<'a, G> {
@@ -531,98 +523,206 @@ impl<G> InputStack<G> {
         Some(result)
     }
 
-    /// Delivers and advances the exact stored-token cursor at the semantic top.
+    /// Delivers and advances the exact resident input cursor at the semantic top.
     ///
-    /// Token-list and direct macro-argument rows enter this one typed path.
-    /// It indexes and discriminates the top once, performs the ordered inline
-    /// first-touch transition directly, and publishes one diagnostic-context
-    /// incarnation around the in-place advance. No callback or borrowed cursor
-    /// representation crosses this boundary.
-    pub(crate) fn deliver_top_cursor_into<'slot>(
+    /// Source, token-list, and direct macro-argument rows enter this one typed
+    /// path. It indexes and discriminates the top once, performs the matching
+    /// ordered first-touch transition directly, and writes an ordinary word
+    /// into the caller-owned command before the resident borrow ends. Cold
+    /// source, exhaustion, and parameter statuses carry no command borrow.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn deliver_top_into<'slot>(
         &mut self,
+        profile: crate::CommandProfile,
+        force_eof: bool,
+        create_control_sequences: bool,
         sources: super::PackedTokenSources<'_, G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'slot, G>,
         sequence: u64,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<Result<InputCursorDelivery<'slot, G>, ()>> {
-        let index = self.top.checked_sub(1)?;
+        state: &mut tex_state::CommandContext<'_, G>,
+        #[cfg(test)] path_counters: &mut crate::state::RawDeliveryPathCounters,
+    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
+        let Some(index) = self.top.checked_sub(1) else {
+            return Ok(super::InputTopTransition::Empty);
+        };
         #[cfg(any(test, feature = "profiling"))]
         {
             self.cursor_mutations.typed_top_accesses =
                 self.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
-        let mut recorder = InlineCursorRecorder {
-            recording: self.recording,
-            interval: self.interval,
-            index,
-            touched: &mut self.touched,
-            partially_captured: &mut self.partially_captured,
-            undo: &mut self.undo,
-            coalesced_mutations: &mut self.coalesced_mutations,
-            #[cfg(any(test, feature = "profiling"))]
-            counters: &mut self.cursor_mutations,
-        };
         let delivery = match &mut self.rows[index] {
-            InputLevel::Tokens(cursor) => {
-                recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-                let identity = cursor.identity();
-                let behavior = cursor.behavior;
-                match cursor.deliver_into(
-                    sources,
-                    destination,
-                    !matches!(behavior, super::TokenBehavior::Parameter),
-                    sequence,
-                    state,
-                ) {
-                    Ok(Some(super::levels::PackedTokenDelivery::Command {
-                        resolved,
-                        meaning_lookup,
-                    })) => Ok(InputCursorDelivery {
-                        identity,
-                        resolved: Some(resolved),
-                        meaning_lookup,
-                        out_parameter: None,
-                    }),
-                    Ok(Some(super::levels::PackedTokenDelivery::OutParameter(slot))) => {
-                        Ok(InputCursorDelivery {
-                            identity,
-                            resolved: None,
-                            meaning_lookup: false,
-                            out_parameter: Some(slot),
-                        })
+            InputLevel::Source(source) => {
+                let key = source.slot;
+                let slot = self
+                    .source_slots
+                    .value_mut(key.0)
+                    .expect("source row names its live ABA-checked slot");
+                record_source_lex_slot_borrow();
+                if state.tracked_region_is_active() {
+                    super::observe_immutable_source(state, source, slot);
+                }
+                let needs_inverse = self.recording && self.touched[index] != self.interval;
+                if self.recording && !needs_inverse {
+                    self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.cursor_mutations.coalesced_transitions = self
+                            .cursor_mutations
+                            .coalesced_transitions
+                            .saturating_add(1);
                     }
-                    Ok(None) => Ok(InputCursorDelivery {
-                        identity,
-                        resolved: None,
-                        meaning_lookup: false,
-                        out_parameter: None,
-                    }),
-                    Err(()) => Err(()),
+                }
+                if needs_inverse {
+                    self.source_lex_captures = self.source_lex_captures.saturating_add(1);
+                    let payload = self
+                        .source_lex_states
+                        .insert(SourceLexExecutionState::capture(source, slot));
+                    self.undo.append(InputUndo::SourceLex {
+                        index: u32::try_from(index).expect("input row index fits u32"),
+                        payload,
+                    });
+                    self.touched[index] = self.interval;
+                    self.partially_captured[index] = self.interval;
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.cursor_mutations.first_touch_transitions = self
+                            .cursor_mutations
+                            .first_touch_transitions
+                            .saturating_add(1);
+                    }
+                }
+                let identity = source.identity();
+                let position = slot.cursor.next_physical_offset;
+                let active_source = source.frame.source_id();
+                let step = {
+                    let mut queries = super::stack::LiveSourceQueries {
+                        state,
+                        create_control_sequences,
+                    };
+                    match profile.character_mode() {
+                        crate::CharacterMode::EightBitExact => slot
+                            .cursor
+                            .next_compact_exact_byte_step(force_eof, &mut queries),
+                        crate::CharacterMode::UnicodeExtended => slot
+                            .cursor
+                            .next_compact_unicode_step(force_eof, &mut queries),
+                    }
+                };
+                let direct_source_line = slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
+                match step {
+                    CompactSourceTokenizationStep::Token(token) => {
+                        if source.frame.identity() != identity.0 || source.frame.advance().is_none()
+                        {
+                            Err(())
+                        } else {
+                            let range = token.provenance.range();
+                            let origin = if range.end().saturating_sub(range.start()) == 1 {
+                                state.source_token_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            } else {
+                                state.source_range_origin(
+                                    range.source(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            };
+                            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+                                token.word,
+                                origin,
+                                identity.0,
+                                position,
+                                sequence,
+                                Some(token.provenance),
+                                active_source,
+                                true,
+                                direct_source_line,
+                                false,
+                                state,
+                            );
+                            #[cfg(test)]
+                            {
+                                path_counters.source_direct =
+                                    path_counters.source_direct.saturating_add(1);
+                            }
+                            Ok(super::InputTopTransition::Delivered {
+                                resolved,
+                                meaning_lookup,
+                            })
+                        }
+                    }
+                    CompactSourceTokenizationStep::InvalidCharacter => {
+                        Ok(super::InputTopTransition::InvalidCharacter)
+                    }
+                    CompactSourceTokenizationStep::NeedLine => {
+                        Ok(super::InputTopTransition::NeedLine(identity))
+                    }
+                    CompactSourceTokenizationStep::End => {
+                        Ok(super::InputTopTransition::SourceExhausted(identity))
+                    }
                 }
             }
+            InputLevel::Tokens(cursor) => {
+                let mut recorder = InlineCursorRecorder {
+                    recording: self.recording,
+                    interval: self.interval,
+                    index,
+                    touched: &mut self.touched,
+                    partially_captured: &mut self.partially_captured,
+                    undo: &mut self.undo,
+                    coalesced_mutations: &mut self.coalesced_mutations,
+                    #[cfg(any(test, feature = "profiling"))]
+                    counters: &mut self.cursor_mutations,
+                };
+                recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
+                let delivery = cursor.deliver_into(sources, destination, sequence, state);
+                #[cfg(test)]
+                match &delivery {
+                    Ok(super::InputTopTransition::Delivered { .. }) => {
+                        path_counters.stored_direct = path_counters.stored_direct.saturating_add(1);
+                    }
+                    Ok(super::InputTopTransition::OutParameter { .. }) => {
+                        path_counters.out_parameter_interceptions =
+                            path_counters.out_parameter_interceptions.saturating_add(1);
+                    }
+                    Ok(_) | Err(()) => {}
+                }
+                delivery
+            }
             InputLevel::MacroArgument(cursor) => {
+                let mut recorder = InlineCursorRecorder {
+                    recording: self.recording,
+                    interval: self.interval,
+                    index,
+                    touched: &mut self.touched,
+                    partially_captured: &mut self.partially_captured,
+                    undo: &mut self.undo,
+                    coalesced_mutations: &mut self.coalesced_mutations,
+                    #[cfg(any(test, feature = "profiling"))]
+                    counters: &mut self.cursor_mutations,
+                };
                 recorder.record(InputLevelInlineState::new(
                     cursor.frame,
                     super::RetirementBehavior::Pop,
                 ));
-                let identity = cursor.identity();
-                match cursor.deliver_into(scratch, destination, sequence, state) {
-                    Ok(resolved) => Ok(InputCursorDelivery {
-                        identity,
-                        meaning_lookup: resolved
-                            .as_ref()
-                            .is_some_and(|(_, meaning_lookup)| *meaning_lookup),
-                        resolved: resolved.map(|(resolved, _)| resolved),
-                        out_parameter: None,
-                    }),
-                    Err(()) => Err(()),
+                let delivery = cursor.deliver_into(scratch, destination, sequence, state);
+                #[cfg(test)]
+                if matches!(&delivery, Ok(super::InputTopTransition::Delivered { .. })) {
+                    path_counters.macro_argument_direct =
+                        path_counters.macro_argument_direct.saturating_add(1);
                 }
+                delivery
             }
-            InputLevel::Source(_) => return None,
         };
         self.note_context_mutation();
-        Some(delivery)
+        delivery
     }
 
     #[cfg(any(test, feature = "profiling"))]

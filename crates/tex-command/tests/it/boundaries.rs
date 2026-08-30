@@ -122,6 +122,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .expect("read typed delivery driver");
     let input_stack = fs::read_to_string(manifest_dir.join("src/input/stack.rs"))
         .expect("read input-top transition");
+    let input_history = fs::read_to_string(manifest_dir.join("src/input/history.rs"))
+        .expect("read resident input owner");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input-level representation");
     let command = fs::read_to_string(manifest_dir.join("src/command.rs"))
@@ -160,7 +162,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "resident input words must resolve through one final-slot write"
     );
-    assert!(input_stack.contains("destination.write_resolved_delivery("));
+    assert!(input_history.contains("destination.write_resolved_delivery("));
     assert!(levels.contains("destination.write_resolved_delivery("));
     for retired in [
         "RawDeliverySlot",
@@ -168,7 +170,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "resolve_in_place(",
     ] {
         assert!(
-            !format!("{next}\n{levels}\n{command}").contains(retired),
+            !format!("{next}\n{input_history}\n{levels}\n{command}").contains(retired),
             "input delivery must resolve the canonical command directly, without {retired}"
         );
     }
@@ -177,10 +179,12 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "source and stored input must share one destination-directed top transition"
     );
-    let input_top_transition = input_stack
-        .split("fn next_raw_into<'slot>(")
+    assert!(input_stack.contains(".deliver_top_into("));
+    assert!(!input_stack.contains("let Some(level) = roots.input.levels.last()"));
+    let input_top_transition = input_history
+        .split("fn deliver_top_into<'slot>(")
         .nth(1)
-        .and_then(|tail| tail.split("/// Acquires, firms, registers").next())
+        .and_then(|tail| tail.split("pub(crate) fn set_top_token_retirement").next())
         .expect("locate warmed input-top transition");
     for forbidden in [
         "register_source",
@@ -192,8 +196,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "warmed input-top transition must not inspect or call source registration through {forbidden}"
         );
     }
-    assert!(input_stack.contains("CharacterMode::EightBitExact"));
-    assert!(input_stack.contains("CharacterMode::UnicodeExtended"));
+    assert!(input_history.contains("CharacterMode::EightBitExact"));
+    assert!(input_history.contains("CharacterMode::UnicodeExtended"));
     assert!(
         !expansion.contains("ControlSequenceCreation"),
         "canonical command delivery must not carry source-name creation policy"

@@ -230,14 +230,16 @@ collector (see `src/conditionals.rs`).
   per checkpoint-visible row and interval; rows admitted in the interval need
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
-  Typed source operations and one direct stored-token top delivery mutation
-  are the only mutable access; token-list and macro-argument cursors share its
-  single top access, first-touch transition, and diagnostic revision without
-  callback dispatch. No raw mutable top or mutable index survives. Focused
-  gates prove exact coalescing and zero-allocation hot mutation.
+  Typed cold source operations and one direct resident-top delivery mutation
+  are the only mutable access. Source, token-list, and macro-argument cursors
+  share its single top access, matching first-touch transition, direct final-
+  command write, and diagnostic revision without a callback or returned token
+  carrier. No raw mutable top or mutable index survives. Focused gates prove
+  exact coalescing and zero-allocation hot mutation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  the one destination-directed `next_raw_into` source/token top transition,
-  whose cold results retain no command-slot borrow, the singular
+  the destination-directed `next_raw_into` delegation into the resident top,
+  whose EOF, recovery, parameter, and exhaustion results retain no command-
+  slot borrow, the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, borrowed source-ancestry comparison with copy-only

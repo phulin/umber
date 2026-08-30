@@ -665,9 +665,12 @@ owner from that same swap. An interval-local row retains no owner inverse.
 Alternate owners exist only as generation-checked inverse payloads, so
 candidate redo restores the exact authoritative row without a second live
 input representation or the generic logical-stack stored-state machinery.
-The source first-touch inverse is at most 48 bytes. Ordinary source delivery
-lends the semantic top row and checked slot together, writes the caller's
-final command once, and advances the compact position in the same borrow. The
+The source first-touch inverse is at most 48 bytes. One resident transition on
+the `InputStack` looks up and discriminates the semantic top once. Its source
+branch lends the row and checked slot together, while its stored and macro-
+argument branches borrow the admitted span directly; each writes the caller's
+final command and advances the compact position before that top borrow ends.
+No cursor/token carrier or second top lookup returns to `next_raw_into`. The
 common packed frame on every row carries the active external-source context;
 source rows install it and replay rows inherit it at admission. Main-control
 root-file eligibility therefore consumes the source fact delivered with the
@@ -693,10 +696,11 @@ popped source backing.
 
 Raw delivery writes directly into the active request's caller-owned
 `CurrentCommand`. Stored levels route through the `PackedTokenSpanHandle`
-variant chosen at admission, write final resolution inputs into that destination,
-and advance their packed frame in place. Source levels write the same
-destination after tokenization. Parameter replay may overwrite those facts on
-the next iteration before resolution. The reference-only phase proof retains no
+variant chosen at admission, project the resident packed word into final
+meaning and spelling fields, and advance their packed frame in place. Source
+levels write the same destination after tokenization. Parameter interception
+remains a separate status before resolution and may push a literal argument
+level for the next resident transition. The reference-only phase proof retains no
 backing handle or cursor, needs no rollback record, and is never moved into a
 typed suspension; cold input transitions return only copy-small facts after
 the proof has ended.
