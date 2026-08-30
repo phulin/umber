@@ -1125,6 +1125,14 @@ crates/tex-command/src/
         mod.rs
         next.rs
         expand.rs
+        expand_structural.rs
+        expand_input.rs
+        expand_convert.rs
+        expand_pdf.rs
+        expand_pdf_string.rs
+        expand_pdf_file.rs
+        expand_replay.rs
+        expand_render.rs
         status.rs
         alignment.rs
 
@@ -2512,6 +2520,16 @@ string-compare migrations.
 Expandable primitive dispatch is a statically compiled match over a closed
 opcode enum. Pure heavyweight helpers such as regex, MD5, or numeric formatting
 remain isolated functions outside the token-delivery loop.
+
+The physical implementation follows that semantic boundary without creating
+new runtime owners. `processor/expand.rs` owns the destination-directed driver,
+classification, static dispatch, fuel and trace order, and typed continuation
+transitions. Structural, source, TeX/e-TeX conversion, pdfTeX state/object,
+pdfTeX string/regular-expression, and immutable-file enquiry handlers are
+ordinary sibling modules implemented directly on the same borrowed
+`CommandProcessor`. Expansion-result replay and append-oriented rendering are
+separate leaf modules. There is no handler trait, dynamic dispatch, second
+command representation, facade, or intermediate queue.
 
 Command-text rendering is append-oriented. Numeric, glue, token,
 control-sequence, meaning, and command renderers append into one caller-owned

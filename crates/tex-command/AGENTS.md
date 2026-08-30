@@ -101,7 +101,8 @@ collector (see `src/conditionals.rs`).
   the executor borrows the one caller-owned value through preflight and
   scanning, and moves it only into an actual retry or another semantic owner;
   it never enters a durable snapshot or format boundary.
-- `src/processor/expand.rs`: canonical expanded delivery, including one
+- `src/processor/expand.rs`: canonical expanded-delivery driver and static
+  primitive dispatch, including one
   main-control preflight entry that raw-fetches into the caller's destination,
   classifies that resident command once, publishes an ordinary unexpandable
   result directly, and continues through expansion in place only when needed.
@@ -112,6 +113,18 @@ collector (see `src/conditionals.rs`).
   suspension, and a resumed primitive retains §367's already-emitted trace
   instead of printing the command twice. The same rule covers the typed `\expandafter` operand and
   `\csname` accumulator frames.
+- `src/processor/expand_structural.rs`, `src/processor/expand_input.rs`, and
+  `src/processor/expand_convert.rs`: direct/static structural, source, and
+  TeX/e-TeX conversion primitive families. They borrow the one processor and
+  mutate its authoritative state in place; none owns a command facade or
+  alternate delivery path.
+- `src/processor/expand_pdf.rs`, `src/processor/expand_pdf_string.rs`, and
+  `src/processor/expand_pdf_file.rs`: direct/static pdfTeX state/object,
+  string/regular-expression, and immutable-file enquiry primitive families,
+  including their exact typed suspension phases.
+- `src/processor/expand_replay.rs` and `src/processor/expand_render.rs`:
+  expansion-result insertion plus shared append-oriented TeX command and
+  conversion rendering. These contain no expansion driver or semantic owner.
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.
@@ -244,9 +257,8 @@ collector (see `src/conditionals.rs`).
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.
-- `src/processor/expand.rs`, `src/processor/expand/tests.rs`, and
-  `src/processor/fixtures/`: ordinary expanded-command delivery, expandable
-  primitives, converted-token construction, focused private unit tests, and
+- `src/processor/expand/tests.rs` and `src/processor/fixtures/`: focused
+  expanded-delivery, primitive, suspension, allocation/layout unit tests and
   bounded source microfixtures.
 - `src/scanners/`: private typed scanner family. `hyphenation.rs` owns TeX82
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
