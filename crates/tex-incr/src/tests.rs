@@ -563,12 +563,31 @@ fn complete_identity_matches_no_op_convergence() {
     let source = page_source(12);
     let mut session = session(RevisionId::new(1), &source);
     session.cold().expect("baseline");
+    let accepted_generation = session
+        .prior_generation
+        .as_ref()
+        .expect("baseline generation")
+        .generation
+        .witness();
     let output = session
         .advance(RevisionId::new(2), edit(&session, 0..0, ""))
         .expect("no-op revision");
     assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
     assert!(output.reuse.convergence_boundary.is_some());
     assert!(output.reuse.same_history_attempts > 0);
+    assert!(output.reuse.suffixes_adopted > 0);
+    assert!(accepted_generation.is_live());
+    assert_eq!(session.retired_generation_count(), 0);
+    assert_eq!(session.converged_candidate_generation_count(), 1);
+    assert_eq!(session.occupied_generation_slot_count(), 1);
+    assert_eq!(session.reachability_store.live_generation_count(), 1);
+    assert!(
+        session
+            .history()
+            .iter()
+            .all(|record| record.revision() == RevisionId::new(2)),
+        "converged boundary metadata is eagerly rehomed"
+    );
     assert!(
         session
             .history()

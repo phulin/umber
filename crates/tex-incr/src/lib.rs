@@ -551,6 +551,7 @@ struct CandidatePlan {
     execution_path: RevisionExecutionPath,
     restart_limit: Option<usize>,
     restart_boundary: Option<BoundaryKey>,
+    restart_fork_latency: Duration,
     revision_setup_latency: Duration,
 }
 
@@ -2094,6 +2095,7 @@ pub struct Session<'store> {
     /// this slot.
     prior_generation: Option<RetainedRevisionGeneration<'store>>,
     retired_generations: usize,
+    converged_candidate_generations: usize,
     candidate_lease: Arc<CandidateLeaseState>,
     /// Complete immutable pre-job base. It is checkpoint-owned data, not a
     /// retained runtime generation or a mutable journal lineage.
@@ -2245,6 +2247,7 @@ impl<'store> Session<'store> {
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
             prior_generation: None,
             retired_generations: 0,
+            converged_candidate_generations: 0,
             candidate_lease: CandidateLeaseState::new(),
             job_start_anchor: None,
         })
@@ -2393,6 +2396,13 @@ impl<'store> Session<'store> {
         self.retired_generations
     }
 
+    /// Number of current generations rejected after authoritative boundary
+    /// convergence while the accepted generation remained resident.
+    #[must_use]
+    pub const fn converged_candidate_generation_count(&self) -> usize {
+        self.converged_candidate_generations
+    }
+
     #[must_use]
     pub fn retained_generation_count(&self) -> usize {
         usize::from(self.prior_generation.is_some())
@@ -2535,6 +2545,7 @@ impl<'store> Session<'store> {
             execution_path: RevisionExecutionPath::Cold,
             restart_limit: None,
             restart_boundary: None,
+            restart_fork_latency: Duration::ZERO,
             revision_setup_latency: Duration::ZERO,
         })
     }
@@ -2580,6 +2591,7 @@ impl<'store> Session<'store> {
             execution_path: RevisionExecutionPath::ExternalInputDelta,
             restart_limit: None,
             restart_boundary: None,
+            restart_fork_latency: Duration::ZERO,
             revision_setup_latency: Duration::ZERO,
         })
     }
@@ -2619,6 +2631,7 @@ impl<'store> Session<'store> {
             restart_limit: (execution_path == RevisionExecutionPath::SlowEdit)
                 .then_some(edit.range.start),
             restart_boundary: None,
+            restart_fork_latency: Duration::ZERO,
             revision_setup_latency: started.elapsed(),
         })
     }
@@ -2628,6 +2641,7 @@ impl<'store> Session<'store> {
         mut plan: CandidatePlan,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
+        let fork_started = Timer::start();
         let mut materialized_job_start = false;
         let rooted = if let (Some(prior), Some(limit)) =
             (self.prior_generation.as_mut(), plan.restart_limit)
@@ -2692,6 +2706,7 @@ impl<'store> Session<'store> {
         } else {
             (None, None, None)
         };
+        plan.restart_fork_latency = fork_started.elapsed();
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
             reachability_store: self.reachability_store.clone(),
@@ -2762,6 +2777,7 @@ impl<'store> Session<'store> {
             source_len: candidate.plan.source.len(),
             delivered_commands: completion.delivered_commands,
             revision_setup_latency: candidate.plan.revision_setup_latency,
+            restart_fork_latency: candidate.plan.restart_fork_latency,
             pages_retyped: completion.completion.pages().len(),
         });
         if reuse.same_history_attempts == 0
@@ -2782,6 +2798,16 @@ impl<'store> Session<'store> {
             reuse.trace_nodes_walked = 1;
             reuse.convergence_boundary = Some(selected);
             reuse.same_history_stop = SameHistoryStop::Matched;
+        }
+        if candidate.plan.base_content_hash
+            == ContentHash::from_bytes(candidate.plan.source.as_bytes())
+            && let Some(convergence) = reuse.convergence_boundary
+            && let Some(index) = self
+                .history
+                .iter()
+                .position(|record| record.key == convergence)
+        {
+            reuse.suffixes_adopted = self.history.len().saturating_sub(index);
         }
         reuse.restart_boundary = candidate.plan.restart_boundary;
         let generation = candidate
@@ -2837,6 +2863,7 @@ impl<'store> Session<'store> {
         if transaction.base_content_hash != self.content_hash {
             return Err(SessionError::ContentHashMismatch);
         }
+        let prior_retention = self.accepted_retention;
         let mut prepared =
             prepare_candidate_runtime(transaction.generation, transaction.runtime_key)
                 .map_err(SessionError::RetainedEngine)?;
@@ -2851,30 +2878,50 @@ impl<'store> Session<'store> {
         // before either accepted metadata or the prior owner changes. The
         // current generation was constructed independently under its own
         // HRTB brand, so its checkpoint roots cannot contain a prior id.
-        let previous = self.prior_generation.take();
-        let generation = if let Some(mut previous) = previous {
-            prepared.accept_control();
+        let converged_on_identical_source = transaction.base_content_hash
+            == transaction.content_hash
+            && transaction.reuse.convergence_boundary.is_some()
+            && self.prior_generation.is_some();
+        let incoming = if converged_on_identical_source {
+            drop(prepared);
+            let previous = self
+                .prior_generation
+                .as_mut()
+                .expect("convergence retains the accepted generation");
             previous
                 .generation
-                .prepare_candidate_accept(prepared.generation_mut());
-            previous
-                .generation
-                .finish_candidate_accept(prepared.generation_mut());
-            let generation = prepared.into_generation();
-            previous
-                .generation
-                .retire()
-                .map_err(SessionError::Universe)?;
-            self.retired_generations = self.retired_generations.saturating_add(1);
-            generation
+                .rehome_identical_revision_boundaries(transaction.revision.raw())
+                .map_err(SessionError::RetainedEngine)?;
+            previous.revision = transaction.revision;
+            self.converged_candidate_generations =
+                self.converged_candidate_generations.saturating_add(1);
+            None
         } else {
-            prepared.accept_control();
-            prepared.into_generation()
-        };
-        let incoming = RetainedRevisionGeneration {
-            revision: transaction.revision,
-            generation,
-            checkpoint_count,
+            let previous = self.prior_generation.take();
+            let generation = if let Some(mut previous) = previous {
+                prepared.accept_control();
+                previous
+                    .generation
+                    .prepare_candidate_accept(prepared.generation_mut());
+                previous
+                    .generation
+                    .finish_candidate_accept(prepared.generation_mut());
+                let generation = prepared.into_generation();
+                previous
+                    .generation
+                    .retire()
+                    .map_err(SessionError::Universe)?;
+                self.retired_generations = self.retired_generations.saturating_add(1);
+                generation
+            } else {
+                prepared.accept_control();
+                prepared.into_generation()
+            };
+            Some(RetainedRevisionGeneration {
+                revision: transaction.revision,
+                generation,
+                checkpoint_count,
+            })
         };
         let acceptance = Timer::start();
         self.revision = transaction.revision;
@@ -2882,7 +2929,11 @@ impl<'store> Session<'store> {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        if let Some(selected) = transaction.restart_boundary
+        if converged_on_identical_source {
+            for record in &mut self.history {
+                record.revision = transaction.revision;
+            }
+        } else if let Some(selected) = transaction.restart_boundary
             && selected.boundary != EngineBoundary::JobStart
         {
             let prefix = self
@@ -2911,24 +2962,44 @@ impl<'store> Session<'store> {
             }
             self.history = history;
         }
-        self.prior_generation = Some(incoming);
+        if let Some(incoming) = incoming {
+            self.prior_generation = Some(incoming);
+        }
         self.job_start_anchor = Some(transaction.job_start_anchor);
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
         let output_bytes = detached_output_bytes(&transaction.completion);
+        let retained_checkpoint = converged_on_identical_source
+            .then_some(prior_retention)
+            .flatten();
         let retention = RetentionMetrics {
-            checkpoint_root_bytes: transaction.checkpoint_retained_bytes,
-            checkpoint_shared_owner_bytes: transaction.checkpoint_shared_owner_bytes,
-            checkpoint_metadata_bytes: transaction.checkpoint_metadata_bytes,
-            detached_boundary_bytes: transaction.detached_boundary_bytes,
+            checkpoint_root_bytes: retained_checkpoint.map_or(
+                transaction.checkpoint_retained_bytes,
+                |retention| retention.checkpoint_root_bytes,
+            ),
+            checkpoint_shared_owner_bytes: retained_checkpoint.map_or(
+                transaction.checkpoint_shared_owner_bytes,
+                |retention| retention.checkpoint_shared_owner_bytes,
+            ),
+            checkpoint_metadata_bytes: retained_checkpoint.map_or(
+                transaction.checkpoint_metadata_bytes,
+                |retention| retention.checkpoint_metadata_bytes,
+            ),
+            detached_boundary_bytes: retained_checkpoint.map_or(
+                transaction.detached_boundary_bytes,
+                |retention| retention.detached_boundary_bytes,
+            ),
             memo_result_bytes: 0,
             diagnostic_bytes: self
                 .fragments
                 .retained_bytes()
                 .saturating_add(self.layout.retained_bytes()),
             output_bytes,
-            protected_overage_bytes: transaction.checkpoint_protected_overage_bytes,
+            protected_overage_bytes: retained_checkpoint.map_or(
+                transaction.checkpoint_protected_overage_bytes,
+                |retention| retention.protected_overage_bytes,
+            ),
             job_start_anchor_bytes: self
                 .job_start_anchor
                 .as_ref()

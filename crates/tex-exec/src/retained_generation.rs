@@ -887,6 +887,16 @@ impl<'store> RetainedEngineGeneration<'store> {
         )))
     }
 
+    /// Rehomes detached boundary metadata after a byte-identical revision
+    /// converges and its candidate has been rejected. Runtime checkpoints and
+    /// object graphs stay untouched because the root source bytes are equal.
+    pub fn rehome_identical_revision_boundaries(
+        &mut self,
+        revision: u64,
+    ) -> Result<(), RetainedEngineAccessError> {
+        self.with_admitted(RehomeIdenticalRevision { revision })?
+    }
+
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
@@ -1180,6 +1190,10 @@ struct SelectLatestBoundary {
     position: usize,
 }
 
+struct RehomeIdenticalRevision {
+    revision: u64,
+}
+
 struct PreflightBoundaryLane;
 
 impl RetainedEngineOperation for PreflightBoundaryLane {
@@ -1261,6 +1275,19 @@ impl RetainedEngineOperation for SelectLatestBoundary {
         };
         let retention = boundaries.get(&key)?.retention();
         Ok(Some((key, evidence, retention)))
+    }
+}
+
+impl RetainedEngineOperation for RehomeIdenticalRevision {
+    type Output = Result<(), RetainedEngineAccessError>;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        admitted
+            .sidecars
+            .boundaries
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .rehome_identical_revision(self.revision)
     }
 }
 
@@ -1629,6 +1656,30 @@ impl<G> BoundaryLane<G> {
             }
         })?;
         Ok(selected.map(|(raw, evidence)| (self.public_key(raw), evidence)))
+    }
+
+    fn rehome_identical_revision(
+        &mut self,
+        revision: u64,
+    ) -> Result<(), RetainedEngineAccessError> {
+        let keys = match &self.ownership {
+            BoundaryOwnership::Accepted(keys) => keys.iter().copied().collect::<Vec<_>>(),
+            BoundaryOwnership::Forked { .. } => {
+                return Err(RetainedEngineAccessError::LiveAttachment);
+            }
+        };
+        for key in keys {
+            let row = self.slot_by_index_mut(key.slot);
+            if row.generation != key.generation {
+                return Err(RetainedEngineAccessError::StaleCheckpoint);
+            }
+            row.cell
+                .as_mut()
+                .ok_or(RetainedEngineAccessError::StaleCheckpoint)?
+                .evidence
+                .revision = revision;
+        }
+        Ok(())
     }
 
     fn validate_all(&self) -> Result<(), RetainedEngineAccessError> {

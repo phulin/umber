@@ -59,6 +59,7 @@ pub(crate) struct HistoryComparison<'a> {
     pub(crate) source_len: usize,
     pub(crate) delivered_commands: usize,
     pub(crate) revision_setup_latency: Duration,
+    pub(crate) restart_fork_latency: Duration,
     pub(crate) pages_retyped: usize,
 }
 
@@ -71,6 +72,7 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
         source_len,
         delivered_commands,
         revision_setup_latency,
+        restart_fork_latency,
         pages_retyped,
     } = comparison;
     if execution_path == RevisionExecutionPath::Cold || old.is_empty() {
@@ -82,6 +84,7 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             reexecuted_commands: delivered_commands,
             reexecuted_paragraphs: paragraph_count(new),
             revision_setup_latency,
+            restart_fork_latency,
             trace_retained_bytes: std::mem::size_of_val(new),
             ..ReuseMetrics::default()
         };
@@ -96,6 +99,7 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             reexecuted_paragraphs: paragraph_count(new),
             same_history_stop: SameHistoryStop::HashesDiverged,
             revision_setup_latency,
+            restart_fork_latency,
             trace_retained_bytes: std::mem::size_of_val(new),
             ..ReuseMetrics::default()
         };
@@ -141,6 +145,7 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             SameHistoryStop::HashesDiverged
         },
         revision_setup_latency,
+        restart_fork_latency,
         trace_validation_latency: started.elapsed(),
         ..ReuseMetrics::default()
     }
