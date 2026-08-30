@@ -8,8 +8,8 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSources, PackedTokenSpanHandle,
-    ReplayTrace, RetirementBehavior, SourceControlSequenceKind, SourceNameClass, SourceToken,
+    CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
+    RetirementBehavior, SourceControlSequenceKind, SourceNameClass, SourceToken,
     StoredReplayReason, TokenBehavior, TokenCursor,
 };
 
@@ -258,94 +258,6 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl<G> CommandState<G> {
-    /// Advances the exact top input row once and writes the caller's final
-    /// command value in place. Physical-line acquisition is deliberately a
-    /// separate transition: a cursor without a loaded line returns
-    /// [`InputTopTransition::NeedLine`] without loading or journaling one. A
-    /// successful resolution also commits its scanner and meaning-lookup work
-    /// here, while those facts are resident, rather than carrying them through
-    /// another processor status.
-    #[inline(always)]
-    pub(crate) fn advance_resident_command_into(
-        &mut self,
-        state: &mut tex_state::CommandContext<'_, G>,
-        fuel: &mut crate::fuel::CommandFuel,
-        create_control_sequences: bool,
-        destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
-    ) -> Result<ResidentCommandTransition, ()> {
-        let profile = self.profile();
-        let force_eof = self.source_force_eof();
-        let transition = {
-            let attempt = self.attempt.arena();
-            let scratch = &self.scratch;
-            let roots = &mut self.roots;
-            let replay_lane = &roots.input.replay;
-            roots.input.levels.deliver_top_into(
-                profile,
-                force_eof,
-                create_control_sequences,
-                PackedTokenSources::new(replay_lane, attempt),
-                scratch,
-                destination,
-                sequence,
-                state,
-                #[cfg(test)]
-                &mut self.raw_delivery_path_counters,
-            )?
-        };
-        match transition {
-            InputTopTransition::Delivered {
-                mut resolved,
-                resolution,
-            } => {
-                if resolved.as_ref().suppresses_expandable_control_sequence() {
-                    resolved.as_mut().suppress_expandable();
-                }
-                let scanner = !matches!(
-                    self.roots.scanner.status(),
-                    crate::processor::ScannerStatus::Normal
-                );
-                fuel.record_raw_delivery(scanner, resolution.meaning_lookup());
-                let interception = if resolved.as_ref().is_outer() && scanner {
-                    ResidentCommandInterception::Outer
-                } else {
-                    self.classify_alignment_delivery(
-                        resolved.as_mut(),
-                        resolution.literal_catcode(),
-                    );
-                    ResidentCommandInterception::Ready
-                };
-                Ok(ResidentCommandTransition::Delivered { interception })
-            }
-            InputTopTransition::OutParameter {
-                slot,
-                has_macro_lineage,
-                active_source,
-            } => match self.replay_out_parameter_after_admission(
-                has_macro_lineage,
-                active_source,
-                slot,
-            ) {
-                Ok(OutParameterReplay::Pushed(level)) => {
-                    Ok(ResidentCommandTransition::ParameterPushed(level))
-                }
-                Ok(OutParameterReplay::Literal) | Err(_) => Err(()),
-            },
-            InputTopTransition::InvalidCharacter => Ok(ResidentCommandTransition::InvalidCharacter),
-            InputTopTransition::NeedLine(identity) => {
-                Ok(ResidentCommandTransition::NeedLine(identity))
-            }
-            InputTopTransition::SourceExhausted(identity) => {
-                Ok(ResidentCommandTransition::SourceExhausted(identity))
-            }
-            InputTopTransition::TokenExhausted(identity) => {
-                Ok(ResidentCommandTransition::TokenExhausted(identity))
-            }
-            InputTopTransition::Empty => Ok(ResidentCommandTransition::Empty),
-        }
-    }
-
     /// Acquires, firms, registers, and accounts for one physical line on the
     /// current source. This is the only production transition that computes
     /// lower-buffer occupancy or changes TeX's retained `line` scalar.

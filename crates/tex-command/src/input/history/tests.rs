@@ -3,11 +3,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 #[cfg(feature = "profiling")]
 use tex_state::measurement::HotCoreAllocationOwner;
 
-use super::InputStack;
 use crate::input::{
-    InputLevel, InputLevelId, MacroArgumentCursor, PackedTokenSources, PackedTokenSpanHandle,
-    PackedTokenSpanSource, ReplayLane, ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor,
-    packed_token_frame,
+    InputLevel, InputLevelId, MacroArgumentCursor, PackedTokenSpanHandle, PackedTokenSpanSource,
+    ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor, packed_token_frame,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -21,13 +19,13 @@ fn word(ch: char) -> TracedTokenWord {
 }
 
 fn assert_exact_direct_transition<G>(
-    stack: &mut InputStack<G>,
-    mut mutate: impl FnMut(&mut InputStack<G>),
+    state: &mut crate::CommandState<G>,
+    mut mutate: impl FnMut(&mut crate::CommandState<G>),
 ) {
-    let checkpoint = stack.mark().expect("input checkpoint");
-    stack.reset_cursor_mutation_counters();
-    let opening_revision = stack.context_revision();
-    let before_history = stack.counters();
+    let checkpoint = state.input.levels.mark().expect("input checkpoint");
+    state.input.levels.reset_cursor_mutation_counters();
+    let opening_revision = state.input.levels.context_revision();
+    let before_history = state.input.levels.counters();
     #[cfg(feature = "profiling")]
     let owner = HotCoreAllocationOwner::DeliveryAndScan;
     #[cfg(feature = "profiling")]
@@ -35,15 +33,15 @@ fn assert_exact_direct_transition<G>(
     {
         #[cfg(feature = "profiling")]
         let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-        mutate(stack);
-        mutate(stack);
+        mutate(state);
+        mutate(state);
     }
     #[cfg(feature = "profiling")]
     let after_allocations = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    let after_history = stack.counters();
+    let after_history = state.input.levels.counters();
 
     assert_eq!(
-        stack.cursor_mutation_counters(),
+        state.input.levels.cursor_mutation_counters(),
         super::InputCursorMutationCounters {
             typed_top_accesses: 2,
             first_touch_transitions: 1,
@@ -57,15 +55,24 @@ fn assert_exact_direct_transition<G>(
         1
     );
     assert_eq!(
-        stack.context_revision(),
+        state.input.levels.context_revision(),
         opening_revision.wrapping_add(2).max(1)
     );
-    assert_eq!(stack.as_slice().last().map(cursor_position), Some(2));
+    assert_eq!(
+        state.input.levels.as_slice().last().map(cursor_position),
+        Some(2)
+    );
 
-    stack.begin_checkpoint_candidate(checkpoint);
-    assert_eq!(stack.as_slice().last().map(cursor_position), Some(0));
-    stack.reject_checkpoint_candidate();
-    assert_eq!(stack.as_slice().last().map(cursor_position), Some(2));
+    state.input.levels.begin_checkpoint_candidate(checkpoint);
+    assert_eq!(
+        state.input.levels.as_slice().last().map(cursor_position),
+        Some(0)
+    );
+    state.input.levels.reject_checkpoint_candidate();
+    assert_eq!(
+        state.input.levels.as_slice().last().map(cursor_position),
+        Some(2)
+    );
     #[cfg(feature = "profiling")]
     {
         assert_eq!(after_allocations.calls - before_allocations.calls, 0);
@@ -91,14 +98,12 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
         let behavior = TokenBehavior::Ordinary;
         let retirement = RetirementBehavior::Pop;
         let trace = ReplayTrace::Inserted;
-        let mut replay = ReplayLane::default();
+        let mut state = crate::CommandState::default();
         let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
-            .admit(&mut replay)
+            .admit(&mut state.input.replay)
             .expect("token span admits");
-        let attempt = crate::attempt::AttemptArena::default();
-        let scratch = crate::execution_scratch::ExecutionScratch::default();
-        let mut stack = InputStack::default();
-        stack.push(InputLevel::Tokens(TokenCursor {
+        let mut fuel = crate::CommandFuelLedger::default();
+        state.input.levels.push(InputLevel::Tokens(TokenCursor {
             span,
             frame: packed_token_frame(InputLevelId(1), 2, &behavior, retirement, &trace),
             behavior,
@@ -106,25 +111,20 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
             trace,
         }));
 
-        assert_exact_direct_transition(&mut stack, |stack| {
+        assert_exact_direct_transition(&mut state, |state| {
             let mut command = crate::command::CurrentCommand::empty();
-            let mut path_counters = crate::state::RawDeliveryPathCounters::default();
-            let delivery = stack
-                .deliver_top_into(
-                    crate::CommandProfile::default(),
-                    false,
+            let delivery = state
+                .advance_resident_command_into(
+                    &mut context,
+                    fuel.fuel_mut(),
                     true,
-                    PackedTokenSources::new(&replay, &attempt),
-                    &scratch,
                     command.empty_for_raw_delivery(),
                     7,
-                    &mut context,
-                    &mut path_counters,
                 )
                 .expect("token delivery succeeds");
             assert!(matches!(
                 delivery,
-                crate::input::InputTopTransition::Delivered { .. }
+                crate::input::ResidentCommandTransition::Delivered { .. }
             ));
         });
     });
@@ -134,11 +134,15 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
 fn macro_argument_mutation_uses_the_same_direct_transition() {
     crate::test_harness::with_universe(|universe| {
         let mut context = universe.command_context().expect("command context");
-        let mut scratch = crate::execution_scratch::ExecutionScratch::default();
-        let matching = scratch.begin_macro_match().expect("macro match");
-        let mut buffer = scratch.begin_match_writer(&matching).expect("match writer");
+        let mut state = crate::CommandState::default();
+        let matching = state.scratch.begin_macro_match().expect("macro match");
+        let mut buffer = state
+            .scratch
+            .begin_match_writer(&matching)
+            .expect("match writer");
         for spelling in [word('a'), word('b')] {
-            scratch
+            state
+                .scratch
                 .write_match_word(
                     &mut buffer,
                     spelling,
@@ -146,45 +150,46 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
                 )
                 .expect("argument word");
         }
-        scratch.finish_match_writer(buffer).expect("argument range");
-        let macro_frame = scratch
+        state
+            .scratch
+            .finish_match_writer(buffer)
+            .expect("argument range");
+        let macro_frame = state
+            .scratch
             .commit_macro_match(matching)
             .expect("sealed macro frame");
-        let range = scratch
+        let range = state
+            .scratch
             .argument_range(macro_frame, 1)
             .expect("live macro frame")
             .expect("first argument");
         let behavior = TokenBehavior::Parameter;
         let retirement = RetirementBehavior::Pop;
         let trace = ReplayTrace::MacroParameter { slot: 1 };
-        let mut stack = InputStack::default();
-        stack.push(InputLevel::MacroArgument(MacroArgumentCursor {
-            range,
-            slot: 1,
-            frame: packed_token_frame(InputLevelId(2), 2, &behavior, retirement, &trace),
-        }));
-        let replay = ReplayLane::default();
-        let attempt = crate::attempt::AttemptArena::default();
+        state
+            .input
+            .levels
+            .push(InputLevel::MacroArgument(MacroArgumentCursor {
+                range,
+                slot: 1,
+                frame: packed_token_frame(InputLevelId(2), 2, &behavior, retirement, &trace),
+            }));
+        let mut fuel = crate::CommandFuelLedger::default();
 
-        assert_exact_direct_transition(&mut stack, |stack| {
+        assert_exact_direct_transition(&mut state, |state| {
             let mut command = crate::command::CurrentCommand::empty();
-            let mut path_counters = crate::state::RawDeliveryPathCounters::default();
-            let delivery = stack
-                .deliver_top_into(
-                    crate::CommandProfile::default(),
-                    false,
+            let delivery = state
+                .advance_resident_command_into(
+                    &mut context,
+                    fuel.fuel_mut(),
                     true,
-                    PackedTokenSources::new(&replay, &attempt),
-                    &scratch,
                     command.empty_for_raw_delivery(),
                     11,
-                    &mut context,
-                    &mut path_counters,
                 )
                 .expect("macro-argument delivery succeeds");
             assert!(matches!(
                 delivery,
-                crate::input::InputTopTransition::Delivered { .. }
+                crate::input::ResidentCommandTransition::Delivered { .. }
             ));
         });
     });

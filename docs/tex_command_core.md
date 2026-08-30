@@ -195,8 +195,11 @@ policy settles it once. The reference-only resolved proof ends inside the
 authoritative `CommandState` resident transition: it applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
-can require it. No semantic-token value, unresolved command, or resolved borrow
-crosses that ownership boundary. The processor receives a copy-small
+can require it. That transition borrows the semantic top, discriminates its
+level kind once, advances the resident cursor, and settles fuel, alignment, or
+parameter replay before returning one final status. No intermediate delivery
+result, semantic-token value, unresolved command, or resolved borrow crosses
+that ownership boundary. The processor receives a copy-small
 ready/outer result, and its public return is only a compact `DeliveryStatus` naming end of input,
 command completion, replay completion, pending observation, or an alignment
 boundary. Internal delivery steps pair that status with a zero-sized failure
@@ -214,6 +217,9 @@ replay-completion frontier, and rollback authority. Its storage-lifetime tag
 was selected when the level was created; delivery borrows that domain, writes
 the spelling, raw delivery coordinate, only-present provenance, and input
 flags directly into `CurrentCommand`, and advances the fixed frame in place.
+Stored-token and macro-argument delivery read only the position, identity,
+source, and behavior scalars they require; neither materializes or copies the
+whole packed frame before that advance.
 The frame also carries the active external-source identity inherited when the
 row is pushed. Delivery therefore emits spelling provenance and execution
 source context together without searching lower input rows. Main control

@@ -1,6 +1,8 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+#[cfg(feature = "profiling")]
+use crate::input::{InputLevel, MacroArgumentCursor, packed_token_frame};
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
@@ -586,6 +588,186 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
             (2, 0, 0, 0)
         );
     });
+}
+
+#[test]
+#[cfg(feature = "profiling")]
+fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct Evidence {
+        path: (u64, u64, u64, u64),
+        transitions: (u64, u64, u64),
+        allocation_calls: u64,
+        requested_bytes: u64,
+        whole_frame_copies: u64,
+        whole_command_copies: u64,
+    }
+
+    fn run(operations: usize) -> Evidence {
+        crate::test_harness::with_universe(|universe| {
+            let token = Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            };
+            let words = vec![tex_state::token::TokenWord::pack(token); operations];
+            let traced = vec![TracedTokenWord::pack(token, OriginId::UNKNOWN); operations];
+            let durable = universe
+                .command_context()
+                .expect("mixed delivery context")
+                .allocate_token_list(&words)
+                .expect("mixed delivery durable list");
+            let definition = universe
+                .allocate_definition(&[], &words)
+                .expect("mixed delivery macro replacement");
+
+            let mut command = CommandState::default();
+            let source = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    std::sync::Arc::<[u8]>::from(vec![b'x'; operations + 1]),
+                ))
+                .expect("mixed delivery source registration");
+            command
+                .open_registered_source(source)
+                .expect("mixed delivery source opening");
+            command.profile_prepare_source_line(1);
+            {
+                let context = universe.command_context().expect("mixed durable context");
+                command.push_token_level(
+                    PackedTokenSpanHandle::durable(context.token_list(durable)),
+                    TokenBehavior::Ordinary,
+                    RetirementBehavior::Pop,
+                    ReplayTrace::Stored(StoredReplayReason::EveryPar),
+                );
+            }
+            command.push_token_level(
+                PackedTokenSpanHandle::transient(traced.iter().copied()),
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::Inserted,
+            );
+            command.push_token_level(
+                PackedTokenSpanHandle::MacroReplacement {
+                    definition: definition.clone(),
+                    len: u32::try_from(operations).expect("operation count fits u32"),
+                },
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::MacroReplacement,
+            );
+            let matching = command.scratch.begin_macro_match().expect("macro match");
+            let mut writer = command
+                .scratch
+                .begin_match_writer(&matching)
+                .expect("macro writer");
+            for spelling in &traced {
+                command
+                    .scratch
+                    .write_match_word(
+                        &mut writer,
+                        *spelling,
+                        crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                    )
+                    .expect("macro argument word");
+            }
+            command
+                .scratch
+                .finish_match_writer(writer)
+                .expect("macro argument range");
+            let macro_frame = command
+                .scratch
+                .commit_macro_match(matching)
+                .expect("macro frame");
+            let range = command
+                .scratch
+                .argument_range(macro_frame, 1)
+                .expect("live macro frame")
+                .expect("macro argument");
+            let identity = command.allocate_input_level_identity();
+            let behavior = TokenBehavior::Parameter;
+            let retirement = RetirementBehavior::Pop;
+            let trace = ReplayTrace::MacroParameter { slot: 1 };
+            let mut frame = packed_token_frame(identity, operations, &behavior, retirement, &trace);
+            frame.set_source_context(Some(source));
+            command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor {
+                range,
+                slot: 1,
+                frame,
+            }));
+
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("mixed command context");
+            let mut destination = None;
+            command.profile_reset_raw_delivery_path_counters();
+            let timeline_before = command.profile_timeline_counters();
+            let commands_before = crate::command::command_ownership_counters();
+            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+            let allocations_before =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                for _ in 0..operations.saturating_mul(5) {
+                    assert_eq!(
+                        processor
+                            .get_next_into(&mut destination)
+                            .expect("mixed raw delivery"),
+                        DeliveryStatus::Command
+                    );
+                    assert_eq!(
+                        destination
+                            .take()
+                            .expect("mixed resident command")
+                            .spelling()
+                            .semantic_token(),
+                        token
+                    );
+                }
+            }
+            let allocations_after =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let commands_after = crate::command::command_ownership_counters();
+            let timeline_after = command.profile_timeline_counters();
+            Evidence {
+                path: command.profile_raw_delivery_path_counters(),
+                transitions: command.profile_resident_delivery_transition_counters(),
+                allocation_calls: allocations_after.calls - allocations_before.calls,
+                requested_bytes: allocations_after.requested_bytes
+                    - allocations_before.requested_bytes,
+                whole_frame_copies: timeline_after.full_frame_history_clones
+                    - timeline_before.full_frame_history_clones,
+                whole_command_copies: commands_after.clones - commands_before.clones,
+            }
+        })
+    }
+
+    let one = run(1);
+    assert_eq!(
+        one,
+        Evidence {
+            path: (1, 3, 1, 0),
+            transitions: (9, 0, 0),
+            allocation_calls: 0,
+            requested_bytes: 0,
+            whole_frame_copies: 0,
+            whole_command_copies: 0,
+        }
+    );
+    let four_k = run(4_096);
+    assert_eq!(four_k.path, (4_096, 12_288, 4_096, 0));
+    assert_eq!(four_k.transitions, (20_484, 0, 0));
+    assert_eq!(four_k.allocation_calls, 0);
+    assert_eq!(four_k.requested_bytes, 0);
+    assert_eq!(four_k.whole_frame_copies, 0);
+    assert_eq!(four_k.whole_command_copies, 0);
 }
 
 #[test]

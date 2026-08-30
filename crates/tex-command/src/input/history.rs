@@ -541,7 +541,9 @@ impl<G> InputStack<G> {
         self.note_context_mutation();
         Some(result)
     }
+}
 
+impl<G> crate::CommandState<G> {
     /// Delivers and advances the exact resident input cursor at the semantic top.
     ///
     /// Source, token-list, and direct macro-argument rows enter this one typed
@@ -549,63 +551,80 @@ impl<G> InputStack<G> {
     /// ordered first-touch transition directly, and writes an ordinary word
     /// into the caller-owned command before the resident borrow ends. Cold
     /// source, exhaustion, and parameter statuses carry no command borrow.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn deliver_top_into<'slot>(
+    pub(crate) fn advance_resident_command_into(
         &mut self,
-        profile: crate::CommandProfile,
-        force_eof: bool,
-        create_control_sequences: bool,
-        sources: super::PackedTokenSources<'_, G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        destination: crate::command::EmptyCommand<'slot, G>,
-        sequence: u64,
         state: &mut tex_state::CommandContext<'_, G>,
-        #[cfg(test)] path_counters: &mut crate::state::RawDeliveryPathCounters,
-    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
-        let Some(index) = self.top.checked_sub(1) else {
-            return Ok(super::InputTopTransition::Empty);
+        fuel: &mut crate::fuel::CommandFuel,
+        create_control_sequences: bool,
+        destination: crate::command::EmptyCommand<'_, G>,
+        sequence: u64,
+    ) -> Result<super::ResidentCommandTransition, ()> {
+        let profile = self.profile();
+        let force_eof = self.source_force_eof();
+        let scanner_active = !matches!(
+            self.roots.scanner.status(),
+            crate::processor::ScannerStatus::Normal
+        );
+        let attempt = self.attempt.arena();
+        let scratch = &self.scratch;
+        let roots = &mut self.roots;
+        let timeline = &mut self.timeline;
+        let stack_usage = &mut self.stack_usage;
+        #[cfg(test)]
+        let path_counters = &mut self.raw_delivery_path_counters;
+        let input = &mut roots.input;
+        let sources = super::PackedTokenSources::new(&input.replay, attempt);
+        let levels = &mut input.levels;
+
+        let Some(index) = levels.top.checked_sub(1) else {
+            return Ok(super::ResidentCommandTransition::Empty);
         };
+        #[cfg(test)]
+        {
+            path_counters.resident_transitions =
+                path_counters.resident_transitions.saturating_add(1);
+        }
         #[cfg(any(test, feature = "profiling"))]
         {
-            self.cursor_mutations.typed_top_accesses =
-                self.cursor_mutations.typed_top_accesses.saturating_add(1);
+            levels.cursor_mutations.typed_top_accesses =
+                levels.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
-        let delivery = match &mut self.rows[index] {
+        let delivery = match &mut levels.rows[index] {
             InputLevel::Source(source) => {
                 // This authoritative resident row prevents its slot from
                 // being released or reused until the row itself retires. ABA
                 // validation belongs to cold history coordinates, not every
                 // ordinary token delivered through the live row.
-                let slot = self.source_slots.resident_value_mut(source.slot.0.slot);
+                let slot = levels.source_slots.resident_value_mut(source.slot.0.slot);
                 record_source_lex_slot_borrow();
                 if state.tracked_region_is_active() {
                     super::observe_immutable_source(state, source, slot);
                 }
-                let needs_inverse = self.recording && self.touched[index] != self.interval;
-                if self.recording && !needs_inverse {
-                    self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
+                let needs_inverse = levels.recording && levels.touched[index] != levels.interval;
+                if levels.recording && !needs_inverse {
+                    levels.coalesced_mutations = levels.coalesced_mutations.saturating_add(1);
                     #[cfg(any(test, feature = "profiling"))]
                     {
-                        self.cursor_mutations.coalesced_transitions = self
+                        levels.cursor_mutations.coalesced_transitions = levels
                             .cursor_mutations
                             .coalesced_transitions
                             .saturating_add(1);
                     }
                 }
                 if needs_inverse {
-                    self.source_lex_captures = self.source_lex_captures.saturating_add(1);
-                    let payload = self
+                    levels.source_lex_captures = levels.source_lex_captures.saturating_add(1);
+                    let payload = levels
                         .source_lex_states
                         .insert(SourceLexExecutionState::capture(source, slot));
-                    self.undo.append(InputUndo::SourceLex {
+                    levels.undo.append(InputUndo::SourceLex {
                         index: u32::try_from(index).expect("input row index fits u32"),
                         payload,
                     });
-                    self.touched[index] = self.interval;
-                    self.partially_captured[index] = self.interval;
+                    levels.touched[index] = levels.interval;
+                    levels.partially_captured[index] = levels.interval;
                     #[cfg(any(test, feature = "profiling"))]
                     {
-                        self.cursor_mutations.first_touch_transitions = self
+                        levels.cursor_mutations.first_touch_transitions = levels
                             .cursor_mutations
                             .first_touch_transitions
                             .saturating_add(1);
@@ -690,15 +709,15 @@ impl<G> InputStack<G> {
             }
             InputLevel::Tokens(cursor) => {
                 let mut recorder = InlineCursorRecorder {
-                    recording: self.recording,
-                    interval: self.interval,
+                    recording: levels.recording,
+                    interval: levels.interval,
                     index,
-                    touched: &mut self.touched,
-                    partially_captured: &mut self.partially_captured,
-                    undo: &mut self.undo,
-                    coalesced_mutations: &mut self.coalesced_mutations,
+                    touched: &mut levels.touched,
+                    partially_captured: &mut levels.partially_captured,
+                    undo: &mut levels.undo,
+                    coalesced_mutations: &mut levels.coalesced_mutations,
                     #[cfg(any(test, feature = "profiling"))]
-                    counters: &mut self.cursor_mutations,
+                    counters: &mut levels.cursor_mutations,
                 };
                 recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
                 let delivery = cursor.deliver_into(sources, destination, sequence, state);
@@ -717,15 +736,15 @@ impl<G> InputStack<G> {
             }
             InputLevel::MacroArgument(cursor) => {
                 let mut recorder = InlineCursorRecorder {
-                    recording: self.recording,
-                    interval: self.interval,
+                    recording: levels.recording,
+                    interval: levels.interval,
                     index,
-                    touched: &mut self.touched,
-                    partially_captured: &mut self.partially_captured,
-                    undo: &mut self.undo,
-                    coalesced_mutations: &mut self.coalesced_mutations,
+                    touched: &mut levels.touched,
+                    partially_captured: &mut levels.partially_captured,
+                    undo: &mut levels.undo,
+                    coalesced_mutations: &mut levels.coalesced_mutations,
                     #[cfg(any(test, feature = "profiling"))]
-                    counters: &mut self.cursor_mutations,
+                    counters: &mut levels.cursor_mutations,
                 };
                 recorder.record(InputLevelInlineState::new(
                     cursor.frame,
@@ -740,10 +759,79 @@ impl<G> InputStack<G> {
                 delivery
             }
         };
-        self.note_context_mutation();
-        delivery
+        levels.note_context_mutation();
+        match delivery? {
+            super::InputTopTransition::Delivered {
+                mut resolved,
+                resolution,
+            } => {
+                if resolved.as_ref().suppresses_expandable_control_sequence() {
+                    resolved.as_mut().suppress_expandable();
+                }
+                fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
+                let interception = if resolved.as_ref().is_outer() && scanner_active {
+                    super::ResidentCommandInterception::Outer
+                } else {
+                    roots.alignment.classify_delivery(
+                        timeline,
+                        resolved.as_mut(),
+                        resolution.literal_catcode(),
+                    );
+                    super::ResidentCommandInterception::Ready
+                };
+                Ok(super::ResidentCommandTransition::Delivered { interception })
+            }
+            super::InputTopTransition::OutParameter {
+                slot,
+                has_macro_lineage,
+                active_source,
+            } => {
+                if !(1..=9).contains(&slot) || !has_macro_lineage {
+                    return Err(());
+                }
+                let owner = scratch.active_macro_frame().ok_or(())?;
+                let range = scratch
+                    .argument_range(owner, slot)
+                    .map_err(|_| ())?
+                    .ok_or(())?;
+                let identity = super::InputLevelId(input.next_level_identity);
+                timeline.record_next_input_level_identity(input.next_level_identity);
+                input.next_level_identity = input.next_level_identity.wrapping_add(1);
+                let trace = super::ReplayTrace::MacroParameter { slot };
+                let mut frame = super::packed_token_frame(
+                    identity,
+                    range.len() as usize,
+                    &super::TokenBehavior::Parameter,
+                    super::RetirementBehavior::Pop,
+                    &trace,
+                );
+                frame.set_source_context(active_source);
+                stack_usage.input_stack = stack_usage.input_stack.max(levels.len());
+                levels.push(InputLevel::MacroArgument(super::MacroArgumentCursor {
+                    range,
+                    slot,
+                    frame,
+                }));
+                Ok(super::ResidentCommandTransition::ParameterPushed(identity))
+            }
+            super::InputTopTransition::InvalidCharacter => {
+                Ok(super::ResidentCommandTransition::InvalidCharacter)
+            }
+            super::InputTopTransition::NeedLine(identity) => {
+                Ok(super::ResidentCommandTransition::NeedLine(identity))
+            }
+            super::InputTopTransition::SourceExhausted(identity) => {
+                Ok(super::ResidentCommandTransition::SourceExhausted(identity))
+            }
+            super::InputTopTransition::TokenExhausted(identity) => {
+                Ok(super::ResidentCommandTransition::TokenExhausted(identity))
+            }
+            super::InputTopTransition::Empty => Ok(super::ResidentCommandTransition::Empty),
+        }
     }
+}
 
+impl<G> InputStack<G> {
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn set_top_token_retirement(
         &mut self,

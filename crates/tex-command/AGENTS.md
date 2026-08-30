@@ -241,22 +241,24 @@ collector (see `src/conditionals.rs`).
   per checkpoint-visible row and interval; rows admitted in the interval need
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
-  Typed cold source operations and one direct resident-top delivery mutation
-  are the only mutable access. Source, token-list, and macro-argument cursors
-  share its single top access, matching first-touch transition, direct final-
-  command write, and diagnostic revision without a callback or returned token
-  carrier. No raw mutable top or mutable index survives. Focused gates prove
-  exact coalescing and zero-allocation hot mutation. A resident source row
+  Typed cold source operations and one `CommandState`-owned resident-top
+  transition are the only mutable access. Source, token-list, and macro-
+  argument cursors share its single top access, matching first-touch
+  transition, direct final-command write, fuel/alignment/parameter settlement,
+  and diagnostic revision without a callback or returned delivery result. The
+  resident packed frame is read through only the required scalar fields and is
+  never copied as a whole. No raw mutable top or mutable index survives.
+  Focused gates prove exact coalescing and zero-allocation hot mutation. A resident source row
   structurally proves its source slot remains occupied, so ordinary source
   delivery borrows that slot by physical index without repeating the ABA
   generation check. Cold history, rollback, and detached coordinates continue
   to validate the complete slot key.
-- `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  the destination-directed `advance_resident_command_into` transition over the resident top,
-  whose EOF, recovery, parameter, and exhaustion results retain no command-
-  slot borrow; its ordinary result has already resolved meaning, applied
-  one-delivery suppression, classified only required alignment work, and ended
-  the resolved borrow. The files also own the singular
+- `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement and
+  the copy-small status vocabulary consumed inside the destination-directed
+  resident transition. EOF, recovery, parameter, and exhaustion results retain
+  no command-slot borrow; an ordinary final result has already resolved
+  meaning, applied one-delivery suppression, classified only required
+  alignment work, and ended the resolved borrow. The files also own the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, borrowed source-ancestry comparison with copy-only

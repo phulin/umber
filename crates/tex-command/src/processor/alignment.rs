@@ -23,7 +23,7 @@ use crate::input::InputLevelId;
 /// This deliberately examines `cur_cmd` (the effective [`Meaning`]), not the
 /// token spelling. Control-sequence aliases therefore participate in §§342 and
 /// 760's command-code tests, while the separate spelling match in
-/// [`CommandState::classify_alignment_delivery`] keeps literal-brace
+/// [`AlignmentDeliveryState::classify_delivery`] keeps literal-brace
 /// `align_state` accounting physical.
 pub(crate) fn is_character_command<G>(command: &CurrentCommand<G>, cat: Catcode) -> bool {
     matches!(
@@ -444,6 +444,19 @@ impl AlignmentDelimiter {
     }
 }
 
+#[cfg(all(test, feature = "profiling"))]
+impl<G> crate::CommandState<G> {
+    pub(crate) fn classify_alignment_delivery(
+        &mut self,
+        command: &mut CurrentCommand<G>,
+        literal_catcode: Option<Catcode>,
+    ) {
+        self.roots
+            .alignment
+            .classify_delivery(&mut self.timeline, command, literal_catcode);
+    }
+}
+
 impl<G> AlignmentDeliveryState<G> {
     /// Applies TeX82 §1127 `align_error`'s pre-insertion correction.
     ///
@@ -774,7 +787,7 @@ impl<G> AlignmentDeliveryState<G> {
     }
 }
 
-impl<G> crate::CommandState<G> {
+impl<G> AlignmentDeliveryState<G> {
     /// Classifies and commits one TeX82 §§341--342 alignment delivery.
     ///
     /// Literal braces are the only ordinary deliveries which mutate
@@ -782,34 +795,31 @@ impl<G> crate::CommandState<G> {
     /// interception remains owned by [`AlignmentDeliveryState`] and records no
     /// delivery-owned scalar undo.
     #[inline(always)]
-    pub(crate) fn classify_alignment_delivery(
+    pub(crate) fn classify_delivery(
         &mut self,
+        timeline: &mut crate::snapshot::CommandTimeline<G>,
         command: &mut CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) {
         let adjustment = match literal_catcode {
             Some(Catcode::BeginGroup) => {
-                self.timeline
-                    .record_delivery_align_state(self.roots.alignment.align_state);
-                self.roots.alignment.align_state += 1;
+                timeline.record_delivery_align_state(self.align_state);
+                self.align_state += 1;
                 AlignmentDeliveryAdjustment::BeginGroup
             }
             Some(Catcode::EndGroup) => {
-                self.timeline
-                    .record_delivery_align_state(self.roots.alignment.align_state);
-                self.roots.alignment.align_state -= 1;
+                timeline.record_delivery_align_state(self.align_state);
+                self.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
-            _ if self.roots.alignment.active_cell.is_some()
-                && self.roots.alignment.align_state == CELL_ALIGN_STATE
+            _ if self.active_cell.is_some()
+                && self.align_state == CELL_ALIGN_STATE
                 && is_character_command(command, Catcode::AlignmentTab) =>
             {
-                self.roots
-                    .alignment
-                    .intercept_delimiter(command, AlignmentDelimiter::Tab)
+                self.intercept_delimiter(command, AlignmentDelimiter::Tab)
             }
-            _ if self.roots.alignment.active_cell.is_some()
-                && self.roots.alignment.align_state == CELL_ALIGN_STATE
+            _ if self.active_cell.is_some()
+                && self.align_state == CELL_ALIGN_STATE
                 && matches!(
                     command.meaning(),
                     tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -831,7 +841,7 @@ impl<G> crate::CommandState<G> {
                     )) => AlignmentDelimiter::CrCr,
                     _ => unreachable!("alignment delimiter was classified above"),
                 };
-                self.roots.alignment.intercept_delimiter(command, delimiter)
+                self.intercept_delimiter(command, delimiter)
             }
             _ => AlignmentDeliveryAdjustment::None,
         };

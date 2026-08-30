@@ -141,12 +141,13 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "raw and expanded requests must share one destination-directed state machine"
     );
     assert_eq!(
-        input_stack
+        input_history
             .matches("fn advance_resident_command_into(")
             .count(),
         1,
         "command state must own exactly one completed resident transition"
     );
+    assert!(!input_stack.contains("fn deliver_top_into("));
     for retired in [
         "fn take_input_token(",
         "fn deliver_raw_input_into(",
@@ -162,9 +163,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(expansion.contains("Some(CurrentCommand::empty())"));
     assert!(expansion.contains(".advance_resident_command_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
-    assert!(input_stack.contains("self.classify_alignment_delivery("));
-    assert!(input_stack.contains("resolution.literal_catcode()"));
-    assert!(input_stack.contains("ResidentCommandInterception::Outer"));
+    assert!(input_history.contains("roots.alignment.classify_delivery("));
+    assert!(input_history.contains("resolution.literal_catcode()"));
+    assert!(input_history.contains("ResidentCommandInterception::Outer"));
+    assert_eq!(input_history.matches("match delivery?").count(), 1);
+    assert!(!levels.contains("let frame = self.frame;"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
     assert!(command.contains("struct ResolvedCommand<'slot, G>"));
     assert!(levels.contains("crate::command::EmptyCommand<'slot, G>"));
@@ -186,18 +189,18 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert_eq!(
-        input_stack
+        input_history
             .matches("fn advance_resident_command_into(")
             .count(),
         1,
         "source and stored input must share one destination-directed top transition"
     );
-    assert!(input_stack.contains(".deliver_top_into("));
-    assert!(!input_stack.contains("let Some(level) = roots.input.levels.last()"));
+    assert!(!input_stack.contains("fn deliver_top_into("));
+    assert!(!input_history.contains("let Some(level) = roots.input.levels.last()"));
     let input_top_transition = input_history
-        .split("fn deliver_top_into<'slot>(")
+        .split("fn advance_resident_command_into(")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn set_top_token_retirement").next())
+        .and_then(|tail| tail.split("impl<G> InputStack<G> {").next())
         .expect("locate warmed input-top transition");
     for forbidden in [
         "register_source",
@@ -791,7 +794,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         .expect("read conditional implementation");
     let input =
         fs::read_to_string(manifest_dir.join("src/input/mod.rs")).expect("read input facade");
-    let input_stack = fs::read_to_string(manifest_dir.join("src/input/stack.rs"))
+    let input_history = fs::read_to_string(manifest_dir.join("src/input/history.rs"))
         .expect("read resident command transition");
     let state = fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read command state");
     let alignment = fs::read_to_string(manifest_dir.join("src/processor/alignment.rs"))
@@ -849,20 +852,17 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
             .count(),
         1
     );
-    assert_eq!(
-        alignment.matches("fn classify_alignment_delivery(").count(),
-        1
-    );
+    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(next.matches(".classify_alignment_delivery(").count(), 0);
     assert_eq!(
-        input_stack
-            .matches("self.classify_alignment_delivery(")
+        input_history
+            .matches("roots.alignment.classify_delivery(")
             .count(),
         1
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment
-        .split("fn classify_alignment_delivery(")
+        .split("fn classify_delivery(")
         .nth(1)
         .and_then(|tail| {
             tail.split("pub(crate) const fn back_input_adjustment")

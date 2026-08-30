@@ -164,6 +164,9 @@ pub(crate) struct RawDeliveryPathCounters {
     pub(crate) stored_direct: u64,
     pub(crate) macro_argument_direct: u64,
     pub(crate) out_parameter_interceptions: u64,
+    pub(crate) resident_transitions: u64,
+    pub(crate) intermediate_result_redispatches: u64,
+    pub(crate) whole_input_frame_copies: u64,
 }
 
 /// Compact coordinate for TeX82's live §310 input display.
@@ -1136,6 +1139,20 @@ impl<G> CommandState<G> {
             counters.stored_direct,
             counters.macro_argument_direct,
             counters.out_parameter_interceptions,
+        )
+    }
+
+    /// Returns `(resident transitions, intermediate-result redispatches,
+    /// whole-input-frame copies)` for focused raw-delivery gates.
+    #[doc(hidden)]
+    #[cfg(test)]
+    #[must_use]
+    pub fn profile_resident_delivery_transition_counters(&self) -> (u64, u64, u64) {
+        let counters = self.raw_delivery_path_counters;
+        (
+            counters.resident_transitions,
+            counters.intermediate_result_redispatches,
+            counters.whole_input_frame_copies,
         )
     }
 

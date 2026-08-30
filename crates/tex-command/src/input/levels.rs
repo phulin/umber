@@ -240,24 +240,27 @@ impl<G> MacroArgumentCursor<G> {
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<super::InputTopTransition<'slot, G>, ()> {
-        let frame = self.frame;
-        let position = frame.position();
+        let position = self.frame.position();
+        let identity = self.frame.identity();
+        let active_source = self.frame.source_id();
+        let suppress_expandable = self
+            .frame
+            .flags()
+            .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE);
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
             return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
         };
         let (resolved, resolution) = destination.write_resolved_delivery(
             word.token_word(),
             word.origin(),
-            frame.identity(),
+            identity,
             u64::from(position),
             sequence,
             None,
-            frame.source_id(),
+            active_source,
             false,
             None,
-            frame
-                .flags()
-                .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+            suppress_expandable,
             state,
         );
         if self.frame.advance() != Some(position) {
@@ -294,8 +297,7 @@ impl<G> TokenCursor<G> {
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<super::InputTopTransition<'slot, G>, ()> {
-        let frame = self.frame;
-        let position = frame.position();
+        let position = self.frame.position();
         let index = position as usize;
         let Some((word, origin, source_provenance)) = (match &self.span {
             PackedTokenSpanHandle::Replay { replay, .. } => sources
@@ -321,21 +323,24 @@ impl<G> TokenCursor<G> {
         {
             super::InputTopTransition::OutParameter {
                 slot,
-                has_macro_lineage: frame.flags().contains(InputFrameFlags::HAS_MACRO_LINEAGE),
-                active_source: frame.source_id(),
+                has_macro_lineage: self
+                    .frame
+                    .flags()
+                    .contains(InputFrameFlags::HAS_MACRO_LINEAGE),
+                active_source: self.frame.source_id(),
             }
         } else {
             let (resolved, resolution) = destination.write_resolved_delivery(
                 word,
                 origin,
-                frame.identity(),
+                self.frame.identity(),
                 u64::from(position),
                 sequence,
                 source_provenance,
-                frame.source_id(),
+                self.frame.source_id(),
                 false,
                 None,
-                frame
+                self.frame
                     .flags()
                     .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
                 state,
