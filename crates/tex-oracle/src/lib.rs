@@ -40,7 +40,8 @@ pub use normalize::{NormalizedEvent, Normalizer};
 pub use profile::Tex82ObserverProfile;
 pub use schema::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
+    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticClass, DiagnosticEvent,
+    DiagnosticHistory, DiagnosticLifecycleEvent, DiagnosticOutcome, DiagnosticSeverity,
     EffectEvent, EffectKind, EngineDialect, EngineIdentity, Event, GeometryEvent, GeometryLocation,
     InputEvent, InputReason, InputTransition, LATEST_SCHEMA_VERSION, MacroEvent, Manifest,
     ManifestInput, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, SCHEMA_VERSION,

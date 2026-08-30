@@ -523,6 +523,8 @@ pub struct RunResult {
     pub terminal_text: String,
     /// TeX's process-level outcome after all engine finalization diagnostics.
     pub status: TexRunStatus,
+    /// TeX82 §76's exact final diagnostic history.
+    pub history: tex_state::print::ErrorHistory,
     /// Ordered canonical execution modes, including the initial mode and each
     /// distinct mode reached after a committed main-control step.
     pub mode_transitions: Vec<tex_exec::Mode>,

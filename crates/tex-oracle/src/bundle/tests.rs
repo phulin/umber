@@ -3,7 +3,12 @@ use crate::{CanonicalValue, EffectEvent, EffectKind, GeometryEvent, Normalizer, 
 
 #[test]
 fn json_lines_uses_the_validated_pinned_header() {
-    for schema in [SchemaVersion::V1, SchemaVersion::V2, SchemaVersion::V3] {
+    for schema in [
+        SchemaVersion::V1,
+        SchemaVersion::V2,
+        SchemaVersion::V3,
+        SchemaVersion::V4,
+    ] {
         let oracle = format!(
             "{{\"schema\":{},\"manifest\":\"{}\"}}\n",
             schema.number(),
@@ -14,7 +19,7 @@ fn json_lines_uses_the_validated_pinned_header() {
             oracle.as_bytes()
         );
     }
-    let stale = b"{\"schema\":4,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let stale = b"{\"schema\":5,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
     assert!(canonical_bundle_json_lines(&[], stale).is_err());
 }
 

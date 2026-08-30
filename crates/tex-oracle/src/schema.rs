@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// Schema v1 remains the contract for the committed command fixtures. Schema
 /// v2 adds detached box/package and shipout geometry observations. Schema v3
-/// adds the active source and line captured at each geometry transition. No
-/// later schema changes a v1 or v2 event, manifest, or identity preimage.
+/// adds the active source and line captured at each geometry transition.
+/// Schema v4 adds source-located typed diagnostic reports and the final TeX
+/// history/outcome transition. No later schema changes a v1, v2, or v3 event,
+/// manifest, or identity preimage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(try_from = "u32", into = "u32")]
 pub enum SchemaVersion {
     V1 = 1,
     V2 = 2,
     V3 = 3,
+    V4 = 4,
 }
 
 impl SchemaVersion {
@@ -30,6 +33,7 @@ impl TryFrom<u32> for SchemaVersion {
             1 => Ok(Self::V1),
             2 => Ok(Self::V2),
             3 => Ok(Self::V3),
+            4 => Ok(Self::V4),
             _ => Err(format!("unsupported oracle schema {value}")),
         }
     }
@@ -43,7 +47,7 @@ impl From<SchemaVersion> for u32 {
 /// Schema of the established, committed semantic fixtures.
 pub const SCHEMA_VERSION: u32 = SchemaVersion::V1.number();
 /// Most recent schema available for newly authored fixtures and observers.
-pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V3.number();
+pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V4.number();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -376,6 +380,53 @@ pub struct DiagnosticEvent {
     pub arguments: Vec<CanonicalValue>,
 }
 
+/// TeX's semantic diagnostic class, independent of rendered wording.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticClass {
+    RecoverableError,
+    Warning,
+    Fatal,
+}
+
+/// TeX82 §76's monotonically increasing job history.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticHistory {
+    Spotless,
+    WarningIssued,
+    ErrorMessageIssued,
+    FatalErrorStop,
+}
+
+/// Whether the diagnostic machinery returned to execution or ended the job.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticOutcome {
+    Completed,
+    Aborted,
+}
+
+/// Source-located typed diagnostic lifecycle introduced by schema v4.
+///
+/// Exact message, context, help, and interaction rendering remain absent: the
+/// terminal/log channels own those bytes independently.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "transition", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DiagnosticLifecycleEvent {
+    Report {
+        class: DiagnosticClass,
+        severity: DiagnosticSeverity,
+        diagnostic: String,
+        arguments: Vec<CanonicalValue>,
+        location: Option<SourceLocation>,
+    },
+    Outcome {
+        history: DiagnosticHistory,
+        outcome: DiagnosticOutcome,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectKind {
@@ -445,6 +496,8 @@ pub enum Event {
     Alignment(AlignmentEvent),
     Mutation(MutationEvent),
     Diagnostic(DiagnosticEvent),
+    /// Typed source-located report/final-history lifecycle, schema v4 only.
+    DiagnosticLifecycle(DiagnosticLifecycleEvent),
     Effect(EffectEvent),
     /// Detached finalized box/page geometry, available only in schema v2.
     Geometry(GeometryEvent),

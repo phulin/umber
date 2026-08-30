@@ -188,6 +188,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             .collect();
 
         for (level, kind_text, entered_line) in &group_lines {
+            self.observe_diagnostic_lifecycle(
+                crate::DiagnosticClass::Warning,
+                "warning",
+                "incomplete-source-nesting",
+                vec![crate::DiagnosticArgument::Name("group".into())],
+            );
             let mut printer = self.state.printer();
             printer.print_nl("Warning: end of file when ");
             printer.print(kind_text);
@@ -201,6 +207,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             printer.print(" is incomplete");
         }
         for (name, entered_line) in &condition_lines {
+            self.observe_diagnostic_lifecycle(
+                crate::DiagnosticClass::Warning,
+                "warning",
+                "incomplete-source-nesting",
+                vec![crate::DiagnosticArgument::Name("conditional".into())],
+            );
             let mut printer = self.state.printer();
             printer.print_nl("Warning: end of file when ");
             printer.print(name);

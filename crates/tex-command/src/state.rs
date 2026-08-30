@@ -83,6 +83,9 @@ pub struct CommandStateRoots<G> {
     /// ordinary command snapshot makes a failed aggregate operation restore
     /// the queue together with the input transition that produced it.
     pub(crate) semantic_diagnostics: Vec<CommandSemanticDiagnostic>,
+    /// Most recent direct source spelling, retained only for typed diagnostic
+    /// attribution. It never affects command semantics or rendered context.
+    pub(crate) last_diagnostic_location: Option<crate::SourceLocation>,
     /// TeX82 §§280--282 `insert_token` payloads paired with the exact state
     /// save level that owns them. Frames and words are generation-branded by
     /// this aggregate root; no payload registry or per-value owner exists.
@@ -344,6 +347,7 @@ impl<G> Default for CommandStateRoots<G> {
             replay_completions: Vec::new(),
             pending_replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
+            last_diagnostic_location: None,
             group_payloads: crate::timeline::LogicalStack::default(),
             aftergroup_payloads: crate::timeline::LogicalStack::default(),
             afterassignment: None,
@@ -1095,6 +1099,12 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn current_file_source_id(&self) -> Option<tex_state::SourceId> {
         self.input.current_file_source_id()
+    }
+
+    /// Most recent direct source location committed by command delivery.
+    #[must_use]
+    pub fn last_diagnostic_location(&self) -> Option<crate::SourceLocation> {
+        self.last_diagnostic_location
     }
 
     /// Resets the focused active-source delivery counters.

@@ -5,15 +5,18 @@ use std::sync::Arc;
 use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, ConditionRecord,
-    EffectRecord, GeometryRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, MutationTarget, ObservationEffectKind, ObservationValue,
-    ObservedToken, RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord,
-    TokenListRecord,
+    DiagnosticClass as CommandDiagnosticClass,
+    DiagnosticHistory as CommandDiagnosticHistory, DiagnosticLifecycleRecord,
+    DiagnosticOutcome as CommandDiagnosticOutcome, EffectRecord, GeometryRecord,
+    InputReason as CommandInputReason, InputRecord, InputTransition, MacroRecord, MutationRecord,
+    MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken,
+    RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord, TokenListRecord,
 };
 use tex_oracle::OracleBundle;
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
+    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticClass, DiagnosticEvent,
+    DiagnosticHistory, DiagnosticLifecycleEvent, DiagnosticOutcome, DiagnosticSeverity,
     EffectEvent, EffectKind, Event, EventView, GeometryEvent, InputEvent, InputReason, MacroEvent,
     MutationEvent, NormalizedEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken,
     RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion,
@@ -144,6 +147,7 @@ struct FinalizedEvidence {
 /// mutates a `EngineSession`; callers may hand it observations after
 /// the engine has returned, including after an early failure.
 pub struct LiveSessionTranslator {
+    schema: SchemaVersion,
     default_source: String,
     sources: Vec<ActiveSource>,
     current_source: Option<SourceId>,
@@ -170,6 +174,7 @@ struct ActiveSource {
 impl LiveSessionTranslator {
     pub fn new(source: impl Into<String>, schema: SchemaVersion) -> Self {
         Self {
+            schema,
             default_source: source.into(),
             sources: Vec::new(),
             current_source: None,
@@ -340,6 +345,10 @@ fn observation_source(observation: &CommandObservation) -> Option<SourceId> {
             | GeometryRecord::Vpack { source, .. }
             | GeometryRecord::Shipout { source, .. },
         ) => *source,
+        CommandObservation::DiagnosticLifecycle(DiagnosticLifecycleRecord::Report {
+            location,
+            ..
+        }) => Some(location.source()),
         _ => None,
     }
 }
@@ -351,6 +360,11 @@ impl CommandObserver for Recorder {
 
     fn committed(&mut self, observation: CommandObservation) {
         if matches!(observation, CommandObservation::Geometry(_)) && !self.geometry {
+            return;
+        }
+        if matches!(observation, CommandObservation::DiagnosticLifecycle(_))
+            && self.schema < SchemaVersion::V4
+        {
             return;
         }
         if matches!(
@@ -516,6 +530,7 @@ fn trip_event(observed: &ObservedEvent) -> Option<Event> {
         | EventView::Alignment(_)
         | EventView::Mutation(_)
         | EventView::Diagnostic(_)
+        | EventView::DiagnosticLifecycle(_)
         | EventView::Effect(_)
         | EventView::Geometry(_) => None,
     }

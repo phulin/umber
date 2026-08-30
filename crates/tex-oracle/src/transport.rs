@@ -73,8 +73,28 @@ impl ObservationStream {
                     "schema v1 does not permit geometry events".into(),
                 ));
             }
+            if matches!(event.semantic, Event::DiagnosticLifecycle(_))
+                && schema < SchemaVersion::V4
+            {
+                return Err(ObservationError::InvalidStream(
+                    "schema versions before v4 do not permit diagnostic lifecycle events".into(),
+                ));
+            }
+            if schema == SchemaVersion::V4
+                && matches!(
+                    event.semantic,
+                    Event::DiagnosticLifecycle(crate::DiagnosticLifecycleEvent::Report {
+                        location: None,
+                        ..
+                    })
+                )
+            {
+                return Err(ObservationError::InvalidStream(
+                    "schema v4 diagnostic reports require source provenance".into(),
+                ));
+            }
             if event.semantic.view().class() == crate::EventClass::Geometry
-                && schema == SchemaVersion::V3
+                && schema >= SchemaVersion::V3
                 && !has_geometry_location(&event.semantic)
             {
                 return Err(ObservationError::InvalidStream(

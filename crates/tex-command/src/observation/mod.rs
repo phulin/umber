@@ -783,6 +783,70 @@ pub struct DiagnosticRecord {
     pub arguments: Vec<DiagnosticArgument>,
 }
 
+/// Typed semantic class of a schema-v4 diagnostic report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticClass {
+    RecoverableError,
+    Warning,
+    Fatal,
+}
+
+/// TeX82 §76 history carried by the terminal lifecycle observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticHistory {
+    Spotless,
+    WarningIssued,
+    ErrorMessageIssued,
+    FatalErrorStop,
+}
+
+/// Terminal semantic result paired with final history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticOutcome {
+    Completed,
+    Aborted,
+}
+
+/// Source-located report or final history/outcome for schema v4 observers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiagnosticLifecycleRecord {
+    Report {
+        class: DiagnosticClass,
+        severity: &'static str,
+        diagnostic: &'static str,
+        arguments: Vec<DiagnosticArgument>,
+        location: SourceLocation,
+    },
+    Outcome {
+        history: DiagnosticHistory,
+        outcome: DiagnosticOutcome,
+    },
+}
+
+impl DiagnosticLifecycleRecord {
+    /// Constructs the one terminal lifecycle record from TeX82's durable
+    /// error-channel history. Rendered help and context are deliberately not
+    /// consulted here.
+    #[must_use]
+    pub const fn terminal(history: tex_state::print::ErrorHistory, aborted: bool) -> Self {
+        Self::Outcome {
+            history: match history {
+                tex_state::print::ErrorHistory::Spotless => DiagnosticHistory::Spotless,
+                tex_state::print::ErrorHistory::WarningIssued => DiagnosticHistory::WarningIssued,
+                tex_state::print::ErrorHistory::ErrorMessageIssued => {
+                    DiagnosticHistory::ErrorMessageIssued
+                }
+                tex_state::print::ErrorHistory::FatalErrorStop => DiagnosticHistory::FatalErrorStop,
+            },
+            outcome: if aborted {
+                DiagnosticOutcome::Aborted
+            } else {
+                DiagnosticOutcome::Completed
+            },
+        }
+    }
+}
+
 /// One committed command-core observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandObservation {
@@ -798,6 +862,7 @@ pub enum CommandObservation {
     Alignment(AlignmentRecord),
     Mutation(MutationRecord),
     Diagnostic(DiagnosticRecord),
+    DiagnosticLifecycle(DiagnosticLifecycleRecord),
     Effect(EffectRecord),
     Geometry(GeometryRecord),
 }

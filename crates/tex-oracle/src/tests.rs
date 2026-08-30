@@ -604,6 +604,45 @@ fn schema_version_selects_distinct_manifest_and_stream_domains() {
 }
 
 #[test]
+fn schema_v1_through_v3_identity_preimages_remain_frozen() {
+    let identities = [SchemaVersion::V1, SchemaVersion::V2, SchemaVersion::V3]
+        .map(|schema| {
+            let mut manifest = manifest();
+            manifest.schema = schema.number();
+            let manifest_identity = manifest.identity().expect("manifest identity");
+            let mut observer =
+                JsonLinesObserver::new_for_schema(Vec::new(), schema, manifest_identity)
+                    .expect("stream header");
+            observer.committed(command("assign")).expect("event");
+            let (_, stream_identity) = observer.finish().expect("stream identity");
+            (manifest_identity.hex(), stream_identity.hex())
+        });
+    assert_eq!(
+        identities,
+        [
+            (
+                "4d2981662e9c08586d9f6563e20e13dc7e99dcf2608eb795f2757ca1a641ca21"
+                    .to_owned(),
+                "89e4cf97a3310d7caddb2bfee516d91a42b648786188526342dbebe8b4c64ced"
+                    .to_owned(),
+            ),
+            (
+                "814e59a483cd7199a724f793dcde2ffdbf00339cef50192f82a90feb39ba7222"
+                    .to_owned(),
+                "bd1e830c180e296a4e43f54381845cb7717762c3c0d01303bf02dd85cd2aaab6"
+                    .to_owned(),
+            ),
+            (
+                "f770cb63ef9d1c5ee9c89e08615dc18cd00de519c2c03e6a2eaf415bb37a0cd6"
+                    .to_owned(),
+                "b8510a43e11553a14ac3f53983039a3aea6860249aa26253ff9f8dce059fc178"
+                    .to_owned(),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn geometry_rejects_malformed_input_and_v1_manifest() {
     assert!(
         serde_json::from_str::<GeometryEvent>(

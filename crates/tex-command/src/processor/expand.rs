@@ -996,6 +996,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .as_mut()
                         .expect("resident delivery initializes the command slot");
                     let delivery_stamp = command.delivery_stamp();
+                    if let Some(location) = command.source_location() {
+                        self.command.last_diagnostic_location = Some(location);
+                    }
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
                     self.last_delivery = Some(delivery_stamp);
                     if matches!(interception, ResidentCommandInterception::Outer)

@@ -126,7 +126,8 @@ pub use meaning_projection::{MeaningProjectionBenchmark, MeaningProjectionReceip
 pub use observation::canonical_names;
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
-    CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,
+    CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticClass,
+    DiagnosticHistory, DiagnosticLifecycleRecord, DiagnosticOutcome, DiagnosticRecord,
     EffectRecord, GeneratedSourceRecord, GeometryRecord, InputReason, InputRecord, InputTransition,
     MacroRecord, MutationRecord, MutationTarget, ObservationEffectKind, ObservationValue,
     ObservedToken, OpenedSourceSnapshot, ParameterClass, RecoveryKind, RecoveryRecord,

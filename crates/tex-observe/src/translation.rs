@@ -110,12 +110,7 @@ pub(crate) fn translate_observation(
         }
         CommandObservation::Diagnostic(record) => ObservedEvent::new(
             Event::Diagnostic(DiagnosticEvent {
-                severity: match record.severity {
-                    "note" => DiagnosticSeverity::Note,
-                    "warning" => DiagnosticSeverity::Warning,
-                    "fatal" => DiagnosticSeverity::Fatal,
-                    _ => DiagnosticSeverity::Error,
-                },
+                severity: diagnostic_severity(record.severity),
                 diagnostic: record.diagnostic.into(),
                 arguments: record
                     .arguments
@@ -128,6 +123,56 @@ pub(crate) fn translate_observation(
                         tex_command::DiagnosticArgument::Name(name) => CanonicalValue::Name(name),
                     })
                     .collect(),
+            }),
+            format!("source={source}"),
+        ),
+        CommandObservation::DiagnosticLifecycle(record) => ObservedEvent::new(
+            Event::DiagnosticLifecycle(match record {
+                DiagnosticLifecycleRecord::Report {
+                    class,
+                    severity,
+                    diagnostic,
+                    arguments,
+                    location,
+                } => DiagnosticLifecycleEvent::Report {
+                    class: match class {
+                        CommandDiagnosticClass::RecoverableError => {
+                            DiagnosticClass::RecoverableError
+                        }
+                        CommandDiagnosticClass::Warning => DiagnosticClass::Warning,
+                        CommandDiagnosticClass::Fatal => DiagnosticClass::Fatal,
+                    },
+                    severity: diagnostic_severity(severity),
+                    diagnostic: diagnostic.into(),
+                    arguments: arguments.into_iter().map(diagnostic_argument).collect(),
+                    location: source_location(
+                        location,
+                        source,
+                        source_id,
+                        source_bytes,
+                        source_line_starts,
+                    ),
+                },
+                DiagnosticLifecycleRecord::Outcome { history, outcome } => {
+                    DiagnosticLifecycleEvent::Outcome {
+                        history: match history {
+                            CommandDiagnosticHistory::Spotless => DiagnosticHistory::Spotless,
+                            CommandDiagnosticHistory::WarningIssued => {
+                                DiagnosticHistory::WarningIssued
+                            }
+                            CommandDiagnosticHistory::ErrorMessageIssued => {
+                                DiagnosticHistory::ErrorMessageIssued
+                            }
+                            CommandDiagnosticHistory::FatalErrorStop => {
+                                DiagnosticHistory::FatalErrorStop
+                            }
+                        },
+                        outcome: match outcome {
+                            CommandDiagnosticOutcome::Completed => DiagnosticOutcome::Completed,
+                            CommandDiagnosticOutcome::Aborted => DiagnosticOutcome::Aborted,
+                        },
+                    }
+                }
             }),
             format!("source={source}"),
         ),
@@ -187,6 +232,23 @@ pub(crate) fn translate_observation(
     }
 }
 
+fn diagnostic_severity(severity: &str) -> DiagnosticSeverity {
+    match severity {
+        "note" => DiagnosticSeverity::Note,
+        "warning" => DiagnosticSeverity::Warning,
+        "error" => DiagnosticSeverity::Error,
+        "fatal" => DiagnosticSeverity::Fatal,
+        invalid => panic!("command core published invalid diagnostic severity {invalid:?}"),
+    }
+}
+
+fn diagnostic_argument(argument: tex_command::DiagnosticArgument) -> CanonicalValue {
+    match argument {
+        tex_command::DiagnosticArgument::Token(token) => CanonicalValue::Token(oracle_token(token)),
+        tex_command::DiagnosticArgument::Name(name) => CanonicalValue::Name(name),
+    }
+}
+
 pub(crate) fn observation_value(value: ObservationValue) -> CanonicalValue {
     match value {
         ObservationValue::None => CanonicalValue::None,
@@ -222,6 +284,22 @@ pub(crate) fn command_location(
     source_line_starts: Option<&[usize]>,
 ) -> Option<SourceLocation> {
     let location = record.provenance.source_location?;
+    source_location(
+        location,
+        source,
+        source_id,
+        source_bytes,
+        source_line_starts,
+    )
+}
+
+pub(crate) fn source_location(
+    location: tex_command::SourceLocation,
+    source: &str,
+    source_id: Option<SourceId>,
+    source_bytes: Option<&[u8]>,
+    source_line_starts: Option<&[usize]>,
+) -> Option<SourceLocation> {
     if Some(location.source()) != source_id {
         return None;
     }

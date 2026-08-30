@@ -9,11 +9,11 @@ use std::fmt;
 
 use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
-    EffectEvent, EffectKind, Event, GeometryEvent, GeometryLocation, InputEvent, InputReason,
-    InputTransition, MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind,
-    ScannerEvent, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
-    TokenListTransition,
+    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent,
+    DiagnosticLifecycleEvent, DiagnosticSeverity, EffectEvent, EffectKind, Event, GeometryEvent,
+    GeometryLocation, InputEvent, InputReason, InputTransition, MacroEvent, MutationEvent,
+    OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatusEvent, SourceLocation,
+    StateTarget, TokenListEvent, TokenListTransition,
 };
 
 /// The concrete payload borrowed from any oracle event.
@@ -30,6 +30,7 @@ pub enum EventView<'a> {
     Alignment(&'a AlignmentEvent),
     Mutation(&'a MutationEvent),
     Diagnostic(&'a DiagnosticEvent),
+    DiagnosticLifecycle(&'a DiagnosticLifecycleEvent),
     Effect(&'a EffectEvent),
     Geometry(&'a GeometryEvent),
 }
@@ -48,6 +49,7 @@ pub enum EventViewMut<'a> {
     Alignment(&'a mut AlignmentEvent),
     Mutation(&'a mut MutationEvent),
     Diagnostic(&'a mut DiagnosticEvent),
+    DiagnosticLifecycle(&'a mut DiagnosticLifecycleEvent),
     Effect(&'a mut EffectEvent),
     Geometry(&'a mut GeometryEvent),
 }
@@ -66,6 +68,7 @@ pub enum EventClass {
     Alignment,
     Mutation,
     Diagnostic,
+    DiagnosticLifecycle,
     Effect,
     Geometry,
 }
@@ -86,6 +89,7 @@ impl EventClass {
             Self::Alignment => "alignment_mismatch",
             Self::Mutation => "mutation_mismatch",
             Self::Diagnostic => "diagnostic_mismatch",
+            Self::DiagnosticLifecycle => "diagnostic_lifecycle_mismatch",
             Self::Effect => "effect_mismatch",
             Self::Geometry => "geometry_mismatch",
         }
@@ -152,6 +156,10 @@ pub enum EventAlignmentKey<'a> {
         severity: DiagnosticSeverity,
         diagnostic: &'a str,
     },
+    DiagnosticLifecycle {
+        transition: &'static str,
+        diagnostic: Option<&'a str>,
+    },
     Effect {
         kind: EffectKind,
         channel: &'a str,
@@ -192,6 +200,7 @@ impl Event {
             Self::Alignment(value) => EventView::Alignment(value),
             Self::Mutation(value) => EventView::Mutation(value),
             Self::Diagnostic(value) => EventView::Diagnostic(value),
+            Self::DiagnosticLifecycle(value) => EventView::DiagnosticLifecycle(value),
             Self::Effect(value) => EventView::Effect(value),
             Self::Geometry(value) => EventView::Geometry(value),
         }
@@ -212,6 +221,7 @@ impl Event {
             Self::Alignment(value) => EventViewMut::Alignment(value),
             Self::Mutation(value) => EventViewMut::Mutation(value),
             Self::Diagnostic(value) => EventViewMut::Diagnostic(value),
+            Self::DiagnosticLifecycle(value) => EventViewMut::DiagnosticLifecycle(value),
             Self::Effect(value) => EventViewMut::Effect(value),
             Self::Geometry(value) => EventViewMut::Geometry(value),
         }
@@ -250,6 +260,7 @@ impl<'a> EventView<'a> {
             Self::Alignment(_) => EventClass::Alignment,
             Self::Mutation(_) => EventClass::Mutation,
             Self::Diagnostic(_) => EventClass::Diagnostic,
+            Self::DiagnosticLifecycle(_) => EventClass::DiagnosticLifecycle,
             Self::Effect(_) => EventClass::Effect,
             Self::Geometry(_) => EventClass::Geometry,
         }
@@ -308,6 +319,20 @@ impl<'a> EventView<'a> {
                 severity: event.severity,
                 diagnostic: &event.diagnostic,
             },
+            Self::DiagnosticLifecycle(event) => match event {
+                DiagnosticLifecycleEvent::Report { diagnostic, .. } => {
+                    EventAlignmentKey::DiagnosticLifecycle {
+                        transition: "report",
+                        diagnostic: Some(diagnostic),
+                    }
+                }
+                DiagnosticLifecycleEvent::Outcome { .. } => {
+                    EventAlignmentKey::DiagnosticLifecycle {
+                        transition: "outcome",
+                        diagnostic: None,
+                    }
+                }
+            },
             Self::Effect(event) => EventAlignmentKey::Effect {
                 kind: event.kind,
                 channel: &event.channel,
@@ -355,6 +380,7 @@ impl<'a> EventView<'a> {
             | Self::Alignment(_)
             | Self::Mutation(_)
             | Self::Diagnostic(_)
+            | Self::DiagnosticLifecycle(_)
             | Self::Effect(_)
             | Self::Geometry(_) => None,
         }
@@ -383,6 +409,19 @@ impl<'a> EventView<'a> {
                     visit_value_locations(value, visitor);
                 }
             }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Report {
+                arguments,
+                location,
+                ..
+            }) => {
+                if let Some(location) = location {
+                    visitor(EventLocation::Source(location));
+                }
+                for value in arguments {
+                    visit_value_locations(value, visitor);
+                }
+            }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Outcome { .. }) => {}
             Self::Effect(event) => visit_value_locations(&event.value, visitor),
             Self::Geometry(event) => {
                 if let Some(location) = geometry_location(event) {
@@ -423,6 +462,19 @@ impl EventViewMut<'_> {
                     visit_value_locations_mut(value, visitor);
                 }
             }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Report {
+                arguments,
+                location,
+                ..
+            }) => {
+                if let Some(location) = location {
+                    visitor(EventLocationMut::Source(location));
+                }
+                for value in arguments {
+                    visit_value_locations_mut(value, visitor);
+                }
+            }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Outcome { .. }) => {}
             Self::Effect(event) => visit_value_locations_mut(&mut event.value, visitor),
             Self::Geometry(event) => {
                 if let Some(location) = geometry_location_mut(event) {
@@ -477,6 +529,19 @@ impl EventViewMut<'_> {
                 normalize_string(&mut event.diagnostic);
                 event.arguments.iter_mut().for_each(normalize_value);
             }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Report {
+                diagnostic,
+                arguments,
+                location,
+                ..
+            }) => {
+                normalize_string(diagnostic);
+                arguments.iter_mut().for_each(normalize_value);
+                if let Some(location) = location {
+                    normalize_string(&mut location.source);
+                }
+            }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Outcome { .. }) => {}
             Self::Effect(event) => {
                 normalize_string(&mut event.channel);
                 normalize_value(&mut event.value);
@@ -505,6 +570,15 @@ impl EventViewMut<'_> {
                 erase_value_locations(&mut event.value);
             }
             Self::Diagnostic(event) => event.arguments.iter_mut().for_each(erase_value_locations),
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Report {
+                arguments,
+                location,
+                ..
+            }) => {
+                arguments.iter_mut().for_each(erase_value_locations);
+                *location = None;
+            }
+            Self::DiagnosticLifecycle(DiagnosticLifecycleEvent::Outcome { .. }) => {}
             Self::Effect(event) => erase_value_locations(&mut event.value),
             Self::Geometry(event) => match event {
                 GeometryEvent::Hpack { location, .. }

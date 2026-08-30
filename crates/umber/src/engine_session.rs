@@ -1020,6 +1020,7 @@ impl<'a, G> EngineSession<'a, G> {
                 status: TexRunStatus::from_error_history(
                     self.stores.world().error_channel().history(),
                 ),
+                history: self.stores.world().error_channel().history(),
                 mode_transitions: self.mode_transitions.clone(),
                 fatal: self.control.fatal_error(),
                 artifacts: Vec::new(),
@@ -1140,9 +1141,11 @@ impl<'a, G> EngineSession<'a, G> {
             .control
             .take_format_dump(self.stores)
             .map_err(SessionError::FormatDump)?;
+        let history = self.stores.world().error_channel().history();
         let result = RunResult {
             terminal_text,
-            status: TexRunStatus::from_error_history(self.stores.world().error_channel().history()),
+            status: TexRunStatus::from_error_history(history),
+            history,
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
             artifacts,

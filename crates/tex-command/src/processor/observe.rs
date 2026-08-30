@@ -19,8 +19,9 @@ use super::CommandProcessor;
 use tex_state::token::{OriginId, TracedTokenWord};
 
 use crate::observation::{
-    AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticRecord, InputReason,
-    InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
+    AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticClass,
+    DiagnosticLifecycleRecord, DiagnosticRecord, InputReason, InputRecord, InputTransition,
+    RecoveryKind, RecoveryRecord,
 };
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -148,5 +149,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.observed_command_spelling(command),
             )],
         }));
+    }
+
+    /// Publishes one source-located schema-v4 diagnostic report.
+    pub(crate) fn observe_diagnostic_lifecycle(
+        &mut self,
+        class: DiagnosticClass,
+        severity: &'static str,
+        diagnostic: &'static str,
+        arguments: Vec<DiagnosticArgument>,
+    ) {
+        if !self.is_observed() {
+            return;
+        }
+        let Some(location) = self.command.last_diagnostic_location() else {
+            return;
+        };
+        self.observe(CommandObservation::DiagnosticLifecycle(
+            DiagnosticLifecycleRecord::Report {
+                class,
+                severity,
+                diagnostic,
+                arguments,
+                location,
+            },
+        ));
     }
 }

@@ -417,10 +417,21 @@ impl<G> MainControl<G> {
             }
             _ => None,
         };
-        self.observe_committed([
-            CommandObservation::Diagnostic(fatal.record()),
-            CommandObservation::Effect(engine_termination_effect()),
-        ]);
+        let mut records = Vec::with_capacity(3);
+        if let Some(location) = self.command.last_diagnostic_location() {
+            records.push(CommandObservation::DiagnosticLifecycle(
+                tex_command::DiagnosticLifecycleRecord::Report {
+                    class: tex_command::DiagnosticClass::Fatal,
+                    severity: "fatal",
+                    diagnostic: fatal.diagnostic(),
+                    arguments: fatal.record().arguments,
+                    location,
+                },
+            ));
+        }
+        records.push(CommandObservation::Diagnostic(fatal.record()));
+        records.push(CommandObservation::Effect(engine_termination_effect()));
+        self.observe_committed(records);
         stores
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);
@@ -727,10 +738,21 @@ impl<G> MainControl<G> {
                 }
                 _ => None,
             };
-            self.observe_committed([
-                CommandObservation::Diagnostic(fatal.record()),
-                CommandObservation::Effect(engine_termination_effect()),
-            ]);
+            let mut records = Vec::with_capacity(3);
+            if let Some(location) = self.command.last_diagnostic_location() {
+                records.push(CommandObservation::DiagnosticLifecycle(
+                    tex_command::DiagnosticLifecycleRecord::Report {
+                        class: tex_command::DiagnosticClass::Fatal,
+                        severity: "fatal",
+                        diagnostic: fatal.diagnostic(),
+                        arguments: fatal.record().arguments,
+                        location,
+                    },
+                ));
+            }
+            records.push(CommandObservation::Diagnostic(fatal.record()));
+            records.push(CommandObservation::Effect(engine_termination_effect()));
+            self.observe_committed(records);
             let evidence_error =
                 self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
             let terminal = self.succumb(fatal);

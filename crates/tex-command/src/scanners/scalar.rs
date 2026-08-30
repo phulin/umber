@@ -4199,6 +4199,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Universe, owns that level, so capture its display while it is live
         // for both immediate and deferred reporting.
         let context = self.command.output_open_context(self.state);
+        self.observe_diagnostic_lifecycle(
+            crate::DiagnosticClass::RecoverableError,
+            "error",
+            "missing-number",
+            Vec::new(),
+        );
         // §380 performs an undefined-control-sequence expansion before §444
         // reaches its vacuous constant. Queue behind any already-detected
         // command report. §1370's nested deferred-write processor must also
@@ -4327,6 +4333,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// pdfTeX 1.40.29 §459 with `nd`/`nc` even for a loaded TeX82 format.
     fn illegal_unit_pt_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(self.state);
+        self.observe_diagnostic_lifecycle(
+            crate::DiagnosticClass::RecoverableError,
+            "error",
+            "illegal-unit",
+            vec![crate::DiagnosticArgument::Name("pt".into())],
+        );
         let mut report = self
             .state
             .print_err("Illegal unit of measure (pt inserted)");
