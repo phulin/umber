@@ -280,7 +280,7 @@ pub use virtual_compile::{
     CompileDiagnostic, CompileError, CompileSourceLocation, CompileTelemetry, EngineMode, FileKind,
     FileRequest, FileRequestKey, NeedResources, OutputCapability, OutputCapabilitySet,
     PdfFontClosureReceipt, PdfFontClosureReceiptEntry, PdfFontClosureResourceOutcome,
-    PdfRawObjectFileReceipt, PdfRawObjectFileReceiptEntry, PdfRawObjectFileSource,
+    PdfOutputMode, PdfRawObjectFileReceipt, PdfRawObjectFileReceiptEntry, PdfRawObjectFileSource,
     PdfVirtualFontResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError,
     ResolvedFile, ResolvedPkFont, ResourceDomain, ResourceRequest, ResourceResponse,
     RetentionMetrics, SessionLimits, SessionOptions, SourcePatch, VfsLimitError, VfsLimitKind,

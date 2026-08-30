@@ -410,6 +410,7 @@ fn options(input: PathBuf, distribution: PathBuf, manifest_digest: String) -> Na
         format: None,
         initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
+        pdf_output_mode: None,
         outputs: OutputCapabilitySet::DVI,
         html_asset_directory: None,
         distribution: Some(distribution.to_string_lossy().into_owned()),

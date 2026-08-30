@@ -219,6 +219,9 @@ pub struct SessionOptions {
     /// They are emitted once, with the first required resource batch.
     pub initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     pub engine: EngineMode,
+    /// Optional pdftex.web §1515 process-level output-mode override, applied
+    /// after format loading and before the first source token.
+    pub pdf_output_mode: Option<PdfOutputMode>,
     pub clock: JobClock,
     pub limits: SessionLimits,
     /// Downstream products requested independently from engine compatibility.
@@ -242,6 +245,7 @@ impl Default for SessionOptions {
             format: None,
             initial_prefetch_hints: None,
             engine: EngineMode::Tex82,
+            pdf_output_mode: None,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
             outputs: OutputCapabilitySet::DVI,
@@ -259,6 +263,20 @@ pub enum OutputCapability {
     Dvi,
     Pdf,
     Html,
+}
+
+/// pdfTeX's semantic output mode, distinct from downstream artifact requests.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfOutputMode {
+    Dvi,
+    Pdf,
+}
+
+impl PdfOutputMode {
+    #[must_use]
+    const fn enabled(self) -> bool {
+        matches!(self, Self::Pdf)
+    }
 }
 
 /// A nonempty set of downstream products fixed before execution.
@@ -790,6 +808,7 @@ pub struct VirtualCompileSession<'store> {
     format: Option<Vec<u8>>,
     initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     engine: EngineMode,
+    pdf_output_mode: Option<PdfOutputMode>,
     clock: JobClock,
     limits: SessionLimits,
     workspace: ProjectWorkspace,
@@ -1051,6 +1070,12 @@ impl<'store> VirtualCompileSession<'store> {
                 ),
             });
         }
+        if options.pdf_output_mode.is_some() && !options.engine.supports_pdf_output() {
+            return Err(CompileError::Output(format!(
+                "engine {} does not provide a pdfTeX output-mode parameter",
+                options.engine.name()
+            )));
+        }
         let main_path = VirtualPath::user(&options.main_path).map_err(|error| {
             CompileError::InvalidVirtualPath {
                 path: options.main_path.clone(),
@@ -1087,6 +1112,7 @@ impl<'store> VirtualCompileSession<'store> {
             initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
                 .then(|| initial_prefetch_hints.into_boxed_slice()),
             engine: options.engine,
+            pdf_output_mode: options.pdf_output_mode,
             clock: options.clock,
             limits,
             workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
@@ -1135,6 +1161,7 @@ impl<'store> VirtualCompileSession<'store> {
             format: self.format.clone(),
             initial_prefetch_hints: self.initial_prefetch_hints.clone(),
             engine: self.engine,
+            pdf_output_mode: self.pdf_output_mode,
             clock: self.clock,
             limits: self.limits,
             outputs: self.outputs,
@@ -2076,6 +2103,9 @@ impl<'store> VirtualCompileSession<'store> {
                 session.set_job_clock(self.clock);
                 session.set_command_profile(self.engine.command_profile(), initex);
                 session.set_command_compatibility(self.engine.command_compatibility());
+                if let Some(mode) = self.pdf_output_mode {
+                    session.set_pdf_output_mode(mode.enabled());
+                }
                 session.set_required_font_layout_policy(self.font_layout_policy);
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 if let Some(image) = format_image {

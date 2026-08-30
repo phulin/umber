@@ -42,6 +42,7 @@ pub struct NativeRunOptions {
     pub format: Option<PathBuf>,
     pub initial_prefetch_keys: Vec<String>,
     pub engine: EngineMode,
+    pub pdf_output_mode: Option<crate::PdfOutputMode>,
     pub outputs: OutputCapabilitySet,
     pub html_asset_directory: Option<String>,
     pub distribution: Option<String>,
@@ -556,6 +557,7 @@ impl<'owner> NativeCompileSession<'owner> {
                 initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
                     .then(|| initial_prefetch_hints.into_boxed_slice()),
                 engine: options.engine,
+                pdf_output_mode: options.pdf_output_mode,
                 clock,
                 limits: SessionLimits {
                     attempts: SessionLimits::HARD_MAX.attempts,

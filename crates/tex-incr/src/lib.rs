@@ -29,6 +29,7 @@ use tex_exec::{
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
+use tex_state::env::banks::IntParam;
 use tex_state::interner::InternerBudget;
 use tex_state::{
     ArtifactOrigin, AssignmentScope, CodeTableKind, CommittedArtifact, ContentHash,
@@ -614,6 +615,7 @@ pub struct RevisionCandidate<'store> {
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     initex: bool,
     dvi_output: bool,
+    pdf_output_mode: Option<bool>,
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
@@ -1598,6 +1600,24 @@ fn initialize_candidate_runtime<G: 'static>(
         root_framing_name: candidate.root_framing_name.as_deref(),
     };
     prepare_candidate_control(universe, &options, control, materialized_job_start)?;
+    if !rooted_restart
+        && candidate.profile.dialect() == tex_command::CommandDialect::Pdftex14029
+        && let Some(enabled) = candidate.pdf_output_mode
+    {
+        // pdftex.web §1515 applies the process `--output-format` choice only
+        // after a format image has been loaded. Keep that one-shot host
+        // override in the JobStart transition so later checkpoint restarts
+        // retain TeX's own live `\pdfoutput` value.
+        universe
+            .command_context()
+            .expect("JobStart output-mode override has live state")
+            .assign_int_param(
+                IntParam::PDF_OUTPUT,
+                i32::from(enabled),
+                AssignmentScope::Global,
+            )
+            .expect("pdfTeX output parameter is admitted");
+    }
     let control = control
         .as_mut()
         .expect("candidate control is installed before runtime initialization");
@@ -2241,6 +2261,10 @@ pub struct Session<'store> {
     job_clock: JobClock,
     utf8_input_as_bytes: bool,
     dvi_output: bool,
+    /// pdftex.web §1515's process-selected output override. This is applied
+    /// to the authoritative `\pdfoutput` cell after format materialization
+    /// and before JobStart; it is not a downstream DVI receipt request.
+    pdf_output_mode: Option<bool>,
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
@@ -2397,6 +2421,7 @@ impl<'store> Session<'store> {
             job_clock: JobClock::default(),
             utf8_input_as_bytes: false,
             dvi_output: true,
+            pdf_output_mode: None,
             root_framing: SourceFramingPolicy::Canonical,
             root_framing_name: None,
             root_source_is_byte_projection,
@@ -2515,6 +2540,16 @@ impl<'store> Session<'store> {
             "DVI policy is fixed after execution"
         );
         self.dvi_output = enabled;
+    }
+
+    /// Selects pdfTeX's semantic output mode at the §1515 post-format-load
+    /// boundary, independently from downstream artifact capabilities.
+    pub fn set_pdf_output_mode(&mut self, enabled: bool) {
+        assert!(
+            self.history.is_empty(),
+            "PDF output mode is fixed after execution"
+        );
+        self.pdf_output_mode = Some(enabled);
     }
 
     #[must_use]
@@ -2898,6 +2933,7 @@ impl<'store> Session<'store> {
             required_font_layout_policy: self.required_font_layout_policy,
             initex: self.initex,
             dvi_output: self.dvi_output,
+            pdf_output_mode: self.pdf_output_mode,
             root_framing: self.root_framing,
             root_framing_name: self.root_framing_name.clone(),
             root_source_is_byte_projection: self.root_source_is_byte_projection,

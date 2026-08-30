@@ -3428,6 +3428,44 @@ fn every_engine_mode_has_source_and_schema_12_format_artifact_equivalence() {
 }
 
 #[test]
+fn pdftex_output_mode_override_runs_after_format_loading() {
+    // pdftex.web §1515 applies the process-selected output format after the
+    // format image is loaded and before the first source token. The override
+    // is independent from the downstream DVI receipt capability.
+    for (stored, override_mode, expected) in [
+        (0, None, 0),
+        (1, Some(PdfOutputMode::Dvi), 0),
+        (0, Some(PdfOutputMode::Pdf), 1),
+    ] {
+        let format =
+            construct_test_format(EngineMode::PdfTex, &format!("\\pdfoutput={stored}\\dump"));
+        let mut session = VirtualCompileSession::new(SessionOptions {
+            format: Some(format.into_bytes()),
+            engine: EngineMode::PdfTex,
+            pdf_output_mode: override_mode,
+            outputs: OutputCapabilitySet::DVI,
+            ..SessionOptions::default()
+        })
+        .expect("pdfTeX loaded-format session");
+        session
+            .add_user_file(
+                "main.tex",
+                br"\message{PDFOUTPUT=\the\pdfoutput}\end".to_vec(),
+            )
+            .expect("output-mode probe");
+
+        let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+            panic!("pdfTeX output-mode probe did not complete");
+        };
+        let terminal = String::from_utf8_lossy(&output.terminal);
+        assert!(
+            terminal.contains(&format!("PDFOUTPUT={expected}")),
+            "stored={stored}, override={override_mode:?}: {terminal}"
+        );
+    }
+}
+
+#[test]
 fn virtual_initex_installs_the_canonical_profile_registry() {
     for engine in [
         EngineMode::Tex82,

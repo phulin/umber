@@ -396,6 +396,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             format: opts.format.clone(),
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
+            pdf_output_mode: opts.pdf_output_mode(),
             outputs,
             html_asset_directory: opts
                 .html_assets
@@ -969,6 +970,22 @@ impl RunCliOptions {
             profiling_stats,
         })
     }
+
+    /// Maps explicit native publication flags to pdftex.web §1515's
+    /// process-selected semantic mode. A PDF request wins when the host also
+    /// asks for a downstream DVI copy; absent flags preserve format/default
+    /// behavior.
+    fn pdf_output_mode(&self) -> Option<umber::PdfOutputMode> {
+        if !self.engine.supports_pdf_output() {
+            None
+        } else if self.pdf.is_some() {
+            Some(umber::PdfOutputMode::Pdf)
+        } else if self.dvi.is_some() {
+            Some(umber::PdfOutputMode::Dvi)
+        } else {
+            None
+        }
+    }
 }
 
 fn input_record_receipt(
@@ -1258,6 +1275,37 @@ mod tests {
                 Err(error) => error,
             };
             assert!(matches!(error, CliError::Usage(message) if message == expected));
+        }
+    }
+
+    #[test]
+    fn explicit_pdftex_output_paths_select_the_semantic_output_mode() {
+        for (arguments, expected) in [
+            (
+                vec!["--pdflatex", "--dvi", "main.dvi", "main.tex"],
+                Some(umber::PdfOutputMode::Dvi),
+            ),
+            (
+                vec!["--pdflatex", "--pdf", "main.pdf", "main.tex"],
+                Some(umber::PdfOutputMode::Pdf),
+            ),
+            (
+                vec![
+                    "--pdflatex",
+                    "--dvi",
+                    "main.dvi",
+                    "--pdf",
+                    "main.pdf",
+                    "main.tex",
+                ],
+                Some(umber::PdfOutputMode::Pdf),
+            ),
+            (vec!["--pdflatex", "main.tex"], None),
+            (vec!["--latex", "--dvi", "main.dvi", "main.tex"], None),
+        ] {
+            let options = RunCliOptions::parse(arguments.into_iter().map(str::to_owned))
+                .expect("valid output selection");
+            assert_eq!(options.pdf_output_mode(), expected);
         }
     }
 

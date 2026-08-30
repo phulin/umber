@@ -83,6 +83,14 @@ diagnostics must match the pinned oracle, and node/effect state must survive
 checkpoint, restore, semantic hashing, and format serialization where
 applicable.
 
+pdftex.web §1515 applies a process-selected output-format override to
+`\pdfoutput` after loading the format image and before reading the first source
+token. Umber models that as a one-shot JobStart override on the authoritative
+integer-parameter cell. It is separate from downstream DVI, PDF, and HTML
+artifact capabilities: the native CLI selects DVI semantics for an explicit
+DVI-only pdfTeX/pdfLaTeX run, while a requested PDF artifact selects PDF
+semantics even when DVI co-emission is also requested.
+
 The backend-action row is complete through typed canonical command-core scan,
 apply, state, and output ownership; retired-executor coverage is not part of
 that conclusion. The canonical

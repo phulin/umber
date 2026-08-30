@@ -73,6 +73,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         format,
         initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
+        pdf_output_mode: None,
         outputs: umber::OutputCapabilitySet::DVI,
         html_asset_directory: None,
         distribution,
