@@ -638,6 +638,43 @@ pub struct RetainedEngineGeneration<'store> {
     liveness: Arc<()>,
 }
 
+/// Complete move-only result of forking one retained named boundary.
+///
+/// Keeping the restored generation and its owner-relative checkpoint evidence
+/// together prevents callers from accidentally reordering the parallel tuple
+/// fields that make up one fork transaction.
+pub struct RetainedBoundaryFork<'store> {
+    pub generation: RetainedEngineGeneration<'store>,
+    pub runtime: RetainedEngineAttachmentKey,
+    pub budget_counters: crate::ExecutionBudgetCounters,
+    pub selected: RetainedBoundaryEvidence,
+    pub selected_key: RetainedCheckpointKey,
+    pub retention: crate::CheckpointRetention,
+}
+
+/// Copy-only boundary and output-coordinate plan for one accepted revision
+/// rehome. Source ownership is carried separately by
+/// [`RetainedEditorRevisionRehome`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetainedEditorRevisionRehomePlan {
+    pub revision: u64,
+    pub old_start: usize,
+    pub old_end: usize,
+    pub new_end: usize,
+    pub restart: (usize, crate::EngineBoundary, u32),
+    pub convergence: (usize, crate::EngineBoundary, u32),
+    pub new_effect_prefix: usize,
+    pub new_artifact_prefix: usize,
+}
+
+/// Source owners and coordinate plan consumed by one atomic accepted revision
+/// rehome.
+pub struct RetainedEditorRevisionRehome<'a> {
+    pub accepted: &'a [u8],
+    pub bytes: Arc<[u8]>,
+    pub plan: RetainedEditorRevisionRehomePlan,
+}
+
 /// Marker for the typed main-control owner restored together with one
 /// aggregate checkpoint. The control itself remains in the generation's
 /// typed sidecar so generic settlement can always reach it.
@@ -837,23 +874,20 @@ impl<'store> RetainedEngineGeneration<'store> {
     pub fn fork_boundary(
         &mut self,
         selected: Option<(usize, crate::EngineBoundary, u32)>,
-    ) -> Result<
-        (
-            Self,
-            RetainedEngineAttachmentKey,
-            crate::ExecutionBudgetCounters,
-            RetainedBoundaryEvidence,
-            RetainedCheckpointKey,
-            crate::CheckpointRetention,
-        ),
-        RetainedEngineForkError,
-    > {
+    ) -> Result<RetainedBoundaryFork<'store>, RetainedEngineForkError> {
         let selected = self
             .with_admitted(SelectBoundary { selected })
             .map_err(RetainedEngineForkError::Access)?;
         let (key, evidence, retention) = selected.map_err(RetainedEngineForkError::Access)?;
         let (generation, runtime, counters) = self.fork_checkpoint(&key)?;
-        Ok((generation, runtime, counters, evidence, key, retention))
+        Ok(RetainedBoundaryFork {
+            generation,
+            runtime,
+            budget_counters: counters,
+            selected: evidence,
+            selected_key: key,
+            retention,
+        })
     }
 
     /// Forks the latest live restart root whose conservative root-source
@@ -863,17 +897,7 @@ impl<'store> RetainedEngineGeneration<'store> {
     pub fn fork_latest_boundary_at_or_before(
         &mut self,
         position: usize,
-    ) -> Result<
-        Option<(
-            Self,
-            RetainedEngineAttachmentKey,
-            crate::ExecutionBudgetCounters,
-            RetainedBoundaryEvidence,
-            RetainedCheckpointKey,
-            crate::CheckpointRetention,
-        )>,
-        RetainedEngineForkError,
-    > {
+    ) -> Result<Option<RetainedBoundaryFork<'store>>, RetainedEngineForkError> {
         let selected = self
             .with_admitted(SelectLatestBoundary { position })
             .map_err(RetainedEngineForkError::Access)?
@@ -882,9 +906,14 @@ impl<'store> RetainedEngineGeneration<'store> {
             return Ok(None);
         };
         let (generation, runtime, counters) = self.fork_checkpoint(&key)?;
-        Ok(Some((
-            generation, runtime, counters, evidence, key, retention,
-        )))
+        Ok(Some(RetainedBoundaryFork {
+            generation,
+            runtime,
+            budget_counters: counters,
+            selected: evidence,
+            selected_key: key,
+            retention,
+        }))
     }
 
     /// Rehomes detached boundary metadata after a byte-identical revision
@@ -902,29 +931,9 @@ impl<'store> RetainedEngineGeneration<'store> {
     /// rejected.
     pub fn rehome_editor_revision(
         &mut self,
-        accepted: &[u8],
-        bytes: Arc<[u8]>,
-        revision: u64,
-        old_start: usize,
-        old_end: usize,
-        new_end: usize,
-        restart: (usize, crate::EngineBoundary, u32),
-        convergence: (usize, crate::EngineBoundary, u32),
-        new_effect_prefix: usize,
-        new_artifact_prefix: usize,
+        rehome: RetainedEditorRevisionRehome<'_>,
     ) -> Result<usize, RetainedEngineAccessError> {
-        self.with_admitted(RehomeEditorRevision {
-            accepted,
-            bytes,
-            revision,
-            old_start,
-            old_end,
-            new_end,
-            restart,
-            convergence,
-            new_effect_prefix,
-            new_artifact_prefix,
-        })?
+        self.with_admitted(RehomeEditorRevision(rehome))?
     }
 
     #[must_use]
@@ -1224,18 +1233,7 @@ struct RehomeIdenticalRevision {
     revision: u64,
 }
 
-struct RehomeEditorRevision<'a> {
-    accepted: &'a [u8],
-    bytes: Arc<[u8]>,
-    revision: u64,
-    old_start: usize,
-    old_end: usize,
-    new_end: usize,
-    restart: (usize, crate::EngineBoundary, u32),
-    convergence: (usize, crate::EngineBoundary, u32),
-    new_effect_prefix: usize,
-    new_artifact_prefix: usize,
-}
+struct RehomeEditorRevision<'a>(RetainedEditorRevisionRehome<'a>);
 
 struct PreflightBoundaryLane;
 
@@ -1338,6 +1336,11 @@ impl RetainedEngineOperation for RehomeEditorRevision<'_> {
     type Output = Result<usize, RetainedEngineAccessError>;
 
     fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        let RetainedEditorRevisionRehome {
+            accepted,
+            bytes,
+            plan,
+        } = self.0;
         let command = admitted
             .sidecars
             .command
@@ -1348,32 +1351,17 @@ impl RetainedEngineOperation for RehomeEditorRevision<'_> {
             .boundaries
             .as_mut()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?;
-        boundaries.validate_revision_rehome(
-            self.old_start,
-            self.old_end,
-            self.new_end,
-            self.restart,
-            self.convergence,
-        )?;
+        boundaries.validate_revision_rehome(plan)?;
         command
             .rehome_generated_editor_source(
-                self.accepted,
-                self.bytes,
-                self.old_start,
-                self.old_end,
-                self.new_end,
+                accepted,
+                bytes,
+                plan.old_start,
+                plan.old_end,
+                plan.new_end,
             )
             .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
-        boundaries.rehome_revision_suffix(
-            self.revision,
-            self.old_start,
-            self.old_end,
-            self.new_end,
-            self.restart,
-            self.convergence,
-            self.new_effect_prefix,
-            self.new_artifact_prefix,
-        )?;
+        boundaries.rehome_revision_suffix(plan)?;
         Ok(boundaries.live_roots)
     }
 }
@@ -1769,15 +1757,18 @@ impl<G> BoundaryLane<G> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn validate_revision_rehome(
         &self,
-        old_start: usize,
-        old_end: usize,
-        new_end: usize,
-        restart: (usize, crate::EngineBoundary, u32),
-        convergence: (usize, crate::EngineBoundary, u32),
+        plan: RetainedEditorRevisionRehomePlan,
     ) -> Result<(), RetainedEngineAccessError> {
+        let RetainedEditorRevisionRehomePlan {
+            old_start,
+            old_end,
+            new_end,
+            restart,
+            convergence,
+            ..
+        } = plan;
         let BoundaryOwnership::Accepted(keys) = &self.ownership else {
             return Err(RetainedEngineAccessError::LiveAttachment);
         };
@@ -1814,18 +1805,20 @@ impl<G> BoundaryLane<G> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn rehome_revision_suffix(
         &mut self,
-        revision: u64,
-        old_start: usize,
-        old_end: usize,
-        new_end: usize,
-        restart: (usize, crate::EngineBoundary, u32),
-        convergence: (usize, crate::EngineBoundary, u32),
-        new_effect_prefix: usize,
-        new_artifact_prefix: usize,
+        plan: RetainedEditorRevisionRehomePlan,
     ) -> Result<(), RetainedEngineAccessError> {
+        let RetainedEditorRevisionRehomePlan {
+            revision,
+            old_start,
+            old_end,
+            new_end,
+            restart,
+            convergence,
+            new_effect_prefix,
+            new_artifact_prefix,
+        } = plan;
         let BoundaryOwnership::Accepted(keys) = &mut self.ownership else {
             return Err(RetainedEngineAccessError::LiveAttachment);
         };

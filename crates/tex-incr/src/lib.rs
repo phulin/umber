@@ -2795,62 +2795,62 @@ impl<'store> Session<'store> {
         } else {
             None
         };
-        let (generation, checkpoint_control_key, inherited_boundary) = if let Some((
-            generation,
-            runtime,
-            _budget_counters,
-            selected,
-            selected_key,
-            retention,
-        )) = rooted
-        {
-            let selected_boundary = BoundaryKey {
-                position: selected.position(),
-                boundary: selected.boundary(),
-                ordinal: selected.ordinal(),
-            };
-            let inherited_boundary = (!self
-                .history
-                .iter()
-                .any(|record| record.key == selected_boundary))
-            .then_some(InheritedBoundary {
-                key: selected_key,
-                evidence: selected,
+        let (generation, checkpoint_control_key, inherited_boundary) =
+            if let Some(tex_exec::RetainedBoundaryFork {
+                generation,
+                runtime,
+                budget_counters: _,
+                selected,
+                selected_key,
                 retention,
-            });
-            plan.restart_boundary = Some(selected_boundary);
-            (Some(generation), Some(runtime), inherited_boundary)
-        } else if self.prior_generation.is_some() {
-            if plan.execution_path == RevisionExecutionPath::SlowEdit {
-                plan.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
-            }
-            let metadata = self.job_start_session_metadata();
-            let anchor = self
-                .job_start_anchor
-                .as_mut()
-                .ok_or(SessionError::MissingJobStartAnchor)?;
-            let image = anchor.materialize_image(metadata)?;
-            let generation = self
-                .prior_generation
-                .as_mut()
-                .expect("JobStart fallback has an accepted generation")
-                .generation
-                .materialize_job_start_candidate(
-                    World::memory_with_clock(self.job_clock),
-                    image,
-                    true,
-                )
-                .map_err(SessionError::Format)?;
-            plan.restart_boundary = self
-                .history
-                .iter()
-                .find(|record| record.key.boundary == EngineBoundary::JobStart)
-                .map(|record| record.key);
-            materialized_job_start = true;
-            (Some(generation), None, None)
-        } else {
-            (None, None, None)
-        };
+            }) = rooted
+            {
+                let selected_boundary = BoundaryKey {
+                    position: selected.position(),
+                    boundary: selected.boundary(),
+                    ordinal: selected.ordinal(),
+                };
+                let inherited_boundary = (!self
+                    .history
+                    .iter()
+                    .any(|record| record.key == selected_boundary))
+                .then_some(InheritedBoundary {
+                    key: selected_key,
+                    evidence: selected,
+                    retention,
+                });
+                plan.restart_boundary = Some(selected_boundary);
+                (Some(generation), Some(runtime), inherited_boundary)
+            } else {
+                let metadata = self.job_start_session_metadata();
+                if let Some(prior) = self.prior_generation.as_mut() {
+                    if plan.execution_path == RevisionExecutionPath::SlowEdit {
+                        plan.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
+                    }
+                    let anchor = self
+                        .job_start_anchor
+                        .as_mut()
+                        .ok_or(SessionError::MissingJobStartAnchor)?;
+                    let image = anchor.materialize_image(metadata)?;
+                    let generation = prior
+                        .generation
+                        .materialize_job_start_candidate(
+                            World::memory_with_clock(self.job_clock),
+                            image,
+                            true,
+                        )
+                        .map_err(SessionError::Format)?;
+                    plan.restart_boundary = self
+                        .history
+                        .iter()
+                        .find(|record| record.key.boundary == EngineBoundary::JobStart)
+                        .map(|record| record.key);
+                    materialized_job_start = true;
+                    (Some(generation), None, None)
+                } else {
+                    (None, None, None)
+                }
+            };
         let comparison_history: Arc<[BoundaryRecord]> = Arc::from(self.history.clone());
         let comparison_start = plan.restart_boundary.and_then(|selected| {
             comparison_history
@@ -3116,22 +3116,24 @@ impl<'store> Session<'store> {
             ));
             previous.checkpoint_count = previous
                 .generation
-                .rehome_editor_revision(
-                    &accepted_root,
-                    current_root,
-                    transaction.revision.raw(),
-                    edit_map.old_start,
-                    edit_map.old_end,
-                    edit_map.new_end,
-                    (restart.position, restart.boundary, restart.ordinal),
-                    (
-                        old_convergence.position,
-                        old_convergence.boundary,
-                        old_convergence.ordinal,
-                    ),
-                    new_convergence.effect_prefix,
-                    new_convergence.artifact_prefix,
-                )
+                .rehome_editor_revision(tex_exec::RetainedEditorRevisionRehome {
+                    accepted: &accepted_root,
+                    bytes: current_root,
+                    plan: tex_exec::RetainedEditorRevisionRehomePlan {
+                        revision: transaction.revision.raw(),
+                        old_start: edit_map.old_start,
+                        old_end: edit_map.old_end,
+                        new_end: edit_map.new_end,
+                        restart: (restart.position, restart.boundary, restart.ordinal),
+                        convergence: (
+                            old_convergence.position,
+                            old_convergence.boundary,
+                            old_convergence.ordinal,
+                        ),
+                        new_effect_prefix: new_convergence.effect_prefix,
+                        new_artifact_prefix: new_convergence.artifact_prefix,
+                    },
+                })
                 .map_err(SessionError::RetainedEngine)?;
             previous.revision = transaction.revision;
             self.converged_candidate_generations =

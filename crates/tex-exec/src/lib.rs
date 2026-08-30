@@ -99,8 +99,9 @@ pub use mode::{
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_generation::{
     AdmittedEngineGeneration, BoundaryLaneStorage, CheckpointPruningReceipt,
-    RestoredCheckpointRuntime, RetainedBoundaryEvidence, RetainedCheckpointKey,
-    RetainedCheckpointStore, RetainedEngineAccessError, RetainedEngineAttachmentKey,
+    RestoredCheckpointRuntime, RetainedBoundaryEvidence, RetainedBoundaryFork,
+    RetainedCheckpointKey, RetainedCheckpointStore, RetainedEditorRevisionRehome,
+    RetainedEditorRevisionRehomePlan, RetainedEngineAccessError, RetainedEngineAttachmentKey,
     RetainedEngineForkError, RetainedEngineGeneration, RetainedEngineOperation,
     RetainedEngineRetirement,
 };
