@@ -2416,6 +2416,16 @@ impl PageBuilderState {
         }
     }
 
+    pub(crate) fn payload_root_lists(&self) -> [PageListId; 4] {
+        let roots = self.payload_roots();
+        [
+            roots.contribution.list(),
+            roots.current_page.list(),
+            roots.page_discards.list(),
+            roots.split_discards.list(),
+        ]
+    }
+
     /// Starts a fresh page timeline from the live state which escaped the
     /// completed page region. Historical journal rows stay with the old
     /// owner; only canonical current values and rebranded roots enter the new

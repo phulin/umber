@@ -1324,10 +1324,17 @@ impl<'a, G> CommandContext<'a, G> {
         build: crate::node_region::PageClosureBuildMark,
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
+        // TeX82 §977 plus e-TeX change [44.977] lets `\vsplit` update the
+        // split-discard root while constructing the box returned to `\setbox`.
+        // That side effect remains page-owned when the result becomes durable.
         let durable = match value {
             Some(root) => Some(
                 self.page_nodes
-                    .finish_built_page_root_to_durable(build, root)
+                    .finish_built_page_root_to_durable_preserving_roots(
+                        build,
+                        root,
+                        self.page.payload_root_lists(),
+                    )
                     .map_err(|_| {
                         crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed)
                     })?,
@@ -2997,7 +3004,11 @@ impl<'a, G> CommandContext<'a, G> {
         );
         let owner = self
             .page_nodes
-            .finish_built_page_root_to_durable(build, box_list)
+            .finish_built_page_root_to_durable_preserving_roots(
+                build,
+                box_list,
+                self.page.payload_root_lists(),
+            )
             .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));

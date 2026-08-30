@@ -812,6 +812,64 @@ impl<'a> PageMaterialArena<'a> {
             })
     }
 
+    /// Publishes a built closure without detaching a construction-suffix root
+    /// still owned by the page builder.
+    pub(crate) fn finish_built_page_root_to_durable_preserving_roots(
+        &mut self,
+        mark: ClosureBuildMark<PageRole>,
+        root: PageListId,
+        retained_roots: [PageListId; 4],
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        if !self
+            .region
+            .build_suffix_contains_any_root(self.pool, &mark, retained_roots)?
+        {
+            return self.finish_built_page_root_to_durable(mark, root);
+        }
+
+        let source_root = self.region.root(self.pool, root)?;
+        let mut durable = self.pool.start_region::<DurableRole>()?;
+        let before = durable.counters().source_nodes_copied;
+        let copied = match structural_copy_fallback(
+            self.pool,
+            self.region,
+            source_root,
+            &mut durable,
+            StructuralCopyReason::RetainedRoot,
+        ) {
+            Ok(copied) => copied,
+            Err(error) => {
+                assert!(
+                    self.pool.retire_region(durable).is_ok(),
+                    "failed retained-root destination remains quiescent"
+                );
+                return Err(error);
+            }
+        };
+        let copied_nodes = durable
+            .counters()
+            .source_nodes_copied
+            .saturating_sub(before);
+        let owner = durable
+            .into_closure(self.pool, copied)
+            .map_err(|(error, region)| {
+                assert!(
+                    self.pool.retire_region(region).is_ok(),
+                    "validated retained-root destination retires"
+                );
+                error
+            })?;
+        self.durable_transitions.page_to_durable_nodes_copied = self
+            .durable_transitions
+            .page_to_durable_nodes_copied
+            .saturating_add(copied_nodes);
+        self.durable_transitions.node_closure_scan_nodes = self
+            .durable_transitions
+            .node_closure_scan_nodes
+            .saturating_add(copied_nodes);
+        Ok(owner)
+    }
+
     /// Consumes a unique durable owner and transfers its exact addresses into
     /// the current page region.
     #[allow(clippy::result_large_err)] // Failed transfer must return the move-only durable owner.

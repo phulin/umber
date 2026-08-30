@@ -3613,6 +3613,34 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Whether one validated owner root is wholly resident in the
+    /// construction suffix opened at `mark`.
+    pub(crate) fn list_is_in_batch_suffix(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: &BatchMark<Lane>,
+        list: ArenaListId<Lane>,
+    ) -> Result<bool, ForkArenaError> {
+        self.validate_pool(pool)?;
+        if mark.arena != self.owner {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.validate_list(pool, list)?;
+        if list.is_empty() {
+            return Ok(false);
+        }
+        match self.validate_list_in_suffix(
+            pool,
+            list,
+            mark.payload_start as usize,
+            mark.descriptor_start as usize,
+        ) {
+            Ok(()) => Ok(true),
+            Err(ForkArenaError::InvalidRegion) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Chunk-only closure proof used by retained-lineage sharing. Direct child
     /// floors were folded into metadata at publication, so this never visits
     /// a node payload or follows the node tree.

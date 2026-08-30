@@ -349,6 +349,28 @@ impl<Role> NodeRegion<Role> {
             .restore_operation(&mut pool.chunks, mark.rollback)
     }
 
+    pub(crate) fn build_suffix_contains_any_root<const N: usize>(
+        &self,
+        pool: &NodePool,
+        mark: &ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<bool, ForkArenaError> {
+        pool.validate_region(self)?;
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        for root in roots {
+            if self.pub_arena.list_is_in_batch_suffix(
+                &pool.chunks,
+                &mark.batch,
+                root.coordinate(),
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn preflight_unique_successor_adoption<const N: usize>(
         &self,
         pool: &NodePool,
@@ -547,6 +569,8 @@ impl<Role> NodeRegion<Role> {
 }
 
 /// Sealed payload-plus-descriptor boundary taken before closure construction.
+/// It is consumed either by exact suffix transfer or by the retained-root
+/// structural-copy path that deliberately keeps the suffix page-owned.
 pub struct ClosureBuildMark<Role> {
     region: NodeRegionId,
     serial: u64,

@@ -921,6 +921,45 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
 }
 
 #[test]
+fn built_durable_copy_preserves_page_root_created_in_construction_suffix() {
+    page_arena!(arena, pool, region, 64);
+    let build = arena.begin_closure_build().expect("open box build");
+    let retained = arena
+        .publish_owned([Node::Penalty(51)])
+        .expect("page-owned side effect");
+    let built = arena
+        .publish_owned([Node::Penalty(52)])
+        .expect("built box root");
+
+    let durable = arena
+        .finish_built_page_root_to_durable_preserving_roots(
+            build,
+            built,
+            [
+                PageListId::empty(),
+                PageListId::empty(),
+                PageListId::empty(),
+                retained,
+            ],
+        )
+        .expect("retained-root fallback");
+
+    assert_eq!(resolved(&arena, retained), [Node::Penalty(51)]);
+    assert_eq!(
+        arena
+            .durable_list(&durable)
+            .expect("durable result")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [Node::Penalty(52)]
+    );
+    arena
+        .retire_durable(durable)
+        .expect("retire durable result");
+}
+
+#[test]
 fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
     page_arena!(arena, pool, region, 64);
     let leaf = arena.publish_owned([Node::Penalty(43)]).expect("page leaf");
