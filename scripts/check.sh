@@ -54,6 +54,7 @@ if ((${#selected_gates[@]} == 0)); then
 fi
 
 failed_gates=()
+blocked_gates=()
 ran_gates=0
 
 gate() {
@@ -67,7 +68,9 @@ gate() {
   printf '\n=== check.sh gate: %s\n' "$name"
   local status=0
   "$@" || status=$?
-  if ((status != 0)); then
+  if ((status == 4)); then
+    blocked_gates+=("$name (exit $status)")
+  elif ((status != 0)); then
     failed_gates+=("$name (exit $status)")
   fi
   return 0
@@ -119,11 +122,21 @@ gate rustfmt cargo fmt --all --check
 gate clippy run_clippy
 gate node-width-budget scripts/check-node-width-budget.sh
 
-if ((${#failed_gates[@]} == 0)); then
+if ((${#failed_gates[@]} == 0 && ${#blocked_gates[@]} == 0)); then
   printf '\ncheck.sh: all %d gates passed.\n' "$ran_gates"
   exit 0
 fi
 
-printf '\ncheck.sh: %d of %d gates FAILED:\n' "${#failed_gates[@]}" "$ran_gates" >&2
-printf '  - %s\n' "${failed_gates[@]}" >&2
-exit 1
+if ((${#failed_gates[@]} > 0)); then
+  printf '\ncheck.sh: %d of %d gates FAILED:\n' "${#failed_gates[@]}" "$ran_gates" >&2
+  printf '  - %s\n' "${failed_gates[@]}" >&2
+  if ((${#blocked_gates[@]} > 0)); then
+    printf 'check.sh: %d additional gates BLOCKED:\n' "${#blocked_gates[@]}" >&2
+    printf '  - %s\n' "${blocked_gates[@]}" >&2
+  fi
+  exit 1
+fi
+
+printf '\ncheck.sh: %d of %d gates BLOCKED:\n' "${#blocked_gates[@]}" "$ran_gates" >&2
+printf '  - %s\n' "${blocked_gates[@]}" >&2
+exit 4

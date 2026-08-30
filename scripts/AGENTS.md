@@ -72,6 +72,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   and materialization.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
+- `test-check-node-width-budget.sh`: hermetic host/toolchain qualification,
+  supported comparison, unsupported-host, and malformed baseline coverage for
+  the compact-width timing gate.
 - `trip-observer-common.sh`: generated-output namespace selection, atomic
   sealed-artifact replacement, and cold-oracle progress heartbeats shared by
   the TeX82/e-TeX observers and their hermetic watchdog/ownership self-test.

@@ -1,5 +1,8 @@
 {
+  "schema_version": 1,
   "profile": "Generation-tagged NodeListId; Criterion release; aarch64-apple-darwin; Rust 1.93.0",
+  "host": "aarch64-apple-darwin",
+  "rustc_release": "1.93.0",
   "regression_tolerance_percent": 10.0,
   "benchmarks": {
     "same_font_64": 87.431,

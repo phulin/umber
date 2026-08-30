@@ -730,6 +730,12 @@ scripts/check-node-width-budget.sh
 ```
 
 The width script preserves the committed row names, means, and 10% tolerance.
+It validates the baseline schema and exact row set before running Criterion,
+then applies those timing limits only when the active Rust host triple and
+exact compiler release match the baseline metadata. Other environments report
+a machine-readable, non-gating `unsupported` result and exit `4`; they do not
+claim either pass or regression. `scripts/check.sh` preserves that status as
+`BLOCKED` rather than relabeling it as `PASS` or `FAIL`.
 The allocation binary preserves the alignment, line-breaking, deep-choice,
 deep-sublist, and flat-math ceilings. The incremental two-generation accepted
 and rejected edit diagnostic is separately runnable from its owner with
