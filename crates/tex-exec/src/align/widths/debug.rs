@@ -1,6 +1,7 @@
 use tex_state::CommandContext;
 #[cfg(debug_assertions)]
 use tex_state::math::MathField;
+#[cfg(debug_assertions)]
 use tex_state::node::Node;
 use tex_state::node_arena::PageListId;
 
