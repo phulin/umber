@@ -237,7 +237,7 @@ pub use source_fragments::{
 };
 pub use universe::{
     DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
-    PromotionReceipt, RuntimeCheckpoint, RuntimeCheckpointFontScanCounters,
+    PromotionReceipt, ResidentPromotionBatch, RuntimeCheckpoint, RuntimeCheckpointFontScanCounters,
     RuntimeCheckpointIdentityRoots, RuntimeCheckpointRetention, ShipoutTransaction,
     StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe, UniverseError,
     UniverseRetirement, with_universe, with_universe_in_epoch,

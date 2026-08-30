@@ -1405,51 +1405,198 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
     operation: &mut PreparedColdCommand<G>,
     command: &mut tex_command::CommandState<G>,
     stores: &mut Universe<G>,
-    additional_token_roots: &[tex_command::AttemptTokenListId],
-) -> Result<Vec<tex_state::TokenListId<G>>, ColdPreparationError> {
+    additional_token_roots: &mut [OperationTokenRoot<G>],
+) -> Result<(), ColdPreparationError> {
     operation.adopt_durable_token_sources();
-    let mut roots = Vec::new();
-    operation.attempt_token_roots(&mut roots);
-    roots.extend_from_slice(additional_token_roots);
-    let mut definitions = Vec::new();
-    operation.attempt_definition_roots(&mut definitions);
-    let receipt = command.promote_attempt_roots(
-        stores,
-        tex_command::AttemptPromotionRoots::new(&roots, &[], &definitions, &[]),
-    )?;
-    if receipt.token_lists.len() != roots.len() || receipt.definitions.len() != definitions.len() {
-        return Err(ColdPreparationError::ReceiptRemainder);
+    let mut destination = ColdOperationPromotion {
+        operation,
+        additional_token_roots,
+    };
+    command.promote_attempt_roots_into(stores, &mut destination)?;
+    Ok(())
+}
+
+/// Borrow-scoped writer over the exact resident fields that own a prepared
+/// cold operation. Additional roots belong to the caller's already-resident
+/// alignment preparation buffer; they use the same transition and never form
+/// a second promotion receipt.
+struct ColdOperationPromotion<'a, G> {
+    operation: &'a mut PreparedColdCommand<G>,
+    additional_token_roots: &'a mut [OperationTokenRoot<G>],
+}
+
+impl<G> ColdOperationPromotion<'_, G> {
+    fn visit_token_roots(&self, visit: &mut impl FnMut(&OperationTokenRoot<G>)) {
+        self.operation.visit_token_roots(visit);
+        for root in &*self.additional_token_roots {
+            visit(root);
+        }
     }
 
-    let operation_token_count = roots.len() - additional_token_roots.len();
-    let mut tokens = receipt.token_lists.into_iter();
-    let mut installed_tokens = 0_usize;
-    operation.visit_token_roots_mut(&mut |root| {
-        if !matches!(root, OperationTokenRoot::Attempt(_)) {
-            return;
+    fn visit_token_roots_mut(&mut self, visit: &mut impl FnMut(&mut OperationTokenRoot<G>)) {
+        self.operation.visit_token_roots_mut(visit);
+        for root in &mut *self.additional_token_roots {
+            visit(root);
         }
-        let token = tokens
-            .next()
-            .expect("validated promotion receipt covers every operation token root");
-        root.prepare(token)
-            .expect("validated operation token roots are installed once");
-        installed_tokens += 1;
-    });
-    debug_assert_eq!(installed_tokens, operation_token_count);
+    }
+}
 
-    let mut definitions = receipt.definitions.into_iter();
-    operation.visit_definition_roots_mut(&mut |root| {
-        let definition = definitions
-            .next()
-            .expect("validated promotion receipt covers every operation definition root");
-        root.prepare(definition)
-            .expect("validated operation definition roots are installed once");
-    });
-    debug_assert!(definitions.next().is_none());
+impl<G> tex_command::AttemptPromotionDestination<G> for ColdOperationPromotion<'_, G> {
+    fn token_root_count(&self) -> usize {
+        let mut count = 0;
+        self.visit_token_roots(&mut |root| count += usize::from(root.attempt_id().is_ok()));
+        count
+    }
 
-    let additional_tokens = tokens.collect::<Vec<_>>();
-    debug_assert_eq!(additional_tokens.len(), additional_token_roots.len());
-    Ok(additional_tokens)
+    fn token_root(&self, index: usize) -> tex_command::AttemptTokenListId {
+        let mut current = 0;
+        let mut selected = None;
+        self.visit_token_roots(&mut |root| {
+            let Ok(root) = root.attempt_id() else {
+                return;
+            };
+            if current == index {
+                selected = Some(root);
+            }
+            current += 1;
+        });
+        selected.expect("promotion token index is inside the resident root count")
+    }
+
+    fn next_token_root(&self) -> tex_command::AttemptTokenListId {
+        let mut selected = None;
+        self.visit_token_roots(&mut |root| {
+            if selected.is_none() {
+                selected = root.attempt_id().ok();
+            }
+        });
+        selected.expect("a preflighted token root remains to settle")
+    }
+
+    fn settle_token_root(
+        &mut self,
+        source: tex_command::AttemptTokenListId,
+        tokens: tex_state::TokenListId<G>,
+    ) {
+        let mut remaining = 0;
+        self.visit_token_roots(&mut |root| {
+            remaining += usize::from(matches!(
+                root.attempt_id(),
+                Ok(candidate) if candidate == source
+            ));
+        });
+        let mut tokens = Some(tokens);
+        self.visit_token_roots_mut(&mut |root| {
+            if !matches!(root.attempt_id(), Ok(candidate) if candidate == source) {
+                return;
+            }
+            remaining -= 1;
+            let tokens = if remaining == 0 {
+                tokens
+                    .take()
+                    .expect("last matching token root owns the final id")
+            } else {
+                tokens
+                    .as_ref()
+                    .expect("a later matching token root retains the final id")
+                    .clone()
+            };
+            root.prepare(tokens)
+                .expect("preflighted token root is settled exactly once");
+        });
+        debug_assert_eq!(remaining, 0);
+        debug_assert!(tokens.is_none());
+    }
+
+    fn glue_root_count(&self) -> usize {
+        0
+    }
+
+    fn glue_root(&self, _: usize) -> tex_command::AttemptGlueId {
+        unreachable!("cold operations have no attempt-local glue roots")
+    }
+
+    fn next_glue_root(&self) -> tex_command::AttemptGlueId {
+        unreachable!("cold operations have no attempt-local glue roots")
+    }
+
+    fn settle_glue_root(&mut self, _: tex_command::AttemptGlueId, _: tex_state::GlueId<G>) {
+        unreachable!("cold operations have no attempt-local glue roots")
+    }
+
+    fn definition_root_count(&self) -> usize {
+        match &*self.operation {
+            ColdOperation::InputStream {
+                request: RootedInputStreamRequest::Read { definition, .. },
+                ..
+            } => usize::from(definition.attempt_id().is_ok()),
+            _ => 0,
+        }
+    }
+
+    fn definition_root(&self, index: usize) -> tex_command::AttemptDefinitionId {
+        assert_eq!(index, 0, "cold operation owns at most one definition root");
+        match &*self.operation {
+            ColdOperation::InputStream {
+                request: RootedInputStreamRequest::Read { definition, .. },
+                ..
+            } => definition
+                .attempt_id()
+                .expect("promotion definition remains attempt-owned through preflight"),
+            _ => panic!("promotion definition index is inside the resident root count"),
+        }
+    }
+
+    fn next_definition_root(&self) -> tex_command::AttemptDefinitionId {
+        match &*self.operation {
+            ColdOperation::InputStream {
+                request: RootedInputStreamRequest::Read { definition, .. },
+                ..
+            } => definition
+                .attempt_id()
+                .expect("a preflighted definition root remains to settle"),
+            _ => panic!("a preflighted definition root remains to settle"),
+        }
+    }
+
+    fn settle_definition_root(
+        &mut self,
+        source: tex_command::AttemptDefinitionId,
+        definition: tex_state::DefinitionId<G>,
+    ) {
+        let mut definition = Some(definition);
+        self.operation.visit_definition_roots_mut(&mut |root| {
+            if matches!(root.attempt_id(), Ok(candidate) if candidate == source) {
+                root.prepare(
+                    definition
+                        .take()
+                        .expect("one resident definition field owns the promoted id"),
+                )
+                .expect("preflighted definition root is settled exactly once");
+            }
+        });
+        debug_assert!(definition.is_none());
+    }
+
+    fn provenance_root_count(&self) -> usize {
+        0
+    }
+
+    fn provenance_root(&self, _: usize) -> tex_command::AttemptProvenanceId {
+        unreachable!("cold operations have no attempt-local provenance roots")
+    }
+
+    fn next_provenance_root(&self) -> tex_command::AttemptProvenanceId {
+        unreachable!("cold operations have no attempt-local provenance roots")
+    }
+
+    fn settle_provenance_root(
+        &mut self,
+        _: tex_command::AttemptProvenanceId,
+        _: tex_state::ProvenanceId<G>,
+    ) {
+        unreachable!("cold operations have no attempt-local provenance roots")
+    }
 }
 
 impl<G> ColdOperation<G> {
@@ -1476,21 +1623,6 @@ impl<G> ColdOperation<G> {
             }
             _ => {}
         }
-    }
-
-    /// Collects every attempt-local token root in deterministic field order.
-    /// The outer preparation barrier passes this exact sequence to
-    /// `CommandState::promote_attempt_roots`; the resident root fields consume
-    /// the receipt in the same order.
-    pub(in crate::main_control) fn attempt_token_roots(
-        &self,
-        roots: &mut Vec<tex_command::AttemptTokenListId>,
-    ) {
-        self.visit_token_roots(&mut |root| {
-            if let Ok(id) = root.attempt_id() {
-                roots.push(id);
-            }
-        });
     }
 
     fn visit_token_roots(&self, visit: &mut impl FnMut(&OperationTokenRoot<G>)) {
@@ -1582,25 +1714,6 @@ impl<G> ColdOperation<G> {
                 visit_immediate_extension_roots_mut(request, visit);
             }
             _ => {}
-        }
-    }
-
-    /// Collects attempt-local macro definitions which must be promoted in
-    /// the same validated batch as their token-list children.
-    pub(in crate::main_control) fn attempt_definition_roots(
-        &self,
-        roots: &mut Vec<tex_command::AttemptDefinitionId>,
-    ) {
-        if let Self::InputStream {
-            request: RootedInputStreamRequest::Read { definition, .. },
-            ..
-        } = self
-        {
-            roots.push(
-                definition
-                    .attempt_id()
-                    .expect("cold operation definitions are promoted exactly once"),
-            );
         }
     }
 

@@ -81,8 +81,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   mutation values and macro-body walks are demand-selected cold evidence.
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
-  values and the small attempt/prepared root fields that change domain in
-  place; `scan.rs` owns uncommon operand collection and writes completed leaves
+  values, the small attempt/prepared root fields that change domain in place,
+  and the borrow-scoped promotion writer which preflights the complete root set
+  before writing durable owners directly into those fields without an
+  aggregate receipt; `scan.rs` owns uncommon operand collection and writes completed leaves
   directly into the borrowed caller slot while returning only compact control
   outcomes; `apply.rs` mutably borrows the resident prepared operation and
   consumes only its semantic leaves;

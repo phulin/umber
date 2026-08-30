@@ -434,26 +434,92 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         )
     }
 
-    /// Publishes a prevalidated batch from repeatable borrowed source walks.
-    ///
-    /// The caller keeps each source in its original owner through reservation.
-    /// Once all capacity is reserved, publication streams directly into the
-    /// destination publishers and cannot fail. No batch-local payload owner is
-    /// constructed merely to cross this boundary.
-    pub(crate) fn promote_value_streams<TokenLists, Words, Glue, Provenance>(
+    /// Publishes a completely preflighted batch directly into its resident
+    /// destination fields.
+    pub(crate) fn promote_resident_batch<B>(
         &mut self,
-        definitions: &mut [crate::DefinitionBuilder],
-        token_lists: TokenLists,
-        glue_values: Glue,
-        provenance: Provenance,
-    ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError>
+        batch: &mut B,
+    ) -> Result<(), crate::universe::PromotionError>
     where
-        TokenLists: Clone + Iterator<Item = Words>,
-        Words: ExactSizeIterator<Item = TokenWord>,
-        Glue: Clone + Iterator<Item = GlueSpec>,
-        Provenance: Clone + Iterator<Item = OriginRecord>,
+        B: crate::universe::ResidentPromotionBatch<G>,
     {
-        self.promote_value_streams_from(definitions, token_lists, glue_values, provenance)
+        let definition_count = batch.definition_count();
+        let definition_source_count = batch.definition_source_count();
+        let token_list_count = batch.token_list_count();
+        let token_list_source_count = batch.token_list_source_count();
+        let glue_count = batch.glue_count();
+        let glue_source_count = batch.glue_source_count();
+        let provenance_count = batch.provenance_count();
+        let provenance_source_count = batch.provenance_source_count();
+
+        let definitions_arena = self.generation.definitions();
+        for index in 0..definition_source_count {
+            definitions_arena.validate_builder(batch.definition(index))?;
+        }
+        let definition_words = (0..definition_source_count)
+            .try_fold(0usize, |total, index| {
+                total.checked_add(batch.definition(index).words().len())
+            })
+            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
+        let token_words = (0..token_list_source_count)
+            .try_fold(0usize, |total, index| {
+                total.checked_add(batch.token_list_len(index))
+            })
+            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
+
+        // Reserve every destination before the first resident field changes.
+        // Publication and field settlement below are then infallible.
+        self.generation
+            .definitions_mut()
+            .reserve_batch(definition_count, definition_words)?;
+        self.generation
+            .token_lists_mut()
+            .reserve_batch(token_list_count, token_words)?;
+        for index in 0..glue_source_count {
+            let _ = batch.glue(index);
+        }
+        for index in 0..provenance_source_count {
+            let _ = batch.provenance(index);
+        }
+        self.generation.glue_mut().reserve_batch(glue_count)?;
+        self.generation
+            .provenance_mut()
+            .reserve_batch(provenance_count)?;
+
+        for _ in 0..definition_count {
+            let definition = self
+                .generation
+                .definitions_mut()
+                .publish_prevalidated(batch.next_definition_mut());
+            batch.settle_next_definition(definition);
+        }
+        for _ in 0..token_list_count {
+            let word_count = batch.next_token_list_len();
+            let words = (0..word_count).map(|index| batch.next_token_list_word(index));
+            let tokens = self
+                .generation
+                .token_lists_mut()
+                .allocate_from_iter(words)
+                .expect("the complete resident token-list batch was reserved");
+            batch.settle_next_token_list(tokens);
+        }
+        for _ in 0..glue_count {
+            let glue = self
+                .generation
+                .glue_mut()
+                .allocate(batch.next_glue())
+                .expect("the complete resident glue batch was reserved");
+            batch.settle_next_glue(glue);
+        }
+        for _ in 0..provenance_count {
+            let provenance = self
+                .generation
+                .provenance_mut()
+                .allocate(batch.next_provenance())
+                .expect("the complete resident provenance batch was reserved");
+            batch.settle_next_provenance(provenance);
+        }
+        Ok(())
     }
 
     fn promote_value_streams_from<Definition, TokenLists, Words, Glue, Provenance>(

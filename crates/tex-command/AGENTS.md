@@ -411,8 +411,10 @@ collector (see `src/conditionals.rs`).
   `DefinitionId`, so successful publication retains it without allocating or
   copying words. Generic cold-operation promotion borrows that exact builder in
   its attempt row, validates its original destination identity policy before
-  publishing any batch row, then releases its scratch ownership only after
-  success; failure needs no owner restoration. It never copies the parameter/
+  publishing any batch row, then writes the durable owner directly into the
+  checked resident operation field and releases scratch ownership only after
+  success; failure needs no owner restoration. It constructs neither a
+  builder batch nor an aggregate owner receipt, and never copies the parameter/
   replacement slices or reconstructs a second builder. Read setup and
   finalization share one cleanup transaction which
   restores `align_state` and scanner status and truncates the exact child scope

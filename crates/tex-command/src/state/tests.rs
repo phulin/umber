@@ -1,12 +1,209 @@
-use tex_state::DefinitionIdentityPolicy;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{DefinitionId, DefinitionIdentityPolicy, GlueId, ProvenanceId, TokenListId};
 
 use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
 use crate::processor::AlignmentIdentity;
-use crate::{AttemptError, AttemptPromotionRoots};
+use crate::{
+    AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
+    AttemptProvenanceId, AttemptTokenListId,
+};
+
+enum ResidentRoot<Attempt, Durable> {
+    Attempt(Attempt),
+    Durable(Durable),
+}
+
+struct ResidentPromotion<G> {
+    tokens: Vec<ResidentRoot<AttemptTokenListId, TokenListId<G>>>,
+    glue: Vec<ResidentRoot<AttemptGlueId, GlueId<G>>>,
+    definitions: Vec<ResidentRoot<AttemptDefinitionId, DefinitionId<G>>>,
+    provenance: Vec<ResidentRoot<AttemptProvenanceId, ProvenanceId<G>>>,
+}
+
+impl<G> ResidentPromotion<G> {
+    fn new(
+        tokens: &[AttemptTokenListId],
+        glue: &[AttemptGlueId],
+        definitions: &[AttemptDefinitionId],
+        provenance: &[AttemptProvenanceId],
+    ) -> Self {
+        Self {
+            tokens: tokens.iter().copied().map(ResidentRoot::Attempt).collect(),
+            glue: glue.iter().copied().map(ResidentRoot::Attempt).collect(),
+            definitions: definitions
+                .iter()
+                .copied()
+                .map(ResidentRoot::Attempt)
+                .collect(),
+            provenance: provenance
+                .iter()
+                .copied()
+                .map(ResidentRoot::Attempt)
+                .collect(),
+        }
+    }
+
+    fn token(&self, index: usize) -> &TokenListId<G> {
+        match &self.tokens[index] {
+            ResidentRoot::Durable(tokens) => tokens,
+            ResidentRoot::Attempt(_) => panic!("token root was not settled"),
+        }
+    }
+
+    fn glue(&self, index: usize) -> GlueId<G> {
+        match &self.glue[index] {
+            ResidentRoot::Durable(glue) => *glue,
+            ResidentRoot::Attempt(_) => panic!("glue root was not settled"),
+        }
+    }
+
+    fn definition(&self, index: usize) -> &DefinitionId<G> {
+        match &self.definitions[index] {
+            ResidentRoot::Durable(definition) => definition,
+            ResidentRoot::Attempt(_) => panic!("definition root was not settled"),
+        }
+    }
+
+    fn provenance(&self, index: usize) -> ProvenanceId<G> {
+        match &self.provenance[index] {
+            ResidentRoot::Durable(provenance) => *provenance,
+            ResidentRoot::Attempt(_) => panic!("provenance root was not settled"),
+        }
+    }
+}
+
+impl<G> AttemptPromotionDestination<G> for ResidentPromotion<G> {
+    fn token_root_count(&self) -> usize {
+        self.tokens.len()
+    }
+
+    fn token_root(&self, index: usize) -> AttemptTokenListId {
+        match self.tokens[index] {
+            ResidentRoot::Attempt(root) => root,
+            ResidentRoot::Durable(_) => panic!("token root settled before preflight ended"),
+        }
+    }
+
+    fn next_token_root(&self) -> AttemptTokenListId {
+        self.tokens
+            .iter()
+            .find_map(|root| match root {
+                ResidentRoot::Attempt(root) => Some(*root),
+                ResidentRoot::Durable(_) => None,
+            })
+            .expect("token root remains")
+    }
+
+    fn settle_token_root(&mut self, source: AttemptTokenListId, tokens: TokenListId<G>) {
+        let mut matched = 0;
+        for root in &mut self.tokens {
+            if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
+                *root = ResidentRoot::Durable(tokens.clone());
+                matched += 1;
+            }
+        }
+        assert_ne!(matched, 0);
+    }
+
+    fn glue_root_count(&self) -> usize {
+        self.glue.len()
+    }
+
+    fn glue_root(&self, index: usize) -> AttemptGlueId {
+        match self.glue[index] {
+            ResidentRoot::Attempt(root) => root,
+            ResidentRoot::Durable(_) => panic!("glue root settled before preflight ended"),
+        }
+    }
+
+    fn next_glue_root(&self) -> AttemptGlueId {
+        self.glue
+            .iter()
+            .find_map(|root| match root {
+                ResidentRoot::Attempt(root) => Some(*root),
+                ResidentRoot::Durable(_) => None,
+            })
+            .expect("glue root remains")
+    }
+
+    fn settle_glue_root(&mut self, source: AttemptGlueId, glue: GlueId<G>) {
+        let mut matched = 0;
+        for root in &mut self.glue {
+            if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
+                *root = ResidentRoot::Durable(glue);
+                matched += 1;
+            }
+        }
+        assert_ne!(matched, 0);
+    }
+
+    fn definition_root_count(&self) -> usize {
+        self.definitions.len()
+    }
+
+    fn definition_root(&self, index: usize) -> AttemptDefinitionId {
+        match self.definitions[index] {
+            ResidentRoot::Attempt(root) => root,
+            ResidentRoot::Durable(_) => panic!("definition root settled before preflight ended"),
+        }
+    }
+
+    fn next_definition_root(&self) -> AttemptDefinitionId {
+        self.definitions
+            .iter()
+            .find_map(|root| match root {
+                ResidentRoot::Attempt(root) => Some(*root),
+                ResidentRoot::Durable(_) => None,
+            })
+            .expect("definition root remains")
+    }
+
+    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionId<G>) {
+        let mut matched = 0;
+        for root in &mut self.definitions {
+            if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
+                *root = ResidentRoot::Durable(definition.clone());
+                matched += 1;
+            }
+        }
+        assert_ne!(matched, 0);
+    }
+
+    fn provenance_root_count(&self) -> usize {
+        self.provenance.len()
+    }
+
+    fn provenance_root(&self, index: usize) -> AttemptProvenanceId {
+        match self.provenance[index] {
+            ResidentRoot::Attempt(root) => root,
+            ResidentRoot::Durable(_) => panic!("provenance root settled before preflight ended"),
+        }
+    }
+
+    fn next_provenance_root(&self) -> AttemptProvenanceId {
+        self.provenance
+            .iter()
+            .find_map(|root| match root {
+                ResidentRoot::Attempt(root) => Some(*root),
+                ResidentRoot::Durable(_) => None,
+            })
+            .expect("provenance root remains")
+    }
+
+    fn settle_provenance_root(&mut self, source: AttemptProvenanceId, provenance: ProvenanceId<G>) {
+        let mut matched = 0;
+        for root in &mut self.provenance {
+            if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
+                *root = ResidentRoot::Durable(provenance);
+                matched += 1;
+            }
+        }
+        assert_ne!(matched, 0);
+    }
+}
 
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
@@ -283,26 +480,23 @@ fn attempt_promotion_preserves_multiple_root_order_and_duplicates() {
             .allocate_token_list([word('b')])
             .expect("second list");
 
-        let receipt = state
-            .promote_attempt_roots(
-                universe,
-                AttemptPromotionRoots::new(&[second, first, second], &[], &[], &[]),
-            )
+        let mut destination = ResidentPromotion::new(&[second, first, second], &[], &[], &[]);
+        state
+            .promote_attempt_roots_into(universe, &mut destination)
             .expect("promotion");
 
-        assert_eq!(receipt.token_lists.len(), 3);
-        assert_eq!(receipt.token_lists[0], receipt.token_lists[2]);
+        assert_eq!(destination.token(0), destination.token(2));
         let admitted = universe.command_context().expect("admission");
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[0].clone())
+                .token_list(destination.token(0).clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('b').token_word()]
         );
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[1].clone())
+                .token_list(destination.token(1).clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('a').token_word()]
@@ -331,35 +525,29 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
             .allocate_provenance(OriginRecord::UnknownBootstrap)
             .expect("provenance");
 
-        let receipt = state
-            .promote_attempt_roots(
-                universe,
-                AttemptPromotionRoots::new(
-                    &[replacement],
-                    &[glue_root],
-                    &[definition],
-                    &[provenance],
-                ),
-            )
+        let mut destination =
+            ResidentPromotion::new(&[replacement], &[glue_root], &[definition], &[provenance]);
+        state
+            .promote_attempt_roots_into(universe, &mut destination)
             .expect("mixed promotion");
 
         let admitted = universe.command_context().expect("admission");
         assert_eq!(
             admitted
-                .token_list(receipt.token_lists[0].clone())
+                .token_list(destination.token(0).clone())
                 .iter()
                 .collect::<Vec<_>>(),
             &[word('x').token_word()]
         );
-        assert_eq!(admitted.glue(receipt.glue[0]), glue(42));
+        assert_eq!(admitted.glue(destination.glue(0)), glue(42));
         assert_eq!(
             admitted
-                .definition(receipt.definitions[0].clone())
+                .definition(destination.definition(0).clone())
                 .replacement_text(),
             &[word('x').token_word()]
         );
         assert_eq!(
-            admitted.provenance(receipt.provenance[0]),
+            admitted.provenance(destination.provenance(0)),
             OriginRecord::UnknownBootstrap
         );
     });
@@ -424,6 +612,78 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
     });
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_warmed_resident_promotions_allocate_zero_and_keep_owners_stationary() {
+    fn evidence(
+        repetitions: usize,
+    ) -> (
+        tex_state::measurement::HotCoreAllocationMeasurement,
+        usize,
+        u64,
+    ) {
+        crate::test_harness::with_universe(|universe| {
+            let mut state = CommandState::default();
+
+            let warm: Vec<_> = (0..repetitions)
+                .map(|_| attempt_definition(&mut state, &[], &[word('w')]))
+                .collect();
+            let mut warm_destination = ResidentPromotion::new(&[], &[], &warm, &[]);
+            state
+                .promote_attempt_roots_into(universe, &mut warm_destination)
+                .expect("warm resident promotion");
+            drop(warm_destination);
+
+            let definitions: Vec<_> = (0..repetitions)
+                .map(|_| attempt_definition(&mut state, &[], &[word('x')]))
+                .collect();
+            let mut destination = ResidentPromotion::new(&[], &[], &definitions, &[]);
+            let state_address = std::ptr::from_ref(&state);
+            let attempt_address = std::ptr::from_ref(state.attempt.arena());
+            let roots_address = destination.definitions.as_ptr();
+            let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
+            let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                state
+                    .promote_attempt_roots_into(universe, &mut destination)
+                    .expect("measured resident promotion");
+            }
+            let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+            let address_changes = usize::from(std::ptr::from_ref(&state) != state_address)
+                + usize::from(std::ptr::from_ref(state.attempt.arena()) != attempt_address)
+                + usize::from(destination.definitions.as_ptr() != roots_address);
+            let admitted = universe.command_context().expect("definition context");
+            let mut checksum = 0_u64;
+            for index in 0..repetitions {
+                let definition = admitted.definition(destination.definition(index).clone());
+                assert_eq!(definition.replacement_text(), [word('x').token_word()]);
+                checksum ^= (definition.replacement_text().as_ptr() as usize as u64)
+                    .rotate_left((index & 63) as u32);
+            }
+            (
+                tex_state::measurement::HotCoreAllocationMeasurement {
+                    calls: after.calls - before.calls,
+                    requested_bytes: after.requested_bytes - before.requested_bytes,
+                },
+                address_changes,
+                std::hint::black_box(checksum),
+            )
+        })
+    }
+
+    let (one_allocations, one_address_changes, one_checksum) = evidence(1);
+    let (many_allocations, many_address_changes, many_checksum) = evidence(4_096);
+    assert_eq!(one_allocations.calls, 0);
+    assert_eq!(one_allocations.requested_bytes, 0);
+    assert_eq!(many_allocations.calls, 0);
+    assert_eq!(many_allocations.requested_bytes, 0);
+    assert_eq!(one_address_changes, 0);
+    assert_eq!(many_address_changes, 0);
+    assert_ne!(one_checksum, many_checksum);
+}
+
 #[test]
 fn foreign_attempt_root_rejection_is_mutation_free() {
     crate::test_harness::with_universe(|universe| {
@@ -435,11 +695,9 @@ fn foreign_attempt_root_rejection_is_mutation_free() {
             .allocate_token_list([word('x')])
             .expect("foreign root");
 
+        let mut destination = ResidentPromotion::new(&[foreign_root], &[], &[], &[]);
         assert!(matches!(
-            state.promote_attempt_roots(
-                universe,
-                AttemptPromotionRoots::new(&[foreign_root], &[], &[], &[]),
-            ),
+            state.promote_attempt_roots_into(universe, &mut destination),
             Err(AttemptError::ForeignAttempt)
         ));
         let retirement = universe.retire().expect("retirement");
@@ -469,11 +727,9 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
             .rollback_attempt_operation(mark)
             .expect("operation rolls back");
 
+        let mut destination = ResidentPromotion::new(&[valid, stale], &[], &[], &[]);
         assert!(matches!(
-            state.promote_attempt_roots(
-                universe,
-                AttemptPromotionRoots::new(&[valid, stale], &[], &[], &[]),
-            ),
+            state.promote_attempt_roots_into(universe, &mut destination),
             Err(AttemptError::InvalidCoordinate)
         ));
         let retirement = universe.retire().expect("retirement");

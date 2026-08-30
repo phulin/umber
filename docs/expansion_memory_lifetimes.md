@@ -297,24 +297,26 @@ The scanner first fills one attempt-local `DefinitionBuilder` in monotonic
 parameter and replacement phases. Each append validates and updates the
 parameter program and, when requested by the destination generation, the
 framed semantic identity. `\def`, `\edef`, `\read`, and `\readline` share this
-path. Cold-operation promotion first stages each unique builder, then
-destination preflight borrows it to validate the preserved identity policy and
-reserve the complete mixed batch. Rejection restores each builder to its exact
-attempt row with its allocation untouched. After that preflight, publication
-moves each builder's `Rc<DefinitionData>` allocation exactly once into its
-first durable `DefinitionId`; it assigns the serial and accounting through the
-unique mutable owner before any semantic alias exists, then returns the vacant
-builder slot to the attempt for reuse. Token-list roots follow
-the same preflight boundary but stream semantic words from their existing
-attempt range or scanner branch instead of first collecting a batch-local
-`Vec<TokenWord>`. Neither path materializes parameter/replacement vectors,
-constructs a second representation, or moves payload-bearing inline batches
-merely to cross the state boundary. Ordinary allocation, memo import, and
-format restore construct their own checked builders because their inputs begin
-as cold detached data. Definition publication moves the builder-filled
-allocation without traversing or copying its words. A recycled builder
-allocates only when the next definition genuinely begins; the older definition
-keeps its own durable lifetime.
+path. Cold-operation promotion lends one checked writer over the caller's
+resident root fields. The command attempt validates every exposed source in
+place; destination preflight then borrows those same rows to validate the
+preserved identity policy and reserve the complete mixed batch. Rejection has
+nothing to restore because no builder leaves its attempt row. After that
+preflight, publication moves each builder's `Rc<DefinitionData>` allocation
+exactly once into its first durable `DefinitionId`; it assigns the serial and
+accounting through the unique mutable owner before any semantic alias exists,
+writes that owner directly into every matching resident field, and returns the
+now-vacant builder slot to the attempt for reuse. Token-list roots follow the
+same preflight boundary but stream semantic words from their existing attempt
+range or scanner branch directly into the publisher before the resident field
+is settled. Neither path materializes parameter/replacement vectors,
+constructs a promotion-builder batch or second representation, or returns an
+aggregate owner receipt. Ordinary allocation, memo import, and format restore
+construct their own checked builders because their inputs begin as cold
+detached data. Definition publication moves the builder-filled allocation
+without traversing or copying its words. A recycled builder allocates only when
+the next definition genuinely begins; the older definition keeps its own
+durable lifetime.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
@@ -558,8 +560,10 @@ compact readiness coordinate. A successful ordinary scan installs one compact
 hot payload into that frame or one uncommon cold leaf into its adjacent
 caller-owned typed slot and returns only a compact tag. The frame's singular
 payload field owns the hot value or a cold-occupancy tag, so the 264-byte cold
-leaf does not inflate every resident hot record. Preparation changes the cold
-leaf's small attempt-root fields to prepared-root fields in place; application
+leaf does not inflate every resident hot record. Preparation lends those exact
+resident fields to the checked promotion writer, which changes the cold leaf's
+small attempt-root fields to prepared-root fields in place without a builder
+batch or duplicate owner receipt; application
 admits one semantic `CommandContext`, consumes semantic leaves through a mutable
 borrow while that context stays resident, then clears and immediately reuses
 both slots. Named token-list push receipts produced during semantic apply drain

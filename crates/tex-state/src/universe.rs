@@ -697,6 +697,48 @@ pub struct PromotionReceipt<G> {
     pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
 }
 
+/// One checked resident destination for an atomic mixed-value promotion.
+///
+/// Stable indexed reads expose every resident source during preflight; the
+/// corresponding `*_count` methods report how many unique values will be
+/// published. Once every destination arena has reserved its final extent, the
+/// publisher repeatedly consumes the first remaining source and calls the
+/// matching `settle_next_*` method. Settlement must write that durable owner
+/// directly into every resident field which named the source, removing those
+/// fields from the corresponding indexed view. It is infallible because the
+/// destination has already exposed and validated its complete shape.
+///
+/// This protocol deliberately returns no aggregate receipt. A caller which
+/// needs a promoted owner keeps its final field in the resident destination
+/// and consumes that field after the transition.
+pub trait ResidentPromotionBatch<G> {
+    fn definition_source_count(&self) -> usize;
+    fn definition_count(&self) -> usize;
+    fn definition(&self, index: usize) -> &crate::DefinitionBuilder;
+    fn next_definition_mut(&mut self) -> &mut crate::DefinitionBuilder;
+    fn settle_next_definition(&mut self, definition: DefinitionId<G>);
+
+    fn token_list_source_count(&self) -> usize;
+    fn token_list_count(&self) -> usize;
+    fn token_list_len(&self, index: usize) -> usize;
+    fn token_list_word(&self, index: usize, word: usize) -> TokenWord;
+    fn next_token_list_len(&self) -> usize;
+    fn next_token_list_word(&self, word: usize) -> TokenWord;
+    fn settle_next_token_list(&mut self, tokens: TokenListId<G>);
+
+    fn glue_source_count(&self) -> usize;
+    fn glue_count(&self) -> usize;
+    fn glue(&self, index: usize) -> GlueSpec;
+    fn next_glue(&self) -> GlueSpec;
+    fn settle_next_glue(&mut self, glue: GlueId<G>);
+
+    fn provenance_source_count(&self) -> usize;
+    fn provenance_count(&self) -> usize;
+    fn provenance(&self, index: usize) -> OriginRecord;
+    fn next_provenance(&self) -> OriginRecord;
+    fn settle_next_provenance(&mut self, provenance: ProvenanceId<G>);
+}
+
 /// Failure to promote an exact page-node closure into durable generation
 /// storage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2111,24 +2153,16 @@ impl<G> Universe<G> {
             .promote_values(definitions, token_lists, glue_values, provenance)
     }
 
-    /// Promotes borrowed sources without first moving them into batch-local
-    /// payload carriers.
+    /// Preflights one resident mixed-value destination, then writes every
+    /// published owner directly into that destination.
     ///
-    /// Each iterator must be repeatable because complete validation and
-    /// reservation precede publication. After reservation succeeds, the word
-    /// streams are consumed directly by the final token-list publisher.
-    pub fn promote_value_streams<TokenLists, Words, Glue, Provenance>(
-        &mut self,
-        definitions: &mut [crate::DefinitionBuilder],
-        token_lists: TokenLists,
-        glue_values: Glue,
-        provenance: Provenance,
-    ) -> Result<PromotionReceipt<G>, PromotionError>
+    /// No payload or owner aggregate crosses this boundary. Complete source
+    /// validation and capacity reservation precede the first settlement, so
+    /// rejection leaves both the source batch and its resident destination
+    /// unchanged.
+    pub fn promote_resident_batch<B>(&mut self, batch: &mut B) -> Result<(), PromotionError>
     where
-        TokenLists: Clone + Iterator<Item = Words>,
-        Words: ExactSizeIterator<Item = TokenWord>,
-        Glue: Clone + Iterator<Item = GlueSpec>,
-        Provenance: Clone + Iterator<Item = OriginRecord>,
+        B: ResidentPromotionBatch<G>,
     {
         self.core
             .as_mut()
@@ -2138,7 +2172,7 @@ impl<G> Universe<G> {
                 StateError::GenerationInUse => PromotionError::GenerationInUse,
                 _ => PromotionError::AllocationFailed,
             })?
-            .promote_value_streams(definitions, token_lists, glue_values, provenance)
+            .promote_resident_batch(batch)
     }
 
     pub(crate) fn promote_format_values(

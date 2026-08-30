@@ -6,7 +6,6 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
-use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tex_state::glue::GlueSpec;
@@ -233,50 +232,35 @@ impl AttemptNameId {
     }
 }
 
-/// Attempt-local roots selected for one atomic durable promotion.
+/// Resident fields whose attempt-local roots cross one atomic promotion.
 ///
-/// The request is branded by the destination generation even though its
-/// coordinates belong to the current command attempt. This prevents a batch
-/// assembled for one [`Universe`] from being reused with another generation.
-/// Every slice is validated before any durable row is reserved or published.
-#[derive(Clone, Copy, Debug)]
-pub struct AttemptPromotionRoots<'a, G> {
-    pub(crate) token_lists: &'a [AttemptTokenListId],
-    pub(crate) glue: &'a [AttemptGlueId],
-    pub(crate) definitions: &'a [AttemptDefinitionId],
-    pub(crate) provenance: &'a [AttemptProvenanceId],
-    _generation: PhantomData<fn(&G) -> &G>,
-}
+/// The destination remains at one caller-owned address for the complete
+/// transition. Indexed access exposes its current attempt roots in stable
+/// field order during preflight. Each `settle_*` call replaces every field
+/// which names that source with the supplied durable owner and must not fail:
+/// source validation and destination reservation have already completed.
+/// Repeated roots therefore create only legitimate semantic aliases, never a
+/// relocation table or duplicate aggregate receipt.
+pub trait AttemptPromotionDestination<G> {
+    fn token_root_count(&self) -> usize;
+    fn token_root(&self, index: usize) -> AttemptTokenListId;
+    fn next_token_root(&self) -> AttemptTokenListId;
+    fn settle_token_root(&mut self, source: AttemptTokenListId, tokens: TokenListId<G>);
 
-impl<'a, G> AttemptPromotionRoots<'a, G> {
-    /// Declares every root that may escape the current command attempt.
-    #[must_use]
-    pub const fn new(
-        token_lists: &'a [AttemptTokenListId],
-        glue: &'a [AttemptGlueId],
-        definitions: &'a [AttemptDefinitionId],
-        provenance: &'a [AttemptProvenanceId],
-    ) -> Self {
-        Self {
-            token_lists,
-            glue,
-            definitions,
-            provenance,
-            _generation: PhantomData,
-        }
-    }
-}
+    fn glue_root_count(&self) -> usize;
+    fn glue_root(&self, index: usize) -> AttemptGlueId;
+    fn next_glue_root(&self) -> AttemptGlueId;
+    fn settle_glue_root(&mut self, source: AttemptGlueId, glue: GlueId<G>);
 
-/// Durable coordinates produced by one atomic attempt-root promotion.
-///
-/// Each sequence follows the exact order of its corresponding request slice,
-/// including repeated roots.
-#[derive(Debug)]
-pub struct AttemptPromotionReceipt<G> {
-    pub token_lists: SmallVec<[TokenListId<G>; 4]>,
-    pub glue: SmallVec<[GlueId<G>; 4]>,
-    pub definitions: SmallVec<[DefinitionId<G>; 4]>,
-    pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
+    fn definition_root_count(&self) -> usize;
+    fn definition_root(&self, index: usize) -> AttemptDefinitionId;
+    fn next_definition_root(&self) -> AttemptDefinitionId;
+    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionId<G>);
+
+    fn provenance_root_count(&self) -> usize;
+    fn provenance_root(&self, index: usize) -> AttemptProvenanceId;
+    fn next_provenance_root(&self) -> AttemptProvenanceId;
+    fn settle_provenance_root(&mut self, source: AttemptProvenanceId, provenance: ProvenanceId<G>);
 }
 
 /// Provenance beside one attempt token: either an already-admitted compact
@@ -1347,145 +1331,55 @@ impl<G> AttemptArena<G> {
         std::str::from_utf8(bytes).map_err(|_| AttemptError::InvalidCoordinate)
     }
 
-    /// Publishes declared roots directly from their attempt-owned storage.
+    /// Publishes every attempt root directly into one resident destination.
     ///
-    /// Complete source validation precedes moving the declared definition
-    /// builders into one temporary owner batch. Destination preflight leaves
-    /// them unchanged on failure; successful publication transfers each
-    /// allocation exactly once and recycles the vacant builders. Duplicate
-    /// declarations share one published owner without an id relocation table
-    /// or a second payload representation.
-    pub(crate) fn promote(
+    /// Complete source and destination traversal precedes reservation. On
+    /// success the durable publishers settle each final field before
+    /// advancing to the next source; no builder batch, relocation table, or
+    /// aggregate owner receipt exists. Definition builders remain in their
+    /// authoritative attempt rows through preflight and become vacant only at
+    /// their exact successful publication.
+    pub(crate) fn promote_into<D>(
         &mut self,
         universe: &mut Universe<G>,
-        roots: AttemptEscapeRoots<'_>,
-    ) -> Result<AttemptPromotion<G>, AttemptError> {
-        for &id in roots.token_lists {
+        destination: &mut D,
+    ) -> Result<(), AttemptError>
+    where
+        D: AttemptPromotionDestination<G>,
+    {
+        for index in 0..destination.token_root_count() {
+            let id = destination.token_root(index);
             self.validate_key(id.key)?;
             self.token_words(id)?;
         }
-        for &id in roots.glue {
+        for index in 0..destination.glue_root_count() {
+            let id = destination.glue_root(index);
             self.validate_key(id.key)?;
             self.glue(id)?;
         }
-        for &id in roots.definitions {
+        for index in 0..destination.definition_root_count() {
+            let id = destination.definition_root(index);
             self.validate_key(id.key)?;
             self.definition_builder(id)?;
         }
-        for &id in roots.provenance {
+        for index in 0..destination.provenance_root_count() {
+            let id = destination.provenance_root(index);
             self.validate_key(id.key)?;
             self.provenance(id)?;
         }
 
-        let definition_count = unique_count(roots.definitions);
+        let definition_count = unique_count_by(destination.definition_root_count(), |index| {
+            destination.definition_root(index)
+        });
         self.recycled_definition_builders
             .try_reserve(definition_count)
             .map_err(|_| AttemptError::AllocationFailed)?;
-        let mut definitions = SmallVec::<[DefinitionBuilder; 4]>::new();
-        definitions
-            .try_reserve_exact(definition_count)
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        for (index, &id) in roots.definitions.iter().enumerate() {
-            if !is_first_occurrence(roots.definitions, index) {
-                continue;
-            }
-            definitions.push(
-                self.definitions
-                    .get_mut(id.index())
-                    .filter(|row| row.serial == id.serial)
-                    .and_then(|row| row.value.builder.take())
-                    .expect("the complete definition source set was validated"),
-            );
-        }
-        let token_lists = roots
-            .token_lists
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| is_first_occurrence(roots.token_lists, *index))
-            .map(|(_, id)| {
-                self.token_words(*id)
-                    .expect("the complete token source set was validated")
-                    .iter()
-                    .map(|word| word.token_word())
-            });
-        let glue_values = roots
-            .glue
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| is_first_occurrence(roots.glue, *index))
-            .map(|(_, id)| {
-                self.glue(*id)
-                    .expect("the complete glue source set was validated")
-            });
-        let provenance = roots
-            .provenance
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| is_first_occurrence(roots.provenance, *index))
-            .map(|(_, id)| {
-                self.provenance(*id)
-                    .expect("the complete provenance source set was validated")
-            });
-        let receipt = match universe.promote_value_streams(
-            &mut definitions,
-            token_lists,
-            glue_values,
-            provenance,
-        ) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                let mut definitions = definitions.into_iter();
-                for (index, &id) in roots.definitions.iter().enumerate() {
-                    if !is_first_occurrence(roots.definitions, index) {
-                        continue;
-                    }
-                    self.definitions
-                        .get_mut(id.index())
-                        .filter(|row| row.serial == id.serial)
-                        .expect("validated attempt definition row remains live")
-                        .value
-                        .builder = definitions.next();
-                }
-                return Err(AttemptError::from(error));
-            }
+        let mut batch = AttemptResidentPromotion {
+            arena: self,
+            destination,
         };
-
-        self.recycled_definition_builders.extend(definitions);
-
-        Ok(AttemptPromotion {
-            token_lists: roots
-                .token_lists
-                .iter()
-                .map(|id| {
-                    let index = unique_index(roots.token_lists, id);
-                    receipt.token_lists[index].clone()
-                })
-                .collect(),
-            glue: roots
-                .glue
-                .iter()
-                .map(|id| {
-                    let index = unique_index(roots.glue, id);
-                    receipt.glue[index]
-                })
-                .collect(),
-            definitions: roots
-                .definitions
-                .iter()
-                .map(|id| {
-                    let index = unique_index(roots.definitions, id);
-                    receipt.definitions[index].clone()
-                })
-                .collect(),
-            provenance: roots
-                .provenance
-                .iter()
-                .map(|id| {
-                    let index = unique_index(roots.provenance, id);
-                    receipt.provenance[index]
-                })
-                .collect(),
-        })
+        universe.promote_resident_batch(&mut batch)?;
+        Ok(())
     }
 
     /// Promotes one macro definition without arena-sized relocation tables,
@@ -1516,42 +1410,168 @@ impl<G> AttemptArena<G> {
     }
 }
 
-/// Explicit roots permitted to escape one command operation.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct AttemptEscapeRoots<'a> {
-    pub(crate) token_lists: &'a [AttemptTokenListId],
-    pub(crate) glue: &'a [AttemptGlueId],
-    pub(crate) definitions: &'a [AttemptDefinitionId],
-    pub(crate) provenance: &'a [AttemptProvenanceId],
-}
-
-fn is_first_occurrence<T: PartialEq>(values: &[T], index: usize) -> bool {
-    !values[..index].contains(&values[index])
-}
-
-fn unique_count<T: PartialEq>(values: &[T]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| is_first_occurrence(values, *index))
+fn unique_count_by<T>(len: usize, mut at: impl FnMut(usize) -> T) -> usize
+where
+    T: Copy + PartialEq,
+{
+    (0..len)
+        .filter(|&index| (0..index).all(|prior| at(prior) != at(index)))
         .count()
 }
 
-fn unique_index<T: PartialEq>(values: &[T], value: &T) -> usize {
-    let first = values
-        .iter()
-        .position(|candidate| candidate == value)
-        .expect("a declared promotion root is present in its source slice");
-    unique_count(&values[..first])
+struct AttemptResidentPromotion<'a, G, D> {
+    arena: &'a mut AttemptArena<G>,
+    destination: &'a mut D,
 }
 
-/// Durable coordinates returned in the caller's declared root order.
-#[derive(Debug)]
-pub(crate) struct AttemptPromotion<G> {
-    pub(crate) token_lists: SmallVec<[TokenListId<G>; 4]>,
-    pub(crate) glue: SmallVec<[GlueId<G>; 4]>,
-    pub(crate) definitions: SmallVec<[DefinitionId<G>; 4]>,
-    pub(crate) provenance: SmallVec<[ProvenanceId<G>; 4]>,
+impl<G, D> tex_state::ResidentPromotionBatch<G> for AttemptResidentPromotion<'_, G, D>
+where
+    D: AttemptPromotionDestination<G>,
+{
+    fn definition_source_count(&self) -> usize {
+        self.destination.definition_root_count()
+    }
+
+    fn definition_count(&self) -> usize {
+        unique_count_by(self.destination.definition_root_count(), |index| {
+            self.destination.definition_root(index)
+        })
+    }
+
+    fn definition(&self, index: usize) -> &DefinitionBuilder {
+        let id = self.destination.definition_root(index);
+        self.arena
+            .definition_builder(id)
+            .expect("the complete definition source set was validated")
+    }
+
+    fn next_definition_mut(&mut self) -> &mut DefinitionBuilder {
+        let id = self.destination.next_definition_root();
+        self.arena
+            .definitions
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial)
+            .and_then(|row| row.value.builder.as_mut())
+            .expect("the next preflighted definition source remains resident")
+    }
+
+    fn settle_next_definition(&mut self, definition: DefinitionId<G>) {
+        let source = self.destination.next_definition_root();
+        self.destination.settle_definition_root(source, definition);
+        let builder = self
+            .arena
+            .definitions
+            .get_mut(source.index())
+            .filter(|row| row.serial == source.serial)
+            .and_then(|row| row.value.builder.take())
+            .expect("published definition leaves one vacant resident builder");
+        self.arena.recycled_definition_builders.push(builder);
+    }
+
+    fn token_list_source_count(&self) -> usize {
+        self.destination.token_root_count()
+    }
+
+    fn token_list_count(&self) -> usize {
+        unique_count_by(self.destination.token_root_count(), |index| {
+            self.destination.token_root(index)
+        })
+    }
+
+    fn token_list_len(&self, index: usize) -> usize {
+        let id = self.destination.token_root(index);
+        self.arena
+            .token_words(id)
+            .expect("the complete token source set was validated")
+            .len()
+    }
+
+    fn token_list_word(&self, index: usize, word: usize) -> TokenWord {
+        let id = self.destination.token_root(index);
+        self.arena
+            .token_words(id)
+            .expect("the complete token source set was validated")
+            .get(word)
+            .expect("preflighted token word is inside the source list")
+            .token_word()
+    }
+
+    fn next_token_list_len(&self) -> usize {
+        self.arena
+            .token_words(self.destination.next_token_root())
+            .expect("the next preflighted token source remains resident")
+            .len()
+    }
+
+    fn next_token_list_word(&self, word: usize) -> TokenWord {
+        self.arena
+            .token_words(self.destination.next_token_root())
+            .expect("the next preflighted token source remains resident")
+            .get(word)
+            .expect("preflighted token word is inside the source list")
+            .token_word()
+    }
+
+    fn settle_next_token_list(&mut self, tokens: TokenListId<G>) {
+        let source = self.destination.next_token_root();
+        self.destination.settle_token_root(source, tokens);
+    }
+
+    fn glue_source_count(&self) -> usize {
+        self.destination.glue_root_count()
+    }
+
+    fn glue_count(&self) -> usize {
+        unique_count_by(self.destination.glue_root_count(), |index| {
+            self.destination.glue_root(index)
+        })
+    }
+
+    fn glue(&self, index: usize) -> GlueSpec {
+        let id = self.destination.glue_root(index);
+        self.arena
+            .glue(id)
+            .expect("the complete glue source set was validated")
+    }
+
+    fn next_glue(&self) -> GlueSpec {
+        self.arena
+            .glue(self.destination.next_glue_root())
+            .expect("the next preflighted glue source remains resident")
+    }
+
+    fn settle_next_glue(&mut self, glue: GlueId<G>) {
+        let source = self.destination.next_glue_root();
+        self.destination.settle_glue_root(source, glue);
+    }
+
+    fn provenance_source_count(&self) -> usize {
+        self.destination.provenance_root_count()
+    }
+
+    fn provenance_count(&self) -> usize {
+        unique_count_by(self.destination.provenance_root_count(), |index| {
+            self.destination.provenance_root(index)
+        })
+    }
+
+    fn provenance(&self, index: usize) -> OriginRecord {
+        let id = self.destination.provenance_root(index);
+        self.arena
+            .provenance(id)
+            .expect("the complete provenance source set was validated")
+    }
+
+    fn next_provenance(&self) -> OriginRecord {
+        self.arena
+            .provenance(self.destination.next_provenance_root())
+            .expect("the next preflighted provenance source remains resident")
+    }
+
+    fn settle_next_provenance(&mut self, provenance: ProvenanceId<G>) {
+        let source = self.destination.next_provenance_root();
+        self.destination.settle_provenance_root(source, provenance);
+    }
 }
 
 /// Opaque owner transferred between consecutive command operations.

@@ -724,46 +724,21 @@ impl<G> CommandState<G> {
         self.attempt.arena().token_words(id)
     }
 
-    /// Promotes one declared token-list escape root into generation-durable
-    /// storage. No unrelated attempt row is inspected or copied.
-    pub fn promote_attempt_token_list(
-        &mut self,
-        universe: &mut tex_state::Universe<G>,
-        id: crate::AttemptTokenListId,
-    ) -> Result<tex_state::TokenListId<G>, crate::AttemptError> {
-        let promotion = self.promote_attempt_roots(
-            universe,
-            crate::AttemptPromotionRoots::new(core::slice::from_ref(&id), &[], &[], &[]),
-        )?;
-        Ok(promotion.token_lists[0].clone())
-    }
-
-    /// Atomically promotes every declared attempt-local root into this
-    /// generation's durable stores.
+    /// Atomically promotes every attempt-local root exposed by one resident
+    /// destination into this generation's durable stores.
     ///
     /// The command attempt validates the complete request before reserving or
-    /// publishing destination rows. On success, every receipt vector retains
-    /// the corresponding request slice's order, including duplicates.
-    pub fn promote_attempt_roots(
+    /// publishing destination rows. Successful publication writes final
+    /// owners into that same destination without an aggregate receipt.
+    pub fn promote_attempt_roots_into<D>(
         &mut self,
         universe: &mut tex_state::Universe<G>,
-        roots: crate::AttemptPromotionRoots<'_, G>,
-    ) -> Result<crate::AttemptPromotionReceipt<G>, crate::AttemptError> {
-        let promotion = self.attempt.arena_mut().promote(
-            universe,
-            crate::attempt::AttemptEscapeRoots {
-                token_lists: roots.token_lists,
-                glue: roots.glue,
-                definitions: roots.definitions,
-                provenance: roots.provenance,
-            },
-        )?;
-        Ok(crate::AttemptPromotionReceipt {
-            token_lists: promotion.token_lists,
-            glue: promotion.glue,
-            definitions: promotion.definitions,
-            provenance: promotion.provenance,
-        })
+        destination: &mut D,
+    ) -> Result<(), crate::AttemptError>
+    where
+        D: crate::AttemptPromotionDestination<G>,
+    {
+        self.attempt.arena_mut().promote_into(universe, destination)
     }
 
     /// Promotes one declared macro-definition root and its schema-owned text

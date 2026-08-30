@@ -616,27 +616,43 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn definition_promotion_preflights_then_moves_the_checked_builder_once() {
+fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
     let repository = test_support::repository_root();
     let attempt = fs::read_to_string(repository.join("crates/tex-command/src/attempt.rs"))
         .expect("read attempt promotion implementation");
     let stores = fs::read_to_string(repository.join("crates/tex-state/src/stores.rs"))
         .expect("read destination promotion implementation");
+    let operation =
+        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/cold/operation.rs"))
+            .expect("read resident cold-operation promotion implementation");
     let promotion = attempt
-        .split("pub(crate) fn promote(")
+        .split("pub(crate) fn promote_into<D>(")
         .nth(1)
         .and_then(|tail| tail.split("pub(crate) fn promote_definition(").next())
         .expect("locate generic attempt promotion");
     let destination = stores
-        .split("pub(crate) fn promote_value_streams<")
+        .split("pub(crate) fn promote_resident_batch<B>(")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn promote_format_values(").next())
-        .expect("locate streamed destination promotion");
+        .and_then(|tail| tail.split("fn promote_value_streams_from<").next())
+        .expect("locate resident destination promotion");
+    let resident_writer = operation
+        .split("struct ColdOperationPromotion<'a, G>")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> ColdOperation<G>").next())
+        .expect("locate cold-operation resident writer");
+    let preparation = operation
+        .split("pub(in crate::main_control) fn prepare_cold_operation<G>(")
+        .nth(1)
+        .and_then(|tail| tail.split("struct ColdOperationPromotion<'a, G>").next())
+        .expect("locate resident cold-operation preparation");
 
-    assert!(promotion.contains("universe.promote_value_streams("));
-    assert!(promotion.contains("row.value.builder.take()"));
-    assert!(promotion.contains("definitions.into_iter()"));
-    assert!(promotion.contains("SmallVec::<[DefinitionBuilder; 4]>::new()"));
+    assert!(promotion.contains("universe.promote_resident_batch(&mut batch)?"));
+    assert!(promotion.contains("AttemptResidentPromotion"));
+    assert!(!promotion.contains("SmallVec"));
+    assert!(!promotion.contains("AttemptPromotionReceipt"));
+    assert!(!promotion.contains("AttemptPromotionRoots"));
+    assert!(!promotion.contains("promote_value_streams"));
+    assert!(!promotion.contains("definitions.into_iter()"));
     assert!(!promotion.contains("DefinitionPromotion::new("));
     assert!(!promotion.contains("Vec<DefinitionBuilder>"));
     assert!(!promotion.contains("Vec<TokenWord>"));
@@ -644,14 +660,27 @@ fn definition_promotion_preflights_then_moves_the_checked_builder_once() {
     assert!(!promotion.contains("replacement_text().to_vec()"));
     assert!(!destination.contains("DefinitionBuilder::from_slices"));
     let validation = destination
-        .find("definitions_arena.validate_builder(definition.builder())")
+        .find("definitions_arena.validate_builder(batch.definition(index))")
         .expect("destination-policy preflight");
     let publication = destination
-        .find(".publish_prevalidated(definition.builder_mut())")
+        .find(".publish_prevalidated(batch.next_definition_mut())")
         .expect("infallible checked builder transfer");
     assert!(validation < publication);
     assert!(destination.contains("reserve_batch(definition_count, definition_words)?"));
     assert!(destination.contains(".allocate_from_iter(words)"));
+    assert!(destination.contains("batch.settle_next_definition(definition)"));
+    assert!(destination.contains("batch.settle_next_token_list(tokens)"));
+    assert!(!destination.contains("PromotionReceipt"));
+    assert!(!resident_writer.contains("AttemptPromotionReceipt"));
+    assert!(!resident_writer.contains("AttemptPromotionRoots"));
+    assert!(!resident_writer.contains("receipt.token_lists"));
+    assert!(!resident_writer.contains("receipt.definitions"));
+    assert!(preparation.contains(") -> Result<(), ColdPreparationError>"));
+    assert!(preparation.contains("command.promote_attempt_roots_into(stores, &mut destination)?"));
+    assert!(!preparation.contains("Result<Vec<"));
+    assert!(!preparation.contains("let mut roots"));
+    assert!(!preparation.contains("let mut definitions"));
+    assert!(!preparation.contains("collect::<Vec"));
 }
 
 #[test]

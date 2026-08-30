@@ -6717,33 +6717,34 @@ impl<G> MainControl<G> {
             }
             _ => None,
         };
-        let alignment_roots = completed_preamble
+        let mut alignment_roots = completed_preamble
             .as_ref()
             .map(|(_, preamble)| {
                 let mut roots = Vec::with_capacity(preamble.columns.len() * 2);
                 for templates in &preamble.columns {
-                    roots.extend(templates.u_template);
-                    roots.push(templates.v_template);
+                    roots.extend(templates.u_template.map(OperationTokenRoot::attempt));
+                    roots.push(OperationTokenRoot::attempt(templates.v_template));
                 }
                 roots
             })
             .unwrap_or_default();
-        let promoted_alignment_roots = match prepare_cold_operation(
+        if prepare_cold_operation(
             frame.unavailable_mut(cold),
             self.command.state_mut(),
             stores,
-            &alignment_roots,
-        ) {
-            Ok(prepared) => prepared,
-            Err(_) => {
-                frame.error = Some(ExecError::MissingToken {
-                    context: "cold operation root preparation",
-                });
-                return OperationReadiness::Failed;
-            }
-        };
+            &mut alignment_roots,
+        )
+        .is_err()
+        {
+            frame.error = Some(ExecError::MissingToken {
+                context: "cold operation root preparation",
+            });
+            return OperationReadiness::Failed;
+        }
         let alignment_preamble = completed_preamble.map(|(alignment, preamble)| {
-            let mut promoted = promoted_alignment_roots.into_iter();
+            let mut promoted = alignment_roots
+                .into_iter()
+                .map(|mut root| root.take_prepared());
             let columns = preamble
                 .columns
                 .iter()

@@ -296,20 +296,22 @@ monotonic parameter and replacement phases. It incrementally maintains the
 checked parameter program and the destination generation's optional framed
 identity. Macro scanning and `read_toks` retain that exact row through
 suspension and recycle it on cancellation; it is never part of checkpoint
-state. Generic cold promotion borrows that exact row while validating its
-preserved identity policy and reserving the complete mixed batch. Rejection
-therefore performs no owner restoration; the builder never left its attempt
-row. Successful publication retains the builder's allocation without
-traversing or copying its words. Attempt retirement then relinquishes the
-scratch owner and recycles a vacant builder slot. If a builder is deliberately
-reused while an older published definition remains live, its next reset
-detaches into a fresh allocation before accepting new words. Attempt token
-lists likewise stream their existing semantic words into the destination
-publisher without a batch-local word vector. This creates no temporary
-parameter/replacement vectors, second representation, payload-bearing inline
-promotion carrier, or failure-only ownership transaction. Ordinary allocation,
-memo import, and format restore use the same checked metadata path, so malformed
-parameter numbering or replacement references fail before publication.
+state. Generic cold promotion lends the caller's resident root fields as one
+checked destination, validates every exact attempt row in place, and reserves
+the complete mixed batch. Rejection therefore performs no owner restoration;
+the builder never left its attempt row. Successful publication retains the
+builder's allocation without traversing or copying its words, writes its first
+durable owner directly into every matching resident field, and only then
+recycles the vacant builder slot. If a builder is deliberately reused while an
+older published definition remains live, its next reset detaches into a fresh
+allocation before accepting new words. Attempt token lists likewise stream
+their existing semantic words into the destination publisher and settle the
+resident field without a batch-local word vector. This creates no temporary
+parameter/replacement vectors, promotion-builder batch, duplicate owner
+receipt, second representation, payload-bearing inline promotion carrier, or
+failure-only ownership transaction. Ordinary allocation, memo import, and
+format restore use the same checked metadata path, so malformed parameter
+numbering or replacement references fail before publication.
 
 ```rust
 pub struct DefinitionId<G> {

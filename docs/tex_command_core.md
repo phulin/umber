@@ -4115,9 +4115,11 @@ fields directly beside its singular compact payload. There is no nested
 preflight-command projection. A completed hot scan is installed once in that
 payload; a completed cold scan installs its uncommon leaf once in an adjacent
 caller-owned typed slot while the payload records only cold occupancy. Both are
-represented between phases only by a compact tag. Preparation borrows the
-resident cold leaf, replaces its small attempt-root fields with prepared-root
-owners, and leaves both owners at the same addresses. Application consumes
+represented between phases only by a compact tag. Preparation lends the
+resident cold leaf to one checked promotion writer, which preflights all
+attempt roots and writes each prepared owner directly into its final field
+without a temporary builder batch or aggregate receipt. Both the cold leaf and
+its enclosing operation remain at the same addresses. Application consumes
 semantic leaves through mutable borrows and then clears the occupied slot. A
 genuinely suspended typed scanner writes its rebuilt leaf directly into those
 same destinations; a real suspension moves the frame and occupied cold slot
