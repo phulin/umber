@@ -1,8 +1,45 @@
 use super::cell::JournalCell;
 use super::{JournalEntry, Mutation, SaveJournal, canonical_restore_words};
+use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{CodeTableKind, FontRuntimeCell, StateCell, StateWord};
 
 enum TestGeneration {}
+
+fn assert_exact_capacity_accounting(journal: &SaveJournal<TestGeneration>) {
+    assert_eq!(
+        journal.retained_bytes(),
+        journal.retained_bytes_census(),
+        "constant-time projection must equal the test-only physical census"
+    );
+}
+
+fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> GroupFrame {
+    let (save_stack_words_before, latest_save_push_before) = journal.save_stack_projection();
+    let frame = GroupFrame::for_journal_test(
+        GroupKind::Simple,
+        lineage,
+        u32::try_from(journal.active_groups.len()).expect("test depth fits u32") + 2,
+        save_stack_words_before,
+        latest_save_push_before,
+    );
+    journal.record_group_enter(frame);
+    frame
+}
+
+fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, before: i32) {
+    let level = journal
+        .active_groups
+        .last()
+        .expect("saved mutation has an active group")
+        .frame
+        .level();
+    journal.record_mutation(Mutation::new(
+        StateCell::Count(cell),
+        StateWord::Integer(before),
+        level,
+        Some(level),
+    ));
+}
 
 #[test]
 fn reports_journal_component_widths() {
@@ -129,6 +166,7 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
     assert!(!journal.validate_cursor(root));
     assert!(journal.validate_cursor(floor));
     assert!(journal.validate_cursor(accepted));
+    assert_exact_capacity_accounting(&journal);
 
     for index in released_records + 1..released_records.saturating_mul(2) {
         journal.record_mutation(Mutation::new(
@@ -145,6 +183,7 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
     );
     journal.truncate_checkpoint(floor);
     assert!(journal.validate_cursor(floor));
+    assert_exact_capacity_accounting(&journal);
 }
 
 #[test]
@@ -184,6 +223,7 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
         None,
     ));
     assert_eq!(journal.checkpoint_entries, 2);
+    assert_exact_capacity_accounting(&journal);
 }
 
 #[test]
@@ -208,6 +248,157 @@ fn nested_operations_share_one_ordered_lane_and_rollback_only_the_inner_suffix()
     assert_eq!(journal.operation_suffix(&outer).len(), 1);
     journal.commit_operation(outer);
     assert!(journal.operation_entries.is_empty());
+    assert_exact_capacity_accounting(&journal);
+}
+
+#[test]
+fn exact_capacity_accounting_covers_group_reuse_and_operation_settlement() {
+    let mut journal = SaveJournal::<TestGeneration>::new();
+    assert_exact_capacity_accounting(&journal);
+
+    let outer = enter_group(&mut journal, 1);
+    for cell in 0..64 {
+        record_saved_count(&mut journal, cell, i32::from(cell));
+    }
+    assert_exact_capacity_accounting(&journal);
+
+    let operation = journal.begin_operation();
+    let _inner = enter_group(&mut journal, 2);
+    for cell in 64..128 {
+        record_saved_count(&mut journal, cell, i32::from(cell));
+    }
+    assert_exact_capacity_accounting(&journal);
+    journal.finish_operation_rollback(operation);
+    assert_exact_capacity_accounting(&journal);
+
+    let operation = journal.begin_operation();
+    let inner = enter_group(&mut journal, 3);
+    record_saved_count(&mut journal, 128, 128);
+    journal.record_group_exit(inner);
+    journal.commit_operation(operation);
+    assert_exact_capacity_accounting(&journal);
+
+    journal.record_group_exit(outer);
+    assert_exact_capacity_accounting(&journal);
+    let _reused = enter_group(&mut journal, 4);
+    assert_exact_capacity_accounting(&journal);
+
+    let outer_cursor = journal.checkpoint_cursor(1);
+    let retained = enter_group(&mut journal, 5);
+    let retained_cursor = journal.checkpoint_cursor(2);
+    journal.record_group_exit(retained);
+    assert_exact_capacity_accounting(&journal);
+    let _ = journal.restore_group_cursor(outer_cursor);
+    assert_exact_capacity_accounting(&journal);
+    let _ = journal.restore_group_cursor(retained_cursor);
+    assert_exact_capacity_accounting(&journal);
+}
+
+#[test]
+fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() {
+    let mut root_journal = SaveJournal::<TestGeneration>::new();
+    let root = root_journal.checkpoint_cursor(0);
+    root_journal.record_mutation(Mutation::new(
+        StateCell::Count(0),
+        StateWord::Integer(0),
+        1,
+        None,
+    ));
+    let tail = root_journal.begin_checkpoint_candidate(root);
+    assert!(tail.is_root_candidate());
+    root_journal.record_mutation(Mutation::new(
+        StateCell::Count(1),
+        StateWord::Integer(1),
+        1,
+        None,
+    ));
+    root_journal.reject_checkpoint_candidate(tail);
+    assert_exact_capacity_accounting(&root_journal);
+
+    let mut journal = SaveJournal::<TestGeneration>::new();
+    let outer = enter_group(&mut journal, 1);
+    for cell in 0..64 {
+        record_saved_count(&mut journal, cell, i32::from(cell));
+    }
+    let selected = journal.checkpoint_cursor(1);
+    let inner = enter_group(&mut journal, 2);
+    for cell in 64..192 {
+        record_saved_count(&mut journal, cell, i32::from(cell));
+    }
+    journal.record_group_exit(inner);
+    assert_exact_capacity_accounting(&journal);
+
+    let tail = journal.begin_checkpoint_candidate(selected);
+    assert_exact_capacity_accounting(&journal);
+    for cell in 192..256 {
+        record_saved_count(&mut journal, cell, i32::from(cell));
+    }
+    journal.reject_checkpoint_candidate(tail);
+    assert_exact_capacity_accounting(&journal);
+
+    let tail = journal.begin_checkpoint_candidate(selected);
+    assert!(matches!(
+        tail.groups,
+        super::AcceptedGroupTail::Arbitrary { .. }
+    ));
+    record_saved_count(&mut journal, 256, 256);
+    journal.accept_checkpoint_candidate();
+    drop(tail);
+    assert_exact_capacity_accounting(&journal);
+
+    journal.record_group_exit(outer);
+    let root = journal.checkpoint_cursor(0);
+    for cell in 512..768 {
+        journal.record_mutation(Mutation::new(
+            StateCell::Count(cell),
+            StateWord::Integer(i32::from(cell)),
+            1,
+            None,
+        ));
+    }
+    let floor = journal.checkpoint_cursor(0);
+    journal
+        .release_checkpoint_prefix(floor)
+        .expect("checkpoint prefix releases");
+    assert!(!journal.validate_cursor(root));
+    assert_exact_capacity_accounting(&journal);
+}
+
+#[test]
+fn retained_byte_projection_has_fixed_work_with_many_group_segments() {
+    let mut shallow = SaveJournal::<TestGeneration>::new();
+    let _ = enter_group(&mut shallow, 1);
+    record_saved_count(&mut shallow, 0, 0);
+
+    let mut deep = SaveJournal::<TestGeneration>::new();
+    for lineage in 1..=4_096 {
+        let _ = enter_group(&mut deep, lineage);
+        record_saved_count(
+            &mut deep,
+            u16::try_from(lineage).expect("test lineage fits u16"),
+            i32::try_from(lineage).expect("test lineage fits i32"),
+        );
+    }
+    assert_exact_capacity_accounting(&shallow);
+    assert_exact_capacity_accounting(&deep);
+
+    for _ in 0..4_096 {
+        std::hint::black_box(shallow.retained_bytes());
+        std::hint::black_box(deep.retained_bytes());
+    }
+    assert_eq!(
+        shallow.retained_bytes(),
+        shallow
+            .group_capacity_bytes
+            .saturating_add(shallow.checkpoint_capacity_bytes)
+            .saturating_add(shallow.operation_capacity_bytes)
+    );
+    assert_eq!(
+        deep.retained_bytes(),
+        deep.group_capacity_bytes
+            .saturating_add(deep.checkpoint_capacity_bytes)
+            .saturating_add(deep.operation_capacity_bytes)
+    );
 }
 
 #[test]

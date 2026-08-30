@@ -59,6 +59,25 @@ impl GroupFrame {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) const fn for_journal_test(
+        kind: GroupKind,
+        lineage: u64,
+        level: u32,
+        save_stack_words_before: usize,
+        latest_save_push_before: Option<(u32, usize)>,
+    ) -> Self {
+        Self::new(
+            kind,
+            1,
+            lineage,
+            0,
+            level,
+            save_stack_words_before,
+            latest_save_push_before,
+        )
+    }
+
     #[must_use]
     pub const fn kind(self) -> GroupKind {
         self.kind

@@ -219,7 +219,10 @@ authority. Page-region history owns contiguous page/epoch boundary intervals;
 removing the last row in one interval drops the whole exclusive region. No
 per-checkpoint, per-list, or batch reference count releases node chunks. Other
 coarse append/journal owners remain charged once while their direct aggregate
-owner is retained.
+owner is retained. The dense save journal maintains its exact physical
+capacity charge at vector and pool capacity-change points. Reading that charge
+for an execution budget is constant work and never scans groups, journal
+chunks, or checkpoint roots.
 
 `RetentionMetrics` reports the shared-owner, per-root metadata, and detached
 evidence terms independently, with `checkpoint_root_bytes` equal to their sum.

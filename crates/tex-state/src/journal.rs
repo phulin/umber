@@ -330,6 +330,9 @@ pub(crate) struct SaveJournal<G> {
     active_operations: Vec<u64>,
     next_operation: u64,
     save_stack: SaveStackProjection,
+    group_capacity_bytes: usize,
+    checkpoint_capacity_bytes: usize,
+    operation_capacity_bytes: usize,
     #[cfg(feature = "profiling")]
     profile: SaveJournalProfile,
 }
@@ -358,6 +361,8 @@ impl<G> SaveJournal<G> {
                 next.checked_add(1)
             })
             .expect("state journal identity space exhausted");
+        let checkpoint_pool = ChunkPool::default();
+        let checkpoint_capacity_bytes = checkpoint_pool.allocated_heap_bytes();
         Self {
             owner,
             active_groups: Vec::new(),
@@ -366,7 +371,7 @@ impl<G> SaveJournal<G> {
             pending_operation_groups: Vec::new(),
             spare_group_entries: Vec::new(),
             next_group_id: 0,
-            checkpoint_pool: ChunkPool::default(),
+            checkpoint_pool,
             checkpoint_arena: ForkArena::new(),
             checkpoint_entries: 0,
             checkpoint_stamps: std::collections::HashMap::new(),
@@ -376,6 +381,9 @@ impl<G> SaveJournal<G> {
             active_operations: Vec::new(),
             next_operation: 0,
             save_stack: SaveStackProjection::default(),
+            group_capacity_bytes: 0,
+            checkpoint_capacity_bytes,
+            operation_capacity_bytes: 0,
             #[cfg(feature = "profiling")]
             profile: SaveJournalProfile::default(),
         }
@@ -446,7 +454,13 @@ impl<G> SaveJournal<G> {
             self.operation_entries.clear();
             for segment in self.pending_operation_groups.drain(..) {
                 if segment.checkpoint_pinned {
+                    let before = self.retained_groups.capacity();
                     self.retained_groups.push(segment);
+                    Self::account_capacity_change::<GroupSegment<G>>(
+                        &mut self.group_capacity_bytes,
+                        before,
+                        self.retained_groups.capacity(),
+                    );
                 } else {
                     let mut entries = segment.entries;
                     entries.clear();
@@ -462,6 +476,7 @@ impl<G> SaveJournal<G> {
         let cell = mutation.cell();
         let stamped = self.checkpoint_stamps.get(&cell).copied();
         if stamped.map(|(epoch, _)| epoch) != Some(self.checkpoint_epoch) {
+            let checkpoint_pages = self.checkpoint_pool.page_count();
             let index = self.checkpoint_entries;
             self.checkpoint_stamps
                 .insert(cell, (self.checkpoint_epoch, index));
@@ -489,6 +504,9 @@ impl<G> SaveJournal<G> {
                 .checkpoint_entries
                 .checked_add(1)
                 .expect("checkpoint journal exceeds usize entries");
+            if self.checkpoint_pool.page_count() != checkpoint_pages {
+                self.refresh_checkpoint_capacity_bytes();
+            }
         }
         if mutation.saved_at().is_some() {
             let position = u32::try_from(self.len().saturating_add(1))
@@ -508,11 +526,7 @@ impl<G> SaveJournal<G> {
                     core::mem::size_of::<Mutation<G>>(),
                 );
             }
-            self.active_groups
-                .last_mut()
-                .expect("a TeX save has an active group")
-                .entries
-                .push(mutation.clone());
+            self.push_group_mutation(mutation.clone());
             self.active_group_entries = self.active_group_entries.saturating_add(1);
         }
         if !self.active_operations.is_empty() {
@@ -522,8 +536,7 @@ impl<G> SaveJournal<G> {
                 self.operation_entries.capacity(),
                 core::mem::size_of::<JournalEntry<G>>(),
             );
-            self.operation_entries
-                .push(JournalEntry::Mutation(mutation));
+            self.push_operation_entry(JournalEntry::Mutation(mutation));
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
@@ -541,11 +554,12 @@ impl<G> SaveJournal<G> {
             .checked_add(1)
             .expect("group segment identity space exhausted");
         let parent = self.active_groups.last().map_or(0, |group| group.id);
-        self.active_groups.push(GroupSegment {
+        let entries = self.spare_group_entries.pop().unwrap_or_default();
+        self.push_active_group(GroupSegment {
             id: self.next_group_id,
             parent,
             frame,
-            entries: self.spare_group_entries.pop().unwrap_or_default(),
+            entries,
             checkpoint_pinned: false,
         });
         self.active_group_entries = self.active_group_entries.saturating_add(1);
@@ -556,7 +570,7 @@ impl<G> SaveJournal<G> {
                 self.operation_entries.capacity(),
                 core::mem::size_of::<JournalEntry<G>>(),
             );
-            self.operation_entries.push(entry);
+            self.push_operation_entry(entry);
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
@@ -579,9 +593,9 @@ impl<G> SaveJournal<G> {
             latest_push: frame.latest_save_push_before,
         };
         if !self.active_operations.is_empty() {
-            self.pending_operation_groups.push(segment);
+            self.push_pending_group(segment);
         } else if segment.checkpoint_pinned {
-            self.retained_groups.push(segment);
+            self.push_retained_group(segment);
         } else {
             let mut entries = segment.entries;
             entries.clear();
@@ -594,7 +608,7 @@ impl<G> SaveJournal<G> {
                 self.operation_entries.capacity(),
                 core::mem::size_of::<JournalEntry<G>>(),
             );
-            self.operation_entries.push(entry);
+            self.push_operation_entry(entry);
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
@@ -619,14 +633,10 @@ impl<G> SaveJournal<G> {
     }
 
     #[must_use]
-    pub(crate) fn retained_bytes(&self) -> usize {
-        self.group_capacity_bytes()
-            .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
-            .saturating_add(
-                self.operation_entries
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<JournalEntry<G>>()),
-            )
+    pub(crate) const fn retained_bytes(&self) -> usize {
+        self.group_capacity_bytes
+            .saturating_add(self.checkpoint_capacity_bytes)
+            .saturating_add(self.operation_capacity_bytes)
     }
 
     #[cfg(test)]
@@ -749,7 +759,12 @@ impl<G> SaveJournal<G> {
         } else {
             let accepted_active_ids = self.active_groups.iter().map(|group| group.id).collect();
             let accepted_retained_ids = self.retained_groups.iter().map(|group| group.id).collect();
+            self.remove_group_storage(
+                self.active_groups.capacity(),
+                Self::group_entry_capacity_bytes(&self.active_groups),
+            );
             let mut groups = std::mem::take(&mut self.active_groups);
+            self.remove_group_storage(0, Self::group_entry_capacity_bytes(&self.retained_groups));
             groups.append(&mut self.retained_groups);
             let mut target_ids = Vec::with_capacity(cursor.group_depth() as usize);
             let mut id = cursor.group_id();
@@ -767,15 +782,23 @@ impl<G> SaveJournal<G> {
                     .iter()
                     .position(|group| group.id == id)
                     .expect("validated target group remains in the accepted pool");
-                self.active_groups.push(groups.swap_remove(index));
+                let segment = groups.swap_remove(index);
+                self.admit_active_group(segment);
             }
             let innermost_suffix = self
                 .active_groups
                 .last_mut()
                 .map_or_else(Vec::new, |group| {
-                    group
+                    let before = group.entries.capacity();
+                    let suffix = group
                         .entries
-                        .split_off(cursor.group_entry_position() as usize)
+                        .split_off(cursor.group_entry_position() as usize);
+                    Self::account_capacity_change::<Mutation<G>>(
+                        &mut self.group_capacity_bytes,
+                        before,
+                        group.entries.capacity(),
+                    );
+                    suffix
                 });
             self.active_group_entries = self
                 .active_groups
@@ -829,7 +852,15 @@ impl<G> SaveJournal<G> {
                 mut innermost_suffix,
                 save_stack,
             } => {
+                self.remove_group_storage(
+                    self.active_groups.capacity(),
+                    Self::group_entry_capacity_bytes(&self.active_groups),
+                );
                 let mut groups = std::mem::take(&mut self.active_groups);
+                self.remove_group_storage(
+                    0,
+                    Self::group_entry_capacity_bytes(&self.retained_groups),
+                );
                 groups.append(&mut self.retained_groups);
                 groups.append(&mut other_groups);
                 if let Some(group) = groups
@@ -845,14 +876,34 @@ impl<G> SaveJournal<G> {
                         .expect("accepted group id survives candidate rollback");
                     groups.swap_remove(index)
                 };
-                self.active_groups = accepted_active_ids
+                let active_before = self.active_groups.capacity();
+                let active_groups: Vec<_> = accepted_active_ids
                     .into_iter()
                     .map(&mut take_group)
                     .collect();
-                self.retained_groups = accepted_retained_ids
+                Self::account_capacity_change::<GroupSegment<G>>(
+                    &mut self.group_capacity_bytes,
+                    active_before,
+                    active_groups.capacity(),
+                );
+                self.group_capacity_bytes = self
+                    .group_capacity_bytes
+                    .saturating_add(Self::group_entry_capacity_bytes(&active_groups));
+                self.active_groups = active_groups;
+                let retained_before = self.retained_groups.capacity();
+                let retained_groups: Vec<_> = accepted_retained_ids
                     .into_iter()
                     .map(&mut take_group)
                     .collect();
+                Self::account_capacity_change::<GroupSegment<G>>(
+                    &mut self.group_capacity_bytes,
+                    retained_before,
+                    retained_groups.capacity(),
+                );
+                self.group_capacity_bytes = self
+                    .group_capacity_bytes
+                    .saturating_add(Self::group_entry_capacity_bytes(&retained_groups));
+                self.retained_groups = retained_groups;
                 self.active_group_entries = self
                     .active_groups
                     .iter()
@@ -870,6 +921,7 @@ impl<G> SaveJournal<G> {
         self.checkpoint_arena
             .reject_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
             .expect("dense rejection reattaches its prior suffix");
+        self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_fork = false;
         self.advance_checkpoint_epoch();
     }
@@ -883,6 +935,7 @@ impl<G> SaveJournal<G> {
         self.checkpoint_arena
             .accept_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
             .expect("dense acceptance drops its detached prior suffix");
+        self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_fork = false;
         self.advance_checkpoint_epoch();
     }
@@ -913,6 +966,7 @@ impl<G> SaveJournal<G> {
         self.checkpoint_arena
             .restore_accepted_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
             .expect("validated dense checkpoint suffix truncates atomically");
+        self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.advance_checkpoint_epoch();
         self.save_stack = cursor.save_stack;
@@ -925,9 +979,12 @@ impl<G> SaveJournal<G> {
         if !self.validate_cursor(cursor) || self.checkpoint_fork {
             return Err(crate::StateError::InvalidCursor);
         }
-        self.checkpoint_arena
+        let released = self
+            .checkpoint_arena
             .release_accepted_prefix(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-            .map_err(|_| crate::StateError::InvalidCursor)
+            .map_err(|_| crate::StateError::InvalidCursor)?;
+        self.refresh_checkpoint_capacity_bytes();
+        Ok(released)
     }
 
     pub(crate) fn finish_operation_rollback(&mut self, operation: StateOperation<G>) {
@@ -940,7 +997,7 @@ impl<G> SaveJournal<G> {
                 .pending_operation_groups
                 .pop()
                 .expect("pending operation group suffix");
-            self.active_groups.push(segment);
+            self.push_active_group(segment);
         }
         for entry in self.operation_entries[operation.operation_position as usize..]
             .iter()
@@ -996,6 +1053,7 @@ impl<G> SaveJournal<G> {
         self.checkpoint_arena
             .restore_operation(&mut self.checkpoint_pool, operation.checkpoint)
             .expect("state operation restores its dense journal suffix");
+        self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_entries = operation.checkpoint_entries as usize;
         self.rebuild_save_stack_projection();
     }
@@ -1050,7 +1108,7 @@ impl<G> SaveJournal<G> {
                     .active_group_entries
                     .saturating_sub(segment.entries.len().saturating_add(1));
                 if segment.checkpoint_pinned {
-                    self.retained_groups.push(segment);
+                    self.push_retained_group(segment);
                 } else {
                     self.recycle_segment(segment);
                 }
@@ -1090,7 +1148,7 @@ impl<G> SaveJournal<G> {
         while self.active_groups.len() > common {
             let segment = self.active_groups.pop().expect("active group suffix");
             if segment.checkpoint_pinned {
-                self.retained_groups.push(segment);
+                self.push_retained_group(segment);
             } else {
                 self.recycle_segment(segment);
             }
@@ -1102,7 +1160,7 @@ impl<G> SaveJournal<G> {
                 .position(|group| group.id == id)
                 .expect("validated retained group cursor");
             let segment = self.retained_groups.swap_remove(index);
-            self.active_groups.push(segment);
+            self.push_active_group(segment);
         }
         if let Some(group) = self.active_groups.last_mut() {
             group
@@ -1187,7 +1245,19 @@ impl<G> SaveJournal<G> {
             .sum()
     }
 
-    fn group_capacity_bytes(&self) -> usize {
+    #[cfg(test)]
+    fn retained_bytes_census(&self) -> usize {
+        self.group_capacity_bytes_census()
+            .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
+            .saturating_add(
+                self.operation_entries
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<JournalEntry<G>>()),
+            )
+    }
+
+    #[cfg(test)]
+    fn group_capacity_bytes_census(&self) -> usize {
         let headers = self
             .active_groups
             .capacity()
@@ -1210,6 +1280,108 @@ impl<G> SaveJournal<G> {
                     .saturating_mul(core::mem::size_of::<Mutation<G>>())
             }))
             .fold(headers, usize::saturating_add)
+    }
+
+    fn account_capacity_change<T>(retained_bytes: &mut usize, before: usize, after: usize) {
+        let element_bytes = core::mem::size_of::<T>();
+        if after >= before {
+            *retained_bytes = retained_bytes
+                .saturating_add(after.saturating_sub(before).saturating_mul(element_bytes));
+        } else {
+            *retained_bytes = retained_bytes
+                .saturating_sub(before.saturating_sub(after).saturating_mul(element_bytes));
+        }
+    }
+
+    fn push_group_mutation(&mut self, mutation: Mutation<G>) {
+        let group = self
+            .active_groups
+            .last_mut()
+            .expect("a TeX save has an active group");
+        let before = group.entries.capacity();
+        group.entries.push(mutation);
+        Self::account_capacity_change::<Mutation<G>>(
+            &mut self.group_capacity_bytes,
+            before,
+            group.entries.capacity(),
+        );
+    }
+
+    fn push_active_group(&mut self, segment: GroupSegment<G>) {
+        let before = self.active_groups.capacity();
+        self.active_groups.push(segment);
+        Self::account_capacity_change::<GroupSegment<G>>(
+            &mut self.group_capacity_bytes,
+            before,
+            self.active_groups.capacity(),
+        );
+    }
+
+    fn admit_active_group(&mut self, segment: GroupSegment<G>) {
+        self.add_group_entry_storage(&segment);
+        self.push_active_group(segment);
+    }
+
+    fn push_retained_group(&mut self, segment: GroupSegment<G>) {
+        let before = self.retained_groups.capacity();
+        self.retained_groups.push(segment);
+        Self::account_capacity_change::<GroupSegment<G>>(
+            &mut self.group_capacity_bytes,
+            before,
+            self.retained_groups.capacity(),
+        );
+    }
+
+    fn push_pending_group(&mut self, segment: GroupSegment<G>) {
+        let before = self.pending_operation_groups.capacity();
+        self.pending_operation_groups.push(segment);
+        Self::account_capacity_change::<GroupSegment<G>>(
+            &mut self.group_capacity_bytes,
+            before,
+            self.pending_operation_groups.capacity(),
+        );
+    }
+
+    fn push_operation_entry(&mut self, entry: JournalEntry<G>) {
+        let before = self.operation_entries.capacity();
+        self.operation_entries.push(entry);
+        Self::account_capacity_change::<JournalEntry<G>>(
+            &mut self.operation_capacity_bytes,
+            before,
+            self.operation_entries.capacity(),
+        );
+    }
+
+    fn group_entry_capacity_bytes(groups: &[GroupSegment<G>]) -> usize {
+        groups
+            .iter()
+            .map(|group| {
+                group
+                    .entries
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<Mutation<G>>())
+            })
+            .fold(0, usize::saturating_add)
+    }
+
+    fn remove_group_storage(&mut self, header_capacity: usize, entry_bytes: usize) {
+        self.group_capacity_bytes = self.group_capacity_bytes.saturating_sub(
+            header_capacity.saturating_mul(core::mem::size_of::<GroupSegment<G>>()),
+        );
+        self.group_capacity_bytes = self.group_capacity_bytes.saturating_sub(entry_bytes);
+    }
+
+    fn add_group_entry_storage(&mut self, segment: &GroupSegment<G>) {
+        self.group_capacity_bytes = self.group_capacity_bytes.saturating_add(
+            segment
+                .entries
+                .capacity()
+                .saturating_mul(core::mem::size_of::<Mutation<G>>()),
+        );
+    }
+
+    fn refresh_checkpoint_capacity_bytes(&mut self) {
+        self.checkpoint_capacity_bytes = self.checkpoint_pool.allocated_heap_bytes();
     }
 
     fn recycle_active_group(&mut self) {

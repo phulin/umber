@@ -168,6 +168,28 @@ fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
 }
 
 #[test]
+fn environment_journal_budget_rejects_the_first_capacity_growth() {
+    let mut session = session(RevisionId::new(1), "\\count0=1\\end");
+    let mut candidate = session.start_cold_candidate().expect("candidate");
+    candidate.set_execution_budgets(tex_exec::ExecutionBudgets {
+        journal_bytes: 0,
+        ..tex_exec::ExecutionBudgets::default()
+    });
+
+    let error = candidate
+        .drive_with_resource_resolvers(&mut DirectResourceHost, &Cancellation::new())
+        .expect_err("the first journal allocation exceeds a zero-byte budget");
+    assert!(matches!(
+        error,
+        SessionError::Execute(tex_exec::ExecError::ResourceBudgetExceeded {
+            resource: "environment journal bytes",
+            limit: 0,
+            attempted,
+        }) if attempted > 0
+    ));
+}
+
+#[test]
 fn exhausted_fuel_is_not_reported_as_an_invalid_terminal_revision() {
     let error = super::map_terminal_completion_error(
         tex_exec::EngineCompletionError::TerminalRevisionUnavailable,

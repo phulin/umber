@@ -158,9 +158,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   warmed direct-row construction, and compile/runtime escape controls.
 - `src/journal.rs`: Separate compact TeX group saves, typed chunk-arena named-
   checkpoint deltas holding one reversible alternate per written cell, fixed
-  save-stack projections, prefix-independent accepted/current suffix
-  settlement, and reusable operation-local undo with owner-checked stable
-  cursors.
+  save-stack projections, exact capacity-change accounting for constant-time
+  budget reads, prefix-independent accepted/current suffix settlement, and
+  reusable operation-local undo with owner-checked stable cursors.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,

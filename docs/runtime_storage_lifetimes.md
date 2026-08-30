@@ -221,6 +221,9 @@ struct SaveJournal<G> {
     checkpoint_lane: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
     checkpoint_epochs: HashMap<StateCell, u64>,
     operation_undo: Vec<UndoEntry<G>>,
+    group_capacity_bytes: usize,
+    checkpoint_capacity_bytes: usize,
+    operation_capacity_bytes: usize,
 }
 
 struct JournalCursor {
@@ -239,7 +242,12 @@ rejection swaps the candidate backward and accepted suffix forward, and
 acceptance prunes the detached suffix. Whole group
 segments are moved between active, checkpoint-retained, operation-pending, and
 reusable-buffer owners without scanning, copying, relocating, or repacking
-their live entries.
+their live entries. The journal updates three exact byte scalars only when a
+group buffer, checkpoint pool, or operation lane can change capacity.
+Execution-budget checks read those scalars in constant work; they do not walk
+groups or checkpoint chunks on each command. These scalars describe physical
+capacity only and are neither semantic state, a liveness registry, nor a
+second journal representation.
 
 ### Fresh parameter profiles
 
