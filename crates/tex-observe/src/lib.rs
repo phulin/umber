@@ -5,11 +5,10 @@ use std::sync::Arc;
 use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, ConditionRecord,
-    DiagnosticClass as CommandDiagnosticClass,
-    DiagnosticHistory as CommandDiagnosticHistory, DiagnosticLifecycleRecord,
-    DiagnosticOutcome as CommandDiagnosticOutcome, EffectRecord, GeometryRecord,
-    InputReason as CommandInputReason, InputRecord, InputTransition, MacroRecord, MutationRecord,
-    MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken,
+    DiagnosticClass as CommandDiagnosticClass, DiagnosticHistory as CommandDiagnosticHistory,
+    DiagnosticLifecycleRecord, DiagnosticOutcome as CommandDiagnosticOutcome, EffectRecord,
+    GeometryRecord, InputReason as CommandInputReason, InputRecord, InputTransition, MacroRecord,
+    MutationRecord, MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken,
     RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord, TokenListRecord,
 };
 use tex_oracle::OracleBundle;

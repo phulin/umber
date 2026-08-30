@@ -127,7 +127,10 @@ impl CapturedChannels {
                 .observations
                 .iter()
                 .filter(|observation| {
-                    !matches!(observation, tex_command::CommandObservation::DiagnosticLifecycle(_))
+                    !matches!(
+                        observation,
+                        tex_command::CommandObservation::DiagnosticLifecycle(_)
+                    )
                 })
                 .count(),
             status: run.fatal.map_or_else(
@@ -154,15 +157,19 @@ impl CapturedChannels {
 /// outcome is retained as the closing record.
 #[must_use]
 pub fn portable_diagnostic_channel(run: &SemanticRun) -> Vec<u8> {
-    let root_id = run.observations.iter().find_map(|observation| match observation {
-        tex_command::CommandObservation::Command(record) => {
-            record.provenance.source_location.map(tex_command::SourceLocation::source)
-        }
-        tex_command::CommandObservation::DiagnosticLifecycle(
-            tex_command::DiagnosticLifecycleRecord::Report { location, .. },
-        ) => Some(location.source()),
-        _ => None,
-    });
+    let root_id = run
+        .observations
+        .iter()
+        .find_map(|observation| match observation {
+            tex_command::CommandObservation::Command(record) => record
+                .provenance
+                .source_location
+                .map(tex_command::SourceLocation::source),
+            tex_command::CommandObservation::DiagnosticLifecycle(
+                tex_command::DiagnosticLifecycleRecord::Report { location, .. },
+            ) => Some(location.source()),
+            _ => None,
+        });
     let Some(root_id) = root_id else {
         return Vec::new();
     };
@@ -199,7 +206,9 @@ pub fn portable_diagnostic_channel(run: &SemanticRun) -> Vec<u8> {
     )
     .expect("in-memory diagnostic stream header");
     for event in lifecycle {
-        observer.committed(event).expect("in-memory diagnostic event");
+        observer
+            .committed(event)
+            .expect("in-memory diagnostic event");
     }
     observer.finish().expect("in-memory diagnostic stream").0
 }

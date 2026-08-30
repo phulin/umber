@@ -1,13 +1,17 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "repository-contract test reads tracked oracle instrumentation and matrix files"
+)]
+
 use std::collections::BTreeSet;
 use std::fs;
 
 #[test]
 fn pdftex_diagnostic_matrix_is_exhaustive_for_supported_hooks() {
     let root = test_support::repository_root();
-    let matrix = fs::read_to_string(
-        root.join("tests/pdftex14029-oracle/diagnostic-event-matrix.txt"),
-    )
-    .expect("diagnostic matrix");
+    let matrix =
+        fs::read_to_string(root.join("tests/pdftex14029-oracle/diagnostic-event-matrix.txt"))
+            .expect("diagnostic matrix");
     let rows: Vec<_> = matrix
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -35,31 +39,30 @@ fn pdftex_diagnostic_matrix_is_exhaustive_for_supported_hooks() {
         );
     }
 
-    let instrumentation = fs::read_to_string(
-        root.join("tests/pdftex14029-oracle/instrumentation.ch"),
-    )
-    .expect("pdfTeX instrumentation");
+    let instrumentation =
+        fs::read_to_string(root.join("tests/pdftex14029-oracle/instrumentation.ch"))
+            .expect("pdfTeX instrumentation");
     let hooks: BTreeSet<_> = instrumentation
         .lines()
         .filter(|line| line.contains("umber_diag_report(") && !line.contains("procedure "))
         .map(|line| {
-        let class = if line.contains("umber_diag_report(0,") {
-            "recoverable_error"
-        } else if line.contains("umber_diag_report(1,") {
-            "warning"
-        } else if line.contains("umber_diag_report(2,") {
-            "fatal"
-        } else {
-            panic!("unclassified diagnostic hook {line:?}");
-        };
-        let identity = line
-            .split_once("umber_diag_report(")
-            .expect("diagnostic hook")
-            .1
-            .split('"')
-            .nth(1)
-            .expect("literal diagnostic identity");
-        (class, identity)
+            let class = if line.contains("umber_diag_report(0,") {
+                "recoverable_error"
+            } else if line.contains("umber_diag_report(1,") {
+                "warning"
+            } else if line.contains("umber_diag_report(2,") {
+                "fatal"
+            } else {
+                panic!("unclassified diagnostic hook {line:?}");
+            };
+            let identity = line
+                .split_once("umber_diag_report(")
+                .expect("diagnostic hook")
+                .1
+                .split('"')
+                .nth(1)
+                .expect("literal diagnostic identity");
+            (class, identity)
         })
         .collect();
     for &(class, identity) in &hooks {

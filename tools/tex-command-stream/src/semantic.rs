@@ -33,10 +33,9 @@ mod tests;
 pub use channels::{
     CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, EffectArtifact,
     STREAM_CHANNELS, StreamChannel, StreamDisposition, first_line_difference,
-    first_line_difference_in, normalize_channel, normalize_log_clock, portable_effect_channel,
-    portable_diagnostic_channel, split_channel_lines, strip_diagnostic_reports,
-    validate_xfail_diagnostics_disposition,
-    validate_xfail_disposition,
+    first_line_difference_in, normalize_channel, normalize_log_clock, portable_diagnostic_channel,
+    portable_effect_channel, split_channel_lines, strip_diagnostic_reports,
+    validate_xfail_diagnostics_disposition, validate_xfail_disposition,
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 

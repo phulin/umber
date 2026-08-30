@@ -9,11 +9,11 @@ use std::fmt;
 
 use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent,
-    DiagnosticLifecycleEvent, DiagnosticSeverity, EffectEvent, EffectKind, Event, GeometryEvent,
-    GeometryLocation, InputEvent, InputReason, InputTransition, MacroEvent, MutationEvent,
-    OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatusEvent, SourceLocation,
-    StateTarget, TokenListEvent, TokenListTransition,
+    CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticLifecycleEvent,
+    DiagnosticSeverity, EffectEvent, EffectKind, Event, GeometryEvent, GeometryLocation,
+    InputEvent, InputReason, InputTransition, MacroEvent, MutationEvent, OracleToken,
+    RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatusEvent, SourceLocation, StateTarget,
+    TokenListEvent, TokenListTransition,
 };
 
 /// The concrete payload borrowed from any oracle event.

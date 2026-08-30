@@ -73,8 +73,7 @@ impl ObservationStream {
                     "schema v1 does not permit geometry events".into(),
                 ));
             }
-            if matches!(event.semantic, Event::DiagnosticLifecycle(_))
-                && schema < SchemaVersion::V4
+            if matches!(event.semantic, Event::DiagnosticLifecycle(_)) && schema < SchemaVersion::V4
             {
                 return Err(ObservationError::InvalidStream(
                     "schema versions before v4 do not permit diagnostic lifecycle events".into(),
