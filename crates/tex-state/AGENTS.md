@@ -102,7 +102,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   metadata, mutation-compatible coordinate-only chunk cursors whose short
   value borrows do not survive an append, sequential compatibility iterators
   that retain their owner-relative cursor within each packed block, explicit
-  cold structural audits, and reverse `ChunkCursor` traversal, canonical
+  cold structural audits, constant-size live-frontier authentication at
+  lifecycle boundaries, and reverse `ChunkCursor` traversal, canonical
   nonrecursive range lists, partial operation rollback, whole-chunk retained
   marks, exclusive batch promotion, and exactly accepted-versus-forked
   settlement.

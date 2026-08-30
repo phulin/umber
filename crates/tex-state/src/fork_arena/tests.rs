@@ -368,6 +368,30 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
 }
 
 #[test]
+fn live_chunk_boundary_validation_work_is_constant_at_required_sizes() {
+    let mut observed = Vec::new();
+    for chunks in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let _root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..chunks {
+                builder.push(value).expect("one-node direct block");
+            }
+            builder.seal().expect("direct root")
+        };
+
+        let reads_before = pool.payload.arena_position_reads();
+        arena.seal_boundary(&mut pool).expect("sealed boundary");
+        let reads = pool.payload.arena_position_reads() - reads_before;
+        observed.push(reads);
+        eprintln!("LIVE_CHUNK_BOUNDARY_SCALE chunks={chunks} frontier_reads={reads}");
+    }
+
+    assert_eq!(observed, [1, 1, 1]);
+}
+
+#[test]
 fn direct_chunk_visit_is_linear_and_allocation_free_at_one_sixty_four_and_four_thousand_ninety_six_chunks()
  {
     for chunks in [1_u32, 64, 4_096] {

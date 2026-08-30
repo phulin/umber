@@ -359,6 +359,17 @@ copied into the new owner. Page-to-durable box255 publication remains a
 separate lifetime boundary and retains its explicitly counted copy while page
 and durable owners coexist.
 
+Each arena lane also maintains one constant-size live frontier: its logical
+end position and current tail chunk incarnation. Append, operation rollback,
+candidate settlement, prefix release, lineage sharing, and succession update
+that record at the same structural mutation as the authoritative chunk vector
+and pool lineage index. A checked lifecycle boundary compares the maintained
+record with the vector tail and authenticates that tail's generation, arena,
+lineage, and owner-relative position in the pool. It therefore admits the
+module-private prefix invariant in O(1), without a whole-arena chunk census or
+a second node representation. Cold suffix-closure and dependency audits remain
+explicit where their semantic contract requires visiting the selected suffix.
+
 An old page region is retained precisely when at least one retained restart
 row belongs to its contiguous boundary interval. If a page contains no
 retained boundary, output has detached, and held-over material has evacuated,

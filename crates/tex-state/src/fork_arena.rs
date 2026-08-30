@@ -85,6 +85,8 @@ struct ChunkStorage<T> {
     #[cfg(test)]
     validation_reads: core::cell::Cell<u64>,
     #[cfg(test)]
+    arena_position_reads: core::cell::Cell<u64>,
+    #[cfg(test)]
     previous_link_reads: core::cell::Cell<u64>,
     #[cfg(any(test, feature = "testing"))]
     admitted_index_resolutions: core::cell::Cell<u64>,
@@ -118,6 +120,8 @@ impl<T> ChunkStorage<T> {
             #[cfg(test)]
             validation_reads: core::cell::Cell::new(0),
             #[cfg(test)]
+            arena_position_reads: core::cell::Cell::new(0),
+            #[cfg(test)]
             previous_link_reads: core::cell::Cell::new(0),
             #[cfg(any(test, feature = "testing"))]
             admitted_index_resolutions: core::cell::Cell::new(0),
@@ -131,6 +135,11 @@ impl<T> ChunkStorage<T> {
     #[cfg(test)]
     fn validation_reads(&self) -> u64 {
         self.validation_reads.get()
+    }
+
+    #[cfg(test)]
+    fn arena_position_reads(&self) -> u64 {
+        self.arena_position_reads.get()
     }
 
     #[cfg(test)]
@@ -594,6 +603,9 @@ impl<T> ChunkStorage<T> {
     }
 
     fn arena_position(&self, key: RawChunkKey, arena: u32, lineage: u32) -> Option<usize> {
+        #[cfg(test)]
+        self.arena_position_reads
+            .set(self.arena_position_reads.get().saturating_add(1));
         let meta = self.chunks.get(key.slot as usize)?;
         if !meta.live || meta.generation != key.generation || meta.arena != arena {
             return None;
@@ -976,6 +988,18 @@ struct ChunkSet {
     descriptors: Vec<RawChunkKey>,
 }
 
+/// Constant-size authentication for one arena lane's indexed live suffix.
+///
+/// `end` is the owner-relative position after the last live chunk. `tail` is
+/// absent when every position below `end` has already been released into the
+/// logical base. Module-private structural mutations update this record at
+/// the same point as the authoritative chunk vectors and pool indexes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct LiveChunkFrontier {
+    end: usize,
+    tail: Option<RawChunkKey>,
+}
+
 enum ForkOwnership {
     Accepted(ChunkSet),
     Forked {
@@ -1265,6 +1289,8 @@ pub struct ForkArena<T, Lane> {
     ownership: ForkOwnership,
     base_payload_chunks: u32,
     base_descriptor_chunks: u32,
+    payload_frontier: LiveChunkFrontier,
+    descriptor_frontier: LiveChunkFrontier,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
@@ -1298,6 +1324,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             base_descriptor_chunks: 0,
+            payload_frontier: LiveChunkFrontier::default(),
+            descriptor_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -1316,6 +1344,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             base_descriptor_chunks: 0,
+            payload_frontier: LiveChunkFrontier::default(),
+            descriptor_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -1378,29 +1408,82 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
+    fn computed_live_chunk_frontier(&self, descriptor: bool) -> LiveChunkFrontier {
+        let end = if descriptor {
+            self.live_descriptor_len()
+        } else {
+            self.live_payload_len()
+        };
+        let base = if descriptor {
+            self.base_descriptor_chunks as usize
+        } else {
+            self.base_payload_chunks as usize
+        };
+        let tail = (end != base)
+            .then(|| self.live_key_at(descriptor, end - 1))
+            .flatten();
+        LiveChunkFrontier { end, tail }
+    }
+
+    fn refresh_live_chunk_frontier(&mut self, descriptor: bool) {
+        let frontier = self.computed_live_chunk_frontier(descriptor);
+        if descriptor {
+            self.descriptor_frontier = frontier;
+        } else {
+            self.payload_frontier = frontier;
+        }
+    }
+
+    fn refresh_live_chunk_frontiers(&mut self) {
+        self.refresh_live_chunk_frontier(false);
+        self.refresh_live_chunk_frontier(true);
+    }
+
+    /// Authenticates the complete live chunk suffix from its maintained tail.
+    ///
+    /// The ordered key vectors and pool indexes are mutated only by this
+    /// module. Verifying their constant-size end record plus the tail chunk's
+    /// incarnation, arena, lineage, and owner-relative position therefore
+    /// admits the maintained prefix invariant without replaying every chunk.
     fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         self.validate_pool(pool)?;
-        for position in self.base_payload_chunks as usize..self.live_payload_len() {
-            let key = self
-                .live_key_at(false, position)
-                .ok_or(ForkArenaError::InvalidChunk)?;
-            if pool.payload.arena_position(key, self.owner, self.lineage) != Some(position) {
-                return Err(ForkArenaError::InvalidChunk);
-            }
-        }
-        for position in self.base_descriptor_chunks as usize..self.live_descriptor_len() {
-            let key = self
-                .live_key_at(true, position)
-                .ok_or(ForkArenaError::InvalidChunk)?;
-            if pool
-                .descriptors
-                .arena_position(key, self.owner, self.lineage)
-                != Some(position)
-            {
-                return Err(ForkArenaError::InvalidChunk);
-            }
-        }
+        self.validate_live_chunk_frontier(pool, false, self.payload_frontier)?;
+        self.validate_live_chunk_frontier(pool, true, self.descriptor_frontier)?;
         Ok(())
+    }
+
+    fn validate_live_chunk_frontier(
+        &self,
+        pool: &ChunkPool<T>,
+        descriptor: bool,
+        frontier: LiveChunkFrontier,
+    ) -> Result<(), ForkArenaError> {
+        if frontier != self.computed_live_chunk_frontier(descriptor) {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        let Some(key) = frontier.tail else {
+            let base = if descriptor {
+                self.base_descriptor_chunks as usize
+            } else {
+                self.base_payload_chunks as usize
+            };
+            return (frontier.end == base)
+                .then_some(())
+                .ok_or(ForkArenaError::InvalidChunk);
+        };
+        let position = frontier
+            .end
+            .checked_sub(1)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        let actual = if descriptor {
+            pool.descriptors
+                .arena_position(key, self.owner, self.lineage)
+        } else {
+            pool.payload.arena_position(key, self.owner, self.lineage)
+        };
+        (actual == Some(position))
+            .then_some(())
+            .ok_or(ForkArenaError::InvalidChunk)
     }
 
     fn can_seal_boundary(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
@@ -1512,19 +1595,23 @@ impl<T, Lane> ForkArena<T, Lane> {
             .sealed_prefix_chunks_shared
             .saturating_add(count);
         let counters = self.counters;
-        Ok(Self {
+        let mut shared = Self {
             owner: self.owner,
             lineage,
             pool_owner: self.pool_owner,
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
             base_descriptor_chunks: 0,
+            payload_frontier: LiveChunkFrontier::default(),
+            descriptor_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
             counters,
             _types: PhantomData,
-        })
+        };
+        shared.refresh_live_chunk_frontiers();
+        Ok(shared)
     }
 
     /// Releases every envelope after a complete read-only preflight.
@@ -1546,6 +1633,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.release_set(pool, set)
                 .expect("region retirement was completely preflighted");
         }
+        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -1723,6 +1811,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     self.counters.direct_blocks_allocated.saturating_add(1);
                 let position = self.live_payload_len() - 1;
                 self.index_chunk(pool, false, key, position);
+                self.refresh_live_chunk_frontier(false);
                 key
             }
         };
@@ -2005,6 +2094,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
         }
+        self.refresh_live_chunk_frontier(descriptor);
         Ok(())
     }
 
@@ -2760,6 +2850,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         self.base_payload_chunks = mark.payload_chunks;
         self.base_descriptor_chunks = mark.descriptor_chunks;
+        self.refresh_live_chunk_frontiers();
         Ok(payload_count.saturating_add(descriptor_count))
     }
 
@@ -3048,6 +3139,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             detached_prior,
             current: ChunkSet::default(),
         };
+        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -3154,6 +3246,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         prefix.payload.extend(detached_prior.payload);
         prefix.descriptors.extend(detached_prior.descriptors);
         self.ownership = ForkOwnership::Accepted(prefix);
+        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -3183,6 +3276,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         prefix.payload.extend(current.payload);
         prefix.descriptors.extend(current.descriptors);
         self.ownership = ForkOwnership::Accepted(prefix);
+        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -3236,6 +3330,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload: current.payload.split_off(payload_floor),
             descriptors: current.descriptors.split_off(descriptor_floor),
         };
+        self.refresh_live_chunk_frontiers();
         let count = self.release_set(pool, released)?;
         self.counters.rootless_suffix_chunks_released = self
             .counters
@@ -3496,6 +3591,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .obsolete_chunks_pruned
             .saturating_add(released as u64);
         self.ownership = ForkOwnership::Accepted(successor);
+        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -3545,6 +3641,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         for key in &descriptors {
             self.unindex_chunk(pool, true, *key);
         }
+        self.refresh_live_chunk_frontiers();
         Ok(DetachedBatch {
             arena: batch.arena,
             serial: batch.serial,
@@ -3606,6 +3703,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             current.payload.extend(batch.payload);
             current.descriptors.extend(batch.descriptors);
         }
+        self.refresh_live_chunk_frontiers();
         self.pending_batch = None;
         Ok(())
     }
@@ -3721,6 +3819,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             current.payload.extend(batch.payload);
             current.descriptors.extend(batch.descriptors);
         }
+        destination.refresh_live_chunk_frontiers();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -3832,6 +3931,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             current.payload.extend(payload);
             current.descriptors.extend(descriptors);
         }
+        destination.refresh_live_chunk_frontiers();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -4140,7 +4240,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         if local > lane.len() {
             return Err(ForkArenaError::InvalidRegion);
         }
-        Ok(lane.split_off(local))
+        let detached = lane.split_off(local);
+        self.refresh_live_chunk_frontier(descriptor);
+        Ok(detached)
     }
 
     fn validate_list_in_suffix(
