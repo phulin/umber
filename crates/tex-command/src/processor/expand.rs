@@ -4466,9 +4466,5 @@ mod tests;
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ExpansionState {
     pub(crate) cumulative_expansions: u64,
-    pub(crate) next_resource_resolution: u64,
-    pub(crate) pending_diagnostics: Vec<u64>,
-    pub(crate) observed_dependencies: Vec<u64>,
-    pub(crate) semantic_barriers: Vec<u64>,
     pub(crate) profile: CommandProfile,
 }

@@ -1422,23 +1422,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .ok_or(CommandError::input_invariant())
     }
 
-    /// Restores a command and records the diagnostic selected by `back_error`.
-    ///
-    /// Full diagnostic-text rendering for the identities this records remains
-    /// a later milestone; keeping its accounting here ensures recovery input
-    /// remains ordinary input after the one backup transition.
-    pub(crate) fn back_error(
-        &mut self,
-        command: CurrentCommand<G>,
-        diagnostic: u64,
-    ) -> Result<(), CommandError> {
-        self.back_input(command)?;
-        self.command.timeline.record_expansion_diagnostic_push();
-        self.command.expansion.pending_diagnostics.push(diagnostic);
-        Ok(())
-    }
-
-    /// [`Self::back_error`] that also composes the report §82 will render.
+    /// Restores a command and composes the report §82 will render.
     ///
     /// TeX82's `back_error` is `back_input` *then* `error`, so the context is
     /// captured with the backed-up level already on the stack -- which is
@@ -1451,7 +1435,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         message: String,
         help: &'static [&'static str],
     ) -> Result<(), CommandError> {
-        self.back_error(command, diagnostic)?;
+        self.back_input(command)?;
         let context = self.command.output_open_context(self.state);
         self.command
             .semantic_diagnostics
@@ -1474,8 +1458,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         message: String,
         help: &'static [&'static str],
     ) {
-        self.command.timeline.record_expansion_diagnostic_push();
-        self.command.expansion.pending_diagnostics.push(diagnostic);
         let context = self.command.output_open_context(self.state);
         self.command
             .semantic_diagnostics
@@ -2236,7 +2218,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         recovery: RecoveryContext,
         at_file_end: bool,
     ) -> Result<(), CommandError> {
-        let RecoveryContext { status, warning } = recovery;
+        let RecoveryContext { status, .. } = recovery;
         if matches!(status, ScannerStatus::Aligning(_)) {
             // TeX82 §23's `check_outer_validity` reports the aligning
             // recovery before `ins_error` inserts inaccessible frozen `\cr`.
@@ -2285,10 +2267,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 && self.command.alignment.active_alignment.is_some();
         if !retains_aligning_until_preamble_completion {
             self.command.scanner.clear_for_recovery();
-        }
-        if let Some(warning) = warning {
-            self.command.timeline.record_expansion_diagnostic_push();
-            self.command.expansion.pending_diagnostics.push(warning.0);
         }
         let observed_tokens = std::iter::once(first_token)
             .chain(second_token)

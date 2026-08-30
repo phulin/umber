@@ -16,6 +16,33 @@ fn install_static<G>(universe: &mut tex_state::Universe<G>, name: &str, meaning:
     Token::Cs(symbol.symbol())
 }
 
+fn collect_expanded_characters<G>(
+    universe: &mut tex_state::Universe<G>,
+    command: &mut CommandState<G>,
+) -> String {
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::default();
+    let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+    let mut context = universe.command_context().expect("command context");
+    let mut processor = crate::test_harness::processor(
+        command,
+        &mut context,
+        &mut capabilities,
+        &mut fuel,
+        &mut diagnostic_effects,
+    );
+    let mut output = String::new();
+    while let Some(command) = processor.get_x_token().expect("expanded delivery") {
+        match command.meaning() {
+            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
+                output.push(ch);
+            }
+            other => panic!("expected expanded character, found {other:?}"),
+        }
+    }
+    output
+}
+
 #[test]
 fn parameterless_macro_expands_from_a_generation_typed_definition() {
     crate::test_harness::with_universe(|universe| {
@@ -704,5 +731,41 @@ fn csname_relaxes_an_already_interned_undefined_name() {
         );
         assert_eq!(expanded.meaning(), Meaning::Relax);
         assert!(processor.get_x_token().expect("end").is_none());
+    });
+}
+
+#[test]
+fn pdf_insert_height_queries_live_state_and_distinguishes_missing_from_zero() {
+    crate::test_harness::with_universe(|universe| {
+        let pdf_insert_height = install_static(
+            universe,
+            "pdfinsertht",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight),
+        );
+        let class = [Token::Char {
+            ch: '7',
+            cat: Catcode::Other,
+        }];
+
+        let mut missing = CommandState::new(CommandProfile::PDFTEX14029);
+        crate::test_harness::push(
+            &mut missing,
+            std::iter::once(pdf_insert_height).chain(class),
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut missing), "0pt");
+
+        universe
+            .command_context()
+            .expect("command context")
+            .upsert_page_insertion(tex_state::page::PageInsertion::new(
+                7,
+                tex_state::scaled::Scaled::from_raw(0),
+            ));
+        let mut present = CommandState::new(CommandProfile::PDFTEX14029);
+        crate::test_harness::push(
+            &mut present,
+            std::iter::once(pdf_insert_height).chain(class),
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut present), "0.0pt");
     });
 }

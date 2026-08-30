@@ -1290,31 +1290,6 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
 }
 
 #[test]
-fn ordered_diagnostic_pushes_remain_noncoalescible_and_restore_in_order() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = crate::CommandState::default();
-        let checkpoint = command
-            .publish_summary(universe)
-            .expect("quiescent checkpoint publishes");
-        let before = command.timeline.packed_journal_counters();
-        for diagnostic in [11, 22, 33] {
-            command.timeline.record_expansion_diagnostic_push();
-            command.expansion.pending_diagnostics.push(diagnostic);
-        }
-        let after = command.timeline.packed_journal_counters();
-        assert_eq!(after.records - before.records, 3);
-        assert_eq!(after.ordered_events - before.ordered_events, 3);
-
-        let mut candidate =
-            crate::CommandState::fork_summary(command, &checkpoint, universe, universe)
-                .expect("diagnostic suffix forks");
-        assert!(candidate.expansion.pending_diagnostics.is_empty());
-        candidate.reject_checkpoint_candidate();
-        assert_eq!(candidate.expansion.pending_diagnostics, [11, 22, 33]);
-    });
-}
-
-#[test]
 fn surviving_summary_restarts_identically_after_a_newer_summary_is_dropped() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

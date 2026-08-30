@@ -146,7 +146,6 @@ enum CommandRootUndo<G> {
     NextSourceIdentity(u64),
     RetainedFileLineNumber(i32),
     ForceEof(bool),
-    ExpansionDiagnosticPush(Option<u64>),
 }
 
 const _: () = assert!(std::mem::size_of::<CommandRootUndo<()>>() <= 32);
@@ -190,12 +189,6 @@ impl<G> CommandRootUndo<G> {
                 std::mem::swap(value, &mut roots.input.retained_file_line_number);
             }
             Self::ForceEof(value) => std::mem::swap(value, &mut roots.input.force_eof),
-            Self::ExpansionDiagnosticPush(value) => match value.take() {
-                Some(diagnostic) => roots.expansion.pending_diagnostics.push(diagnostic),
-                None => {
-                    *value = roots.expansion.pending_diagnostics.pop();
-                }
-            },
         }
     }
 }
@@ -689,17 +682,6 @@ impl<G> CommandTimeline<G> {
         }
         self.pending_input_touched = true;
         self.pending_input.append(PendingInputUndo(old));
-    }
-
-    pub(crate) fn record_expansion_diagnostic_push(&mut self) {
-        if self.has_live_frame() {
-            // Ordered diagnostic pushes are the deliberately non-coalescible
-            // class: every payload must survive reverse rollback and forward
-            // redo in its original vector order.
-            self.scalars
-                .append(CommandRootUndo::ExpansionDiagnosticPush(None));
-            self.ordered_events = self.ordered_events.saturating_add(1);
-        }
     }
 
     fn restore_roots(

@@ -29,10 +29,8 @@ fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
 }
 
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
-const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
 const MISSING_RELATION_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0003;
-const BAD_NUMBER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0004;
 const ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0005;
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
@@ -1356,10 +1354,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn record_bad_number(&mut self) {
-        self.command
-            .expansion
-            .pending_diagnostics
-            .push(BAD_NUMBER_DIAGNOSTIC);
         observe!(
             self,
             CommandObservation::Diagnostic(DiagnosticRecord {
@@ -1576,13 +1570,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 context,
                 integer_error: None,
             });
-        self.command
-            .expansion
-            .pending_diagnostics
-            .push(EXTRA_DELIMITER_DIAGNOSTIC);
         // TeX82 §509 diagnoses a delimiter which exceeds the current
-        // `if_limit` at the delimiter transition itself.  Keep the pending
-        // diagnostic for engine-facing recovery, but publish the detached
+        // `if_limit` at the delimiter transition itself. Publish the detached
         // command event here so it remains ordered after raw delivery and
         // before the following token.
         observe!(
@@ -1602,10 +1591,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .state
             .primitive_token("relax")
             .ok_or(CommandError::input_invariant())?;
-        self.command
-            .expansion
-            .pending_diagnostics
-            .push(INCOMPLETE_IF_DIAGNOSTIC);
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,

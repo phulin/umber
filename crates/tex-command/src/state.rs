@@ -145,24 +145,6 @@ impl<G> CommandStateRoots<G> {
             .saturating_add(self.alignment.align_stack.retained_bytes())
             .saturating_add(self.alignment.suspended.retained_bytes())
             .saturating_add(
-                self.expansion
-                    .pending_diagnostics
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.expansion
-                    .observed_dependencies
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.expansion
-                    .semantic_barriers
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
                 self.replay_completions
                     .capacity()
                     .saturating_mul(std::mem::size_of::<InputLevelId>()),
@@ -452,9 +434,8 @@ pub enum CommandSemanticDiagnostic {
     /// `tex-command` never prints (see this crate's `AGENTS.md`), and the
     /// levels §82 displays are live only inside the borrowed processor
     /// episode. Composing the whole report here is what lets the executor
-    /// render it faithfully after the borrow ends. `identity` is the same
-    /// `back_error` accounting code recorded in `pending_diagnostics`, kept
-    /// so a report and its recovery remain correlatable.
+    /// render it faithfully after the borrow ends. `identity` correlates the
+    /// report with the recovery that produced it without a second ledger.
     Recoverable {
         identity: u64,
         /// TeX82 §306's selector-routed heading and partial token list,
@@ -1041,17 +1022,13 @@ impl<G> CommandState<G> {
             && self.pending_replay_completions.is_empty()
             && self.semantic_diagnostics.is_empty()
             && !self.name_in_progress
-            && self.named_token_list_pushes.is_empty()
-            && self.expansion.pending_diagnostics.is_empty()
-            && self.expansion.observed_dependencies.is_empty()
-            && self.expansion.semantic_barriers.is_empty();
+            && self.named_token_list_pushes.is_empty();
         if !supported_continuation {
             state.unsupported_command_state();
             return;
         }
         stack ^= self.profile().fingerprint().get();
         stack = stack.rotate_left(17) ^ self.expansion.cumulative_expansions;
-        stack = stack.rotate_left(17) ^ self.expansion.next_resource_resolution;
         state.observe_command_projection(
             tex_state::DependencyKey::InputLine,
             tex_state::DependencyValue::Projection {

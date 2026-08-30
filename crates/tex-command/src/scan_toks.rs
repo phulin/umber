@@ -525,8 +525,6 @@ enum MacroParameterDiagnostic {
     IllegalReplacementNumber { target: Option<Symbol> },
 }
 
-const NONCONSECUTIVE_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0476;
-const ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0479;
 const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -1447,10 +1445,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
             // token recovery.
-            // §476's text is already rendered by
-            // `report_macro_parameter_diagnostic` below; this records only
-            // the recovery identity.
-            self.back_error(follower, NONCONSECUTIVE_PARAMETER_DIAGNOSTIC)?;
+            self.back_input(follower)?;
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
@@ -1766,9 +1761,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let delivered = destination
                     .take()
                     .expect("parameter recovery consumes the delivered command");
-                if let Err(error) =
-                    self.back_error(delivered, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)
-                {
+                if let Err(error) = self.back_input(delivered) {
                     return Err(replacement_failure(
                         error,
                         output,

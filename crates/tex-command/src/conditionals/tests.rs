@@ -319,17 +319,12 @@ fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
             );
             assert_eq!(next_character(&mut processor), 't');
         }
-        assert!(
-            command
-                .take_semantic_diagnostics()
-                .iter()
-                .any(|diagnostic| {
-                    matches!(
-                        diagnostic,
-                        CommandSemanticDiagnostic::Recoverable { message, .. }
-                    if message.starts_with("Extra ")
-                    )
-                })
-        );
+        let diagnostics = command.take_semantic_diagnostics();
+        assert!(matches!(
+            diagnostics.as_slice(),
+            [CommandSemanticDiagnostic::Recoverable { message, .. }]
+                if message.starts_with("Extra ")
+        ));
+        assert!(command.take_semantic_diagnostics().is_empty());
     });
 }
