@@ -3912,6 +3912,18 @@ same driver and destination. Main-loop lookahead, alignment delivery, prefix
 scanning, leader handoff, and in-place reswitch use the same caller-owned
 destination shape; the returned status carries no command.
 
+The `expanded_deliveries` work counter counts completed expanded-driver
+deliveries, not semantic observations. Raw preflight therefore observes its
+first unexpandable command without charging a second driver completion. This
+also applies when the caller resumes the exact retained frame after host
+resource acquisition: retry does not physically redeliver the command merely
+to reproduce historical bookkeeping. In the authenticated 50M arXiv row, the
+unified loop removes exactly 125 such completions, one for each of the 124
+reported distribution acquisitions plus the authored-root acquisition, while
+the exhaustive command trace remains exact. The accepted work vector is
+`(50000000,49909604,9459109,15938741,35330972,4203)`; restoring the prior
+`9459234` expanded-delivery count would add work with no TeX semantic event.
+
 Execution may call narrow processor APIs to:
 
 - push `\every...` token input;
