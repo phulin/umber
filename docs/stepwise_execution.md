@@ -248,7 +248,11 @@ delivery-order cursor rather than cloning or reconstructing them.
 
 `DirectOperationMark` is fixed-size and non-restoring. It owns the current
 environment-journal cursor and, for an incremental candidate, disposable
-private-allocation watermarks. It registers no aggregate rollback root and
+private-allocation watermarks. Its command-attempt member is a move-only,
+coordinate-free lifecycle capability: `CommandState` retains the sole ordinary
+opening mark and settles it directly at commit or rollback. Only a genuine
+resource suspension cold-materializes that mark in the pending package for
+owner-exact readmission. It registers no aggregate rollback root and
 does not construct or advance semantic state identity. A successful operation
 closes the private mark and may establish a new level-zero journal baseline
 only when no named checkpoint or fork prefix retains the old one. Open groups,

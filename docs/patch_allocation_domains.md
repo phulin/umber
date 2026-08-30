@@ -49,7 +49,10 @@ does not traverse stores, reconstruct indexes, or compact historical
 allocations.
 
 `tex-command::CommandState` owns command cursors and typed resource
-continuations. It contains no allocation-domain control. `tex-exec::MainControl`
+continuations, including the sole ordinary command-attempt coordinate; the
+executor moves only its coordinate-free lifecycle edge. A genuine suspension
+may retain the coordinate in its pending package for owner-exact admission. It
+contains no allocation-domain control. `tex-exec::MainControl`
 opens one fixed-size `Universe::DirectOperationMark` after preflight. Successful
 operation commit closes the private suffix without releasing earlier work.
 Ordinary failure and cancellation discard only unpublished operation

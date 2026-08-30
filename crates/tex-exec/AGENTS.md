@@ -43,7 +43,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   cold slot, and move-only suspension carriers.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/rollback, resource and diagnostic retry settlement, and ordered
-  semantic/effect/artifact/boundary publication.
+  semantic/effect/artifact/boundary publication. Its direct-operation mark
+  moves only tex-command's opaque lifecycle edge; the authoritative ordinary
+  attempt coordinate remains in `CommandState`.
 - `src/main_control/executor_facts.rs`: the one stack-branded stationary mode,
   effective-tail, transaction, checked-save, and delivery preparation. The
   caller-owned preparation slot is filled and drained fieldwise across

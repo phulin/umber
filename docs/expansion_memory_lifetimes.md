@@ -576,8 +576,11 @@ promotion, so the complete hot-path invariant is not yet implemented.
 An ordinary function local cannot survive suspension. Every value needed on
 resume is moved into a typed pending state. For the resource path,
 `PendingCommandAttempt` owns the complete attempt, a non-`Copy`
-`CommandAttemptOperation` capability, a fixed resume point, the typed requested
-operation frame, and one coarse generation owner. Preparation writes
+coordinate-free `CommandAttemptOperation` capability, the cold-materialized
+opening coordinate, a fixed resume point, the typed requested operation frame,
+and one coarse generation owner. In the ordinary path `CommandState` alone owns
+that coordinate; `DirectOperationMark` moves only the opaque lifecycle edge,
+so commit and rollback neither copy nor compare a duplicate mark. Preparation writes
 diagnostic fields into one caller-loop `OperationFrame` and returns only a
 compact readiness coordinate. A successful ordinary scan installs one compact
 hot payload into that frame or one uncommon cold leaf into its adjacent
@@ -962,7 +965,7 @@ not supplied the file.
    in its parent's shared attempt token lane. Its unfinished state moves into an
    ABA-tagged `ExecutionScratch` slot; each enclosing expansion moves that
    non-`Copy` key into its own typed caller frame.
-4. `PendingCommandAttempt` takes the attempt arena, fixed opening mark, resume
+4. `PendingCommandAttempt` takes the attempt arena, cold-materialized fixed opening mark, resume
    coordinates, typed resource operation, and one coarse current-generation
    owner. Ordinary Rust locals and borrows end before control returns to the
    host. Scratch segments A--C remain where they are; nothing is copied.

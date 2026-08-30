@@ -43,7 +43,10 @@ collector (see `src/conditionals.rs`).
   fixed-chunk token lane, promotion, and suspension scope capabilities. Each
   scanner carries only a typed branch coordinate into that lane; finalization
   publishes the same words and truncation returns whole chunks. Macro
-  invocation storage does not use this arena.
+  invocation storage does not use this arena. `CommandState` owns the sole
+  ordinary operation coordinate; the executor moves a coordinate-free opaque
+  lifecycle edge. Only genuine suspension copies the coordinate into the
+  pending package for owner-exact readmission.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   The admitted macro frame's fixed nine-slot metadata owns the current argument
   cursor and first-scan facts while its resident writer settles each accepted
@@ -76,7 +79,8 @@ collector (see `src/conditionals.rs`).
   persistent command state, cross-processor executor-owned replay-completion
   fences, current-generation execution scratch, and direct semantic mutation.
   `src/state/attempt_transition.rs` owns direct-operation scope settlement and
-  resource handoff; `src/state/projection.rs` owns allocation-free retained-byte
+  resource handoff, including the single state-owned ordinary attempt mark;
+  `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
   executor-facing fact transfer. Each is an inherent implementation on the
   same authoritative `CommandState`; none adds a facade or state owner. A named checkpoint records

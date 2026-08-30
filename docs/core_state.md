@@ -507,7 +507,9 @@ expanded delivery and typed operand preflight complete first; resource misses
 retain their prepared request, and semantic apply commits exact owners
 directly. `DirectOperationMark` is a fixed-size, non-restoring cursor over the
 operation's environment-journal activity and private immutable-store suffix.
-It registers no rollback root, clones no aggregate state, and does not publish,
+Its command-attempt edge is coordinate-free; `CommandState` owns the sole
+ordinary opening mark, while a real resource suspension alone retains a cold
+copy for pending-continuation admission. It registers no rollback root, clones no aggregate state, and does not publish,
 compute, or advance durable semantic identity. At level zero, a changed direct
 operation may retire closed environment-journal history only when no named
 checkpoint or fork prefix can restore it. Open groups and retained checkpoints

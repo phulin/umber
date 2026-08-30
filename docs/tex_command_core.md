@@ -3267,10 +3267,14 @@ A missing resource returns a typed `NeedResource`. No async future or callback
 is stored in `CommandState`. The unfinished operation moves exactly once into
 `PendingCommandAttempt<G, R>`, the sole in-session suspension package: it owns
 the complete `AttemptArena`, one coarse `GenerationOwner<G>`, a non-`Copy`
-operation capability, the typed request, and integer-only command, scanner,
-expansion, and subordinate resume cursors. Resume consumes that package,
-validates the generation, reinstalls the same attempt, and returns the same
-operation capability without rescanning the request operands. A rejected
+coordinate-free operation capability, the cold-materialized authoritative
+opening coordinate, the typed request, and integer-only command, scanner,
+expansion, and subordinate resume cursors. Ordinary begin, commit, and rollback
+keep that coordinate only in `CommandState`; the executor's direct-operation
+mark moves only the opaque lifecycle capability and performs no duplicate-mark
+comparison. Resume consumes the package, validates its coordinate and
+generation against the admitting command state, reinstalls the same attempt,
+and returns the same operation capability without rescanning the request operands. A rejected
 suspension likewise returns the still-live capability to its caller.
 Cancellation drops the package wholesale. Before a suspension leaves the
 session it detaches to the handle-free command-continuation schema; the
