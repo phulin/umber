@@ -525,10 +525,16 @@ impl SourceMap {
             return Ok(position);
         }
 
-        let semantic_registration = self
-            .reachable_state_identity
-            .as_ref()
-            .map(|_| source_descriptor_identity(&descriptor));
+        let semantic_registration = self.reachable_state_identity.as_ref().and_then(|_| {
+            match &descriptor {
+                // The named generated source is the editor's root revision.
+                // Its whole-buffer identity is validation metadata, not
+                // future TeX state; unread input is represented by the
+                // command cursor projection instead.
+                SourceDescriptor::Generated(source) if source.logical_path().is_some() => None,
+                _ => Some(source_descriptor_identity(&descriptor)),
+            }
+        });
 
         let byte_len = descriptor.byte_len();
         let owned_descriptor = descriptor.clone();
@@ -952,13 +958,15 @@ fn source_descriptor_identity(descriptor: &SourceDescriptor) -> u64 {
         }
         SourceDescriptor::Generated(source) => {
             hasher.tag(1);
-            hasher.bytes(&source.hash().bytes());
             match source.logical_path() {
                 Some(path) => {
                     hasher.bool(true);
                     hasher.str(path);
                 }
-                None => hasher.bool(false),
+                None => {
+                    hasher.bool(false);
+                    hasher.bytes(&source.hash().bytes());
+                }
             }
         }
     })

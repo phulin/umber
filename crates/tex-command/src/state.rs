@@ -2391,9 +2391,34 @@ impl<G> CommandState<G> {
         self.timeline
             .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
-        let rebound = self.input.levels.rebind_physical_source(source, replacement);
+        let rebound = self
+            .input
+            .levels
+            .rebind_physical_source(source, replacement);
         debug_assert!(rebound, "the validated root source remains present");
         Ok(id)
+    }
+
+    /// Rehomes the accepted editor backing after convergence. This runs only
+    /// after the current candidate has been rejected and does not create a
+    /// command-journal branch or another generation.
+    #[doc(hidden)]
+    pub fn rehome_generated_editor_source(
+        &mut self,
+        accepted: &[u8],
+        bytes: std::sync::Arc<[u8]>,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+    ) -> Result<(), SourceRegistrationError> {
+        if !self
+            .input
+            .levels
+            .rehome_generated_source(accepted, bytes, old_start, old_end, new_end)?
+        {
+            return Err(SourceRegistrationError::RestartPrefixMismatch { anchor: 0 });
+        }
+        Ok(())
     }
 
     fn take_registered_source(

@@ -15,9 +15,11 @@ owns two inline slots for the optional accepted prior and exclusive current
 candidate. `RetainedStateGeneration` and `RetainedEngineGeneration` are
 move-only slot leases; the `Universe`, dense state, journals, save stacks,
 checkpoints, continuations, and generation-typed sidecars reside below the
-same external store. Public incremental, virtual-compile, project, fixed-point,
-editor, and native sessions borrow a caller-owned store explicitly; their Rust
-lifetime prevents a session or generation from outliving it. A suspended
+same external store. At rest the session occupies only the accepted slot.
+Starting an advance may occupy the other slot with one candidate; history
+metadata never occupies a slot. Public incremental, virtual-compile, project,
+fixed-point, editor, and native sessions borrow a caller-owned store explicitly;
+their Rust lifetime prevents a session or generation from outliving it. A suspended
 candidate can remain beside its session across host turns because both are
 statically tied to that external owner rather than either borrowing the other.
 One coarse `Rc<RefCell<_>>` allocation also permits a self-contained exported
@@ -986,6 +988,19 @@ evidence, hashes, schedules, output prefixes, and the exclusive page regions
 required by exact paragraph restart. It never retains a third runtime
 generation or infers node liveness from raw roots.
 
+Convergence is the other terminal transition. The first mapped schedule row
+whose complete reachable-state identity matches stops candidate execution at
+that checkpoint. The candidate detaches only effects, artifacts, and DVI plans
+through the match; the session joins that prefix to its detached accepted
+suffix. After validation, the candidate is rejected wholesale. One aggregate
+accepted-generation operation then substitutes the current immutable editor
+backing, maps every retained root-source cursor and physical-line coordinate,
+releases boundary rows between restart and convergence, and rebases the
+surviving boundary effect/artifact prefixes. This is bounded mark/journal and
+boundary-row work: it does not traverse or copy definition, token, node, PDF,
+or provenance graphs. The accepted generation is now the new revision, and the
+candidate slot is empty.
+
 There is no runtime compactor, relocation map, generation graph, forwarding
 pointer, slab splice, tracing collector, or content-equality merge. Routine
 edits perform at most one aggregate checkpoint fork, never a per-checkpoint
@@ -1057,10 +1072,11 @@ selection, node-building lifetimes, resource/effect barriers, shipout
 detachment, and the ordering of aggregate restore. It cannot construct state
 ids or publish partially sealed values.
 
-`tex-incr` owns the prior/current generation state machine, detached named
+`tex-incr` owns the accepted/candidate generation state machine, detached named
 checkpoint evidence, history pruning, candidate acceptance/rejection, and
-convergence comparison. It never relocates runtime roots or inspects private
-arena storage.
+convergence comparison. It requests aggregate root-source rehome through a
+typed `tex-exec` operation; it never inspects or rewrites private arena
+storage.
 
 `tex-out` accepts only validated handle-free page plans, artifacts, source
 recipes, and output DTOs. It owns serialization and output-specific lowering.

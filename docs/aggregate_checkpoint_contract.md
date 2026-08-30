@@ -43,6 +43,17 @@ followed by either `CandidateUndo -> RejectionRedo -> AcceptedHead` or
 restored or independently committed state. Unwind cleanup uses the rejection
 path; it is not a second acceptance protocol.
 
+Incremental convergence is a complete aggregate terminal transition, not a
+third protocol state. The candidate stops at the first mapped schedule row
+with an equal complete reachable-state identity and detaches output only
+through that row. After all rehome and splice inputs validate, aggregate
+rejection drops the candidate. The accepted command/source owner then replaces
+only its root editor backing and maps retained physical offsets; its boundary
+lane drops the divergent interval and rebases the adopted suffix coordinates.
+The operation visits bounded marks, journal state, and boundary rows only. It
+does not copy a reachable graph, keep a candidate suffix alive, or create a
+history-owned generation.
+
 The fixed validation/rewind/redo/promotion order is core, command, mode, page,
 hyphenation, PDF, World, dependencies, and source/font. Candidate undo and
 partial-acquisition rollback use the exact reverse. Execution counters are

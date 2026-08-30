@@ -43,7 +43,7 @@ mod trace;
 
 use candidate_lease::{CandidateLease, CandidateLeaseState};
 pub use history::{BoundaryKey, BoundaryRecord};
-use history::{HistoryComparison, compare_histories};
+use history::{HistoryComparison, RevisionEditMap, compare_histories};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 const SESSION_INTERNER_NAMES: u32 = 65_536;
@@ -317,15 +317,14 @@ pub enum SameHistoryStop {
 
 /// Detached result of one accepted editor revision.
 ///
-/// The completion is the sole owner of accepted effects, artifacts, DVI page
-/// plans, and PDF state.  Session metadata remains generation-free and never
-/// duplicates those output families.
+/// The completion shares one immutable detached owner with the session so a
+/// converged revision can splice output without duplicating page payloads.
 #[derive(Debug)]
 pub struct AcceptedOutput {
     output_id: RenderedOutputId,
     pub revision: RevisionId,
     pub content_hash: ContentHash,
-    completion: DetachedEngineCompletion,
+    completion: Arc<DetachedEngineCompletion>,
     format_dump: Option<DetachedFormatDump>,
     pub reuse: ReuseMetrics,
     pub retention: RetentionMetrics,
@@ -338,8 +337,8 @@ impl AcceptedOutput {
     }
 
     #[must_use]
-    pub const fn completion(&self) -> &DetachedEngineCompletion {
-        &self.completion
+    pub fn completion(&self) -> &DetachedEngineCompletion {
+        self.completion.as_ref()
     }
 
     #[must_use]
@@ -348,12 +347,12 @@ impl AcceptedOutput {
     }
 
     #[must_use]
-    pub const fn pdf(&self) -> Option<&tex_state::DetachedPdfCompletion> {
+    pub fn pdf(&self) -> Option<&tex_state::DetachedPdfCompletion> {
         self.completion.pdf()
     }
 
     pub fn into_completion(self) -> DetachedEngineCompletion {
-        self.completion
+        Arc::try_unwrap(self.completion).unwrap_or_else(|shared| (*shared).clone())
     }
 
     #[must_use]
@@ -362,7 +361,15 @@ impl AcceptedOutput {
     }
 
     pub fn into_terminal(self) -> (DetachedEngineCompletion, Option<DetachedFormatDump>) {
-        (self.completion, self.format_dump)
+        let Self {
+            completion,
+            format_dump,
+            ..
+        } = self;
+        (
+            Arc::try_unwrap(completion).unwrap_or_else(|shared| (*shared).clone()),
+            format_dump,
+        )
     }
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
@@ -439,6 +446,8 @@ pub struct RevisionTransaction<'store> {
     layout: EditorLayout,
     content_hash: ContentHash,
     restart_boundary: Option<BoundaryKey>,
+    edit_map: Option<RevisionEditMap>,
+    convergence_source_boundary: Option<BoundaryKey>,
     completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
@@ -550,6 +559,7 @@ struct CandidatePlan {
     layout: EditorLayout,
     execution_path: RevisionExecutionPath,
     restart_limit: Option<usize>,
+    edit_map: Option<RevisionEditMap>,
     restart_boundary: Option<BoundaryKey>,
     restart_fork_latency: Duration,
     revision_setup_latency: Duration,
@@ -624,6 +634,9 @@ pub struct RevisionCandidate<'store> {
     candidate_lease: Option<CandidateLease>,
     job_start_anchor: Option<FrozenJobStartAnchor>,
     materialized_job_start: bool,
+    comparison_history: Arc<[BoundaryRecord]>,
+    comparison_start: Option<usize>,
+    accepted_dependencies: Arc<[tex_state::InputDependency]>,
 }
 
 /// Result of driving a revision until it suspends or completes.
@@ -1180,6 +1193,15 @@ struct CandidateRuntime {
     job_start_anchor: Option<FrozenJobStartAnchor>,
 }
 
+struct LiveConvergence {
+    accepted: Arc<[BoundaryRecord]>,
+    next_old: usize,
+    edit: Option<RevisionEditMap>,
+    restart: BoundaryKey,
+    matched: Option<(BoundaryKey, BoundaryKey)>,
+    schedule_diverged: bool,
+}
+
 struct LiveHistoryState {
     revision: RevisionId,
     records: Vec<BoundaryRecord>,
@@ -1197,6 +1219,7 @@ struct LiveHistoryState {
     >,
     checkpoint_metadata_bytes: usize,
     protected_overage_bytes: usize,
+    convergence: Option<LiveConvergence>,
 }
 
 #[derive(Clone, Copy)]
@@ -1206,7 +1229,11 @@ struct SharedOwnerRetention {
 }
 
 impl LiveHistoryState {
-    fn new(revision: RevisionId, checkpoint_budget: usize) -> Self {
+    fn new(
+        revision: RevisionId,
+        checkpoint_budget: usize,
+        convergence: Option<LiveConvergence>,
+    ) -> Self {
         Self {
             revision,
             records: Vec::new(),
@@ -1218,7 +1245,56 @@ impl LiveHistoryState {
             shared_owner_charges: BTreeMap::new(),
             checkpoint_metadata_bytes: 0,
             protected_overage_bytes: 0,
+            convergence,
         }
+    }
+
+    fn observe_convergence(&mut self, record: &BoundaryRecord) {
+        let Some(comparison) = self.convergence.as_mut() else {
+            return;
+        };
+        if comparison.matched.is_some() || comparison.schedule_diverged {
+            return;
+        }
+        // A restored rooted candidate carries the selected boundary as its
+        // inherited first row. A materialized JobStart publishes the same
+        // anchor before consuming input. Neither is newly executed work.
+        if self.records.is_empty() && record.key == comparison.restart {
+            return;
+        }
+        let Some(old) = comparison.accepted.get(comparison.next_old) else {
+            comparison.schedule_diverged = true;
+            return;
+        };
+        let mapped_position = comparison
+            .edit
+            .and_then(|edit| edit.map_position(old.key.position))
+            .or_else(|| comparison.edit.is_none().then_some(old.key.position));
+        let Some(mapped_position) = mapped_position else {
+            comparison.schedule_diverged = true;
+            return;
+        };
+        let mapped = BoundaryKey {
+            position: mapped_position,
+            boundary: old.key.boundary,
+            ordinal: old.key.ordinal,
+        };
+        if mapped != record.key {
+            comparison.schedule_diverged = true;
+            return;
+        }
+        comparison.next_old = comparison.next_old.saturating_add(1);
+        if old.reachable_state_identity.is_some()
+            && old.reachable_state_identity == record.reachable_state_identity
+        {
+            comparison.matched = Some((old.key, record.key));
+        }
+    }
+
+    fn convergence_match(&self) -> Option<(BoundaryKey, BoundaryKey)> {
+        self.convergence
+            .as_ref()
+            .and_then(|comparison| comparison.matched)
     }
 
     fn inherit_boundary(&mut self, inherited: InheritedBoundary) {
@@ -1411,7 +1487,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
         self.state
             .occurrences
             .insert((position, boundary), ordinal.saturating_add(1));
-        self.state.records.push(BoundaryRecord {
+        let record = BoundaryRecord {
             revision: self.state.revision,
             key: BoundaryKey {
                 position,
@@ -1421,7 +1497,9 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             effect_prefix: checkpoint.effect_prefix_len(),
             artifact_prefix: checkpoint.artifact_prefix_len(),
             reachable_state_identity: checkpoint.reachable_state_identity(),
-        });
+        };
+        self.state.observe_convergence(&record);
+        self.state.records.push(record);
         let retention = checkpoint.retention();
         let evidence = tex_exec::RetainedBoundaryEvidence::new(
             self.state.revision.raw(),
@@ -1457,6 +1535,10 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
         self.pending_release
             .take()
             .or_else(|| self.state.take_budget_release(&mut self.retained))
+    }
+
+    fn stop_requested(&self) -> bool {
+        self.state.convergence_match().is_some()
     }
 }
 
@@ -1532,7 +1614,22 @@ fn initialize_candidate_runtime<G: 'static>(
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
     control.enable_reachable_state_identity(universe);
-    let mut history = LiveHistoryState::new(candidate.plan.revision, candidate.checkpoint_budget);
+    let convergence = candidate
+        .comparison_start
+        .zip(candidate.plan.restart_boundary)
+        .map(|(next_old, restart)| LiveConvergence {
+            accepted: Arc::clone(&candidate.comparison_history),
+            next_old,
+            edit: candidate.plan.edit_map,
+            restart,
+            matched: None,
+            schedule_diverged: false,
+        });
+    let mut history = LiveHistoryState::new(
+        candidate.plan.revision,
+        candidate.checkpoint_budget,
+        convergence,
+    );
     if let Some(inherited) = candidate.inherited_boundary.take() {
         debug_assert!(rooted);
         history.inherit_boundary(inherited);
@@ -1668,6 +1765,42 @@ fn execute_plan<G>(
                             limit: candidate.execution_budgets.steps,
                             attempted: u64::try_from(*delivered_commands).unwrap_or(u64::MAX),
                         },
+                    ));
+                }
+                if sink.stop_requested()
+                    && !matches!(step, MainControlStep::End | MainControlStep::EndOfInput)
+                {
+                    let dependencies = candidate
+                        .accepted_dependencies
+                        .iter()
+                        .cloned()
+                        .chain(universe.world().input_dependencies())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    let completion = ledger.detach_checkpoint_prefix(control, universe)?;
+                    let checkpoint_retained_bytes = sink.state.retained_bytes();
+                    let checkpoint_shared_owner_bytes = sink.state.shared_owner_bytes();
+                    let checkpoint_metadata_bytes = sink.state.restart_metadata_bytes();
+                    let detached_boundary_bytes = sink.state.detached_boundary_bytes();
+                    let checkpoint_protected_overage_bytes = sink.state.protected_overage_bytes;
+                    return Ok(PlanExecution::Complete(
+                        Box::new(CandidateCompletion {
+                            completion,
+                            history: std::mem::take(&mut sink.state.records),
+                            dependencies,
+                            delivered_commands: *delivered_commands,
+                            format_dump: None,
+                            checkpoint_retained_bytes,
+                            checkpoint_shared_owner_bytes,
+                            checkpoint_metadata_bytes,
+                            detached_boundary_bytes,
+                            checkpoint_protected_overage_bytes,
+                            job_start_anchor: job_start_anchor
+                                .take()
+                                .expect("every executing candidate owns a frozen JobStart anchor"),
+                        }),
+                        control.fuel_burned(),
                     ));
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
@@ -2094,6 +2227,7 @@ pub struct Session<'store> {
     /// generation while it is being driven; detached history never enters
     /// this slot.
     prior_generation: Option<RetainedRevisionGeneration<'store>>,
+    accepted_completion: Option<Arc<DetachedEngineCompletion>>,
     retired_generations: usize,
     converged_candidate_generations: usize,
     candidate_lease: Arc<CandidateLeaseState>,
@@ -2246,6 +2380,7 @@ impl<'store> Session<'store> {
             expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
             prior_generation: None,
+            accepted_completion: None,
             retired_generations: 0,
             converged_candidate_generations: 0,
             candidate_lease: CandidateLeaseState::new(),
@@ -2544,6 +2679,7 @@ impl<'store> Session<'store> {
             layout: clone_layout(&self.layout, &self.fragments)?,
             execution_path: RevisionExecutionPath::Cold,
             restart_limit: None,
+            edit_map: None,
             restart_boundary: None,
             restart_fork_latency: Duration::ZERO,
             revision_setup_latency: Duration::ZERO,
@@ -2590,6 +2726,7 @@ impl<'store> Session<'store> {
             layout: clone_layout(&self.layout, &self.fragments)?,
             execution_path: RevisionExecutionPath::ExternalInputDelta,
             restart_limit: None,
+            edit_map: None,
             restart_boundary: None,
             restart_fork_latency: Duration::ZERO,
             revision_setup_latency: Duration::ZERO,
@@ -2630,6 +2767,11 @@ impl<'store> Session<'store> {
             execution_path,
             restart_limit: (execution_path == RevisionExecutionPath::SlowEdit)
                 .then_some(edit.range.start),
+            edit_map: Some(RevisionEditMap {
+                old_start: edit.range.start,
+                old_end: edit.range.end,
+                new_end: edit.range.start.saturating_add(edit.replacement.len()),
+            }),
             restart_boundary: None,
             restart_fork_latency: Duration::ZERO,
             revision_setup_latency: started.elapsed(),
@@ -2679,6 +2821,9 @@ impl<'store> Session<'store> {
             plan.restart_boundary = Some(selected_boundary);
             (Some(generation), Some(runtime), inherited_boundary)
         } else if self.prior_generation.is_some() {
+            if plan.execution_path == RevisionExecutionPath::SlowEdit {
+                plan.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
+            }
             let metadata = self.job_start_session_metadata();
             let anchor = self
                 .job_start_anchor
@@ -2706,6 +2851,13 @@ impl<'store> Session<'store> {
         } else {
             (None, None, None)
         };
+        let comparison_history: Arc<[BoundaryRecord]> = Arc::from(self.history.clone());
+        let comparison_start = plan.restart_boundary.and_then(|selected| {
+            comparison_history
+                .iter()
+                .position(|record| record.key == selected)
+                .map(|index| index.saturating_add(1))
+        });
         plan.restart_fork_latency = fork_started.elapsed();
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
@@ -2740,6 +2892,9 @@ impl<'store> Session<'store> {
             candidate_lease: Some(candidate_lease),
             job_start_anchor: self.job_start_anchor.clone(),
             materialized_job_start,
+            comparison_history,
+            comparison_start,
+            accepted_dependencies: Arc::from(self.dependencies.clone()),
         })
     }
 
@@ -2755,7 +2910,7 @@ impl<'store> Session<'store> {
         &mut self,
         mut candidate: RevisionCandidate<'store>,
     ) -> Result<RevisionTransaction<'store>, SessionError> {
-        let completion = candidate
+        let mut completion = candidate
             .completed
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
@@ -2768,12 +2923,21 @@ impl<'store> Session<'store> {
                     .position(|record| record.key == selected)
             })
             .map_or(0, |selected| selected.saturating_add(1));
+        let new_history_start = candidate
+            .plan
+            .restart_boundary
+            .filter(|selected| {
+                completion
+                    .history
+                    .first()
+                    .is_some_and(|record| record.key == *selected)
+            })
+            .map_or(0, |_| 1);
         let mut reuse = compare_histories(HistoryComparison {
             execution_path: candidate.plan.execution_path,
             old: &self.history[old_history_start..],
-            new: &completion.history,
-            unchanged_content: candidate.plan.base_content_hash
-                == ContentHash::from_bytes(candidate.plan.source.as_bytes()),
+            new: &completion.history[new_history_start..],
+            edit: candidate.plan.edit_map,
             source_len: candidate.plan.source.len(),
             delivered_commands: completion.delivered_commands,
             revision_setup_latency: candidate.plan.revision_setup_latency,
@@ -2799,15 +2963,53 @@ impl<'store> Session<'store> {
             reuse.convergence_boundary = Some(selected);
             reuse.same_history_stop = SameHistoryStop::Matched;
         }
-        if candidate.plan.base_content_hash
-            == ContentHash::from_bytes(candidate.plan.source.as_bytes())
-            && let Some(convergence) = reuse.convergence_boundary
-            && let Some(index) = self
+        let mut convergence_source_boundary = None;
+        if let Some(convergence) = reuse.convergence_boundary
+            && let Some(new_index) = completion
                 .history
                 .iter()
                 .position(|record| record.key == convergence)
+            && let Some(old_index) = self.history.iter().position(|record| {
+                let mapped = candidate
+                    .plan
+                    .edit_map
+                    .and_then(|edit| edit.map_position(record.key.position))
+                    .or_else(|| {
+                        candidate
+                            .plan
+                            .edit_map
+                            .is_none()
+                            .then_some(record.key.position)
+                    });
+                mapped == Some(convergence.position)
+                    && record.key.boundary == convergence.boundary
+                    && record.key.ordinal == convergence.ordinal
+                    && (candidate.plan.restart_boundary == Some(convergence)
+                        || record.reachable_state_identity
+                            == completion.history[new_index].reachable_state_identity)
+            })
         {
-            reuse.suffixes_adopted = self.history.len().saturating_sub(index);
+            let new_record = &completion.history[new_index];
+            let old_record = &self.history[old_index];
+            convergence_source_boundary = Some(old_record.key);
+            reuse.suffixes_adopted = self.history.len().saturating_sub(old_index);
+            reuse.pages_retained_prefix = new_record.artifact_prefix;
+            reuse.pages_reused = self.accepted_completion.as_ref().map_or(0, |accepted| {
+                accepted
+                    .pages()
+                    .len()
+                    .saturating_sub(old_record.artifact_prefix)
+            });
+            reuse.pages_retyped = new_record.artifact_prefix;
+            if let Some(accepted) = self.accepted_completion.as_deref() {
+                completion.completion.splice_retained_suffix(
+                    accepted,
+                    new_record.effect_prefix,
+                    old_record.effect_prefix,
+                    new_record.artifact_prefix,
+                    old_record.artifact_prefix,
+                )?;
+            }
         }
         reuse.restart_boundary = candidate.plan.restart_boundary;
         let generation = candidate
@@ -2826,6 +3028,8 @@ impl<'store> Session<'store> {
             revision: candidate.plan.revision,
             content_hash: ContentHash::from_bytes(candidate.plan.source.as_bytes()),
             restart_boundary: candidate.plan.restart_boundary,
+            edit_map: candidate.plan.edit_map,
+            convergence_source_boundary,
             source: candidate.plan.source,
             fragments: candidate.plan.fragments,
             layout: candidate.plan.layout,
@@ -2864,6 +3068,10 @@ impl<'store> Session<'store> {
             return Err(SessionError::ContentHashMismatch);
         }
         let prior_retention = self.accepted_retention;
+        let prior_checkpoint_count = self
+            .prior_generation
+            .as_ref()
+            .map_or(0, |generation| generation.checkpoint_count);
         let mut prepared =
             prepare_candidate_runtime(transaction.generation, transaction.runtime_key)
                 .map_err(SessionError::RetainedEngine)?;
@@ -2878,19 +3086,52 @@ impl<'store> Session<'store> {
         // before either accepted metadata or the prior owner changes. The
         // current generation was constructed independently under its own
         // HRTB brand, so its checkpoint roots cannot contain a prior id.
-        let converged_on_identical_source = transaction.base_content_hash
-            == transaction.content_hash
-            && transaction.reuse.convergence_boundary.is_some()
-            && self.prior_generation.is_some();
-        let incoming = if converged_on_identical_source {
+        let converged =
+            transaction.reuse.convergence_boundary.is_some() && self.prior_generation.is_some();
+        let incoming = if converged {
+            let edit_map = transaction
+                .edit_map
+                .expect("an editor convergence owns its revision map");
+            let restart = transaction
+                .restart_boundary
+                .expect("an editor convergence owns its restart boundary");
+            let old_convergence = transaction
+                .convergence_source_boundary
+                .expect("convergence names the accepted suffix boundary");
+            let new_convergence = transaction
+                .reuse
+                .convergence_boundary
+                .and_then(|key| transaction.history.iter().find(|record| record.key == key))
+                .expect("convergence names the current boundary record");
             drop(prepared);
             let previous = self
                 .prior_generation
                 .as_mut()
                 .expect("convergence retains the accepted generation");
-            previous
+            let accepted_root =
+                source_file_bytes(&self.source, self.root_source_is_byte_projection);
+            let current_root = Arc::from(source_file_bytes(
+                &transaction.source,
+                self.root_source_is_byte_projection,
+            ));
+            previous.checkpoint_count = previous
                 .generation
-                .rehome_identical_revision_boundaries(transaction.revision.raw())
+                .rehome_editor_revision(
+                    &accepted_root,
+                    current_root,
+                    transaction.revision.raw(),
+                    edit_map.old_start,
+                    edit_map.old_end,
+                    edit_map.new_end,
+                    (restart.position, restart.boundary, restart.ordinal),
+                    (
+                        old_convergence.position,
+                        old_convergence.boundary,
+                        old_convergence.ordinal,
+                    ),
+                    new_convergence.effect_prefix,
+                    new_convergence.artifact_prefix,
+                )
                 .map_err(SessionError::RetainedEngine)?;
             previous.revision = transaction.revision;
             self.converged_candidate_generations =
@@ -2929,10 +3170,57 @@ impl<'store> Session<'store> {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        if converged_on_identical_source {
-            for record in &mut self.history {
+        if converged {
+            let edit_map = transaction
+                .edit_map
+                .expect("an editor convergence owns its revision map");
+            let restart = transaction
+                .restart_boundary
+                .expect("an editor convergence owns its restart boundary");
+            let old_convergence = transaction
+                .convergence_source_boundary
+                .expect("convergence names the accepted suffix boundary");
+            let new_convergence = transaction
+                .reuse
+                .convergence_boundary
+                .and_then(|key| transaction.history.iter().find(|record| record.key == key))
+                .expect("convergence names the current boundary record");
+            let restart_index = self
+                .history
+                .iter()
+                .position(|record| record.key == restart)
+                .expect("restart boundary belongs to accepted history");
+            let convergence_index = self
+                .history
+                .iter()
+                .position(|record| record.key == old_convergence)
+                .expect("convergence boundary belongs to accepted history");
+            let old_effect_prefix = self.history[convergence_index].effect_prefix;
+            let old_artifact_prefix = self.history[convergence_index].artifact_prefix;
+            let mut rehomed = self.history[..=restart_index].to_vec();
+            let suffix_start = convergence_index.max(restart_index.saturating_add(1));
+            rehomed.extend(
+                self.history[suffix_start..]
+                    .iter()
+                    .cloned()
+                    .map(|mut record| {
+                        record.key.position = edit_map
+                            .map_position(record.key.position)
+                            .expect("adopted suffix anchors map outside the edit");
+                        record.effect_prefix = new_convergence
+                            .effect_prefix
+                            .saturating_add(record.effect_prefix.saturating_sub(old_effect_prefix));
+                        record.artifact_prefix = new_convergence.artifact_prefix.saturating_add(
+                            record.artifact_prefix.saturating_sub(old_artifact_prefix),
+                        );
+                        record.revision = transaction.revision;
+                        record
+                    }),
+            );
+            for record in &mut rehomed[..=restart_index] {
                 record.revision = transaction.revision;
             }
+            self.history = rehomed;
         } else if let Some(selected) = transaction.restart_boundary
             && selected.boundary != EngineBoundary::JobStart
         {
@@ -2970,36 +3258,55 @@ impl<'store> Session<'store> {
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
         let output_bytes = detached_output_bytes(&transaction.completion);
-        let retained_checkpoint = converged_on_identical_source
-            .then_some(prior_retention)
-            .flatten();
+        let retained_checkpoint = converged.then_some(prior_retention).flatten();
+        let converged_checkpoint_count = self
+            .prior_generation
+            .as_ref()
+            .map_or(0, |generation| generation.checkpoint_count);
+        let converged_checkpoint_metadata = retained_checkpoint.map_or(0, |retention| {
+            retention
+                .checkpoint_metadata_bytes
+                .checked_div(prior_checkpoint_count)
+                .unwrap_or(0)
+                .saturating_mul(converged_checkpoint_count)
+        });
+        let converged_detached_boundary_bytes = self
+            .history
+            .len()
+            .saturating_mul(size_of::<BoundaryRecord>());
+        let converged_checkpoint_root_bytes = retained_checkpoint.map_or(0, |retention| {
+            retention
+                .checkpoint_shared_owner_bytes
+                .saturating_add(converged_checkpoint_metadata)
+                .saturating_add(converged_detached_boundary_bytes)
+        });
         let retention = RetentionMetrics {
-            checkpoint_root_bytes: retained_checkpoint.map_or(
-                transaction.checkpoint_retained_bytes,
-                |retention| retention.checkpoint_root_bytes,
-            ),
-            checkpoint_shared_owner_bytes: retained_checkpoint.map_or(
-                transaction.checkpoint_shared_owner_bytes,
-                |retention| retention.checkpoint_shared_owner_bytes,
-            ),
-            checkpoint_metadata_bytes: retained_checkpoint.map_or(
-                transaction.checkpoint_metadata_bytes,
-                |retention| retention.checkpoint_metadata_bytes,
-            ),
-            detached_boundary_bytes: retained_checkpoint.map_or(
-                transaction.detached_boundary_bytes,
-                |retention| retention.detached_boundary_bytes,
-            ),
+            checkpoint_root_bytes: retained_checkpoint
+                .map_or(transaction.checkpoint_retained_bytes, |_| {
+                    converged_checkpoint_root_bytes
+                }),
+            checkpoint_shared_owner_bytes: retained_checkpoint
+                .map_or(transaction.checkpoint_shared_owner_bytes, |retention| {
+                    retention.checkpoint_shared_owner_bytes
+                }),
+            checkpoint_metadata_bytes: retained_checkpoint
+                .map_or(transaction.checkpoint_metadata_bytes, |_| {
+                    converged_checkpoint_metadata
+                }),
+            detached_boundary_bytes: retained_checkpoint
+                .map_or(transaction.detached_boundary_bytes, |_| {
+                    converged_detached_boundary_bytes
+                }),
             memo_result_bytes: 0,
             diagnostic_bytes: self
                 .fragments
                 .retained_bytes()
                 .saturating_add(self.layout.retained_bytes()),
             output_bytes,
-            protected_overage_bytes: retained_checkpoint.map_or(
-                transaction.checkpoint_protected_overage_bytes,
-                |retention| retention.protected_overage_bytes,
-            ),
+            protected_overage_bytes: retained_checkpoint
+                .map_or(transaction.checkpoint_protected_overage_bytes, |_| {
+                    converged_checkpoint_root_bytes.saturating_sub(self.checkpoint_budget)
+                }),
             job_start_anchor_bytes: self
                 .job_start_anchor
                 .as_ref()
@@ -3008,11 +3315,13 @@ impl<'store> Session<'store> {
         self.accepted_retention = Some(retention);
         let mut reuse = transaction.reuse;
         reuse.acceptance_latency = acceptance.elapsed();
+        let completion = Arc::new(transaction.completion);
+        self.accepted_completion = Some(Arc::clone(&completion));
         Ok(AcceptedOutput {
             output_id: self.output_id,
             revision: self.revision,
             content_hash: self.content_hash,
-            completion: transaction.completion,
+            completion,
             format_dump: transaction.format_dump,
             reuse,
             retention,

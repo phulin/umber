@@ -42,7 +42,7 @@ impl EngineCompletionDemand {
 }
 
 /// One aligned page row in terminal engine completion.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DetachedPreparedPage {
     artifact: CommittedArtifact,
     dvi: Option<DviPagePlan>,
@@ -66,7 +66,7 @@ impl DetachedPreparedPage {
 }
 
 /// Handle-free output of one admitted terminal engine episode.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DetachedEngineCompletion {
     effect_base: u64,
     effects: Vec<EffectRecord>,
@@ -76,6 +76,54 @@ pub struct DetachedEngineCompletion {
 }
 
 impl DetachedEngineCompletion {
+    /// Replaces the post-convergence output suffix with rows detached from
+    /// the accepted revision. Live engine graphs never enter this operation;
+    /// it joins only already detached effects, artifacts, and DVI plans.
+    #[doc(hidden)]
+    pub fn splice_retained_suffix(
+        &mut self,
+        retained: &Self,
+        new_effect_prefix: usize,
+        old_effect_prefix: usize,
+        new_artifact_prefix: usize,
+        old_artifact_prefix: usize,
+    ) -> Result<(), EngineCompletionError> {
+        let new_effect_prefix = new_effect_prefix
+            .saturating_sub(usize::try_from(self.effect_base).unwrap_or(usize::MAX))
+            .min(self.effects.len());
+        let old_effect_prefix = old_effect_prefix
+            .saturating_sub(usize::try_from(retained.effect_base).unwrap_or(usize::MAX))
+            .min(retained.effects.len());
+        self.effects.truncate(new_effect_prefix);
+        self.stream_open_contexts.truncate(new_effect_prefix);
+        self.effects
+            .extend(retained.effects[old_effect_prefix..].iter().cloned());
+        self.stream_open_contexts.extend(
+            retained.stream_open_contexts[old_effect_prefix..]
+                .iter()
+                .cloned(),
+        );
+
+        let new_artifact_prefix = new_artifact_prefix.min(self.pages.len());
+        let old_artifact_prefix = old_artifact_prefix.min(retained.pages.len());
+        self.pages.truncate(new_artifact_prefix);
+        for page in &retained.pages[old_artifact_prefix..] {
+            let mut page = page.clone();
+            page.artifact
+                .rebase_open_out_suffix(old_effect_prefix, new_effect_prefix)
+                .map_err(|error| EngineCompletionError::OutputSplice(error.to_string()))?;
+            self.pages.push(page);
+        }
+        if self.pdf.is_none() {
+            self.pdf.clone_from(&retained.pdf);
+        }
+        validate_stream_open_contexts(&self.effects, &self.stream_open_contexts)?;
+        if let Some(pdf) = &self.pdf {
+            validate_pdf(pdf, self.pages.iter().map(DetachedPreparedPage::artifact))?;
+        }
+        Ok(())
+    }
+
     /// Captures the terminal page projection directly from borrowed canonical
     /// output-ledger rows. The only page vector created is the final detached
     /// completion; no accumulated `PreparedDviPage` prefix is materialized.
@@ -215,6 +263,7 @@ pub enum EngineCompletionError {
     InvalidArtifactIdentity { page: usize },
     InvalidEffectOrdinal { page: usize, ordinal: u32 },
     InvalidEffectOccurrence { page: usize, ordinal: u32 },
+    OutputSplice(String),
     PdfPageCount,
     PdfPageArtifact { page: usize },
     PdfObjectIdentity(u32),

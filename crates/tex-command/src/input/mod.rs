@@ -358,7 +358,14 @@ pub(crate) fn observe_immutable_source<G>(
 }
 
 fn project_source<G>(hash: &mut ProjectionHasher, slot: &SourceSlot<G>) {
-    hash.bytes(&slot.cursor.backing.bytes);
+    // Only unread input is future-relevant. Hashing the complete editor
+    // backing makes one already-consumed byte poison every later convergence
+    // point even when TeX state has rejoined.
+    let unread = usize::try_from(slot.cursor.next_physical_offset)
+        .ok()
+        .and_then(|start| slot.cursor.backing.bytes.get(start..))
+        .unwrap_or_default();
+    hash.bytes(unread);
     hash.byte(slot.cursor.backing.mode as u8);
     hash.bytes(
         slot.cursor
@@ -368,7 +375,6 @@ fn project_source<G>(hash: &mut ProjectionHasher, slot: &SourceSlot<G>) {
             .unwrap_or_default()
             .as_bytes(),
     );
-    hash.u64(slot.cursor.next_physical_offset);
     hash.u64(slot.cursor.next_line_number);
     hash.byte(slot.cursor.pending_acquired_line.into());
     hash.byte(slot.cursor.end_after_line.into());
@@ -392,12 +398,10 @@ fn project_source<G>(hash: &mut ProjectionHasher, slot: &SourceSlot<G>) {
 
 fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines::SourceLineState) {
     let backing = cursor.current_backing();
-    hash.bytes(&backing.bytes);
+    let start = usize::try_from(line.cursor.byte_cursor).unwrap_or(usize::MAX);
+    let end = usize::try_from(line.retained_end).unwrap_or(0);
+    hash.bytes(backing.bytes.get(start..end).unwrap_or_default());
     hash.u64(line.physical.number());
-    hash.u64(line.physical.content_range().start());
-    hash.u64(line.physical.content_range().end());
-    hash.u64(line.retained_end);
-    hash.u64(line.cursor.byte_cursor);
     hash.u64(line.cursor.scalar_cursor);
     hash.byte(line.cursor.endline_delivered.into());
     if let Some(endline) = line.endline {

@@ -146,7 +146,7 @@ fn prepared_non_job_start() -> (
         base_revision: session.revision(),
         expected_hash: ContentHash::from_bytes(SOURCE.as_bytes()),
         range: edit_position..edit_position,
-        replacement: "\\relax ".to_owned(),
+        replacement: "\\count255=1 ".to_owned(),
     };
     let mut candidate = session
         .start_advance_candidate(RevisionId::new(2), edit)

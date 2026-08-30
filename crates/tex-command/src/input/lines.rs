@@ -45,6 +45,11 @@ impl SourceRange {
         self.start == self.end
     }
 
+    pub(crate) fn rehome_offsets(&mut self, map: super::source::SourceOffsetMap) {
+        self.start = map.map(self.start);
+        self.end = map.map(self.end);
+    }
+
     /// Physical source column of the final byte this spelling consumed.
     ///
     /// A reduced `^^` spelling is located at its final physical byte even
@@ -219,6 +224,11 @@ pub struct PhysicalLine {
 }
 
 impl PhysicalLine {
+    pub(crate) fn rehome_offsets(&mut self, map: super::source::SourceOffsetMap) {
+        self.content.rehome_offsets(map);
+        self.terminator.rehome_offsets(map);
+    }
+
     /// One-based physical line number within this registered source.
     #[must_use]
     pub const fn number(self) -> u64 {
@@ -446,6 +456,15 @@ impl std::hash::Hash for SourceLineState {
 }
 
 impl SourceLineState {
+    pub(crate) fn rehome_offsets(&mut self, map: super::source::SourceOffsetMap) {
+        self.physical.rehome_offsets(map);
+        self.retained_end = map.map(self.retained_end);
+        self.cursor.byte_cursor = map.map(self.cursor.byte_cursor);
+        for node in &mut self.reduced_spellings.nodes {
+            node.spelling.range.rehome_offsets(map);
+        }
+    }
+
     pub(crate) fn active_reduced_spellings(&self) -> ActiveReducedSourceSpellings<'_> {
         self.reduced_spellings.active(self.cursor.reduced_head)
     }

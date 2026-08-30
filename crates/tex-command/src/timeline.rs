@@ -65,6 +65,25 @@ impl<T> Default for PayloadSlab<T> {
 }
 
 impl<T> PayloadSlab<T> {
+    pub(crate) fn for_each_value_mut(&mut self, mut visit: impl FnMut(PayloadHandle, &mut T)) {
+        for (page_index, page) in self.pages.iter_mut().enumerate() {
+            for (slot_index, slot) in page.slots.iter_mut().enumerate() {
+                if let Some(value) = slot.value.as_mut() {
+                    let raw = page_index
+                        .saturating_mul(PAYLOAD_SLOTS_PER_PAGE)
+                        .saturating_add(slot_index);
+                    visit(
+                        PayloadHandle {
+                            slot: u32::try_from(raw).expect("payload slab fits u32"),
+                            generation: slot.generation,
+                        },
+                        value,
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn warm_first_page(&mut self) {
         if self.pages.is_empty() {
             self.add_page();

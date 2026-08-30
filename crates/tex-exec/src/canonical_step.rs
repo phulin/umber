@@ -328,6 +328,42 @@ impl OutputLedger {
         Ok(completion)
     }
 
+    /// Detaches the output prefix sealed by the most recently published
+    /// checkpoint. The live executor is intentionally left nonterminal: the
+    /// incremental owner will reject this generation after joining the
+    /// detached prefix to an accepted suffix.
+    #[doc(hidden)]
+    pub fn detach_checkpoint_prefix<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        universe: &mut Universe<G>,
+    ) -> Result<crate::DetachedEngineCompletion, crate::EngineCompletionError> {
+        self.collect_prepared_pages(control);
+        let world = universe.world();
+        let effect_base = world
+            .effect_pos()
+            .raw()
+            .saturating_sub(u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX));
+        let (effects, stream_open_contexts) = world.detached_effect_records();
+        let artifacts = world.committed_artifacts();
+        let artifact_publications = world.artifact_publications();
+        let output_checkpoint = self.checkpoint();
+        crate::DetachedEngineCompletion::capture_borrowed_pages(
+            effect_base,
+            effects,
+            stream_open_contexts,
+            artifacts.to_vec(),
+            artifact_publications,
+            self.prepared_page_count,
+            |visit| {
+                self.pages
+                    .visit_checkpoint_values(&self.pool, output_checkpoint.mark, visit)
+                    .expect("checkpoint output visits its sealed accepted/current lineage");
+            },
+            None,
+        )
+    }
+
     pub fn commit_job_start<G>(
         &mut self,
         control: &mut MainControl<G>,

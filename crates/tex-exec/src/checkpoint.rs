@@ -473,6 +473,16 @@ impl<G> EngineCheckpointRelease<G> {
 }
 
 impl<G> EngineCheckpoint<G> {
+    pub(crate) fn rehome_output_coordinates(
+        &mut self,
+        root_anchor: usize,
+        effect_prefix: usize,
+        artifact_prefix: usize,
+    ) {
+        self.root_anchor = root_anchor;
+        self.effect_prefix = effect_prefix;
+        self.artifact_prefix = artifact_prefix;
+    }
     /// Converts a just-captured checkpoint into an aggregate release without
     /// ever publishing it as a live restart root. Frozen JobStart capture uses
     /// this after its self-contained anchor is authoritative, so private page

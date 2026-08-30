@@ -55,7 +55,7 @@ pub(crate) struct HistoryComparison<'a> {
     pub(crate) execution_path: RevisionExecutionPath,
     pub(crate) old: &'a [BoundaryRecord],
     pub(crate) new: &'a [BoundaryRecord],
-    pub(crate) unchanged_content: bool,
+    pub(crate) edit: Option<RevisionEditMap>,
     pub(crate) source_len: usize,
     pub(crate) delivered_commands: usize,
     pub(crate) revision_setup_latency: Duration,
@@ -63,12 +63,31 @@ pub(crate) struct HistoryComparison<'a> {
     pub(crate) pages_retyped: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RevisionEditMap {
+    pub(crate) old_start: usize,
+    pub(crate) old_end: usize,
+    pub(crate) new_end: usize,
+}
+
+impl RevisionEditMap {
+    pub(crate) fn map_position(self, old: usize) -> Option<usize> {
+        if old <= self.old_start {
+            Some(old)
+        } else if old >= self.old_end {
+            self.new_end.checked_add(old.checked_sub(self.old_end)?)
+        } else {
+            None
+        }
+    }
+}
+
 pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetrics {
     let HistoryComparison {
         execution_path,
         old,
         new,
-        unchanged_content,
+        edit,
         source_len,
         delivered_commands,
         revision_setup_latency,
@@ -89,37 +108,35 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             ..ReuseMetrics::default()
         };
     }
-    if !unchanged_content {
-        return ReuseMetrics {
-            execution_path,
-            pages_retyped,
-            reexecuted_bytes: source_len,
-            reexecuted_tokens: delivered_commands,
-            reexecuted_commands: delivered_commands,
-            reexecuted_paragraphs: paragraph_count(new),
-            same_history_stop: SameHistoryStop::HashesDiverged,
-            revision_setup_latency,
-            restart_fork_latency,
-            trace_retained_bytes: std::mem::size_of_val(new),
-            ..ReuseMetrics::default()
-        };
-    }
     let started = Timer::start();
     let mut attempts = 0usize;
     let mut mismatches = 0usize;
     let mut convergence = None;
+    let mut schedule_diverged = false;
     for (old_record, new_record) in old.iter().zip(new) {
-        if old_record.key.boundary != new_record.key.boundary {
-            continue;
+        let Some(mapped_position) = edit
+            .and_then(|edit| edit.map_position(old_record.key.position))
+            .or_else(|| edit.is_none().then_some(old_record.key.position))
+        else {
+            schedule_diverged = true;
+            break;
+        };
+        let mapped_key = BoundaryKey {
+            position: mapped_position,
+            boundary: old_record.key.boundary,
+            ordinal: old_record.key.ordinal,
+        };
+
+        if mapped_key != new_record.key {
+            schedule_diverged = true;
+            break;
         }
         attempts = attempts.saturating_add(1);
         match (
             old_record.reachable_state_identity,
             new_record.reachable_state_identity,
         ) {
-            (Some(old_identity), Some(new_identity))
-                if old_record.key == new_record.key && old_identity == new_identity =>
-            {
+            (Some(old_identity), Some(new_identity)) if old_identity == new_identity => {
                 convergence.get_or_insert(new_record.key);
             }
             _ => mismatches = mismatches.saturating_add(1),
@@ -139,6 +156,8 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
         trace_retained_bytes: std::mem::size_of_val(new),
         same_history_stop: if convergence.is_some() {
             SameHistoryStop::Matched
+        } else if schedule_diverged {
+            SameHistoryStop::ScheduleDiverged
         } else if attempts == 0 {
             SameHistoryStop::NoComparableBoundary
         } else {

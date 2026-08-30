@@ -353,6 +353,12 @@ pub(crate) struct RegisteredSource {
 }
 
 impl RegisteredSource {
+    pub(crate) fn is_editor_backing(&self, accepted: &[u8]) -> bool {
+        self.kind == RegisteredSourceKind::Generated
+            && self.name.is_some()
+            && self.bytes.as_ref() == accepted
+    }
+
     /// Returns the §537 name when this source owns canonical file framing.
     pub(crate) fn canonical_framing_name(&self) -> Option<Arc<str>> {
         (self.framing == SourceFramingPolicy::Canonical)
@@ -397,6 +403,13 @@ impl RegisteredSource {
             framing: self.framing,
             descriptor,
         })
+    }
+
+    pub(crate) fn rehome_generated(
+        &self,
+        bytes: Arc<[u8]>,
+    ) -> Result<Self, SourceRegistrationError> {
+        self.rebind_generated(self.id, bytes)
     }
 
     /// Returns the immutable backing descriptor used to register source
@@ -564,6 +577,37 @@ pub(crate) struct SourceCursorExecutionState {
     end_after_line: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SourceOffsetMap {
+    old_start: u64,
+    old_end: u64,
+    new_end: u64,
+}
+
+impl SourceOffsetMap {
+    pub(crate) fn new(old_start: usize, old_end: usize, new_end: usize) -> Self {
+        Self {
+            old_start: u64::try_from(old_start).unwrap_or(u64::MAX),
+            old_end: u64::try_from(old_end).unwrap_or(u64::MAX),
+            new_end: u64::try_from(new_end).unwrap_or(u64::MAX),
+        }
+    }
+
+    pub(crate) const fn map(self, old: u64) -> u64 {
+        if old <= self.old_start {
+            old
+        } else if old >= self.old_end {
+            self.new_end
+                .saturating_add(old.saturating_sub(self.old_end))
+        } else {
+            // Only divergent journal rows can point inside the replaced span;
+            // they are discarded with the divergent boundary interval. Keep
+            // their coordinates valid until that bounded release completes.
+            self.new_end
+        }
+    }
+}
+
 impl SourceCursor {
     pub(crate) fn new(backing: RegisteredSource) -> Self {
         Self {
@@ -618,6 +662,26 @@ impl SourceCursor {
         std::mem::swap(&mut self.next_line_number, &mut state.next_line_number);
         std::mem::swap(&mut self.line, &mut state.line);
         std::mem::swap(&mut self.end_after_line, &mut state.end_after_line);
+    }
+
+    pub(crate) fn rehome_offsets(&mut self, map: SourceOffsetMap) {
+        self.next_physical_offset = map.map(self.next_physical_offset);
+        if self.line_backing.is_none()
+            && let Some(line) = self.line.as_mut()
+        {
+            line.rehome_offsets(map);
+        }
+    }
+}
+
+impl SourceCursorExecutionState {
+    pub(crate) fn rehome_offsets(&mut self, map: SourceOffsetMap) {
+        self.next_physical_offset = map.map(self.next_physical_offset);
+        if self.line_backing.is_none()
+            && let Some(line) = self.line.as_mut()
+        {
+            line.rehome_offsets(map);
+        }
     }
 }
 

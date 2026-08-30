@@ -271,9 +271,14 @@ nodes.
 
 ## Generation substrates and restart forking
 
-Every checkpoint of a retained generation shares one frozen `Universe`
-substrate. Records are owner-exact watermark snapshots into that substrate,
-and a retained substrate is never mutated or rolled back in place.
+Every checkpoint of a retained generation shares one accepted `Universe`
+substrate. Records are owner-exact watermark snapshots into that substrate.
+Ordinary execution never mutates the accepted substrate: the aggregate fork
+restores the selected marks into the sole candidate slot and execution mutates
+only that candidate. After convergence, one bounded aggregate rehome changes
+the accepted root-editor backing, mapped source offsets, revision metadata,
+and output-prefix coordinates without executing the accepted substrate or
+copying a reachable object graph.
 Incremental history sinks capture the session-local canonical comparison
 identity while each accepted boundary's `Universe` is live. The identity is
 stored with the checkpoint and preserved by record clones and revision
@@ -336,12 +341,13 @@ executing. Both terminal outcomes return to one substrate:
   bit-identical below the anchor, which the fork operation guarantees; the old
   substrate is then dropped.
 
-Rare partial-adoption outcomes may transiently leave accepted records split
-across both substrates; the next terminal outcome or ordinary eviction
-normalizes back to one. Semantic state is never spliced between substrates:
-adoption is by reference plus metadata rehoming only. Typed diagnostic roots
-are ordinary detached ownership, and arbitrary handles and raw substores still
-cannot cross substrate ownership.
+There is no partial-adoption state. Before publication, all fallible candidate
+and accepted-root validation completes while both slots still have their
+original roles. Convergence then detaches the candidate output prefix, joins it
+to the already detached accepted suffix, drops the complete candidate slot,
+and eagerly rehomes the surviving accepted checkpoints to the new revision.
+Job end instead promotes the candidate and retires the complete former
+accepted slot. Either transition returns to exactly one generation.
 
 Because retained substrates are frozen, v1 needs no per-checkpoint pinning of
 journal, node, or content spans: watermark prefixes below a retained
@@ -531,10 +537,14 @@ payload survived. Store-specific root projections land with their dedicated
 representation migrations under the generic contract in
 [Private revision allocation domains](patch_allocation_domains.md).
 
-Within an accepted generation, records are ordered by schedule and their
-restart roots, canonical comparison identities, and revision metadata are
-never mutated in place. Rehoming creates a new accepted record wrapper rather
-than mutating an old generation's checkpoint. `JobStart` is always retained.
+Within an accepted generation, records are ordered by schedule. The history
+vector owns only detached comparison metadata; the accepted generation's
+private boundary lane owns restart roots. Convergence rebuilds the detached
+history as the candidate prefix through the selected restart followed by the
+mapped accepted suffix. The aggregate lane performs the corresponding bounded
+row release and coordinate rehome in place. Neither owner creates a third
+lineage, a per-checkpoint arena, or a chain of revision maps. `JobStart`
+schedule evidence is always retained.
 
 The host supplies a soft checkpoint-root memory budget. The aggregate state
 layer reports opaque retention units and their charged bytes; `tex-incr` never

@@ -3336,9 +3336,9 @@ impl<G> MainControl<G> {
             .root_main_source
             .or_else(|| self.command.current_file_source_id())
             .expect("a rooted checkpoint retains its main source identity");
-        let current =
-            self.command
-                .rebind_generated_source(accepted, bytes, unchanged_prefix)?;
+        let current = self
+            .command
+            .rebind_generated_source(accepted, bytes, unchanged_prefix)?;
         self.root_main_source = Some(current);
         Ok(())
     }

@@ -553,7 +553,7 @@ fn semantic_edit_matches_a_fresh_cold_execution() {
     assert_detached_output_eq(&accepted, &expected);
     assert_eq!(
         accepted.reuse.execution_path,
-        RevisionExecutionPath::SlowEdit
+        RevisionExecutionPath::ForcedJobStartFallback
     );
     assert_eq!(accepted.reuse.pages_reused, 0);
 }
@@ -595,6 +595,59 @@ fn complete_identity_matches_no_op_convergence() {
             .all(|record| record.reachable_state_identity().is_some()),
         "incremental history demands a complete owner-composed identity"
     );
+}
+
+#[test]
+fn changed_prefix_convergence_rehomes_suffix_for_the_next_edit() {
+    let original = "A\\par\n\\def\\unused{X}\\def\\unused{Z}\nB\\par\nC\\par\\end";
+    let first_position = original.find('X').expect("overwritten definition");
+    let mut incremental = session(RevisionId::new(1), original);
+    incremental.cold().expect("baseline");
+
+    let first_source = original.replacen('X', "WIDE", 1);
+    let mut candidate = incremental
+        .start_advance_candidate(
+            RevisionId::new(2),
+            edit(&incremental, first_position..first_position + 1, "WIDE"),
+        )
+        .expect("start changed-prefix candidate");
+    let candidate_generation = candidate
+        .generation
+        .as_ref()
+        .expect("candidate owns the current generation")
+        .witness();
+    assert_eq!(incremental.occupied_generation_slot_count(), 2);
+    drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost)
+        .expect("drive changed-prefix candidate");
+    let candidate = incremental
+        .prepare_revision_candidate(candidate)
+        .expect("prepare changed-prefix convergence");
+    let first = incremental
+        .accept_revision(candidate)
+        .expect("changed prefix converges");
+    assert!(first.reuse.convergence_boundary.is_some());
+    assert!(first.reuse.suffixes_adopted > 0);
+    assert_eq!(incremental.converged_candidate_generation_count(), 1);
+    assert!(!candidate_generation.is_live());
+    assert_eq!(incremental.occupied_generation_slot_count(), 1);
+    let mut first_cold = session(RevisionId::new(2), &first_source);
+    let first_cold = first_cold.cold().expect("first cold output");
+    assert!(
+        first.reuse.reexecuted_commands < first_cold.reuse.reexecuted_commands,
+        "the candidate stops at convergence instead of running the retained suffix"
+    );
+    assert_detached_output_eq(&first, &first_cold);
+
+    let third_position = first_source.find('C').expect("third paragraph");
+    let second_source = first_source.replacen('C', "E", 1);
+    let second = incremental
+        .advance(
+            RevisionId::new(3),
+            edit(&incremental, third_position..third_position + 1, "E"),
+        )
+        .expect("adopted suffix remains restartable");
+    let mut second_cold = session(RevisionId::new(3), &second_source);
+    assert_detached_output_eq(&second, &second_cold.cold().expect("second cold output"));
 }
 
 #[test]
@@ -1375,7 +1428,7 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
     let edit_position = source
         .find("\\def")
         .expect("suffix follows first paragraph");
-    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\count255=1 ");
     let before_reject = incremental
         .command_timeline_counters()
         .expect("accepted command counters")
@@ -1480,7 +1533,7 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
     );
 
     let edited = format!(
-        "{}\\relax {}",
+        "{}\\count255=1 {}",
         &source[..edit_position],
         &source[edit_position..]
     );
@@ -1532,7 +1585,7 @@ fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
     let edit_position = source
         .find("\\hsize")
         .expect("page-rich suffix follows first paragraph");
-    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\relax ");
+    let candidate_edit = edit(&incremental, edit_position..edit_position, "\\count255=1 ");
 
     let mut rejected = incremental
         .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
@@ -1601,7 +1654,7 @@ fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
     );
 
     let edited = format!(
-        "{}\\relax {}",
+        "{}\\count255=1 {}",
         &source[..edit_position],
         &source[edit_position..]
     );

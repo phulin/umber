@@ -897,6 +897,36 @@ impl<'store> RetainedEngineGeneration<'store> {
         self.with_admitted(RehomeIdenticalRevision { revision })?
     }
 
+    /// Atomically retargets the accepted editor backing and detached boundary
+    /// revision metadata after the current generation has converged and been
+    /// rejected.
+    pub fn rehome_editor_revision(
+        &mut self,
+        accepted: &[u8],
+        bytes: Arc<[u8]>,
+        revision: u64,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+        restart: (usize, crate::EngineBoundary, u32),
+        convergence: (usize, crate::EngineBoundary, u32),
+        new_effect_prefix: usize,
+        new_artifact_prefix: usize,
+    ) -> Result<usize, RetainedEngineAccessError> {
+        self.with_admitted(RehomeEditorRevision {
+            accepted,
+            bytes,
+            revision,
+            old_start,
+            old_end,
+            new_end,
+            restart,
+            convergence,
+            new_effect_prefix,
+            new_artifact_prefix,
+        })?
+    }
+
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
@@ -1194,6 +1224,19 @@ struct RehomeIdenticalRevision {
     revision: u64,
 }
 
+struct RehomeEditorRevision<'a> {
+    accepted: &'a [u8],
+    bytes: Arc<[u8]>,
+    revision: u64,
+    old_start: usize,
+    old_end: usize,
+    new_end: usize,
+    restart: (usize, crate::EngineBoundary, u32),
+    convergence: (usize, crate::EngineBoundary, u32),
+    new_effect_prefix: usize,
+    new_artifact_prefix: usize,
+}
+
 struct PreflightBoundaryLane;
 
 impl RetainedEngineOperation for PreflightBoundaryLane {
@@ -1288,6 +1331,50 @@ impl RetainedEngineOperation for RehomeIdenticalRevision {
             .as_mut()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?
             .rehome_identical_revision(self.revision)
+    }
+}
+
+impl RetainedEngineOperation for RehomeEditorRevision<'_> {
+    type Output = Result<usize, RetainedEngineAccessError>;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        let command = admitted
+            .sidecars
+            .command
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
+        let boundaries = admitted
+            .sidecars
+            .boundaries
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
+        boundaries.validate_revision_rehome(
+            self.old_start,
+            self.old_end,
+            self.new_end,
+            self.restart,
+            self.convergence,
+        )?;
+        command
+            .rehome_generated_editor_source(
+                self.accepted,
+                self.bytes,
+                self.old_start,
+                self.old_end,
+                self.new_end,
+            )
+            .map_err(|_| RetainedEngineAccessError::StaleCheckpoint)?;
+        boundaries.rehome_revision_suffix(
+            self.revision,
+            self.old_start,
+            self.old_end,
+            self.new_end,
+            self.restart,
+            self.convergence,
+            self.new_effect_prefix,
+            self.new_artifact_prefix,
+        )?;
+        Ok(boundaries.live_roots)
     }
 }
 
@@ -1682,6 +1769,133 @@ impl<G> BoundaryLane<G> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn validate_revision_rehome(
+        &self,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+        restart: (usize, crate::EngineBoundary, u32),
+        convergence: (usize, crate::EngineBoundary, u32),
+    ) -> Result<(), RetainedEngineAccessError> {
+        let BoundaryOwnership::Accepted(keys) = &self.ownership else {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        };
+        let mut restart_seen = false;
+        let mut convergence_seen = false;
+        for key in keys {
+            let row = self.slot_by_index(key.slot);
+            if row.generation != key.generation {
+                return Err(RetainedEngineAccessError::StaleCheckpoint);
+            }
+            let evidence = row
+                .cell
+                .as_ref()
+                .ok_or(RetainedEngineAccessError::StaleCheckpoint)?
+                .evidence;
+            let identity = (evidence.position, evidence.boundary, evidence.ordinal);
+            restart_seen |= identity == restart;
+            if identity == convergence {
+                if !restart_seen {
+                    return Err(RetainedEngineAccessError::StaleCheckpoint);
+                }
+                convergence_seen = true;
+            }
+            if convergence_seen
+                && map_revision_offset(evidence.position, old_start, old_end, new_end).is_none()
+            {
+                return Err(RetainedEngineAccessError::StaleCheckpoint);
+            }
+        }
+        if restart_seen && convergence_seen {
+            Ok(())
+        } else {
+            Err(RetainedEngineAccessError::StaleCheckpoint)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn rehome_revision_suffix(
+        &mut self,
+        revision: u64,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+        restart: (usize, crate::EngineBoundary, u32),
+        convergence: (usize, crate::EngineBoundary, u32),
+        new_effect_prefix: usize,
+        new_artifact_prefix: usize,
+    ) -> Result<(), RetainedEngineAccessError> {
+        let BoundaryOwnership::Accepted(keys) = &mut self.ownership else {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        };
+        let mut accepted = std::mem::take(keys);
+        let mut retained = VecDeque::with_capacity(accepted.len());
+        let mut after_restart = false;
+        let mut adopting_suffix = false;
+        let mut old_effect_prefix = 0;
+        let mut old_artifact_prefix = 0;
+        while let Some(key) = accepted.pop_front() {
+            let evidence = self
+                .slot_by_index(key.slot)
+                .cell
+                .as_ref()
+                .ok_or(RetainedEngineAccessError::StaleCheckpoint)?
+                .evidence;
+            let identity = (evidence.position, evidence.boundary, evidence.ordinal);
+            if identity == convergence {
+                adopting_suffix = true;
+                old_effect_prefix = evidence.effect_prefix;
+                old_artifact_prefix = evidence.artifact_prefix;
+            }
+            if after_restart && !adopting_suffix {
+                let cell = self.release_slot(key)?;
+                self.live_roots = self
+                    .live_roots
+                    .saturating_sub(usize::from(cell.checkpoint.is_some()));
+                continue;
+            }
+            {
+                let row = self.slot_by_index_mut(key.slot);
+                if row.generation != key.generation {
+                    return Err(RetainedEngineAccessError::StaleCheckpoint);
+                }
+                let cell = row
+                    .cell
+                    .as_mut()
+                    .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+                cell.evidence.revision = revision;
+                if adopting_suffix {
+                    cell.evidence.position =
+                        map_revision_offset(cell.evidence.position, old_start, old_end, new_end)
+                            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+                    cell.evidence.effect_prefix = new_effect_prefix.saturating_add(
+                        cell.evidence
+                            .effect_prefix
+                            .saturating_sub(old_effect_prefix),
+                    );
+                    cell.evidence.artifact_prefix = new_artifact_prefix.saturating_add(
+                        cell.evidence
+                            .artifact_prefix
+                            .saturating_sub(old_artifact_prefix),
+                    );
+                    if let Some(checkpoint) = cell.checkpoint.as_mut() {
+                        checkpoint.rehome_output_coordinates(
+                            cell.evidence.position,
+                            cell.evidence.effect_prefix,
+                            cell.evidence.artifact_prefix,
+                        );
+                    }
+                }
+            }
+            retained.push_back(key);
+            after_restart |= identity == restart;
+        }
+        self.ownership = BoundaryOwnership::Accepted(retained);
+        self.live_roots = self.visible_live_roots();
+        Ok(())
+    }
+
     fn validate_all(&self) -> Result<(), RetainedEngineAccessError> {
         self.visit_visible(|_, _| {})?;
         Ok(())
@@ -1955,6 +2169,21 @@ fn next_generation() -> u64 {
             next.checked_add(1)
         })
         .expect("retained engine generation identity space exhausted")
+}
+
+fn map_revision_offset(
+    old: usize,
+    old_start: usize,
+    old_end: usize,
+    new_end: usize,
+) -> Option<usize> {
+    if old <= old_start {
+        Some(old)
+    } else if old >= old_end {
+        new_end.checked_add(old.checked_sub(old_end)?)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -482,6 +482,16 @@ impl SourceLexExecutionState {
             line_backing_registered: slot.cursor.line_backing_registered,
         }
     }
+
+    pub(crate) fn rehome_offsets(
+        &mut self,
+        slot: SourceSlotKey,
+        map: super::source::SourceOffsetMap,
+    ) {
+        if self.slot == slot {
+            self.cursor.byte_cursor = map.map(self.cursor.byte_cursor);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -515,6 +525,41 @@ pub(crate) enum SourceLevelExecutionState<G> {
 }
 
 impl<G> SourceLevelExecutionState<G> {
+    pub(crate) fn rehome_physical_backing(
+        &mut self,
+        slot: SourceSlotKey,
+        accepted: &[u8],
+        replacement: &RegisteredSource,
+    ) {
+        let (state_slot, backing) = match self {
+            Self::Backing { slot, backing, .. } | Self::PhysicalBacking { slot, backing, .. } => {
+                (*slot, backing)
+            }
+            Self::Cursor { .. } | Self::EveryEof { .. } => return,
+        };
+        if state_slot == slot && backing.is_editor_backing(accepted) {
+            backing.clone_from(replacement);
+        }
+    }
+
+    pub(crate) fn rehome_offsets(
+        &mut self,
+        root_slot: SourceSlotKey,
+        map: super::source::SourceOffsetMap,
+    ) {
+        match self {
+            Self::Cursor { slot, cursor, .. }
+            | Self::EveryEof { slot, cursor, .. }
+            | Self::Backing { slot, cursor, .. }
+                if *slot == root_slot =>
+            {
+                cursor.rehome_offsets(map);
+            }
+            Self::PhysicalBacking { .. } => {}
+            Self::Cursor { .. } | Self::EveryEof { .. } | Self::Backing { .. } => {}
+        }
+    }
+
     pub(crate) fn cursor(source: &SourceLevel<G>, slot: &mut SourceSlot<G>) -> Self {
         Self::Cursor {
             slot: source.slot,
@@ -649,10 +694,7 @@ impl<G> SourceLevel<G> {
             } => {
                 assert_eq!(self.slot, *slot, "source inverse names the live slot");
                 std::mem::swap(&mut owner.cursor.backing, backing);
-                std::mem::swap(
-                    &mut owner.cursor.backing_registered,
-                    backing_registered,
-                );
+                std::mem::swap(&mut owner.cursor.backing_registered, backing_registered);
             }
         }
     }

@@ -182,6 +182,61 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
+    pub(crate) fn rehome_generated_source(
+        &mut self,
+        accepted: &[u8],
+        bytes: std::sync::Arc<[u8]>,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+    ) -> Result<bool, crate::SourceRegistrationError> {
+        let offsets = super::source::SourceOffsetMap::new(old_start, old_end, new_end);
+        let mut rebound = false;
+        let mut failure = None;
+        let mut replacement = None;
+        let mut root_slot = None;
+        self.source_slots.for_each_value_mut(|handle, slot| {
+            if failure.is_some() || !slot.cursor.backing.is_editor_backing(accepted) {
+                return;
+            }
+            if replacement.is_none() {
+                match slot
+                    .cursor
+                    .backing
+                    .rehome_generated(std::sync::Arc::clone(&bytes))
+                {
+                    Ok(prepared) => replacement = Some(prepared),
+                    Err(error) => {
+                        failure = Some(error);
+                        return;
+                    }
+                }
+            }
+            slot.cursor
+                .backing
+                .clone_from(replacement.as_ref().expect("replacement was prepared"));
+            slot.cursor.rehome_offsets(offsets);
+            root_slot = Some(SourceSlotKey(handle));
+            rebound = true;
+        });
+        if rebound {
+            let root_slot = root_slot.expect("a rebound source owns its slot");
+            self.source_lex_states
+                .for_each_value_mut(|_, state| state.rehome_offsets(root_slot, offsets));
+            let replacement = replacement
+                .as_ref()
+                .expect("a rebound source prepared its replacement");
+            self.source_owner_states.for_each_value_mut(|_, state| {
+                state.rehome_physical_backing(root_slot, accepted, replacement);
+                state.rehome_offsets(root_slot, offsets);
+            });
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(rebound),
+        }
+    }
+
     pub(crate) fn push_source(&mut self, frame: super::PackedInputFrame, slot: SourceSlot<G>) {
         self.source_slots.warm_first_page();
         let slot = SourceSlotKey::new(self.source_slots.insert(slot));
