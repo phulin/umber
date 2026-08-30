@@ -3033,26 +3033,43 @@ impl<G> MainControl<G> {
                 );
                 (operation, pending)
             });
-            // Inspect the discriminant before taking the large typed retry
-            // aggregate so the ordinary None path leaves its storage resident.
-            let pending_direct = if resumed_resource.is_some() {
+            // Drain an occupied retry in place. Keeping the outer Option and
+            // destination aggregate out of locals prevents ordinary delivery
+            // from copying the frame-sized vacant representation. A genuine
+            // retry moves only its operation capability and exact destination
+            // fields into the caller-owned slots used by this iteration.
+            let (retained_operation, pending_preflight) = if resumed_resource.is_some() {
                 debug_assert!(self.pending_direct_operation.is_none());
-                None
-            } else if self.pending_direct_operation.is_some() {
-                self.pending_direct_operation.take()
+                (None, None)
+            } else if let Some(pending) = self.pending_direct_operation.as_mut() {
+                let operation =
+                    match std::mem::replace(&mut pending.state, PendingDirectState::Fresh) {
+                        PendingDirectState::Fresh => None,
+                        PendingDirectState::Retained(operation) => Some(operation),
+                    };
+                let preflight = match &mut pending.destination {
+                    PendingDirectDestination::Alignment(pending) => PreflightDelivery::<G> {
+                        delivery: OperationDelivery::AlignmentRetry {
+                            alignment: pending.alignment,
+                            cursor: pending.cursor,
+                        },
+                        capabilities:
+                            crate::transaction_protocol::canonical_static_command_capabilities(
+                                Meaning::Relax,
+                            ),
+                        scanner: pending.scanner.take(),
+                        expansion: pending.expansion.take(),
+                    },
+                    PendingDirectDestination::Frame(pending) => {
+                        operation_frame = std::mem::take(&mut pending.frame);
+                        cold_operation = std::mem::take(&mut pending.cold);
+                        preflight_delivery_from_frame(&operation_frame)
+                    }
+                };
+                self.pending_direct_operation = None;
+                (operation, Some(preflight))
             } else {
-                None
-            };
-            let (retained_operation, pending_destination) = match pending_direct {
-                Some(PendingDirectOperation {
-                    state: PendingDirectState::Fresh,
-                    destination,
-                }) => (None, Some(destination)),
-                Some(PendingDirectOperation {
-                    state: PendingDirectState::Retained(operation),
-                    destination,
-                }) => (Some(operation), Some(destination)),
-                None => (None, None),
+                (None, None)
             };
             let (operation, resumed_resource) = match resumed_resource {
                 Some((operation, mut pending)) => {
@@ -3151,26 +3168,8 @@ impl<G> MainControl<G> {
                     scanner: None,
                     expansion: None,
                 }
-            } else if let Some(destination) = pending_destination {
-                match destination {
-                    PendingDirectDestination::Alignment(pending) => PreflightDelivery::<G> {
-                        delivery: OperationDelivery::AlignmentRetry {
-                            alignment: pending.alignment,
-                            cursor: pending.cursor,
-                        },
-                        capabilities:
-                            crate::transaction_protocol::canonical_static_command_capabilities(
-                                Meaning::Relax,
-                            ),
-                        scanner: pending.scanner,
-                        expansion: pending.expansion,
-                    },
-                    PendingDirectDestination::Frame(pending) => {
-                        operation_frame = pending.frame;
-                        cold_operation = pending.cold;
-                        preflight_delivery_from_frame(&operation_frame)
-                    }
-                }
+            } else if let Some(preflight) = pending_preflight {
+                preflight
             } else {
                 let preflight = match self.preflight_replay_delivery(
                     stores,
