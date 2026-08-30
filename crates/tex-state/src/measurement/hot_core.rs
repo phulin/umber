@@ -501,7 +501,7 @@ static NODE_CHECKPOINT_SIDECAR_ROWS: AtomicU64 = AtomicU64::new(0);
 static NODE_CHECKPOINT_SIDECAR_NODES: AtomicU64 = AtomicU64::new(0);
 static NODE_CHECKPOINT_SHARED_ROWS: AtomicU64 = AtomicU64::new(0);
 
-#[must_use]
+#[must_use = "keep the allocation scope alive for the interval being measured"]
 pub fn hot_core_allocation_scope(
     owner: HotCoreAllocationOwner,
 ) -> umber_hot_core_allocator::AllocationScope {
