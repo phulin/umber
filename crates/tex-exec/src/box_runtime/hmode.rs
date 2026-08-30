@@ -184,7 +184,11 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
         diagnostic_effects,
         &pending.source,
         no_boundary,
-        suppress_right_boundary,
+        if suppress_right_boundary {
+            LigatureRightBoundary::Suppressed
+        } else {
+            LigatureRightBoundary::Font
+        },
         insert_hyphen_discs,
         fuel,
     ) {
@@ -853,17 +857,48 @@ pub(crate) fn reconstitute_with_fuel<G>(
         diagnostic_effects,
         pending,
         no_left_boundary,
-        false,
+        LigatureRightBoundary::Font,
         insert_hyphen_discs,
+        fuel,
+    )
+}
+
+/// Reconstitutes a hyphenated word against TeX82 §897's saved same-font
+/// nonletter without materializing that implicit right character.
+pub(crate) fn reconstitute_with_right_character<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    pending: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+    right_character: Option<u8>,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, tex_command::CommandError> {
+    run_tfm_ligature_machine(
+        stores,
+        diagnostic_effects,
+        pending,
+        no_left_boundary,
+        right_character.map_or(
+            LigatureRightBoundary::Suppressed,
+            LigatureRightBoundary::Character,
+        ),
+        false,
         fuel,
     )
 }
 
 #[derive(Clone)]
 enum LigatureWorkItem {
-    Boundary,
+    Boundary(Option<u8>),
     Glyph(PendingHRunChar),
     Kern { amount: Scaled, kind: KernKind },
+}
+
+#[derive(Clone, Copy)]
+enum LigatureRightBoundary {
+    Suppressed,
+    Font,
+    Character(u8),
 }
 
 #[derive(Clone)]
@@ -975,12 +1010,12 @@ pub(crate) fn replacement_glyph(
 /// Source glyphs, generated pseudo-ligatures, and both boundaries share one
 /// work list. Thus every replacement pair re-enters the TFM program, and the
 /// retain/delete and pass-over bits move one authoritative cursor.
-pub(crate) fn run_tfm_ligature_machine<G>(
+fn run_tfm_ligature_machine<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     source: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
-    suppress_right_boundary: bool,
+    right_boundary: LigatureRightBoundary,
     insert_hyphen_discs: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<Vec<Node>, tex_command::CommandError> {
@@ -991,7 +1026,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
     let false_bchar = stores.font_false_boundary_char(font);
     let mut work = LigatureWorkList::with_capacity(source.len() + 4);
     if !no_left_boundary {
-        work.push_back(LigatureWorkItem::Boundary);
+        work.push_back(LigatureWorkItem::Boundary(None));
     }
     for entry in source {
         work.push_back(LigatureWorkItem::Glyph(PendingHRunChar::new(
@@ -1000,8 +1035,14 @@ pub(crate) fn run_tfm_ligature_machine<G>(
             entry.origin,
         )));
     }
-    if !suppress_right_boundary {
-        work.push_back(LigatureWorkItem::Boundary);
+    match right_boundary {
+        LigatureRightBoundary::Suppressed => {}
+        LigatureRightBoundary::Font => {
+            work.push_back(LigatureWorkItem::Boundary(None));
+        }
+        LigatureRightBoundary::Character(ch) => {
+            work.push_back(LigatureWorkItem::Boundary(Some(ch)));
+        }
     }
 
     let mut cursor = work.head;
@@ -1019,12 +1060,17 @@ pub(crate) fn run_tfm_ligature_machine<G>(
             continue;
         }
         let pair: Option<(LigKernChar, LigKernChar)> = match (&left_item, &right_item) {
-            (LigatureWorkItem::Boundary, LigatureWorkItem::Glyph(right)) => font_code(right.ch)
+            (LigatureWorkItem::Boundary(_), LigatureWorkItem::Glyph(right)) => font_code(right.ch)
                 .ok()
                 .map(|right| (LigKernChar::Boundary, LigKernChar::Char(right))),
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary) => font_code(left.ch)
-                .ok()
-                .map(|left| (LigKernChar::Char(left), LigKernChar::Boundary)),
+            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(right)) => {
+                font_code(left.ch).ok().map(|left| {
+                    (
+                        LigKernChar::Char(left),
+                        right.map_or(LigKernChar::Boundary, LigKernChar::Char),
+                    )
+                })
+            }
             (LigatureWorkItem::Glyph(left), LigatureWorkItem::Glyph(right))
                 if left.font == right.font =>
             {
@@ -1068,10 +1114,13 @@ pub(crate) fn run_tfm_ligature_machine<G>(
         }
 
         let auto = match (&left_item, &right_item) {
-            (LigatureWorkItem::Boundary, LigatureWorkItem::Glyph(right)) => {
+            (LigatureWorkItem::Boundary(_), LigatureWorkItem::Glyph(right)) => {
                 auto_kern(stores, right, Some(true))
             }
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary) => {
+            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(Some(right))) => {
+                auto_kern_codes(stores, left.font, Some(left.ch), Some(char::from(*right)))
+            }
+            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(None)) => {
                 auto_kern(stores, left, None)
             }
             (LigatureWorkItem::Glyph(left), LigatureWorkItem::Glyph(right)) => {
@@ -1111,8 +1160,8 @@ pub(crate) fn run_tfm_ligature_machine<G>(
                     font,
                     lig.replacement,
                     consumed,
-                    matches!(left_item, LigatureWorkItem::Boundary),
-                    matches!(right_item, LigatureWorkItem::Boundary),
+                    matches!(left_item, LigatureWorkItem::Boundary(_)),
+                    matches!(right_item, LigatureWorkItem::Boundary(_)),
                 ));
                 match (lig.delete_current, lig.delete_next) {
                     (true, true) => {
@@ -1156,7 +1205,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
             out.extend(pending_disc.take());
         }
         match item {
-            LigatureWorkItem::Boundary => {}
+            LigatureWorkItem::Boundary(_) => {}
             LigatureWorkItem::Glyph(glyph) => {
                 if work.nodes[current].discard_if_missing
                     && !stores.font_character_exists(glyph.font, glyph.ch)
@@ -1184,7 +1233,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
 fn work_glyph(item: &LigatureWorkItem) -> Option<PendingHRunChar> {
     match item {
         LigatureWorkItem::Glyph(glyph) => Some(glyph.clone()),
-        LigatureWorkItem::Boundary | LigatureWorkItem::Kern { .. } => None,
+        LigatureWorkItem::Boundary(_) | LigatureWorkItem::Kern { .. } => None,
     }
 }
 

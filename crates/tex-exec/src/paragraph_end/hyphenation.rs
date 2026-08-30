@@ -613,6 +613,7 @@ fn hyphenate_candidate_after_glue<G>(
     let HyphenationCandidate {
         word_start,
         end: index,
+        right_boundary,
         language,
         left,
         right,
@@ -671,6 +672,7 @@ fn hyphenate_candidate_after_glue<G>(
         &word,
         &positions,
         no_left_boundary,
+        right_boundary,
         generated_word,
         output_len,
         fuel,
@@ -680,7 +682,7 @@ fn hyphenate_candidate_after_glue<G>(
     for node in generated_word.drain(..) {
         stores.push_page_active_list(out, node);
     }
-    if trailing_font_kern {
+    if trailing_font_kern && !matches!(right_boundary, HyphenationRightBoundary::Character(_)) {
         stores.append_page_active_span_range(out, source, index - 1..index);
         *output_len += 1;
     }
@@ -690,10 +692,18 @@ fn hyphenate_candidate_after_glue<G>(
 struct HyphenationCandidate {
     word_start: usize,
     end: usize,
+    right_boundary: HyphenationRightBoundary,
     language: u8,
     left: usize,
     right: usize,
     word: smallvec::SmallVec<[WordChar; 64]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HyphenationRightBoundary {
+    None,
+    Font,
+    Character(u8),
 }
 
 /// Implements TeX82 §§891--895's bounded scan from the glue after which a
@@ -714,6 +724,7 @@ fn find_hyphenation_candidate<G>(
     let mut minima = 0;
     let mut word = smallvec::SmallVec::<[WordChar; 64]>::new();
     let mut word_end = None;
+    let mut right_boundary = HyphenationRightBoundary::None;
     // TeX describes seeking the first letter, collecting the bounded word,
     // and checking its terminator as adjacent loops. Keep those phases in one
     // forward arena traversal so a packed predecessor chain is descended
@@ -752,53 +763,78 @@ fn find_hyphenation_candidate<G>(
                     font: node_font,
                     ch,
                     origin,
-                } if *node_font == candidate_font && word.len() < 63 => {
-                    normalized_hyphen_code(stores, language, *ch).is_some_and(|lower| {
+                } if *node_font == candidate_font => {
+                    if word.len() < 63
+                        && let Some(lower) = normalized_hyphen_code(stores, language, *ch)
+                    {
                         word.push(WordChar {
                             font: candidate_font,
                             ch: *ch,
                             lower,
                             origin: *origin,
                         });
+                        right_boundary = HyphenationRightBoundary::None;
                         true
-                    })
+                    } else {
+                        right_boundary = u8::try_from(*ch as u32).map_or(
+                            HyphenationRightBoundary::None,
+                            HyphenationRightBoundary::Character,
+                        );
+                        false
+                    }
                 }
                 Node::Lig {
                     font: node_font,
                     orig,
                     origins,
+                    right_hit,
                     ..
-                } if *node_font == candidate_font
-                    && word
+                } if *node_font == candidate_font => {
+                    let original_len = word.len();
+                    let capacity_ok = word
                         .len()
                         .checked_add(orig.len())
-                        .is_some_and(|len| len <= 63) =>
-                {
-                    let original_len = word.len();
-                    let mut valid = true;
-                    for (offset, &ch) in orig.iter().enumerate() {
-                        let Some(lower) = normalized_hyphen_code(stores, language, ch) else {
-                            valid = false;
-                            break;
-                        };
-                        if let Some(&origin) = origins.get(offset) {
-                            word.push(WordChar {
-                                font: candidate_font,
-                                ch,
-                                lower,
-                                origin,
-                            });
+                        .is_some_and(|len| len <= 63);
+                    let mut valid = capacity_ok;
+                    if capacity_ok {
+                        for (offset, &ch) in orig.iter().enumerate() {
+                            let Some(lower) = normalized_hyphen_code(stores, language, ch) else {
+                                valid = false;
+                                break;
+                            };
+                            if let Some(&origin) = origins.get(offset) {
+                                word.push(WordChar {
+                                    font: candidate_font,
+                                    ch,
+                                    lower,
+                                    origin,
+                                });
+                            }
                         }
                     }
                     if !valid {
                         word.truncate(original_len);
+                        right_boundary = orig
+                            .first()
+                            .and_then(|ch| u8::try_from(*ch as u32).ok())
+                            .map_or(
+                                HyphenationRightBoundary::None,
+                                HyphenationRightBoundary::Character,
+                            );
+                    } else if *right_hit {
+                        right_boundary = HyphenationRightBoundary::Font;
+                    } else {
+                        right_boundary = HyphenationRightBoundary::None;
                     }
                     valid
                 }
                 Node::Kern {
                     kind: KernKind::Font,
                     ..
-                } => true,
+                } => {
+                    right_boundary = HyphenationRightBoundary::Font;
+                    true
+                }
                 _ => false,
             };
             if continues_word {
@@ -840,6 +876,7 @@ fn find_hyphenation_candidate<G>(
     Some(HyphenationCandidate {
         word_start: word_start.expect("permitted candidate has a word start"),
         end: word_end.unwrap_or(nodes.len()),
+        right_boundary,
         language,
         left,
         right,
@@ -943,6 +980,47 @@ fn current_language<G>(stores: &CommandContext<'_, G>) -> u8 {
     u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0)
 }
 
+fn reconstitute_hyphenated_span<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    pending: &[PendingHChar],
+    no_left_boundary: bool,
+    right_boundary: HyphenationRightBoundary,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, ExecError> {
+    let result = match right_boundary {
+        HyphenationRightBoundary::None => {
+            crate::box_runtime::hmode::reconstitute_with_right_character(
+                stores,
+                diagnostic_effects,
+                pending,
+                no_left_boundary,
+                None,
+                fuel,
+            )
+        }
+        HyphenationRightBoundary::Font => crate::box_runtime::hmode::reconstitute_with_fuel(
+            stores,
+            diagnostic_effects,
+            pending,
+            no_left_boundary,
+            false,
+            fuel,
+        ),
+        HyphenationRightBoundary::Character(ch) => {
+            crate::box_runtime::hmode::reconstitute_with_right_character(
+                stores,
+                diagnostic_effects,
+                pending,
+                no_left_boundary,
+                Some(ch),
+                fuel,
+            )
+        }
+    };
+    result.map_err(ExecError::Command)
+}
+
 #[allow(clippy::too_many_arguments)] // Word reconstruction carries independent boundary and projection state.
 fn append_hyphenated_word<G>(
     stores: &mut CommandContext<'_, G>,
@@ -950,21 +1028,21 @@ fn append_hyphenated_word<G>(
     word: &[WordChar],
     positions: &[usize],
     no_left_boundary: bool,
+    right_boundary: HyphenationRightBoundary,
     out: &mut Vec<Node>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = crate::box_runtime::hmode::reconstitute_with_fuel(
+    let nodes = reconstitute_hyphenated_span(
         stores,
         diagnostic_effects,
         &pending,
         no_left_boundary,
-        false,
+        right_boundary,
         fuel,
-    )
-    .map_err(ExecError::Command)?;
+    )?;
     let mut position_index = 0;
     let mut char_start = 0;
 
@@ -1005,6 +1083,7 @@ fn append_hyphenated_word<G>(
                 ((char_start, position, char_end), *output_len),
                 node,
                 &nodes[node_index + 1..],
+                right_boundary,
                 fuel,
                 projection.missing_hyphens,
             )?;
@@ -1053,6 +1132,7 @@ fn discretionary_through_node<G>(
     location: ((usize, usize, usize), usize),
     replacement: Node,
     following: &[Node],
+    right_boundary: HyphenationRightBoundary,
     fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
 ) -> Result<(Node, tex_state::node_arena::PageListId), ExecError> {
@@ -1080,23 +1160,25 @@ fn discretionary_through_node<G>(
     )
     .map_err(ExecError::Command)?;
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = crate::box_runtime::hmode::reconstitute_with_fuel(
+    let post = reconstitute_hyphenated_span(
         stores,
         diagnostic_effects,
         &post_pending,
         false,
-        false,
+        right_boundary,
         fuel,
-    )
-    .map_err(ExecError::Command)?;
+    )?;
 
     let (physical_replace_count, physical_post) = physical_discretionary_projection(
         stores,
         diagnostic_effects,
         word,
         span,
-        &replacement,
-        following,
+        PhysicalDiscretionarySource {
+            replacement: &replacement,
+            following,
+            right_boundary,
+        },
         fuel,
     )?;
     let disc = automatic_discretionary_with_count(
@@ -1118,15 +1200,25 @@ fn discretionary_through_node<G>(
 /// character boundary represented by both reconstitutions.  Projecting that
 /// boundary here retains TeX's exact replacement count and post-break list
 /// without flattening the semantic ligature used by packing and shipout.
+struct PhysicalDiscretionarySource<'a> {
+    replacement: &'a Node,
+    following: &'a [Node],
+    right_boundary: HyphenationRightBoundary,
+}
+
 fn physical_discretionary_projection<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     word: &[WordChar],
     span: (usize, usize, usize),
-    replacement: &Node,
-    following: &[Node],
+    source: PhysicalDiscretionarySource<'_>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(u8, tex_state::node_arena::PageListId), ExecError> {
+    let PhysicalDiscretionarySource {
+        replacement,
+        following,
+        right_boundary,
+    } = source;
     let (start, position, end) = span;
     let mut major = Vec::with_capacity(following.len() + 1);
     major.push(replacement.clone());
@@ -1135,15 +1227,14 @@ fn physical_discretionary_projection<G>(
         .iter()
         .map(WordChar::pending)
         .collect::<Vec<_>>();
-    let minor = crate::box_runtime::hmode::reconstitute_with_fuel(
+    let minor = reconstitute_hyphenated_span(
         stores,
         diagnostic_effects,
         &minor_pending,
         false,
-        false,
+        right_boundary,
         fuel,
-    )
-    .map_err(ExecError::Command)?;
+    )?;
 
     let (major_len, minor_len) =
         synchronized_physical_branch_lengths(&major, start, &minor, position, end, word.len());
@@ -1374,7 +1465,7 @@ mod tests {
 
     fn hyphenation_font<G>(stores: &mut CommandContext<'_, G>) -> tex_state::ids::FontId {
         let mut characters = vec![None; 256];
-        for code in [b'-', b'a', b'b', b'c', b'd'] {
+        for code in [b'-', b'.', b'a', b'b', b'c', b'd'] {
             characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
                 width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY / 2),
                 height: tex_state::scaled::Scaled::from_raw(0),
@@ -1383,6 +1474,20 @@ mod tests {
                 tag: tex_state::font::CharTag::None,
             });
         }
+        characters[usize::from(b'd')]
+            .as_mut()
+            .expect("test letter exists")
+            .tag = tex_state::font::CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        };
+        let program = vec![tex_fonts::LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'.',
+            command: Some(tex_fonts::LigKernCommand::Kern(
+                tex_state::scaled::Scaled::from_raw(-1_234),
+            )),
+        }];
         let size = tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY);
         stores.intern_font(tex_state::font::LoadedFont::new(
             "hyphenation-test",
@@ -1392,7 +1497,7 @@ mod tests {
             size,
             size,
             vec![tex_state::scaled::Scaled::from_raw(0); 7],
-            tex_state::font::FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+            tex_state::font::FontMetrics::new(characters, program, None, None, Vec::new()),
         ))
     }
 
@@ -1584,6 +1689,10 @@ mod tests {
             let found = candidate(&mut stores, &nodes).expect("four letters meet the 2+2 minima");
             assert_eq!((found.language, found.left, found.right), (7, 2, 2));
             assert_eq!((found.word_start, found.end), (3, 7));
+            assert_eq!(
+                found.right_boundary,
+                HyphenationRightBoundary::Character(b'.')
+            );
             assert!(found.word.iter().all(|letter| letter.font == font));
             assert_eq!(
                 found
@@ -1602,6 +1711,83 @@ mod tests {
             });
             assert!(candidate(&mut stores, &too_short).is_none());
         });
+    }
+
+    #[test]
+    fn hyphenation_reconstitution_uses_same_font_nonletter_as_right_boundary() {
+        // TeX82 §897 saves the first same-font nonletter as `hyf_bchar`;
+        // §§903--918 reconstitute the word against it while retaining the
+        // original punctuation node after the replaced word.
+        fn run(with_position: bool) -> Vec<Node> {
+            let mut result = Vec::new();
+            crate::test_harness::with_nonstop_plain_universe(|universe| {
+                let mut stores = universe.command_context().expect("test state is admitted");
+                let font = hyphenation_font(&mut stores);
+                stores.set_font_hyphen_char(font, i32::from(b'-'));
+                if with_position {
+                    stores.add_hyphenation_exception_for_language(
+                        0,
+                        ExceptionSpec {
+                            word: "abcd".to_owned(),
+                            positions: vec![2],
+                        },
+                    );
+                }
+                stores
+                    .assign_int_param(
+                        IntParam::LEFT_HYPHEN_MIN,
+                        1,
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("left minimum");
+                stores
+                    .assign_int_param(
+                        IntParam::RIGHT_HYPHEN_MIN,
+                        1,
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("right minimum");
+                let mut nodes = vec![Node::Glue {
+                    spec: tex_state::glue::GlueSpec::ZERO,
+                    kind: tex_state::node::GlueKind::Normal,
+                    leader: None,
+                }];
+                nodes.extend("abcd.".chars().map(|ch| character(font, ch)));
+                nodes.push(Node::Penalty(0));
+                let source = stores.publish_page_nodes(nodes);
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+                let hyphenated =
+                    hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
+                        .expect("hyphenation succeeds");
+                result = stores
+                    .page_nodes(hyphenated.semantic)
+                    .expect("semantic list")
+                    .iter()
+                    .cloned()
+                    .collect();
+            });
+            result
+        }
+
+        let unchanged = run(false);
+        assert!(unchanged.windows(2).any(|nodes| matches!(
+            nodes,
+            [Node::Char { ch: 'd', .. }, Node::Char { ch: '.', .. }]
+        )));
+
+        let reconstituted = run(true);
+        assert!(reconstituted.windows(3).any(|nodes| matches!(
+            nodes,
+            [
+                Node::Char { ch: 'd', .. },
+                Node::Kern {
+                    amount,
+                    kind: KernKind::Font,
+                },
+                Node::Char { ch: '.', .. },
+            ] if amount.raw() == -1_234
+        )));
     }
 
     #[test]
