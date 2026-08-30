@@ -528,6 +528,17 @@ scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.
 This keeps exactly the current generation alive, not one owner per token.
 
+The physical executor split follows those same ownership transitions without
+splitting the interpreter. `main_control/operation_frame.rs` owns the resident
+frame, adjacent cold slot, and genuine suspension carriers;
+`main_control/delivery.rs` mutates those destinations through delivery,
+preflight, and retry; `main_control/settlement.rs` owns commit, rollback, and
+publication settlement; and `main_control/executor_facts.rs` lends only
+borrow-scoped live executor facts. `main_control.rs` retains the one
+`MainControl` loop and explicit owner-loan/return orchestration. The sibling
+modules use direct static calls and introduce no transport value, heap owner,
+or alternate command representation.
+
 Nested scanner and expansion suspension uses two fixed typed scratch lanes.
 `PendingScanToks` has a dedicated lane because it owns the definition builder
 and attempt scope, while scalar, alignment, and structured continuations share

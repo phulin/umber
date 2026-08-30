@@ -399,7 +399,7 @@ a `.` other-character), while the other three cases each need exactly one.
 redefinition-proof control-sequence token backing a primitive by name (e.g.
 `"endgroup"`, `"right"`), shared with the pre-existing `check_outer_validity`
 frozen-insertion recoveries (`\par`/`\fi`/`\cr`) rather than duplicated.
-`tex-exec`'s `scan_off_save` (`main_control.rs`) is the executor-side
+`tex-exec`'s `scan_off_save` (`main_control/delivery.rs`) is the executor-side
 half: given a command and the innermost `GroupKind`, it selects and issues the
 matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` →
 `\right.`, otherwise → `}`, or the bottom-level drop when no group is open),
@@ -4047,7 +4047,8 @@ preparation path. No path backs up or redelivers a settled preflight command.
 Replay completion and alignment events remain compact status variants and
 leave no command-bearing return envelope.
 
-The executor's caller-loop `OperationFrame` owns those command, parked
+The executor's caller-loop `OperationFrame` in
+`main_control/operation_frame.rs` owns those command, parked
 expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase
 fields directly beside its singular compact payload. There is no nested
 preflight-command projection. A completed hot scan is installed once in that
@@ -4124,7 +4125,7 @@ processor episode.
 
 ### 33.2 Dispatch-completeness invariant
 
-`main_control.rs`'s `scan_command` is the sole place an
+`main_control/delivery.rs`'s `scan_command` is the sole place an
 `UnexpandablePrimitive` reaches stomach dispatch. Every variant must be either
 routed by a named arm (directly, or through an explicit generic path such as
 `scan_math_request` for the math-noad family) or must fail loudly

@@ -368,6 +368,18 @@ fn predecessor_operation_branches_are_absent() {
 #[test]
 fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     let control = include_str!("../src/main_control.rs");
+    let delivery = include_str!("../src/main_control/delivery.rs");
+    let executor_facts = include_str!("../src/main_control/executor_facts.rs");
+    let operation_frame = include_str!("../src/main_control/operation_frame.rs");
+    let settlement = include_str!("../src/main_control/settlement.rs");
+    let ownership_surface = [
+        control,
+        delivery,
+        executor_facts,
+        operation_frame,
+        settlement,
+    ]
+    .concat();
     let interpreter = include_str!("../src/interpreter.rs");
     let hot = include_str!("../src/main_control/hot_apply.rs");
     let cold = include_str!("../src/main_control/cold/mod.rs");
@@ -376,25 +388,54 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     let cold_apply = include_str!("../src/main_control/cold/apply.rs");
 
     assert!(control.contains("mod cold;"));
+    assert!(control.contains("mod delivery;"));
+    assert!(control.contains("mod executor_facts;"));
     assert!(control.contains("mod hot_apply;"));
+    assert!(control.contains("mod operation_frame;"));
+    assert!(control.contains("mod settlement;"));
+    for (authority, owner) in [
+        ("struct OperationFrame<G>", operation_frame),
+        ("fn preflight_replay_delivery(", delivery),
+        ("fn settle_preflight_step<", delivery),
+        ("fn commit_direct_operation(", settlement),
+        ("fn discard_direct_operation(", settlement),
+        ("fn publish_pending_named_boundary(", settlement),
+        ("fn effective_tail_facts(", executor_facts),
+    ] {
+        assert!(owner.contains(authority), "missing owner for {authority}");
+        assert!(
+            !control.contains(authority),
+            "ownership transition leaked back into main_control.rs: {authority}"
+        );
+    }
+    for interpreter_authority in [
+        "fn execute_direct_episode(",
+        "fn prepare_operation(",
+        "fn apply_ready_operation(",
+    ] {
+        assert!(
+            control.contains(interpreter_authority),
+            "main-control interpreter lost {interpreter_authority}"
+        );
+    }
     assert_eq!(control.matches("fn command_processor<").count(), 1);
     assert_eq!(interpreter.matches("CommandProcessor::new(").count(), 1);
-    assert!(!control.contains("enum ScannedStep"));
-    assert!(!control.contains("struct PreparedOperation"));
-    assert!(control.contains("struct OperationFrame<G>"));
-    assert!(!control.contains("struct PreparedColdOperation"));
-    assert!(!control.contains("struct PrepareOperationError"));
-    assert!(!control.contains("Prepared(Box<ColdOperation"));
-    let operation_frame = control
+    assert!(!ownership_surface.contains("enum ScannedStep"));
+    assert!(!ownership_surface.contains("struct PreparedOperation"));
+    assert!(operation_frame.contains("struct OperationFrame<G>"));
+    assert!(!ownership_surface.contains("struct PreparedColdOperation"));
+    assert!(!ownership_surface.contains("struct PrepareOperationError"));
+    assert!(!ownership_surface.contains("Prepared(Box<ColdOperation"));
+    let operation_frame_definition = operation_frame
         .split("struct OperationFrame<G>")
         .nth(1)
         .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
         .expect("locate authoritative operation frame");
-    assert!(operation_frame.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(operation_frame.contains("payload: Option<OperationPayload<G>>"));
-    assert!(operation_frame.contains("phase: Option<PreflightCommandPhase>"));
-    assert!(!control.contains("struct PreflightCommand<G>"));
-    assert!(!control.contains("command: Option<PreflightCommand<G>>"));
+    assert!(operation_frame_definition.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(operation_frame_definition.contains("payload: Option<OperationPayload<G>>"));
+    assert!(operation_frame_definition.contains("phase: Option<PreflightCommandPhase>"));
+    assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
+    assert!(!ownership_surface.contains("command: Option<PreflightCommand<G>>"));
     for retired in [
         "PendingPreflightCommand",
         "struct PendingOperationScan",
@@ -406,15 +447,15 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         "PreflightDeliveryError",
     ] {
         assert!(
-            !control.contains(retired),
+            !ownership_surface.contains(retired),
             "retained preflight command mirror: {retired}"
         );
     }
-    assert!(!control.contains("command.clone()"));
+    assert!(!ownership_surface.contains("command.clone()"));
     assert!(!cold_scan.contains("command.clone()"));
-    let preflight = control
+    let preflight = delivery
         .split_once("fn preflight_replay_delivery(")
-        .and_then(|(_, tail)| tail.split_once("pub const fn job_body_effect_end"))
+        .and_then(|(_, tail)| tail.split_once("/// The closer TeX82"))
         .map(|(body, _)| body)
         .expect("locate direct preflight delivery");
     assert!(preflight.contains("processor.main_loop_lookahead_into(&mut frame.command)"));
@@ -456,7 +497,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .expect("locate context-free cold preparation");
     assert!(!scanned_preparation.contains("command_context()"));
     assert!(!scanned_preparation.contains("command_processor("));
-    let expansion_settlement = control
+    let expansion_settlement = delivery
         .split_once("fn settle_preflight_step<")
         .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))
         .map(|(body, _)| body)
@@ -516,6 +557,7 @@ fn canonical_episode_has_no_admission_executor_or_coverage_fallback() {
 #[test]
 fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
     let receipt = include_str!("../src/execution_receipt.rs");
+    let settlement = include_str!("../src/main_control/settlement.rs");
     for method in [
         "fn push_mutation",
         "fn push_diagnostic",
@@ -600,11 +642,11 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
                 .expect("direct operation commit"),
         "world/artifact/geometry/termination receipt closes before commit"
     );
-    let failed = control
+    let failed = settlement
         .split_once("fn finish_direct_failure(")
         .expect("failed-operation authority")
         .1
-        .split_once("fn execute_direct_episode(")
+        .split_once("\n}\n\nimpl<G> MainControl<G> {")
         .expect("failed-operation authority boundary")
         .0;
     assert!(
@@ -622,8 +664,10 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
 #[test]
 fn operation_host_preparation_has_one_effective_tail_authority() {
     let control = include_str!("../src/main_control.rs");
+    let executor_facts = include_str!("../src/main_control/executor_facts.rs");
+    let ownership_surface = [control, executor_facts].concat();
     assert!(
-        !control.contains("refresh_host_capabilities"),
+        !ownership_surface.contains("refresh_host_capabilities"),
         "the retired duplicate refresh layer must remain absent"
     );
     let direct_episode = control
@@ -640,7 +684,7 @@ fn operation_host_preparation_has_one_effective_tail_authority() {
         1,
         "one call-local host preparation owns each direct operation"
     );
-    let preparation = control
+    let preparation = executor_facts
         .split_once("fn prepare_host_capabilities<'operation>(")
         .expect("host preparation authority")
         .1
