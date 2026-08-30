@@ -4,10 +4,10 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::measurement::{
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, hot_core_census,
-    node_graph_census, retained_generation_census,
+    retained_generation_census,
 };
 use tex_state::node::{Node, NodeTokenList};
-use tex_state::node_arena::{PageListId, PageNodeArena};
+use tex_state::node_arena::PageListId;
 use tex_state::page::PageMark;
 use tex_state::token::{Token, TokenWord};
 use tex_state::{
@@ -37,14 +37,18 @@ fn main() {
     let enforce = std::env::args().any(|argument| argument == "--enforce");
     let mut failures = Vec::new();
 
-    let (reads, writes, page_queue, mark_classes, node_graph) = hot_state_gate();
+    let (reads, writes, page_queue, mark_classes) = hot_state_gate();
     check_zero("warmed direct reads", reads, &mut failures);
     check_zero("warmed same-cell writes", writes, &mut failures);
     check_zero("warmed page queue", page_queue, &mut failures);
     check_zero("warmed mark classes", mark_classes, &mut failures);
-    check_zero("warmed node transfer/alias", node_graph, &mut failures);
+    let (node_owner_swap, generated_nodes, copied_nodes) = node_owner_swap_gate();
+    check_zero(
+        "warmed PageBuilder owner transaction",
+        node_owner_swap,
+        &mut failures,
+    );
     generation_lifecycle_gate(&mut failures);
-    let physical_copy = physical_copy_control();
 
     println!(
         "FINAL_STATE_GATE direct_reads={} reads_allocations={} reads_bytes={} warm_writes={} writes_allocations={} writes_bytes={} page_nodes={} page_allocations={} page_bytes={} mark_operations={} mark_allocations={} mark_bytes={} node_operations={} node_allocations={} node_bytes={}",
@@ -61,12 +65,16 @@ fn main() {
         mark_classes.calls,
         mark_classes.requested_bytes,
         WARM_WRITES,
-        node_graph.calls,
-        node_graph.requested_bytes,
+        node_owner_swap.calls,
+        node_owner_swap.requested_bytes,
     );
     println!(
-        "NODE_GRAPH_COPY_CONTROL operations={} allocations={} requested_bytes={}",
-        WARM_WRITES, physical_copy.calls, physical_copy.requested_bytes
+        "NODE_OWNER_SWAP_GATE operations={} allocations={} requested_bytes={} new_semantic_nodes={} source_nodes_copied={}",
+        WARM_WRITES,
+        node_owner_swap.calls,
+        node_owner_swap.requested_bytes,
+        generated_nodes,
+        copied_nodes
     );
     println!(
         "NODE_GRAPH_LAYOUT node_bytes={} coordinate_bytes={} token_payload_bytes={}",
@@ -90,25 +98,47 @@ fn main() {
     }
 }
 
-fn physical_copy_control() -> AllocationDelta {
-    let mut source = PageNodeArena::new();
-    let root = source.publish(vec![Node::Penalty(17)]).expect("source row");
-    let mut destination = PageNodeArena::new();
-    let mark = destination.cursor();
-    measure(HotCoreAllocationOwner::SemanticApply, || {
-        for _ in 0..WARM_WRITES {
-            black_box(
-                source
-                    .promote_into(&[root], &mut destination)
-                    .expect("physical graph copy"),
-            );
-            destination.truncate(mark).expect("reset physical copy");
+fn node_owner_swap_gate() -> (AllocationDelta, u64, u64) {
+    with_universe(engine_budget(), |universe| {
+        {
+            let mut transaction = universe.begin_shipout();
+            let mut context = transaction.command_context().expect("page context");
+            for index in 0..WARM_WRITES {
+                context.append_page_contribution(Node::Penalty(index as i32));
+            }
         }
+
+        let counters_before = universe.page_material_counters();
+        let mut transaction = universe.begin_shipout();
+        let allocations = measure(HotCoreAllocationOwner::SemanticApply, || {
+            let mut context = transaction.command_context().expect("page context");
+            for index in 0..WARM_WRITES {
+                context.append_page_contribution(Node::Penalty(index as i32));
+            }
+            black_box(context.page_contribution_front());
+        });
+        drop(transaction);
+        let counters_after = universe.page_material_counters();
+        let generated_nodes = counters_after
+            .new_semantic_nodes
+            .saturating_sub(counters_before.new_semantic_nodes);
+        let copied_nodes = counters_after
+            .source_nodes_copied
+            .saturating_sub(counters_before.source_nodes_copied);
+        assert_eq!(
+            generated_nodes, WARM_WRITES as u64,
+            "each PageBuilder append publishes exactly one new semantic node"
+        );
+        assert_eq!(
+            copied_nodes, 0,
+            "same-region move-only PageBuilder appends do not copy node payload"
+        );
+        (allocations, generated_nodes, copied_nodes)
     })
+    .expect("node owner-swap gate universe")
 }
 
 fn hot_state_gate() -> (
-    AllocationDelta,
     AllocationDelta,
     AllocationDelta,
     AllocationDelta,
@@ -170,24 +200,33 @@ fn hot_state_gate() -> (
         });
 
         {
-            let mut context = universe.command_context().expect("page context");
+            let mut transaction = universe.begin_shipout();
+            let mut context = transaction.command_context().expect("page context");
             for index in 0..PAGE_QUEUE_LEN {
                 context.append_page_contribution(Node::Penalty(index as i32));
             }
-            while context.pop_page_contribution_front().is_some() {}
+            while let Some(carrier) = context.pop_page_contribution_front() {
+                context.discard_page_node(carrier);
+            }
         }
+        let mut transaction = universe.begin_shipout();
         let page_queue = measure(HotCoreAllocationOwner::SemanticApply, || {
-            let mut context = universe.command_context().expect("page context");
+            let mut context = transaction.command_context().expect("page context");
             for index in 0..PAGE_QUEUE_LEN {
                 context.append_page_contribution(Node::Penalty(index as i32));
             }
             for index in 0..PAGE_QUEUE_LEN {
+                let carrier = context
+                    .pop_page_contribution_front()
+                    .expect("queued page contribution remains live");
                 assert_eq!(
-                    context.pop_page_contribution_front(),
-                    Some(Node::Penalty(index as i32))
+                    context.page_carrier_node(&carrier),
+                    &Node::Penalty(index as i32)
                 );
+                context.discard_page_node(carrier);
             }
         });
+        drop(transaction);
         let mark_words =
             NodeTokenList::new(vec![TokenWord::pack(Token::param(1))].into_boxed_slice());
         {
@@ -208,38 +247,7 @@ fn hot_state_gate() -> (
                 context.clear_page_mark_class(PageMark::Top, 32_767);
             }
         });
-        let root = universe.publish_page_nodes(&[Node::Penalty(17)]);
-        universe.assign_page_box_global(0, root);
-        let operation = universe
-            .begin_state_operation()
-            .expect("warm node operation");
-        for _ in 0..WARM_WRITES {
-            let alias = universe.copy_box_to_page(0).expect("warm box alias remains live");
-            universe.replace_page_box(0, alias);
-        }
-        universe
-            .restore_state(operation)
-            .expect("restore warm node writes");
-        let graph_before = node_graph_census();
-        let operation = universe
-            .begin_state_operation()
-            .expect("warmed node operation");
-        let node_graph = measure(HotCoreAllocationOwner::SemanticApply, || {
-            for _ in 0..WARM_WRITES {
-                let alias = universe.copy_box_to_page(0).expect("box alias remains live");
-                universe.replace_page_box(0, alias);
-                black_box(alias);
-            }
-            universe
-                .restore_state(operation)
-                .expect("restore node writes");
-        });
-        let graph = node_graph_census().saturating_sub(graph_before);
-        assert_eq!(graph.physical_copy_rows, 0);
-        assert_eq!(graph.physical_copy_nodes, 0);
-        assert_eq!(graph.logical_aliases, WARM_WRITES as u64);
-        assert_eq!(graph.coordinate_transfers, WARM_WRITES as u64);
-        (reads, writes, page_queue, mark_classes, node_graph)
+        (reads, writes, page_queue, mark_classes)
     })
     .expect("final state gate universe")
 }
