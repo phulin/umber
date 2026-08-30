@@ -279,7 +279,7 @@ impl<G> TokenCursor<G> {
         &mut self,
         sources: PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'slot, G>,
-    ) -> Result<Option<crate::command::RawCommand<'slot, G>>, ()> {
+    ) -> Result<Option<PackedTokenDelivery<'slot, G>>, ()> {
         let frame = self.frame;
         let position = frame.position();
         let Some(raw) = sources.deliver_at_into(&self.span, position, frame, destination) else {
@@ -298,6 +298,16 @@ impl<G> TokenCursor<G> {
 /// The default raw-delivery path writes into the caller's final
 /// [`crate::CurrentCommand`] instead.
 pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
+
+/// One resident stored-token access written into the caller's final command.
+///
+/// The packed out-parameter fact is projected while the storage word is
+/// already resident. It is consumed only by macro-parameter interception and
+/// is not a second token or command representation.
+pub(crate) struct PackedTokenDelivery<'slot, G> {
+    pub(crate) raw: crate::command::RawCommand<'slot, G>,
+    pub(crate) out_parameter: Option<u8>,
+}
 
 /// Typed lifetime handle for one immutable packed-token span.
 ///
@@ -400,7 +410,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         position: u32,
         frame: PackedInputFrame,
         destination: crate::command::EmptyCommand<'slot, G>,
-    ) -> Option<crate::command::RawCommand<'slot, G>> {
+    ) -> Option<PackedTokenDelivery<'slot, G>> {
         let index = position as usize;
         let (word, origin, source_provenance) = match span {
             PackedTokenSpanHandle::Replay { replay, .. } => {
@@ -422,8 +432,8 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 (word, OriginId::UNKNOWN, None)
             }
         };
-        Some(
-            destination.write_raw_delivery(
+        Some(PackedTokenDelivery {
+            raw: destination.write_raw_delivery(
                 TracedTokenWord::from_parts(word, origin),
                 frame.identity(),
                 u64::from(position),
@@ -435,7 +445,8 @@ impl<'a, G> PackedTokenSources<'a, G> {
                     .flags()
                     .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
             ),
-        )
+            out_parameter: word.out_parameter_slot(),
+        })
     }
 }
 

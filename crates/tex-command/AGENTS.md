@@ -197,9 +197,12 @@ collector (see `src/conditionals.rs`).
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
-  and no ancestry or source-slot lookup. A
-  parameter candidate overwrites the same unresolved value before meaning
-  resolution; there is no raw command envelope or second delivery slot. A
+  and no ancestry or source-slot lookup. Resident source tokens and literal
+  macro arguments return directly; stored-token access projects its optional
+  packed out-parameter slot while the word is resident, and only that branch
+  enters parameter replay. A parameter candidate overwrites the same
+  unresolved value before meaning resolution; there is no raw command envelope
+  or second delivery slot. A
   source row contains only its common frame and one eight-byte ABA-checked key
   into the `InputStack`'s fixed reusable source-slot pages. The slot solely
   owns backing, replacement, `everyeof`, ancestry, source classification, and

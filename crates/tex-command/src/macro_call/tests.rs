@@ -295,6 +295,7 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
             &mut fuel,
             &mut diagnostic_effects,
         );
+        processor.command.profile_reset_raw_delivery_path_counters();
         let mut actual = Vec::new();
         let mut destination = None;
         for _ in 0..expected.len() * 2 {
@@ -314,6 +315,10 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         }
         assert_eq!(actual[..expected.len()], expected);
         assert_eq!(actual[expected.len()..], expected);
+        let (_, _, literal_arguments, out_parameters) =
+            processor.command.profile_raw_delivery_path_counters();
+        assert_eq!(literal_arguments, (expected.len() * 2) as u64);
+        assert_eq!(out_parameters, 2);
         assert_eq!(
             processor
                 .retire_exhausted_token_levels_for_named_boundary()

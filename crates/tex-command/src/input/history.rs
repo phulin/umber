@@ -45,8 +45,8 @@ pub(crate) struct InputCursorMutationCounters {
 /// Copy-small facts produced by one direct stored-token cursor mutation.
 pub(crate) struct InputCursorDelivery<'slot, G> {
     pub(crate) identity: super::InputLevelId,
-    pub(crate) delivered_by_parameter: bool,
     pub(crate) raw: Option<crate::command::RawCommand<'slot, G>>,
+    pub(crate) out_parameter: Option<u8>,
 }
 
 struct InlineCursorRecorder<'a, G> {
@@ -566,10 +566,14 @@ impl<G> InputStack<G> {
                 let identity = cursor.identity();
                 let behavior = cursor.behavior;
                 match cursor.deliver_into(sources, destination) {
-                    Ok(raw) => Ok(InputCursorDelivery {
+                    Ok(delivery) => Ok(InputCursorDelivery {
                         identity,
-                        delivered_by_parameter: matches!(behavior, super::TokenBehavior::Parameter),
-                        raw,
+                        out_parameter: delivery.as_ref().and_then(|delivery| {
+                            (!matches!(behavior, super::TokenBehavior::Parameter))
+                                .then_some(delivery.out_parameter)
+                                .flatten()
+                        }),
+                        raw: delivery.map(|delivery| delivery.raw),
                     }),
                     Err(()) => Err(()),
                 }
@@ -583,8 +587,8 @@ impl<G> InputStack<G> {
                 match cursor.deliver_into(scratch, destination) {
                     Ok(raw) => Ok(InputCursorDelivery {
                         identity,
-                        delivered_by_parameter: true,
                         raw,
+                        out_parameter: None,
                     }),
                     Err(()) => Err(()),
                 }

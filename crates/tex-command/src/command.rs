@@ -802,11 +802,6 @@ impl<'slot, G> EmptyCommand<'slot, G> {
 
 impl<'slot, G> RawCommand<'slot, G> {
     #[inline(always)]
-    pub(crate) fn spelling(&self) -> TracedTokenWord {
-        self.0.spelling
-    }
-
-    #[inline(always)]
     pub(crate) fn delivery_coordinate(&self) -> (u64, u64) {
         self.0.raw_delivery_coordinate()
     }

@@ -313,6 +313,13 @@ ordinary successful token neither copies nor reconstructs the error envelope.
 The command slot is neither global nor a mailbox and never survives
 independently of its request.
 
+Resident source tokens and literal macro arguments return directly from input
+delivery. Stored-token access projects an out-parameter slot from the packed
+word already at the storage boundary and carries only that optional fact to
+macro-parameter replay. The ordinary path therefore does not reconstruct a
+complete token merely to ask whether it needs interception, and meaning
+resolution remains the single full spelling classification.
+
 An admitted control-sequence spelling indexes and borrows its dense meaning row
 for resolution. The same token classification reports the work ledger's
 meaning-lookup fact; no second spelling decode precedes resolution. Static

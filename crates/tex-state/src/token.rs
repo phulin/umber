@@ -257,6 +257,22 @@ impl TokenWord {
         }
     }
 
+    /// Returns the macro out-parameter slot encoded by this word, if any.
+    ///
+    /// Raw input delivery uses this narrow projection while it already holds
+    /// a resident stored-token word. Ordinary source characters and literal
+    /// macro arguments never need to reconstruct a complete [`Token`] merely
+    /// to reject this one internal token kind.
+    #[must_use]
+    #[inline(always)]
+    pub const fn out_parameter_slot(self) -> Option<u8> {
+        if self.0 >> Self::KIND_SHIFT == Self::KIND_PARAM {
+            Some((self.0 & Self::PAYLOAD_MASK) as u8)
+        } else {
+            None
+        }
+    }
+
     pub const fn raw(self) -> u32 {
         self.0
     }

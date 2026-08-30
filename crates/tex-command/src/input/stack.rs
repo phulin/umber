@@ -240,7 +240,7 @@ impl<G> CommandState<G> {
     ) -> Result<InputTopTransition<'slot, G>, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
-        let (raw, delivered_by_parameter, admitted_identity) = {
+        let (raw, admitted_identity, out_parameter) = {
             let attempt = self.attempt.arena();
             let scratch = &self.scratch;
             let roots = &mut self.roots;
@@ -329,7 +329,14 @@ impl<G> CommandState<G> {
                                 direct_source_line,
                                 false,
                             );
-                            (raw, false, identity)
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.source_direct = self
+                                    .raw_delivery_path_counters
+                                    .source_direct
+                                    .saturating_add(1);
+                            }
+                            return Ok(InputTopTransition::Delivered(raw));
                         }
                         CompactSourceTokenizationStep::InvalidCharacter => {
                             return Ok(InputTopTransition::InvalidCharacter);
@@ -355,7 +362,24 @@ impl<G> CommandState<G> {
                     let Some(raw) = delivery.raw else {
                         return Ok(InputTopTransition::TokenExhausted(delivery.identity));
                     };
-                    (raw, delivery.delivered_by_parameter, delivery.identity)
+                    let Some(out_parameter) = delivery.out_parameter else {
+                        #[cfg(test)]
+                        {
+                            self.raw_delivery_path_counters.stored_direct = self
+                                .raw_delivery_path_counters
+                                .stored_direct
+                                .saturating_add(1);
+                        }
+                        return Ok(InputTopTransition::Delivered(raw));
+                    };
+                    #[cfg(test)]
+                    {
+                        self.raw_delivery_path_counters.out_parameter_interceptions = self
+                            .raw_delivery_path_counters
+                            .out_parameter_interceptions
+                            .saturating_add(1);
+                    }
+                    (raw, delivery.identity, out_parameter)
                 }
                 InputLevel::MacroArgument(_) => {
                     let delivery = roots
@@ -370,20 +394,24 @@ impl<G> CommandState<G> {
                     let Some(raw) = delivery.raw else {
                         return Ok(InputTopTransition::TokenExhausted(delivery.identity));
                     };
-                    (raw, delivery.delivered_by_parameter, delivery.identity)
+                    #[cfg(test)]
+                    {
+                        self.raw_delivery_path_counters.macro_argument_direct = self
+                            .raw_delivery_path_counters
+                            .macro_argument_direct
+                            .saturating_add(1);
+                    }
+                    return Ok(InputTopTransition::Delivered(raw));
                 }
             }
         };
 
-        let Token::Param(slot) = raw.spelling().semantic_token() else {
-            return Ok(InputTopTransition::Delivered(raw));
-        };
         let delivering_level = InputLevelId(raw.delivery_coordinate().0);
         if admitted_identity != delivering_level {
             return Err(());
         }
         match self
-            .replay_out_parameter_after_admission(delivering_level, delivered_by_parameter, slot)
+            .replay_out_parameter_after_admission(delivering_level, false, out_parameter)
             .map_err(|_| ())?
         {
             OutParameterReplay::Literal => Ok(InputTopTransition::Delivered(raw)),

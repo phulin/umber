@@ -151,6 +151,19 @@ pub struct CommandState<G> {
     /// in-process resource suspension and is consumed only by commit or
     /// rollback; named checkpoints require this field to be empty.
     pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
+    /// Assertion-bearing proof that ordinary input bypasses out-parameter
+    /// interception. Shipping builds contain neither the counters nor updates.
+    #[cfg(test)]
+    pub(crate) raw_delivery_path_counters: RawDeliveryPathCounters,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RawDeliveryPathCounters {
+    pub(crate) source_direct: u64,
+    pub(crate) stored_direct: u64,
+    pub(crate) macro_argument_direct: u64,
+    pub(crate) out_parameter_interceptions: u64,
 }
 
 /// Compact coordinate for TeX82's live §310 input display.
@@ -329,6 +342,8 @@ impl<G> Default for CommandState<G> {
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
+            #[cfg(test)]
+            raw_delivery_path_counters: RawDeliveryPathCounters::default(),
         }
     }
 }
@@ -1122,6 +1137,28 @@ impl<G> CommandState<G> {
             counters.first_touch_transitions,
             counters.coalesced_transitions,
             counters.closure_dispatches,
+        )
+    }
+
+    /// Resets the focused ordinary raw-delivery path counters.
+    #[doc(hidden)]
+    #[cfg(test)]
+    pub fn profile_reset_raw_delivery_path_counters(&mut self) {
+        self.raw_delivery_path_counters = RawDeliveryPathCounters::default();
+    }
+
+    /// Returns `(source direct, stored direct, literal macro-argument direct,
+    /// out-parameter interceptions)` for focused raw-delivery measurements.
+    #[doc(hidden)]
+    #[cfg(test)]
+    #[must_use]
+    pub fn profile_raw_delivery_path_counters(&self) -> (u64, u64, u64, u64) {
+        let counters = self.raw_delivery_path_counters;
+        (
+            counters.source_direct,
+            counters.stored_direct,
+            counters.macro_argument_direct,
+            counters.out_parameter_interceptions,
         )
     }
 

@@ -93,6 +93,26 @@ fn traced_words_compose_semantic_tokens_with_source_coordinates() {
 }
 
 #[test]
+fn out_parameter_slot_is_a_narrow_packed_projection() {
+    assert_eq!(
+        TokenWord::pack(Token::Param(7)).out_parameter_slot(),
+        Some(7)
+    );
+    assert_eq!(
+        TokenWord::pack(Token::Char {
+            ch: '#',
+            cat: Catcode::Parameter,
+        })
+        .out_parameter_slot(),
+        None
+    );
+    assert_eq!(
+        TokenWord::pack(Token::frozen_relax()).out_parameter_slot(),
+        None
+    );
+}
+
+#[test]
 fn origin_encoding_round_trips_direct_and_arena_boundaries() {
     use crate::source_map::SourcePos;
 

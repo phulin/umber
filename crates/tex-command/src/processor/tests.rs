@@ -483,6 +483,93 @@ fn failed_raw_delivery_clears_its_partially_written_final_slot() {
 }
 
 #[test]
+fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"ab"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("first source delivery")
+                    .expect("first source token")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                }
+            );
+            processor.command.profile_reset_raw_delivery_path_counters();
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("resident source delivery")
+                    .expect("resident source token")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Letter,
+                }
+            );
+            assert_eq!(
+                processor.command.profile_raw_delivery_path_counters(),
+                (1, 0, 0, 0)
+            );
+        }
+
+        let ordinary = Token::Char {
+            ch: 't',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [ordinary, Token::Param(1)]);
+        command.profile_reset_raw_delivery_path_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("stored delivery")
+                .expect("stored token")
+                .spelling()
+                .semantic_token(),
+            ordinary
+        );
+        assert!(processor.get_next().is_err());
+        assert_eq!(
+            processor.command.profile_raw_delivery_path_counters(),
+            (0, 1, 0, 1)
+        );
+    });
+}
+
+#[test]
 fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
     crate::test_harness::with_universe(|universe| {
         universe
