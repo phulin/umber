@@ -10581,6 +10581,36 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
 }
 
 #[test]
+fn pdf_destination_scanner_failure_publishes_the_pdf_fatal_channels() {
+    // pdftex.web §1565 calls `pdf_error` for a nonpositive numeric
+    // destination. The scanner may run in the ordinary delivery episode, but
+    // its typed failure must still cross the same PDF fatal publication seam.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        crate::test_harness::assign_int_param(
+            stores,
+            IntParam::PDF_OUTPUT,
+            1,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("integer parameter assignment");
+        let mut control = pdftex_destination_control(stores);
+        register_source(&mut control, br"\pdfdest num 0 fit");
+
+        let error = control.step(stores).expect_err("zero destination is fatal");
+        assert!(error.is_pdftex_navigation_fatal());
+        assert!(
+            terminal_text(stores).contains("pdfTeX error (ext1): num identifier must be positive")
+        );
+        let log = stores
+            .world()
+            .memory_log_output()
+            .map(String::from_utf8_lossy)
+            .unwrap_or_default();
+        assert!(log.contains("pdfTeX error (ext1): num identifier must be positive"));
+    });
+}
+
+#[test]
 fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
     // pdftex.web §1565 appends a whatsit, not an eqtb assignment: ordinary
     // grouping does not undo it, while an engine checkpoint restores both the
@@ -11729,6 +11759,29 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
             );
         });
     }
+}
+
+#[test]
+fn fused_definition_scan_retains_the_first_command_error_context() {
+    // TeX.web §§476 and 1218 report this recoverable scanner error while the
+    // semi-simple group is still live. Continuing delivery in the same
+    // processor must retain that causal point rather than falling back to the
+    // terminal state reached later.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\begingroup\def\bad#2{x}\endgroup\end");
+
+        run_to_end(&mut control, stores);
+
+        let context = control
+            .first_causal_context
+            .as_ref()
+            .expect("scanner error captures its live command context");
+        assert_eq!(context.cause_kind, "command-error");
+        assert_eq!(context.group_depth, 1);
+        assert_eq!(context.group_tail.len(), 1);
+        assert_eq!(context.group_tail[0].kind, "semi-simple");
+    });
 }
 
 #[test]

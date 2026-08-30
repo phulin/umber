@@ -5086,6 +5086,9 @@ impl<G> MainControl<G> {
                                 .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
                         }
                         let result = self.finish_resource_preflight_failure(stores, error);
+                        if let Err(error) = &result {
+                            Self::publish_pdf_fatal_error(stores, error)?;
+                        }
                         if matches!(result, Ok(StepResult::Suspended(_))) {
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
@@ -5695,6 +5698,17 @@ impl<G> MainControl<G> {
                 &context,
                 self.command.diagnostic_input_context(8),
                 cause_kind,
+            ));
+        }
+    }
+
+    fn capture_first_reported_command_error_context(&mut self, stores: &mut Universe<G>) {
+        if self.first_causal_context.is_none() && stores.world().error_channel().error_count() > 0 {
+            let context = stores.command_context().expect("live generation");
+            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                &context,
+                self.command.diagnostic_input_context(8),
+                "command-error",
             ));
         }
     }
@@ -8161,7 +8175,7 @@ impl<G> MainControl<G> {
                     let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
                         tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
                     );
-                    match dispatch_main_control_command(
+                    let scanned = dispatch_main_control_command(
                         &mut processor,
                         frame,
                         mode,
@@ -8173,14 +8187,15 @@ impl<G> MainControl<G> {
                         &mut diagnostics,
                         None,
                         true,
-                    ) {
+                    );
+                    diagnostics.extend(
+                        processor
+                            .take_semantic_diagnostics()
+                            .into_iter()
+                            .map(PendingDiagnostic::Command),
+                    );
+                    match scanned {
                         Ok(operation) => {
-                            diagnostics.extend(
-                                processor
-                                    .take_semantic_diagnostics()
-                                    .into_iter()
-                                    .map(PendingDiagnostic::Command),
-                            );
                             // The scanned operation now owns every durable
                             // result. Retire the delivery/scanner episode as a
                             // unit before handing that operation to execution;
@@ -8217,11 +8232,12 @@ impl<G> MainControl<G> {
             (delivery_status, trace_reported, fused_scan, fused_error)
         };
         drop(context);
+        self.capture_first_reported_command_error_context(stores);
+        self.capture_first_causal_context(stores, &diagnostics);
+        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
         if let Some(error) = fused_error {
             return Err(error);
         }
-        self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
         if let Some((operation, capabilities)) = fused_scan {
             match operation {
                 ScannedOperation::Hot(operation) => {
@@ -8793,14 +8809,7 @@ impl<G> MainControl<G> {
         // §1091's `mode_line` both name the line the command is *on*, and a
         // command that is the first thing on a line is scanned by a step
         // that began on the previous one.
-        if self.first_causal_context.is_none() && stores.world().error_channel().error_count() > 0 {
-            let context = stores.command_context().expect("live generation");
-            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
-                &context,
-                self.command.diagnostic_input_context(8),
-                "command-error",
-            ));
-        }
+        self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
         if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
             frame.error = Some(error);
