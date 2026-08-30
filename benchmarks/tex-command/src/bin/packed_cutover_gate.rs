@@ -95,6 +95,11 @@ fn main() {
         "fused_raw_expanded_delivery",
         fused_raw_expanded_delivery,
     );
+    run_row(
+        only,
+        "destination_owned_macro_expansion",
+        destination_owned_macro_expansion,
+    );
     if let Some(only) = only {
         assert!(
             BENCHMARK_ROWS.contains(&only),
@@ -122,6 +127,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "warmed_keyword_mismatch",
     "destination_directed_warm_delivery",
     "fused_raw_expanded_delivery",
+    "destination_owned_macro_expansion",
 ];
 
 fn run_row(only: Option<&str>, name: &str, row: fn()) {
@@ -682,6 +688,102 @@ fn fused_raw_expanded_delivery() {
             DELIVERIES,
             raw_elapsed.as_nanos() as f64 / DELIVERIES as f64,
             expanded_elapsed.as_nanos() as f64 / DELIVERIES as f64,
+        );
+    });
+}
+
+fn destination_owned_macro_expansion() {
+    const WARMUPS: usize = 64;
+    const EXPANSIONS: usize = 1_000_000;
+    with_universe(|universe| {
+        let name = universe.intern("emptyexpansion").expect("macro name");
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty macro definition");
+        universe
+            .assign_meaning(
+                name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let macro_word = TokenWord::pack(Token::Cs(name.symbol()));
+        let terminal = TokenWord::pack(Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        });
+        let mut warm_words = vec![macro_word; WARMUPS];
+        warm_words.push(terminal);
+        let warm = universe
+            .allocate_token_list(&warm_words)
+            .expect("warm expansion input");
+        let mut measured_words = vec![macro_word; EXPANSIONS];
+        measured_words.push(terminal);
+        let measured = universe
+            .allocate_token_list(&measured_words)
+            .expect("measured expansion input");
+
+        let mut command = CommandState::default();
+        {
+            let context = universe.command_context().expect("command context");
+            command.push_everyjob(&context, warm);
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
+        let mut destination = None;
+        {
+            let mut delivery_processor = processor(
+                &mut context,
+                &mut command,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            assert_eq!(
+                delivery_processor
+                    .get_x_token_into(&mut destination)
+                    .expect("warm macro expansion"),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("warm terminal"), 'z');
+        }
+        destination = None;
+        command.push_everyjob(&context, measured);
+        let work_before = fuel.work();
+        let mut delivery_processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut elapsed = Duration::ZERO;
+        measure_zero("destination_owned_macro_expansion_1000000", || {
+            let start = Instant::now();
+            assert_eq!(
+                delivery_processor
+                    .get_x_token_into(&mut destination)
+                    .expect("measured macro expansion"),
+                DeliveryStatus::Command
+            );
+            elapsed = start.elapsed();
+        });
+        assert_char_ref(destination.as_ref().expect("measured terminal"), 'z');
+        drop(delivery_processor);
+        let work_after = fuel.work();
+        assert_eq!(
+            work_after.token_frame_steps - work_before.token_frame_steps,
+            (EXPANSIONS + 1) as u64
+        );
+        assert_eq!(
+            work_after.expanded_deliveries - work_before.expanded_deliveries,
+            1
+        );
+        println!(
+            "destination_owned_macro_expansion expansions={EXPANSIONS} ns_per_expansion={:.2}",
+            elapsed.as_nanos() as f64 / EXPANSIONS as f64,
         );
     });
 }

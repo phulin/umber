@@ -124,10 +124,13 @@ resume consumes the command once into the caller destination, and resuspension
 parks that same owner again. Nested roots are strict LIFO, and owner/serial
 validation rejects foreign, stale, or out-of-order keys before mutation.
 Failed park returns the complete command, typed phase, and child to the direct
-caller. Structural `expandafter`, `csname`/name-lane, `scan_toks` wrapper, and
-PDF string-compare migrations remain later reviewed stages. Test/profiling
-counters measure command clones, definition retains, ownership moves, lane
-high water, whole-control copies, and warmed allocations independently.
+caller. A nested `expandafter`, expanded `scan_toks` collector, or alignment
+preamble retains only its own earlier operands and the typed child edge: the
+generic expansion frame is the sole owner of the command that actually
+suspended. Structural controls, the `csname` name lane, and PDF string-compare
+migrations remain later reviewed stages. Test/profiling counters measure
+command clones, definition retains, ownership moves, lane high water,
+whole-control copies, and warmed allocations independently.
 
 `PageMaterialArena` owns one `ChunkPool<Node>` and one coordinate-only
 `ForkArena`. Fixed payload chunks own each `Node` once. An `ArenaList` is the
@@ -414,9 +417,12 @@ The canonical `scan_toks` replacement collector keeps one such destination
 for its complete synchronous loop. Raw delivery, expansion classification,
 observation, and token spelling all borrow the command in that slot; a
 successful iteration clears it in place for immediate reuse. Only semantic
-backup or resource suspension moves the command out, and suspension moves it
-directly into the typed collector continuation. The destination therefore
-does not retain commands across a generation or act as a hidden result cache.
+backup or resource suspension moves the command out. Generic expansion moves
+a suspended command directly into its one `ExpansionWork` frame, while the
+collector continuation retains only the typed child edge; direct `\the`,
+`\unexpanded`, and `\detokenize` collector phases retain their own command
+because they do not enter generic expansion. The destination therefore does
+not retain commands across a generation or act as a hidden result cache.
 
 The same scanner frame retains the deferred-diagnostic cursor established
 when its parameter and replacement sink routes opened. For a macro definition,

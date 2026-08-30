@@ -67,6 +67,11 @@ deliveries through each policy. It requires exactly two million resident-frame
 steps, one million expanded completions, no meaning lookup, and zero warmed
 allocation; its separate raw and expanded timings are sized for direct
 `cycles:u`/`instructions:u` and public `memcpy`/`memmove` comparison.
+The destination-owned macro-expansion row drives one million empty macro calls
+through one expanded request and its one reusable command destination. It
+requires one expansion per macro, one final expanded delivery, and zero warmed
+allocation, and reports time per expansion for before/after hardware-counter
+comparison of the expansion result carrier.
 The macro-matching row also asserts that its successful first-token expansion
 does not increase the matched-word read counter: paragraph and removable-
 outer-group decisions must consume first-scan metadata rather than reread the

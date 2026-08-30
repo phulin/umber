@@ -254,6 +254,27 @@ fn internal_delivery_result_does_not_carry_the_rich_error_envelope() {
 }
 
 #[test]
+fn destination_owned_expansion_result_excludes_suspension_payload() {
+    struct FormerSuspendedExpansion<G> {
+        _resume: crate::state::PendingExpansionResume,
+        _child: Option<
+            crate::execution_scratch::ChildContinuation<
+                G,
+                crate::state::PendingExpansionChildDestination,
+            >,
+        >,
+    }
+    struct FormerExpansionFailure<G> {
+        _error: crate::CommandError,
+        _suspended: Option<FormerSuspendedExpansion<G>>,
+    }
+
+    let current = core::mem::size_of::<Result<(), crate::CommandError>>();
+    let former = core::mem::size_of::<FormerExpansionFailure<()>>();
+    assert!(current < former, "current={current}, former={former}");
+}
+
+#[test]
 fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {
@@ -633,6 +654,119 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 ch: 'Q',
                 cat: Catcode::Letter,
             }
+        );
+    });
+}
+
+#[test]
+fn nested_expandafter_suspension_parks_each_command_once() {
+    crate::test_harness::with_universe(|universe| {
+        let expandafter = install_static(
+            universe,
+            "expandafter",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        let input = install_static(
+            universe,
+            "input",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
+        );
+        let first = Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [expandafter, first, input]
+                .into_iter()
+                .chain("child".chars().map(|ch| Token::Char {
+                    ch,
+                    cat: Catcode::Letter,
+                }))
+                .chain([Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                }]),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let ownership_before = crate::command::command_ownership_counters();
+
+        let (resume, delivery_cursor) = {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let mut destination = None;
+            let error = processor
+                .get_x_token_into(&mut destination)
+                .expect_err("nested input expansion suspends");
+            assert!(matches!(
+                error,
+                crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
+            ));
+            assert!(destination.is_none());
+            (
+                processor
+                    .take_pending_expansion_work()
+                    .expect("outer expansion owns the parked command chain"),
+                processor.delivery_cursor(),
+            )
+        };
+        let ownership_after_suspend = crate::command::command_ownership_counters();
+        assert_eq!(
+            ownership_after_suspend.clones - ownership_before.clones,
+            0,
+            "nested callers must retain only child edges, not cloned commands"
+        );
+        assert_eq!(
+            ownership_after_suspend.expansion_moves_in - ownership_before.expansion_moves_in,
+            2,
+            "the input command and its expandafter parent each park once"
+        );
+
+        capabilities.register_input(
+            "child.tex",
+            crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b"Q"[..])
+                .with_name("child.tex"),
+        );
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            processor.resume_delivery_cursor(delivery_cursor);
+            processor.install_expansion_resume(resume);
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("nested expansion resumes"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(
+                destination
+                    .expect("expandafter replays its first token")
+                    .spelling()
+                    .semantic_token(),
+                first
+            );
+        }
+        let ownership_after_resume = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after_resume.clones - ownership_before.clones, 0);
+        assert_eq!(
+            ownership_after_resume.expansion_moves_out - ownership_before.expansion_moves_out,
+            2
         );
     });
 }

@@ -52,7 +52,6 @@ enum AlignmentPreambleChildDestination {
 
 #[derive(Debug, Eq, PartialEq)]
 struct PendingPreambleSpanExpansion<G> {
-    command: CurrentCommand<G>,
     child:
         Option<crate::execution_scratch::ChildContinuation<G, AlignmentPreambleChildDestination>>,
 }
@@ -8014,7 +8013,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         let delivery = if let Some(mut resumed) = pending.take() {
-            self.resume_current_command(&resumed.command);
             if let Some(child) = resumed.child.take() {
                 let (key, destination) = child.restore();
                 if destination != AlignmentPreambleChildDestination::SpanExpansion {
@@ -8022,10 +8020,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 self.scanner_resume = Some(key);
             }
-            if let Err(error) = self.expand(&resumed.command) {
+            if let Err(error) = self.expand_into(destination, true) {
                 if error.is_resource_suspension() {
                     *pending = Some(PendingPreambleSpanExpansion {
-                        command: resumed.command,
                         child: crate::execution_scratch::ChildContinuation::capture(
                             &mut self.scanner_resume,
                             AlignmentPreambleChildDestination::SpanExpansion,
@@ -8059,12 +8056,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::Command => {}
                 _ => return Err(CommandError::input_invariant()),
             }
-            let next = destination.take().ok_or(CommandError::input_invariant())?;
-            if crate::processor::expand::is_expandable_command(&next) {
-                if let Err(error) = self.expand(&next) {
+            if destination
+                .as_ref()
+                .is_some_and(crate::processor::expand::is_expandable_command)
+            {
+                if let Err(error) = self.expand_into(destination, true) {
                     if error.is_resource_suspension() {
                         *pending = Some(PendingPreambleSpanExpansion {
-                            command: next,
                             child: crate::execution_scratch::ChildContinuation::capture(
                                 &mut self.scanner_resume,
                                 AlignmentPreambleChildDestination::SpanExpansion,
@@ -8081,8 +8079,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     DeliveryStatus::Command => {}
                     _ => return Err(CommandError::input_invariant()),
                 }
-            } else {
-                *destination = Some(next);
             }
         }
         if destination.as_ref().is_some_and(|command| {

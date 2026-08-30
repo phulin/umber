@@ -22,7 +22,6 @@ use super::{CommandProcessor, DeliveryStatus};
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingExpandAfter<G> {
     first: CurrentCommand<G>,
-    second: CurrentCommand<G>,
     child: Option<crate::execution_scratch::ChildContinuation<G, PendingExpandAfterDestination>>,
 }
 
@@ -101,8 +100,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             None
         };
-        let (first, second) = if let Some(mut pending) = pending {
-            self.resume_current_command(&pending.second);
+        let (first, mut second) = if let Some(mut pending) = pending {
             if let Some(child) = pending.child.take() {
                 let (key, destination) = child.restore();
                 if destination != PendingExpandAfterDestination::ExpandingSecond {
@@ -110,7 +108,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 self.install_scanner_resume(Some(key));
             }
-            (pending.first, pending.second)
+            (pending.first, None)
         } else {
             let mut first = None;
             match self.get_token_into(&mut first)? {
@@ -127,20 +125,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::Command => {}
                 _ => unreachable!("ordinary token delivery returns only commands"),
             }
-            let second = second
-                .take()
-                .expect("command status initializes destination");
             (first, second)
         };
-        if is_expandable_command(&second) {
-            if let Err(error) = self.expand(&second) {
+        if second.as_ref().is_none_or(is_expandable_command) {
+            if let Err(error) = self.expand_into(&mut second, true) {
                 if error.is_resource_suspension() {
                     let key = self
                         .command
                         .scratch
                         .store_expandafter_frame(PendingExpandAfter {
                             first,
-                            second,
                             child: crate::execution_scratch::ChildContinuation::capture(
                                 &mut self.scanner_resume,
                                 PendingExpandAfterDestination::ExpandingSecond,
@@ -156,7 +150,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             self.replay_expandafter_first(first)?;
         } else {
-            self.back_input(second)?;
+            self.back_input(
+                second
+                    .take()
+                    .expect("unexpandable second command remains in its destination"),
+            )?;
             self.replay_expandafter_first(first)?;
         }
         Ok(())

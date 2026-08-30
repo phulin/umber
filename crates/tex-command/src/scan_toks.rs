@@ -304,7 +304,7 @@ impl<G> ReplacementProgress<G> {
 
 #[derive(Debug, Eq, PartialEq)]
 struct PendingCollectorExpansion<G> {
-    command: crate::CurrentCommand<G>,
+    command: Option<crate::CurrentCommand<G>>,
     route: CollectorExpansionRoute,
     operand: Option<crate::CurrentCommand<G>>,
     child: Option<crate::execution_scratch::ChildContinuation<G, CollectorExpansionRoute>>,
@@ -1492,7 +1492,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             let resumed_expansion = pending_expansion.take();
             let (resumed_route, mut expansion_operand) =
                 if let Some(mut pending) = resumed_expansion {
-                    self.resume_current_command(&pending.command);
+                    if let Some(command) = pending.command.take() {
+                        self.resume_current_command(&command);
+                        destination = Some(command);
+                    }
                     if let Some(child) = pending.child.take() {
                         let (key, child_destination) = child.restore();
                         if child_destination != pending.route {
@@ -1506,7 +1509,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         self.scanner_resume = Some(key);
                     }
-                    destination = Some(pending.command);
                     (Some(pending.route), pending.operand.take())
                 } else {
                     let delivery = if expansion.is_expanded() {
@@ -1538,22 +1540,64 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     (None, None)
                 };
-            let command = destination
-                .as_mut()
-                .expect("command delivery initializes destination");
-            if expansion.is_expanded() && is_expandable_command(command) {
-                let route = resumed_route.unwrap_or_else(|| match command.meaning_ref() {
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::The,
-                    )) => CollectorExpansionRoute::The,
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::Unexpanded,
-                    )) => CollectorExpansionRoute::Unexpanded,
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::Detokenize,
-                    )) => CollectorExpansionRoute::Detokenize,
-                    _ => CollectorExpansionRoute::Ordinary,
+            if expansion.is_expanded()
+                && (resumed_route.is_some()
+                    || destination.as_ref().is_some_and(is_expandable_command))
+            {
+                let route = resumed_route.unwrap_or_else(|| {
+                    match destination
+                        .as_ref()
+                        .expect("command delivery initializes destination")
+                        .meaning_ref()
+                    {
+                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                            ExpandablePrimitive::The,
+                        )) => CollectorExpansionRoute::The,
+                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                            ExpandablePrimitive::Unexpanded,
+                        )) => CollectorExpansionRoute::Unexpanded,
+                        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                            ExpandablePrimitive::Detokenize,
+                        )) => CollectorExpansionRoute::Detokenize,
+                        _ => CollectorExpansionRoute::Ordinary,
+                    }
                 });
+                if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
+                    // A resumed generic expansion restores its sole parked
+                    // command into this destination itself. Every outcome
+                    // either advances the collector or returns its failure.
+                    match self.expand_into(&mut destination, true) {
+                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Err(CommandError::OuterInMacroArgument) => {
+                            self.resume_scanner_episode_after_recovery(episode);
+                            clear_command_destination(&mut destination);
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(replacement_failure(
+                                error,
+                                output,
+                                depth,
+                                &mut pending_parameter,
+                                Some(PendingCollectorExpansion {
+                                    command: destination.take(),
+                                    route,
+                                    operand: None,
+                                    child: crate::execution_scratch::ChildContinuation::capture(
+                                        &mut self.scanner_resume,
+                                        route,
+                                    ),
+                                }),
+                            ));
+                        }
+                    }
+                }
+                let command = destination
+                    .as_mut()
+                    .expect("direct collector expansion retains its command destination");
                 if route == CollectorExpansionRoute::The {
                     // TeX82 §478 handles `\the` directly in `scan_toks`
                     // instead of routing it through §380's ordinary
@@ -1576,7 +1620,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 depth,
                                 &mut pending_parameter,
                                 Some(PendingCollectorExpansion {
-                                    command,
+                                    command: Some(command),
                                     route,
                                     operand: expansion_operand,
                                     child: crate::execution_scratch::ChildContinuation::capture(
@@ -1604,7 +1648,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 depth,
                                 &mut pending_parameter,
                                 Some(PendingCollectorExpansion {
-                                    command,
+                                    command: Some(command),
                                     route,
                                     operand: None,
                                     child: crate::execution_scratch::ChildContinuation::capture(
@@ -1632,7 +1676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 depth,
                                 &mut pending_parameter,
                                 Some(PendingCollectorExpansion {
-                                    command,
+                                    command: Some(command),
                                     route,
                                     operand: None,
                                     child: crate::execution_scratch::ChildContinuation::capture(
@@ -1644,8 +1688,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 }
-                if matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
-                {
+                let protected = matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
+                if protected {
                     // e-TeX 2.6 change section [27.465] represents a
                     // protected macro as `relax/no_expand_flag` for this
                     // collector iteration. The spelling is retained, and
@@ -1661,13 +1705,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }),
                     );
                     command.suppress_expandable();
-                } else {
+                }
+                if !protected {
                     // TeX82 §394 returns from a failed macro call after
                     // either an ordinary non-`\long` `\par` or §23's
                     // outer-validity recovery. Both return to §380's
                     // get_x_token loop; this inlined expanded collector is
                     // that loop's owner while scan_toks is active.
-                    match self.expand(command) {
+                    match self.expand_into(&mut destination, true) {
                         Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
                             clear_command_destination(&mut destination);
                             continue;
@@ -1678,16 +1723,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                             continue;
                         }
                         Err(error) => {
-                            let command = destination
-                                .take()
-                                .expect("collector suspension retains its command");
                             return Err(replacement_failure(
                                 error,
                                 output,
                                 depth,
                                 &mut pending_parameter,
                                 Some(PendingCollectorExpansion {
-                                    command,
+                                    command: destination.take(),
                                     route,
                                     operand: None,
                                     child: crate::execution_scratch::ChildContinuation::capture(

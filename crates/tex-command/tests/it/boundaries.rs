@@ -492,15 +492,17 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
         "pending observation ownership must be typed, never a boolean"
     );
-    assert!(expansion.contains("fn expand(&mut self, command: &CurrentCommand<G>)"));
+    assert!(expansion.contains("pub(crate) fn expand_into("));
+    assert!(expansion.contains("destination: &mut Option<CurrentCommand<G>>"));
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
-    assert!(expansion.contains("let expansion = self.expand_with_trace("));
+    assert!(expansion.contains("match self.expand_into(destination, report_trace)"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
     assert!(expansion.contains("let mut fetch = destination.is_none();"));
-    assert!(expansion.contains("suspension moves the command out of its delivery slot"));
+    assert!(expansion.contains("suspension moves the command out of its destination"));
+    assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
     assert!(!expansion.contains("delivery_driver_inner("));
     assert!(policies.contains("take_pending_expansion_work"));
@@ -571,7 +573,8 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("clear_command_destination(&mut destination)"));
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
-    assert!(collector.contains("self.expand(command)"));
+    assert!(collector.contains("self.expand_into(&mut destination, true)"));
+    assert!(collector.contains("command: destination.take()"));
     assert!(collector.contains("self.append_direct_the_toks(output, &mut expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
