@@ -2,7 +2,6 @@ use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, cr
 use tex_state::cell::{BankTag, CellId};
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::node::Node;
-use tex_state::node_arena::PageNodeArena;
 use tex_state::{
     AssignmentScope, DependencyKey, DependencyRuntime, DependencyValue, ReachabilityStore,
     RetainedStateGeneration, World, with_universe,
@@ -118,19 +117,33 @@ fn direct_state_access(c: &mut Criterion) {
 
 fn page_contribution_queue(c: &mut Criterion) {
     with_universe(engine_budget(), |universe| {
-        let mut context = universe.command_context().expect("command context");
-        for index in 0..PAGE_QUEUE_LEN {
-            context.append_page_contribution(Node::Penalty(index as i32));
+        {
+            let mut transaction = universe.begin_shipout();
+            let mut context = transaction.command_context().expect("page context");
+            for index in 0..PAGE_QUEUE_LEN {
+                context.append_page_contribution(Node::Penalty(index as i32));
+            }
+            while let Some(carrier) = context.pop_page_contribution_front() {
+                context.discard_page_node(carrier);
+            }
         }
-        while context.pop_page_contribution_front().is_some() {}
 
         c.bench_function("page_contribution_queue/warmed_roundtrip", |b| {
             b.iter(|| {
+                let mut transaction = universe.begin_shipout();
+                let mut context = transaction.command_context().expect("page context");
                 for index in 0..PAGE_QUEUE_LEN {
                     context.append_page_contribution(Node::Penalty(index as i32));
                 }
-                while let Some(node) = context.pop_page_contribution_front() {
-                    black_box(node);
+                for index in 0..PAGE_QUEUE_LEN {
+                    let carrier = context
+                        .pop_page_contribution_front()
+                        .expect("queued page contribution remains live");
+                    assert_eq!(
+                        context.page_carrier_node(&carrier),
+                        &Node::Penalty(index as i32)
+                    );
+                    context.discard_page_node(carrier);
                 }
             });
         });
@@ -155,54 +168,65 @@ fn coarse_generation_lifecycle(c: &mut Criterion) {
 
 fn node_graph_transfer(c: &mut Criterion) {
     with_universe(engine_budget(), |universe| {
-        let root = universe.publish_page_nodes(&[Node::Penalty(17)]);
-        universe.assign_page_box_global(0, root);
+        {
+            let mut transaction = universe.begin_shipout();
+            let mut context = transaction.command_context().expect("page context");
+            let nodes = (0..WARM_WRITES)
+                .map(|index| Node::Penalty(index as i32))
+                .collect();
+            let nodes = context.publish_unique_page_nodes(nodes);
+            context.append_unique_page_contributions(nodes);
+        }
+
+        let counters_before = universe.page_material_counters();
+        {
+            let mut transaction = universe.begin_shipout();
+            let mut context = transaction.command_context().expect("page context");
+            let nodes = (0..WARM_WRITES)
+                .map(|index| Node::Penalty(index as i32))
+                .collect();
+            let nodes = context.publish_unique_page_nodes(nodes);
+            context.append_unique_page_contributions(nodes);
+            black_box(context.page_contribution_front());
+        }
+        let counters_after = universe.page_material_counters();
+        assert_eq!(
+            counters_after
+                .new_semantic_nodes
+                .saturating_sub(counters_before.new_semantic_nodes),
+            WARM_WRITES as u64,
+            "the unique PageBuilder root publishes every new semantic node once"
+        );
+        assert_eq!(
+            counters_after
+                .source_nodes_copied
+                .saturating_sub(counters_before.source_nodes_copied),
+            0,
+            "same-region move-only PageBuilder appends do not copy node payload"
+        );
+
         let mut group = c.benchmark_group("node_graph");
         group.throughput(Throughput::Elements(WARM_WRITES as u64));
-        group.bench_function("warmed_transfer_and_alias", |b| {
-            b.iter(|| {
-                let operation = universe
-                    .begin_state_operation()
-                    .expect("warmed node operation");
-                for _ in 0..WARM_WRITES {
-                    let alias = universe.copy_box_to_page(0).expect("live box alias");
-                    universe.replace_page_box(0, alias);
-                    black_box(alias);
-                }
-                universe
-                    .restore_state(operation)
-                    .expect("restore node writes");
-            });
+        group.bench_function("warmed_unique_root_owner_transaction", |b| {
+            b.iter_batched(
+                || {
+                    (0..WARM_WRITES)
+                        .map(|index| Node::Penalty(index as i32))
+                        .collect()
+                },
+                |nodes| {
+                    let mut transaction = universe.begin_shipout();
+                    let mut context = transaction.command_context().expect("page context");
+                    let nodes = context.publish_unique_page_nodes(nodes);
+                    context.append_unique_page_contributions(nodes);
+                    black_box(context.page_contribution_front());
+                },
+                BatchSize::SmallInput,
+            );
         });
         group.finish();
     })
     .expect("node graph benchmark universe");
-}
-
-fn node_graph_copy_control(c: &mut Criterion) {
-    let mut source = PageNodeArena::new();
-    let root = source.publish(vec![Node::Penalty(17)]).expect("source row");
-    let mut destination = PageNodeArena::new();
-    let mark = destination.cursor();
-    let _ = source
-        .promote_into(&[root], &mut destination)
-        .expect("warm physical copy");
-    destination.truncate(mark).expect("reset warm copy");
-    let mut group = c.benchmark_group("node_graph");
-    group.throughput(Throughput::Elements(WARM_WRITES as u64));
-    group.bench_function("physical_copy_control", |b| {
-        b.iter(|| {
-            for _ in 0..WARM_WRITES {
-                black_box(
-                    source
-                        .promote_into(&[root], &mut destination)
-                        .expect("physical graph copy"),
-                );
-                destination.truncate(mark).expect("reset physical copy");
-            }
-        });
-    });
-    group.finish();
 }
 
 criterion_group!(
@@ -211,7 +235,6 @@ criterion_group!(
     direct_state_access,
     page_contribution_queue,
     node_graph_transfer,
-    node_graph_copy_control,
     coarse_generation_lifecycle,
 );
 criterion_main!(benches);
