@@ -2,6 +2,14 @@
 
 pub(crate) mod alignment;
 pub(crate) mod expand;
+mod expand_convert;
+mod expand_input;
+mod expand_pdf;
+mod expand_pdf_file;
+pub(crate) mod expand_pdf_string;
+pub(crate) mod expand_render;
+mod expand_replay;
+pub(crate) mod expand_structural;
 mod next;
 pub(crate) use next::RUNAWAY_SCAN_DIAGNOSTIC;
 mod observe;
@@ -26,12 +34,12 @@ pub use alignment::{
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 use expand::ExpandedFetch;
 pub(crate) use expand::ExpansionState;
-pub use expand::{
+pub use expand_render::{
     PrintCommand, append_character_command_text, append_command_token_text,
     append_print_cmd_chr_text, append_print_esc_text, character_command_text, command_token_text,
     print_cmd_chr_text, print_esc_text,
 };
-pub(crate) use expand::{
+pub(crate) use expand_render::{
     meaning_text, print_cs_text, render_the_value, selector_meaning_text, string_text,
 };
 pub(crate) use next::stored_input_reason;
@@ -447,7 +455,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub fn print_command_trace(&mut self, command: PrintCommand<G>) {
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let mut command_text = String::new();
-        expand::append_print_cmd_chr_text(self.state, command, &mut command_text);
+        expand_render::append_print_cmd_chr_text(self.state, command, &mut command_text);
         self.print_command_trace_text(command_text, conditional_suffix);
     }
 
@@ -455,8 +463,12 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand<G>) {
         let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());
         let mut command = String::new();
-        crate::processor::expand::append_print_esc_text(self.state, "unless", &mut command);
-        crate::processor::expand::append_print_cmd_chr_text(self.state, operand, &mut command);
+        crate::processor::expand_render::append_print_esc_text(self.state, "unless", &mut command);
+        crate::processor::expand_render::append_print_cmd_chr_text(
+            self.state,
+            operand,
+            &mut command,
+        );
         self.print_command_trace_text(command, conditional_suffix);
     }
 

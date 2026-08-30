@@ -228,11 +228,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return;
         }
         let mut text = String::new();
-        crate::processor::expand::append_print_esc_text(self.state, name, &mut text);
+        crate::processor::expand_render::append_print_esc_text(self.state, name, &mut text);
         text.push_str("->");
         for word in self.state.token_list(tokens) {
             let token = word.semantic_token();
-            crate::processor::expand::append_token_list_token_text(self.state, token, &mut text);
+            crate::processor::expand_render::append_token_list_token_text(
+                self.state, token, &mut text,
+            );
         }
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
         // an ordinary macro invocation. At an existing line boundary this
@@ -523,20 +525,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             return;
         }
         let mut text = String::new();
-        crate::processor::expand::append_print_cs_text(self.state, macro_name, &mut text);
+        crate::processor::expand_render::append_print_cs_text(self.state, macro_name, &mut text);
         let definition = self.state.definition(definition);
         // TeX82 §§389 uses `token_show` on the stored definition. A
         // non-`#` parameter marker is stored beside its compact out-parameter
         // slot and must render as one pair (`U3`), not as the literal marker
         // followed by the generic `#3` spelling.
-        crate::processor::expand::append_meaning_token_words(
+        crate::processor::expand_render::append_meaning_token_words(
             self.state,
             definition.parameter_text(),
             false,
             &mut text,
         );
         text.push_str("->");
-        crate::processor::expand::append_meaning_token_words(
+        crate::processor::expand_render::append_meaning_token_words(
             self.state,
             definition.replacement_text(),
             false,
@@ -558,7 +560,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let mut text = format!("{marker}{parameter}<-");
         for word in self.argument_buffer(matching, argument)? {
-            crate::processor::expand::append_token_list_token_text(
+            crate::processor::expand_render::append_token_list_token_text(
                 self.state,
                 word.semantic_token(),
                 &mut text,
@@ -608,7 +610,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.command.scanner.status() {
             ScannerStatus::Matching(context) => {
                 let spelling = self.state.resolve(context.macro_name).to_owned();
-                crate::processor::expand::print_esc_text(self.state, &spelling)
+                crate::processor::expand_render::print_esc_text(self.state, &spelling)
             }
             _ => String::new(),
         }
@@ -624,7 +626,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let context = self.command.output_open_context(self.state);
         let mut display = String::new();
         for token in partial {
-            crate::processor::expand::append_token_list_token_text(
+            crate::processor::expand_render::append_token_list_token_text(
                 self.state,
                 token.semantic_token(),
                 &mut display,

@@ -640,11 +640,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let Some(_kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
             let mut message = String::from("You can't use `");
-            crate::processor::expand::append_print_esc_text(self.state, "unless", &mut message);
-            message.push_str("' before `");
-            crate::processor::expand::append_print_cmd_chr_text(
+            crate::processor::expand_render::append_print_esc_text(
                 self.state,
-                crate::processor::expand::PrintCommand::from_current(&next),
+                "unless",
+                &mut message,
+            );
+            message.push_str("' before `");
+            crate::processor::expand_render::append_print_cmd_chr_text(
+                self.state,
+                crate::processor::expand_render::PrintCommand::from_current(&next),
                 &mut message,
             );
             message.push_str("'.");
@@ -660,9 +664,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
             && self.state.int_param(IntParam::TRACING_IFS) <= 0
         {
-            self.print_unless_command_trace(crate::processor::expand::PrintCommand::from_current(
-                &next,
-            ));
+            self.print_unless_command_trace(
+                crate::processor::expand_render::PrintCommand::from_current(&next),
+            );
         }
         self.expand_conditional(&next, true, resume, suspended)
     }
@@ -1340,7 +1344,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // §503's `print_cmd_chr(if_test,this_if)` names the
                 // conditional whose relation is missing, so the message ends
                 // in the escaped primitive rather than a bare word.
-                let name = crate::processor::expand::print_esc_text(self.state, conditional);
+                let name = crate::processor::expand_render::print_esc_text(self.state, conditional);
                 let message = format!("Missing = inserted for {name}");
                 self.back_error_reporting(
                     relation,
@@ -1551,7 +1555,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn record_extra_delimiter(&mut self, delimiter: ConditionalDelimiter) {
         // §510's `print_cmd_chr(fi_or_else,cur_chr)` names the delimiter that
         // matched nothing, so the message ends in the escaped primitive.
-        let name = crate::processor::expand::print_esc_text(
+        let name = crate::processor::expand_render::print_esc_text(
             self.state,
             match delimiter {
                 ConditionalDelimiter::Or => "or",
@@ -1748,8 +1752,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             return;
         }
         let level = self.command.conditions.frames.len();
-        let delimiter_name =
-            crate::processor::expand::print_esc_text(self.state, delimiter.canonical_branch());
+        let delimiter_name = crate::processor::expand_render::print_esc_text(
+            self.state,
+            delimiter.canonical_branch(),
+        );
         let condition_name = self.conditional_kind_text(frame);
         if !self.command.semantic_diagnostics.is_empty() {
             let mut text = format!("{{{delimiter_name}: {condition_name} (level {level})");
@@ -1801,9 +1807,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let mut condition = String::new();
         if frame.inverted {
-            crate::processor::expand::append_print_esc_text(self.state, "unless", &mut condition);
+            crate::processor::expand_render::append_print_esc_text(
+                self.state,
+                "unless",
+                &mut condition,
+            );
         }
-        crate::processor::expand::append_print_esc_text(
+        crate::processor::expand_render::append_print_esc_text(
             self.state,
             frame.kind.canonical_name(),
             &mut condition,
@@ -1819,9 +1829,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn conditional_kind_text(&self, frame: &ConditionFrame) -> String {
         let mut name = String::new();
         if frame.inverted {
-            crate::processor::expand::append_print_esc_text(self.state, "unless", &mut name);
+            crate::processor::expand_render::append_print_esc_text(self.state, "unless", &mut name);
         }
-        crate::processor::expand::append_print_esc_text(
+        crate::processor::expand_render::append_print_esc_text(
             self.state,
             frame.kind.canonical_name(),
             &mut name,

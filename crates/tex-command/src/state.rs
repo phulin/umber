@@ -1742,7 +1742,7 @@ impl<G> CommandState<G> {
                 // and is exhausted by the next main-control delivery.
                 if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
                     let mut text = String::new();
-                    crate::processor::expand::append_print_esc_text(
+                    crate::processor::expand_render::append_print_esc_text(
                         state,
                         stored_replay_name(reason),
                         &mut text,
@@ -1750,7 +1750,7 @@ impl<G> CommandState<G> {
                     text.push_str("->");
                     for word in state.token_list(tokens) {
                         let token = word.token().expect("durable token word is valid");
-                        crate::processor::expand::append_token_list_token_text(
+                        crate::processor::expand_render::append_token_list_token_text(
                             state, token, &mut text,
                         );
                     }

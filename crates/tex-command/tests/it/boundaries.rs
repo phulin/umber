@@ -364,6 +364,10 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
         .expect("read delivery policy definitions");
     let raw = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery entry points");
+    let structural = fs::read_to_string(manifest_dir.join("src/processor/expand_structural.rs"))
+        .expect("read structural expansion primitives");
+    let pdf_string = fs::read_to_string(manifest_dir.join("src/processor/expand_pdf_string.rs"))
+        .expect("read pdfTeX string expansion primitives");
 
     assert_eq!(
         expansion.matches("fn raw_delivery_driver(").count(),
@@ -422,10 +426,10 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(policies.contains("take_pending_expansion_work"));
     assert!(expansion.contains("ChildContinuation::capture("));
     assert!(expansion.contains("PendingExpansionChildDestination::Dispatch"));
-    assert!(expansion.contains(".store_expandafter_frame(PendingExpandAfter"));
-    assert!(expansion.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
-    assert!(expansion.contains("PdfStringComparePhase::Right { left }"));
-    assert!(expansion.contains("PendingExpansionResume::CsName { name }"));
+    assert!(structural.contains(".store_expandafter_frame(PendingExpandAfter"));
+    assert!(pdf_string.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
+    assert!(pdf_string.contains("PdfStringComparePhase::Right { left }"));
+    assert!(structural.contains("PendingExpansionResume::CsName { name }"));
     let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
         .expect("read conditional continuation ownership");
     assert!(conditionals.contains("PendingExpansionResume::IfCsName"));
@@ -444,19 +448,21 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
         );
     }
     assert!(
-        !expansion.contains("retain_pending_expansion")
-            && !expansion.contains("retain_pending_expandafter"),
+        !format!("{expansion}\n{structural}\n{pdf_string}").contains("retain_pending_expansion")
+            && !structural.contains("retain_pending_expandafter"),
         "resource retry ownership must stay in the typed scratch continuation chain"
     );
     assert!(
         !expansion.contains("let retry = command.clone();"),
         "ordinary expansion must move the live command only at a typed retry barrier"
     );
-    assert!(expansion.contains("fn expand_noexpand("));
-    assert!(expansion.contains("fn expand_expandafter("));
+    assert!(!expansion.contains("fn expand_noexpand("));
+    assert!(!expansion.contains("fn expand_expandafter("));
+    assert!(structural.contains("fn expand_noexpand("));
+    assert!(structural.contains("fn expand_expandafter("));
     for forbidden in ["Dispatch::Push", "Dispatch::PushTransient", "ExpansionMode"] {
         assert!(
-            !expansion.contains(forbidden),
+            !format!("{expansion}\n{structural}\n{pdf_string}").contains(forbidden),
             "ordinary expansion must not introduce {forbidden}"
         );
     }

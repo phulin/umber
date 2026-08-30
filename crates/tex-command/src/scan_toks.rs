@@ -931,7 +931,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let semantic_tokens = (0..words.len())
                 .filter_map(|index| words.token(index))
                 .collect::<Vec<_>>();
-            crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens)
+            crate::processor::expand_render::token_slice_string_text(self.state, &semantic_tokens)
                 .chars()
                 .map(|ch| {
                     self.observed_token(TracedTokenWord::pack(
@@ -2044,7 +2044,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .iter()
             .map(|word| word.semantic_token())
             .collect::<Vec<_>>();
-        let text = crate::processor::expand::token_slice_string_text(self.state, &semantic_tokens);
+        let text =
+            crate::processor::expand_render::token_slice_string_text(self.state, &semantic_tokens);
         let tokens = text
             .chars()
             .map(|ch| {

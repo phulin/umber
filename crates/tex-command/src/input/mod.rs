@@ -1127,7 +1127,7 @@ impl<G> InputState<G> {
         ) {
             raw.clear();
             rendered.clear();
-            crate::processor::expand::append_token_list_token_text(stores, token, raw);
+            crate::processor::expand_render::append_token_list_token_text(stores, token, raw);
             stores.append_selector_string_text(raw, rendered);
         }
 
@@ -1155,7 +1155,7 @@ impl<G> InputState<G> {
                 return None;
             }
             Some((
-                crate::processor::expand::token_list_token_text(
+                crate::processor::expand_render::token_list_token_text(
                     stores,
                     tex_state::token::Token::Cs(activation.name),
                 ),
@@ -1173,11 +1173,11 @@ impl<G> InputState<G> {
         .then(|| {
             format!(
                 "{} ",
-                crate::processor::expand::print_esc_text(stores, "notexpanded:")
+                crate::processor::expand_render::print_esc_text(stores, "notexpanded:")
             )
         });
         let v_sentinel = matches!(tokens.behavior, TokenBehavior::VTemplate).then(|| {
-            crate::processor::expand::token_list_token_text(
+            crate::processor::expand_render::token_list_token_text(
                 stores,
                 stores.frozen_end_template_token(),
             )
@@ -1325,7 +1325,7 @@ impl<G> InputState<G> {
         ) {
             raw.clear();
             rendered.clear();
-            crate::processor::expand::append_token_list_token_text(stores, token, raw);
+            crate::processor::expand_render::append_token_list_token_text(stores, token, raw);
             stores.append_selector_string_text(raw, rendered);
         }
 

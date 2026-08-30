@@ -145,8 +145,8 @@ pub(crate) enum ContinuationFrame<G> {
     Scanner(crate::scan_toks::PendingScanToks<G>),
     Scalar(crate::scanners::PendingScalarFrame<G>),
     Expansion(crate::ExpansionWorkKey<G>),
-    ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
-    PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
+    ExpandAfter(crate::processor::expand_structural::PendingExpandAfter<G>),
+    PdfStringCompare(crate::processor::expand_pdf_string::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
     StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
 }
@@ -159,8 +159,8 @@ pub(crate) enum ContinuationFrame<G> {
 enum StoredContinuationFrame<G> {
     Scalar(crate::scanners::PendingScalarFrame<G>),
     Expansion(crate::ExpansionWorkKey<G>),
-    ExpandAfter(crate::processor::expand::PendingExpandAfter<G>),
-    PdfStringCompare(crate::processor::expand::PendingPdfStringCompare<G>),
+    ExpandAfter(crate::processor::expand_structural::PendingExpandAfter<G>),
+    PdfStringCompare(crate::processor::expand_pdf_string::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
     StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
 }
@@ -1050,7 +1050,7 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn store_expandafter_frame(
         &mut self,
-        pending: crate::processor::expand::PendingExpandAfter<G>,
+        pending: crate::processor::expand_structural::PendingExpandAfter<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
         self.continuation_resumes
             .insert(StoredContinuationFrame::ExpandAfter(pending))
@@ -1063,7 +1063,7 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn take_expandafter_frame(
         &mut self,
         key: ScannerFrameKey<G>,
-    ) -> Result<crate::processor::expand::PendingExpandAfter<G>, ScratchError> {
+    ) -> Result<crate::processor::expand_structural::PendingExpandAfter<G>, ScratchError> {
         if !key.is_expandafter() {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -1075,7 +1075,7 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn store_pdf_string_compare_frame(
         &mut self,
-        pending: crate::processor::expand::PendingPdfStringCompare<G>,
+        pending: crate::processor::expand_pdf_string::PendingPdfStringCompare<G>,
     ) -> Result<ScannerFrameKey<G>, ScratchError> {
         self.continuation_resumes
             .insert(StoredContinuationFrame::PdfStringCompare(pending))
@@ -1088,7 +1088,7 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn take_pdf_string_compare_frame(
         &mut self,
         key: ScannerFrameKey<G>,
-    ) -> Result<crate::processor::expand::PendingPdfStringCompare<G>, ScratchError> {
+    ) -> Result<crate::processor::expand_pdf_string::PendingPdfStringCompare<G>, ScratchError> {
         if !key.is_pdf_string_compare() {
             return Err(ScratchError::InvalidCoordinate);
         }

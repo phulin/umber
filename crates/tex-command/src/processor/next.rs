@@ -2315,7 +2315,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             };
             let name = warning_index.map_or_else(String::new, |symbol| {
                 let spelling = self.state.resolve(symbol).to_owned();
-                super::expand::print_esc_text(self.state, &spelling)
+                super::expand_render::print_esc_text(self.state, &spelling)
             });
             let context = self.command.output_open_context(self.state);
             let heading = match &status {
@@ -2341,7 +2341,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })
                     .map_or_else(String::new, |tokens| {
                         tokens.iter().fold(String::new(), |mut text, token| {
-                            super::expand::append_token_list_token_text(
+                            super::expand_render::append_token_list_token_text(
                                 self.state,
                                 token.semantic_token(),
                                 &mut text,
@@ -2368,8 +2368,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
         }
         if let ScannerStatus::Skipping(skipping) = &status {
-            let name =
-                super::expand::print_esc_text(self.state, skipping.conditional.canonical_name());
+            let name = super::expand_render::print_esc_text(
+                self.state,
+                skipping.conditional.canonical_name(),
+            );
             let message = format!(
                 "Incomplete {name}; all text was ignored after line {}",
                 skipping.skip_line
@@ -2449,7 +2451,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 raw.push(match_marker);
                 raw.push(char::from(b'0' + slot));
             } else {
-                super::expand::append_token_list_token_text(self.state, token, &mut raw);
+                super::expand_render::append_token_list_token_text(self.state, token, &mut raw);
             }
             index += 1;
         }

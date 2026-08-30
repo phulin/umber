@@ -5916,7 +5916,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .map(|word| word.semantic_token())
                                 .collect::<Vec<_>>();
                             PdfImagePageSelection::Named(
-                                crate::processor::expand::token_slice_string_text(
+                                crate::processor::expand_render::token_slice_string_text(
                                     self.state, &semantic,
                                 )
                                 .into_bytes(),
@@ -6483,7 +6483,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     > 1
                 {
                     let mut text = String::new();
-                    crate::processor::expand::append_print_esc_text(self.state, "write", &mut text);
+                    crate::processor::expand_render::append_print_esc_text(
+                        self.state, "write", &mut text,
+                    );
                     text.push_str("->");
                     let words = self
                         .command
@@ -6492,7 +6494,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .token_words(tokens)
                         .map_err(|_| CommandError::input_invariant())?;
                     for word in words.iter() {
-                        crate::processor::expand::append_token_list_token_text(
+                        crate::processor::expand_render::append_token_list_token_text(
                             self.state,
                             word.semantic_token(),
                             &mut text,
