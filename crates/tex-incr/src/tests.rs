@@ -1300,6 +1300,68 @@ fn late_edit_rebinds_the_restored_root_source_and_rejection_restores_it() {
 }
 
 #[test]
+fn non_job_start_font_edit_rebinds_command_source_and_preserves_siblings() {
+    let source = concat!(
+        "A\\par\n",
+        "\\font\\body=cmr10 at 10pt \\body\n",
+        "\\immediate\\write16{selected=\\fontname\\font}\n",
+        "B\\par\n",
+        "C\\par\\end",
+    );
+    let original = "cmr10 at 10pt";
+    let replacement = "cmr11 at 11pt";
+    let font_spec = source.find(original).expect("font follows prefix");
+    let font_range = font_spec..font_spec + original.len();
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("baseline font registers");
+    incremental
+        .register_input_file(Path::new("cmr11.tfm"), CMR10.to_vec())
+        .expect("edited font registers");
+    incremental.cold().expect("baseline");
+    let candidate_edit = edit(&incremental, font_range, replacement);
+
+    let mut rejected = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
+        .expect("font edit candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
+        .expect("font edit reads the rebound source");
+    let rejected = incremental
+        .prepare_revision_candidate(rejected)
+        .expect("prepare font edit rejection");
+    let selected = rejected
+        .reuse()
+        .restart_boundary
+        .expect("reusable prefix supplies a restart");
+    assert_eq!(selected.boundary, EngineBoundary::OuterParagraphEnd);
+    rejected.reject();
+
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), candidate_edit)
+        .expect("unchanged sibling remains seedable");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
+        .expect("sibling font edit reads the rebound source");
+    let accepted = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("prepare sibling font edit");
+    assert_eq!(accepted.reuse().restart_boundary, Some(selected));
+    let output = incremental
+        .accept_revision(accepted)
+        .expect("accept sibling font edit");
+
+    assert!(terminal_effect_text(&output).contains("selected=cmr11 at 11.0pt"));
+    let edited = source.replacen(original, replacement, 1);
+    let mut cold = session(RevisionId::new(2), &edited);
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold baseline font registers");
+    cold.register_input_file(Path::new("cmr11.tfm"), CMR10.to_vec())
+        .expect("cold edited font registers");
+    let expected = cold.cold().expect("cold font edit");
+    assert_detached_output_eq(&output, &expected);
+}
+
+#[test]
 fn fully_pruned_live_roots_select_explicit_job_start() {
     let source = "A\\par\nB\\par\nC\\par\\end";
     let edit_position = source.find('C').expect("third paragraph exists");
