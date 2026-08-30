@@ -6,6 +6,7 @@ use std::hint::black_box;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tex_command::SourceRegistration;
@@ -14,6 +15,7 @@ use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, SameHistoryStop, Session,
+    new_reachability_store,
 };
 use tex_state::{ContentHash, JobClock, PureMemoRecordingPolicy, PureMemoStats, World};
 use tex_state::{MemoLayerStats, PureMemoLayer};
@@ -158,6 +160,23 @@ struct RunOutput {
     expansion_stats: ExpansionStats,
 }
 
+struct ProfileTemplate {
+    world: World,
+    inputs: Vec<(PathBuf, Arc<[u8]>)>,
+}
+
+impl ProfileTemplate {
+    fn register_inputs(&self, session: &mut Session<'_>) -> Result<(), String> {
+        session.set_job_clock(self.world.job_clock());
+        for (path, bytes) in &self.inputs {
+            session
+                .register_input_file(path, Arc::clone(bytes))
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct ProfileCheckpointSink {
     enabled: bool,
@@ -172,7 +191,19 @@ impl<G> CheckpointSink<G> for ProfileCheckpointSink {
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
         self.count += 1;
-        self.hash = self.hash.rotate_left(7) ^ checkpoint.mode_hash();
+        let identity = checkpoint.reachable_state_identity().map_or_else(
+            || {
+                u64::try_from(checkpoint.root_anchor()).unwrap_or(u64::MAX)
+                    ^ u64::try_from(checkpoint.effect_prefix_len())
+                        .unwrap_or(u64::MAX)
+                        .rotate_left(19)
+                    ^ u64::try_from(checkpoint.artifact_prefix_len())
+                        .unwrap_or(u64::MAX)
+                        .rotate_left(37)
+            },
+            |identity| identity.fingerprint(),
+        );
+        self.hash = self.hash.rotate_left(7) ^ identity;
     }
 }
 
@@ -421,7 +452,7 @@ impl IncrementalStages {
 #[allow(clippy::disallowed_methods)] // Host-side cold-policy profiling timer.
 fn run_cold_memo_policy(
     options: &Options,
-    template: &World,
+    template: &ProfileTemplate,
     policy: ColdMemoPolicy,
 ) -> Result<(), String> {
     if options.checkpoints
@@ -443,7 +474,9 @@ fn run_cold_memo_policy(
     let mut last_pages = 0;
     let mut last_memo = PureMemoStats::default();
     for run in 0..total_runs {
+        let reachability_store = new_reachability_store();
         let mut session = incremental_session(
+            &reachability_store,
             template,
             &fixture.original,
             RevisionId::new(1),
@@ -492,7 +525,7 @@ fn run_cold_memo_policy(
 
 fn run_incremental_path(
     options: &Options,
-    template: &World,
+    template: &ProfileTemplate,
     path_kind: IncrementalPath,
 ) -> Result<(), String> {
     if options.checkpoints || options.incremental_edit {
@@ -512,7 +545,9 @@ fn run_incremental_path(
         }
     };
     let source_path = Path::new(JOB_DIR).join(JOB_FILE);
+    let reachability_store = new_reachability_store();
     let mut session = incremental_session(
+        &reachability_store,
         template,
         left,
         RevisionId::new(1),
@@ -609,7 +644,7 @@ fn run_incremental_path(
 #[allow(clippy::disallowed_methods)] // Host-side deletion-baseline timer.
 fn run_edit_restart_workload(
     options: &Options,
-    template: &World,
+    template: &ProfileTemplate,
     workload: EditRestartWorkload,
 ) -> Result<(), String> {
     if options.checkpoints || options.incremental_edit || options.incremental_path.is_some() {
@@ -629,7 +664,9 @@ fn run_edit_restart_workload(
         )
     };
     let source_path = Path::new(JOB_DIR).join(JOB_FILE);
+    let reachability_store = new_reachability_store();
     let mut session = incremental_session(
+        &reachability_store,
         template,
         &before,
         RevisionId::new(1),
@@ -819,7 +856,7 @@ fn replacement_between(from: &str, to: &str) -> (Range<usize>, String) {
     )
 }
 
-fn run_incremental_edit(options: &Options, template: &World) -> Result<(), String> {
+fn run_incremental_edit(options: &Options, template: &ProfileTemplate) -> Result<(), String> {
     if options.checkpoints {
         return Err("--incremental-edit cannot be combined with --checkpoints".to_owned());
     }
@@ -1508,33 +1545,38 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
     })
 }
 
-fn incremental_session(
-    _template: &World,
+fn incremental_session<'store>(
+    reachability_store: &'store tex_state::ReachabilityStore,
+    template: &ProfileTemplate,
     source: &str,
     revision: RevisionId,
     _memo: bool,
     _recording: PureMemoRecordingPolicy,
-) -> Result<Session, String> {
-    Session::start_with_source_path(
-        (),
+) -> Result<Session<'store>, String> {
+    let mut session = Session::start_with_source_path(
+        reachability_store,
         "gentle-profile",
         Path::new(JOB_DIR).join(JOB_FILE).to_string_lossy(),
         revision,
         source,
         usize::MAX,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    template.register_inputs(&mut session)?;
+    Ok(session)
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side benchmark timer; no engine fact observes it.
 fn execute_incremental_sample(
-    template: &World,
+    template: &ProfileTemplate,
     fixture: &IncrementalFixture,
     memo: bool,
     recording: PureMemoRecordingPolicy,
 ) -> Result<IncrementalSample, String> {
     let path = Path::new(JOB_DIR).join(JOB_FILE);
+    let reachability_store = new_reachability_store();
     let mut session = incremental_session(
+        &reachability_store,
         template,
         &fixture.original,
         RevisionId::new(1),
@@ -1594,12 +1636,14 @@ fn execute_incremental_sample(
 
 #[allow(clippy::disallowed_methods)] // Host-side benchmark timer; no engine fact observes it.
 fn execute_cold_sample(
-    template: &World,
+    template: &ProfileTemplate,
     source: &str,
     revision: RevisionId,
 ) -> Result<(Duration, AcceptedOutput), String> {
     let path = Path::new(JOB_DIR).join(JOB_FILE);
+    let reachability_store = new_reachability_store();
     let mut session = incremental_session(
+        &reachability_store,
         template,
         source,
         revision,
@@ -1616,51 +1660,61 @@ fn execute_cold_sample(
     Ok((elapsed, accepted))
 }
 
-fn load_template(repo_root: &Path) -> Result<World, String> {
+fn load_template(repo_root: &Path) -> Result<ProfileTemplate, String> {
     let corpus = repo_root.join("third_party/corpus");
-    let mut world = World::memory_with_clock(JobClock {
-        time: 13 * 60 + 36,
-        second: 0,
-        day: 9,
-        month: 7,
-        year: 2026,
-    });
-    seed_file(&mut world, &corpus.join("plain.tex"), "plain.tex")?;
-    seed_file(&mut world, &corpus.join("gentle.tex"), "gentle.tex")?;
+    let mut template = ProfileTemplate {
+        world: World::memory_with_clock(JobClock {
+            time: 13 * 60 + 36,
+            second: 0,
+            day: 9,
+            month: 7,
+            year: 2026,
+        }),
+        inputs: Vec::new(),
+    };
+    seed_file(&mut template, &corpus.join("plain.tex"), "plain.tex")?;
+    seed_file(&mut template, &corpus.join("gentle.tex"), "gentle.tex")?;
     seed_file(
-        &mut world,
+        &mut template,
         &repo_root.join("third_party/hyphen/hyphen.tex"),
         "hyphen.tex",
     )?;
-    seed_font_dir(&mut world, &repo_root.join("third_party/fonts"))?;
+    seed_font_dir(&mut template, &repo_root.join("third_party/fonts"))?;
     seed_font_dir(
-        &mut world,
+        &mut template,
         &repo_root.join("crates/tex-fonts/tests/fixtures/cm"),
     )?;
-    world
+    template
+        .world
         .set_memory_file(
             Path::new(JOB_DIR).join(JOB_FILE),
             b"\\input plain.tex\n\\input gentle.tex\n".to_vec(),
         )
         .map_err(|error| error.to_string())?;
-    Ok(world)
+    Ok(template)
 }
 
 #[allow(clippy::disallowed_methods)] // Profiling setup reads host inputs once before the run loop.
-fn seed_file(world: &mut World, source: &Path, name: &str) -> Result<(), String> {
-    let bytes = fs::read(source).map_err(|error| {
-        format!(
-            "read required input {}: {error}; run python3 scripts/provision.py worktree .",
-            source.display()
-        )
-    })?;
-    world
-        .set_memory_file(Path::new(JOB_DIR).join(name), bytes)
-        .map_err(|error| error.to_string())
+fn seed_file(template: &mut ProfileTemplate, source: &Path, name: &str) -> Result<(), String> {
+    let bytes: Arc<[u8]> = fs::read(source)
+        .map_err(|error| {
+            format!(
+                "read required input {}: {error}; run python3 scripts/provision.py worktree .",
+                source.display()
+            )
+        })?
+        .into();
+    let path = Path::new(JOB_DIR).join(name);
+    template
+        .world
+        .set_shared_memory_file(&path, Arc::clone(&bytes))
+        .map_err(|error| error.to_string())?;
+    template.inputs.push((path, bytes));
+    Ok(())
 }
 
 #[allow(clippy::disallowed_methods)] // Profiling setup enumerates and reads host fonts once.
-fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
+fn seed_font_dir(template: &mut ProfileTemplate, dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -1677,17 +1731,24 @@ fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
         let name = path
             .file_name()
             .ok_or_else(|| format!("font path has no file name: {}", path.display()))?;
-        let bytes = fs::read(&path)
-            .map_err(|error| format!("read font metric {}: {error}", path.display()))?;
-        world
-            .set_memory_file(Path::new(JOB_DIR).join(name), bytes)
+        let bytes: Arc<[u8]> = fs::read(&path)
+            .map_err(|error| format!("read font metric {}: {error}", path.display()))?
+            .into();
+        let memory_path = Path::new(JOB_DIR).join(name);
+        template
+            .world
+            .set_shared_memory_file(&memory_path, Arc::clone(&bytes))
             .map_err(|error| error.to_string())?;
+        template.inputs.push((memory_path, bytes));
     }
     Ok(())
 }
 
-fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput, String> {
-    umber::with_engine_world(template.clone(), |stores| {
+fn execute_once(
+    template: &ProfileTemplate,
+    capture_checkpoints: bool,
+) -> Result<RunOutput, String> {
+    umber::with_engine_world(template.world.clone(), |stores| {
         let path = Path::new(JOB_DIR).join(JOB_FILE);
         let content = stores
             .world_mut()
