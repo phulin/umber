@@ -6392,6 +6392,101 @@ fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar(
 }
 
 #[test]
+fn post_apply_facts_preserve_character_font_and_page_output_decisions() {
+    // TeX82 §§552/1030/1034/1036: the post-apply handoff distinguishes a
+    // present character from nullfont's empty range, preserves an interrupted
+    // fetch's existing parking, and carries §1012's selected break without
+    // keeping the admitted command facade alive.
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let font = admitted!(stores, |context| {
+            let loaded = tex_fonts::TfmFont::parse(CMR10)
+                .expect("cmr10 parses")
+                .into_loaded_font("cmr10", "cmr10.tfm", tex_fonts::font_content_hash(CMR10));
+            context.intern_font(loaded)
+        });
+        let mut context = stores.command_context().expect("post-apply test admission");
+        context
+            .assign_current_font(font, tex_state::AssignmentScope::Global)
+            .expect("test font assignment");
+        context.record_best_page_break(0, Scaled::from_raw(0), 0);
+        context.record_page_fire_up(0);
+
+        let present = PostApplyFacts::capture(
+            MainControlParking {
+                character: Some('A'),
+                resumes_interrupted_fetch: false,
+            },
+            Mode::Horizontal,
+            &context,
+        );
+        assert_eq!(present.main_loop_active, Some(true));
+        assert!(present.page_output.fire_up.is_some());
+        assert!(!present.page_output.resume_after_output);
+
+        context
+            .assign_current_font(
+                tex_state::font::NULL_FONT,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("nullfont assignment");
+        let missing = MainControlParking {
+            character: Some('A'),
+            resumes_interrupted_fetch: false,
+        }
+        .post_apply(Mode::Horizontal, &context);
+        assert_eq!(missing, Some(false));
+        let preserved = MainControlParking {
+            character: None,
+            resumes_interrupted_fetch: true,
+        }
+        .post_apply(Mode::Vertical, &context);
+        assert_eq!(preserved, None);
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_warmed_post_apply_fact_settlements_allocate_and_copy_no_context() {
+    fn evidence(repetitions: usize) -> tex_state::measurement::HotCoreAllocationMeasurement {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let context = stores.command_context().expect("post-apply test admission");
+            let context_address = std::ptr::from_ref(&context);
+            let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
+            let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                for _ in 0..repetitions {
+                    let facts = PostApplyFacts::capture(
+                        MainControlParking {
+                            character: Some('A'),
+                            resumes_interrupted_fetch: false,
+                        },
+                        Mode::Horizontal,
+                        &context,
+                    );
+                    std::hint::black_box(facts);
+                    assert_eq!(std::ptr::from_ref(&context), context_address);
+                }
+            }
+            let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            tex_state::measurement::HotCoreAllocationMeasurement {
+                calls: after.calls - before.calls,
+                requested_bytes: after.requested_bytes - before.requested_bytes,
+            }
+        })
+    }
+
+    let one = evidence(1);
+    let many = evidence(4_096);
+    assert_eq!(one.calls, 0);
+    assert_eq!(one.requested_bytes, 0);
+    assert_eq!(many.calls, 0);
+    assert_eq!(many.requested_bytes, 0);
+    assert!(std::mem::size_of::<PostApplyFacts>() < std::mem::size_of::<CommandContext<'_, ()>>());
+}
+
+#[test]
 fn pdf_glyph_to_unicode_operands_resume_their_exact_destinations() {
     let source = br"\pdfglyphtounicode{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}\message{[done]}\end";
 

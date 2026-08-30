@@ -460,14 +460,11 @@ impl<G> MainControl<G> {
         // episode here instead of asking only whether another fire-up is
         // currently pending; otherwise its observations survive into the
         // next command step and that command's raw delivery overtakes them.
-        let page_fire_up_pending = stores
-            .command_context()
-            .expect("live generation")
-            .page_fire_up()
-            .is_some();
+        let pending_page_output =
+            PendingPageOutputFacts::capture(&stores.command_context().expect("live generation"));
         let opens_output_batch = !self.page_output_observations.is_empty()
-            || (page_fire_up_pending && !self.boxes.output_routine_active);
-        self.fire_pending_page_output(stores, diagnostic_effects)?;
+            || (pending_page_output.fire_up.is_some() && !self.boxes.output_routine_active);
+        self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         {
             #[cfg(feature = "profiling")]
             tex_state::measurement::record_hot_core_phase(

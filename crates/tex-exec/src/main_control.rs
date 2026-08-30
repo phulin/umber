@@ -40,7 +40,7 @@ use tex_state::math::{
 };
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
-use tex_state::page::{PageDimension, PageInteger};
+use tex_state::page::{PageDimension, PageFireUp, PageInteger};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::token::{OriginId, TracedTokenWord};
@@ -2254,10 +2254,11 @@ impl<G> MainControl<G> {
     /// Takes TeX82 §1030's parking decision for the step just scanned, and
     /// clears the outgoing parking so nested episodes run from `big_switch`.
     ///
-    /// Every step driver takes this before applying its step and gives it back
-    /// to [`Self::resume_main_control_parking`] afterwards. The rule is stated
-    /// here once: three drivers used to spell it out inline, and a rule spelled
-    /// three times is a rule two of them can be missing.
+    /// Every step driver takes this before applying its step and settles it
+    /// through [`MainControlParking::post_apply`] before the callback-scoped
+    /// command admission closes. The rule is stated here once: three drivers
+    /// used to spell it out inline, and a rule spelled three times is a rule
+    /// two of them can be missing.
     fn suspend_main_control_parking<T, D>(
         &mut self,
         scanned: &ColdOperation<G, T, D>,
@@ -2280,40 +2281,6 @@ impl<G> MainControl<G> {
             self.main_loop_active = false;
         }
         parking
-    }
-
-    /// Records which of TeX82 §1030's two fetch labels `main_control` is
-    /// parked at now that this step has been applied.
-    ///
-    /// §1034's `main_loop` is reached only from `hmode`, so the mode tested
-    /// is the one the step left behind: §1090's `vmode+letter` opens a
-    /// paragraph first and arrives in horizontal mode, while `mmode+letter`
-    /// (§1154) appends a math char and never enters the loop at all.
-    ///
-    /// A character the current font does not contain never reaches the
-    /// lookahead either: §1036's `main_loop_move+2` issues `char_warning`,
-    /// frees the would-be node, and jumps straight back to `big_switch`. With
-    /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
-    /// character at all exists -- that is every character in the document.
-    fn resume_main_control_parking(
-        &mut self,
-        parking: MainControlParking,
-        stores: &mut Universe<G>,
-    ) {
-        if parking.resumes_interrupted_fetch {
-            return;
-        }
-        let context = stores.command_context().expect("live generation");
-        self.main_loop_active = parking.character.is_some_and(|character| {
-            matches!(
-                self.modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) && u8::try_from(u32::from(character)).ok().is_some_and(|code| {
-                context
-                    .font_char_metrics(context.current_font(), code)
-                    .is_some()
-            })
-        });
     }
 
     /// Returns the command site retained for the most recent resource need.
@@ -2595,7 +2562,10 @@ impl<G> MainControl<G> {
         // back to any driver: the unobserved driver returns directly here,
         // while observed drivers have a later publication-only tail.
         let applied = applied.and_then(|step| {
-            self.fire_pending_page_output(stores, diagnostic_effects)?;
+            let pending = PendingPageOutputFacts::capture(
+                &stores.command_context().expect("live generation"),
+            );
+            self.fire_pending_page_output(stores, diagnostic_effects, pending)?;
             Ok(step)
         });
         self.main_loop_active = false;
@@ -3125,15 +3095,16 @@ impl<G> MainControl<G> {
             // operation still owns a rollback-restorable mode root. Resume
             // that builder continuation in its own journaled operation before
             // delivering another TeX command.
-            let resumes_page_output =
-                !self.page_region_succession_pending && !self.boxes.output_routine_active && {
-                    let context = stores.command_context().expect("live generation");
-                    context.page_fire_up().is_some()
-                        || context.page_builder_resume_after_output_pending()
-                };
-            if resumes_page_output {
+            let pending_page_output = if !self.page_region_succession_pending
+                && !self.boxes.output_routine_active
+            {
+                PendingPageOutputFacts::capture(&stores.command_context().expect("live generation"))
+            } else {
+                PendingPageOutputFacts::default()
+            };
+            if pending_page_output.is_pending() {
                 let applied = self
-                    .fire_pending_page_output(stores, &mut diagnostic_effects)
+                    .fire_pending_page_output(stores, &mut diagnostic_effects, pending_page_output)
                     .map(|()| ReplayStep::Continue);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -4327,11 +4298,15 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        mut pending: PendingPageOutputFacts,
     ) -> Result<(), ExecError> {
         self.finish_pending_page_region_succession(stores);
         if self.page_region_succession_pending {
             // The active operation can still restore a mode root. Its commit
             // retries succession before this builder continuation resumes.
+            return Ok(());
+        }
+        if self.boxes.output_routine_active || !pending.is_pending() {
             return Ok(());
         }
         while !self.boxes.output_routine_active {
@@ -4341,19 +4316,22 @@ impl<G> MainControl<G> {
             // operation's mode journal commits, so the page builder owns an
             // exact rollback-coupled continuation instead of borrowing the
             // backed-up command as a scheduler.
-            {
-                let mut context = stores.command_context().expect("live generation");
-                if context.take_page_builder_resume_after_output() {
-                    crate::page_builder::build_page(
-                        &mut context,
-                        diagnostic_effects,
-                        self.command.state(),
-                    )?;
-                }
-            }
             let mut context = stores.command_context().expect("live generation");
+            if pending.resume_after_output {
+                assert!(
+                    context.take_page_builder_resume_after_output(),
+                    "captured page-builder continuation remains authoritative until selection"
+                );
+                crate::page_builder::build_page(
+                    &mut context,
+                    diagnostic_effects,
+                    self.command.state(),
+                )?;
+                pending.fire_up = context.page_fire_up();
+                pending.resume_after_output = false;
+            }
             let selected = {
-                let Some(fire_up) = context.page_fire_up() else {
+                let Some(fire_up) = pending.fire_up.take() else {
                     break;
                 };
                 let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
@@ -4413,6 +4391,7 @@ impl<G> MainControl<G> {
                     if self.page_region_succession_pending {
                         break;
                     }
+                    pending.resume_after_output = true;
                     continue;
                 }
                 crate::page_output::SelectedPageOutput::UserRoutine => {
@@ -6763,7 +6742,7 @@ impl<G> MainControl<G> {
         // publication, and `afterassignment` backup. Group transitions can
         // open page-output work, so they deliberately leave the callback at
         // the existing host boundary and use the generic tail below.
-        let (result, settled_in_admission) = stores
+        let (result, settled_in_admission, pending_page_output) = stores
             .with_command_context(|context| {
                 let mut result = hot_apply::apply(
                     operation,
@@ -6797,10 +6776,12 @@ impl<G> MainControl<G> {
                 // transitions, none can contribute material, invoke the page
                 // builder, or cross a World publication boundary. A pending
                 // builder continuation is drained by the direct-episode loop
-                // before another command is delivered, so there is no second
-                // page-state probe to perform here.
+                // before another command is delivered. Capture the page facts
+                // from this existing admission rather than opening another
+                // command context after the callback closes.
                 if result.is_err() || !fires_afterassignment {
-                    return (result, false);
+                    let pending_page_output = PendingPageOutputFacts::capture(context);
+                    return (result, false, pending_page_output);
                 }
 
                 #[cfg(feature = "profiling")]
@@ -6837,13 +6818,14 @@ impl<G> MainControl<G> {
                 ) {
                     result = Err(error);
                 }
-                (result, true)
+                let pending_page_output = PendingPageOutputFacts::capture(context);
+                (result, true, pending_page_output)
             })
             .map_err(|_| ExecError::MissingToken {
                 context: "hot operation admission",
             })?;
         if result.is_ok() {
-            self.fire_pending_page_output(stores, diagnostic_effects)?;
+            self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         }
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -7180,7 +7162,7 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let (mut result, named_token_list_pushes) = if matches!(
+        let (mut result, named_token_list_pushes, mut post_apply_facts) = if matches!(
             &*operation,
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(_))
         ) {
@@ -7197,7 +7179,7 @@ impl<G> MainControl<G> {
             let provenance_demand = stores.provenance_demand();
             let provenance_budget_bytes =
                 stores.provenance_budgets().detached_artifact_recipe_bytes;
-            let (form, source_resolver) = {
+            let (form, source_resolver, post_apply_facts) = {
                 let mut context =
                     stores
                         .command_context()
@@ -7217,7 +7199,9 @@ impl<G> MainControl<G> {
                     .ok_or(ExecError::PdfXFormVoidBox)?;
                 let source_resolver =
                     DetachedArtifactSourceResolver::capture_page_list(form_page, &context);
-                (form, source_resolver)
+                let post_apply_facts =
+                    PostApplyFacts::capture(parking, self.modes.current_mode(), &context);
+                (form, source_resolver, post_apply_facts)
             };
             let mut geometry = DetachedShipoutGeometry::default();
             publish_immediate_pdf_form(
@@ -7235,7 +7219,7 @@ impl<G> MainControl<G> {
                     geometry,
                 );
             }
-            (Ok(ReplayStep::Continue), Vec::new())
+            (Ok(ReplayStep::Continue), Vec::new(), post_apply_facts)
         } else {
             let result = apply_cold_operation(
                 operation,
@@ -7266,8 +7250,10 @@ impl<G> MainControl<G> {
                 command.state,
                 command.state.profile(),
             );
+            let post_apply_facts =
+                PostApplyFacts::capture(parking, self.modes.current_mode(), &context);
             drop(context);
-            (result, named_token_list_pushes)
+            (result, named_token_list_pushes, post_apply_facts)
         };
         frame.clear_cold(cold);
         if result.is_ok()
@@ -7316,6 +7302,7 @@ impl<G> MainControl<G> {
                 command.diagnostic_effects,
                 &context,
             )?;
+            post_apply_facts.page_output = PendingPageOutputFacts::capture(&stores);
         }
         if result.is_ok() {
             if !command.immediate_prints.is_empty() {
@@ -7446,11 +7433,17 @@ impl<G> MainControl<G> {
         {
             result = Ok(self.handle_root_end_of_input(stores));
         }
-        if result.is_ok() {
-            self.resume_main_control_parking(parking, stores);
+        if result.is_ok()
+            && let Some(main_loop_active) = post_apply_facts.main_loop_active
+        {
+            self.main_loop_active = main_loop_active;
         }
         if result.is_ok() {
-            self.fire_pending_page_output(stores, diagnostic_effects)?;
+            self.fire_pending_page_output(
+                stores,
+                diagnostic_effects,
+                post_apply_facts.page_output,
+            )?;
         }
         let extra_tab_recovery = result
             .as_ref()
@@ -8402,6 +8395,75 @@ struct MainControlParking {
     /// resumption of a `get_next` that is still in progress. Such a step
     /// leaves parking exactly as it found it.
     resumes_interrupted_fetch: bool,
+}
+
+impl MainControlParking {
+    /// Reduces TeX82 §1030's post-apply parking decision to the one scalar the
+    /// main-control loop consumes after command admission closes.
+    ///
+    /// §1034's `main_loop` is reached only from `hmode`, so the mode tested is
+    /// the one the step left behind: §1090's `vmode+letter` opens a paragraph
+    /// first and arrives in horizontal mode, while `mmode+letter` (§1154)
+    /// appends a math char and never enters the loop at all.
+    ///
+    /// A character the current font does not contain never reaches lookahead:
+    /// §1036's `main_loop_move+2` issues `char_warning`, frees the would-be
+    /// node, and jumps to `big_switch`. With `\nullfont` selected -- §552
+    /// gives it `font_bc=1`, `font_ec=0` -- that is every character.
+    fn post_apply<G>(self, mode: Mode, context: &CommandContext<'_, G>) -> Option<bool> {
+        if self.resumes_interrupted_fetch {
+            return None;
+        }
+        Some(self.character.is_some_and(|character| {
+            matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+                && u8::try_from(u32::from(character)).ok().is_some_and(|code| {
+                    context
+                        .font_char_metrics(context.current_font(), code)
+                        .is_some()
+                })
+        }))
+    }
+}
+
+/// Copy-small page-output state captured while the operation's authoritative
+/// command context is already admitted.
+#[derive(Clone, Copy, Default)]
+struct PendingPageOutputFacts {
+    fire_up: Option<PageFireUp>,
+    resume_after_output: bool,
+}
+
+impl PendingPageOutputFacts {
+    fn capture<G>(context: &CommandContext<'_, G>) -> Self {
+        Self {
+            fire_up: context.page_fire_up(),
+            resume_after_output: context.page_builder_resume_after_output_pending(),
+        }
+    }
+
+    fn is_pending(self) -> bool {
+        self.fire_up.is_some() || self.resume_after_output
+    }
+}
+
+/// The complete copy-small settlement of one callback-scoped semantic apply.
+#[derive(Clone, Copy)]
+struct PostApplyFacts {
+    main_loop_active: Option<bool>,
+    page_output: PendingPageOutputFacts,
+}
+
+impl PostApplyFacts {
+    fn capture<G>(
+        parking: MainControlParking,
+        mode: Mode,
+        context: &CommandContext<'_, G>,
+    ) -> Self {
+        Self {
+            main_loop_active: parking.post_apply(mode, context),
+            page_output: PendingPageOutputFacts::capture(context),
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
