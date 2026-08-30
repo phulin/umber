@@ -1415,11 +1415,11 @@ impl<G> MixedPackedCursorBenchmark<G> {
             .begin_macro_match()
             .expect("mixed-cursor macro frame");
         let mut buffer = scratch
-            .begin_match_buffer(&matching)
+            .begin_match_writer(&matching)
             .expect("mixed-cursor argument buffer");
         for word in traced {
             scratch
-                .push_match_word(
+                .write_match_word(
                     &mut buffer,
                     word,
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),
@@ -1427,7 +1427,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
                 .expect("mixed-cursor argument word");
         }
         scratch
-            .finish_match_buffer(buffer)
+            .finish_match_writer(buffer)
             .expect("mixed-cursor argument range");
         let frame = scratch
             .commit_macro_match(matching)
@@ -1550,7 +1550,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
             .begin_macro_match()
             .expect("long-argument macro frame");
         let mut buffer = scratch
-            .begin_match_buffer(&matching)
+            .begin_match_writer(&matching)
             .expect("long-argument buffer");
         for index in 0..WORDS {
             let semantic = TokenWord::pack(Token::Char {
@@ -1558,7 +1558,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 cat: crate::Catcode::Letter,
             });
             scratch
-                .push_match_word(
+                .write_match_word(
                     &mut buffer,
                     TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),
@@ -1566,7 +1566,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 .expect("long-argument word");
         }
         scratch
-            .finish_match_buffer(buffer)
+            .finish_match_writer(buffer)
             .expect("long-argument range");
         let frame = scratch
             .commit_macro_match(matching)

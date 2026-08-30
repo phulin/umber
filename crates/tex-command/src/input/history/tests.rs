@@ -136,17 +136,17 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         let mut context = universe.command_context().expect("command context");
         let mut scratch = crate::execution_scratch::ExecutionScratch::default();
         let matching = scratch.begin_macro_match().expect("macro match");
-        let mut buffer = scratch.begin_match_buffer(&matching).expect("match buffer");
+        let mut buffer = scratch.begin_match_writer(&matching).expect("match writer");
         for spelling in [word('a'), word('b')] {
             scratch
-                .push_match_word(
+                .write_match_word(
                     &mut buffer,
                     spelling,
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),
                 )
                 .expect("argument word");
         }
-        scratch.finish_match_buffer(buffer).expect("argument range");
+        scratch.finish_match_writer(buffer).expect("argument range");
         let macro_frame = scratch
             .commit_macro_match(matching)
             .expect("sealed macro frame");

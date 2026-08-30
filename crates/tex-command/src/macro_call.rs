@@ -8,7 +8,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePri
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::execution_scratch::{
-    MacroArgumentTokenFacts, MacroFrameId, MacroMatch, MacroMatchBuffer, MacroWords,
+    MacroArgumentTokenFacts, MacroFrameId, MacroMatch, MacroMatchWriter, MacroWords,
 };
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
@@ -484,7 +484,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
             self.command
                 .scratch
-                .finish_match_buffer(argument)
+                .finish_match_writer(argument)
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(())
@@ -553,7 +553,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         matching: &MacroMatch<G>,
         marker: char,
         parameter: usize,
-        argument: &MacroMatchBuffer<G>,
+        argument: &MacroMatchWriter<G>,
     ) -> Result<(), CommandError> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return Ok(());
@@ -679,7 +679,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn recover_extra_right_brace_argument(
         &mut self,
         command: crate::CurrentCommand<G>,
-    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+    ) -> Result<MacroMatchWriter<G>, CommandError> {
         self.back_input(command)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
@@ -704,7 +704,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         matching: &MacroMatch<G>,
         flags: MeaningFlags,
         paragraph_token: Option<Token>,
-    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+    ) -> Result<MacroMatchWriter<G>, CommandError> {
         let mut delivered = None;
         let first = loop {
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
@@ -817,7 +817,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         flags: MeaningFlags,
         delimiter: &MacroDelimiter<G>,
         paragraph_token: Option<Token>,
-    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+    ) -> Result<MacroMatchWriter<G>, CommandError> {
         debug_assert_ne!(delimiter.len, 0);
         let mut tokens = self.allocate_argument_buffer(matching)?;
         self.command.scratch.clear_delimiter_prefix();
@@ -992,7 +992,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &crate::CurrentCommand<G>,
         flags: MeaningFlags,
         facts: MacroArgumentTokenFacts,
-        partial: Option<(&MacroMatch<G>, &MacroMatchBuffer<G>)>,
+        partial: Option<(&MacroMatch<G>, &MacroMatchWriter<G>)>,
     ) -> Result<(), CommandError> {
         if self.eof_recovered_while_matching && is_paragraph_command(command) {
             // TeX82 §23 calls `check_outer_validity` after source EOF and
@@ -1034,17 +1034,17 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn allocate_argument_buffer(
         &mut self,
         matching: &MacroMatch<G>,
-    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+    ) -> Result<MacroMatchWriter<G>, CommandError> {
         self.command
             .scratch
-            .begin_match_buffer(matching)
+            .begin_match_writer(matching)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn argument_buffer(
         &self,
         _matching: &MacroMatch<G>,
-        buffer: &MacroMatchBuffer<G>,
+        buffer: &MacroMatchWriter<G>,
     ) -> Result<MacroWords<'_, G>, CommandError> {
         self.command
             .scratch
@@ -1055,21 +1055,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn push_argument_token(
         &mut self,
         _matching: &MacroMatch<G>,
-        buffer: &mut MacroMatchBuffer<G>,
+        buffer: &mut MacroMatchWriter<G>,
         token: TracedTokenWord,
         facts: MacroArgumentTokenFacts,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_match_word(buffer, token, facts)
+            .write_match_word(buffer, token, facts)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn strip_argument_outer_group(
         &mut self,
         _matching: &MacroMatch<G>,
-        buffer: MacroMatchBuffer<G>,
-    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+        mut buffer: MacroMatchWriter<G>,
+    ) -> Result<MacroMatchWriter<G>, CommandError> {
         if self
             .command
             .scratch
@@ -1079,7 +1079,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.command
                 .scratch
-                .strip_match_outer_group(&buffer)
+                .strip_match_outer_group(&mut buffer)
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(buffer)
@@ -1088,7 +1088,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn push_delimited_argument_token(
         &mut self,
         matching: &MacroMatch<G>,
-        buffer: &mut MacroMatchBuffer<G>,
+        buffer: &mut MacroMatchWriter<G>,
         depth: &mut u32,
         token: TracedTokenWord,
         facts: MacroArgumentTokenFacts,
