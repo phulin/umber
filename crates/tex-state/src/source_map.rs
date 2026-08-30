@@ -139,6 +139,7 @@ pub struct GeneratedSource {
     bytes: Arc<[u8]>,
     hash: ContentHash,
     logical_path: Option<Arc<String>>,
+    editor_revision: bool,
 }
 
 impl GeneratedSource {
@@ -149,6 +150,7 @@ impl GeneratedSource {
             bytes,
             hash,
             logical_path: None,
+            editor_revision: false,
         }
     }
 
@@ -156,6 +158,15 @@ impl GeneratedSource {
     pub fn named(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
         let mut source = Self::new(bytes);
         source.logical_path = Some(Arc::new(logical_path.into()));
+        source
+    }
+
+    fn editor_revision(logical_path: Option<&str>, bytes: Arc<[u8]>) -> Self {
+        let mut source = logical_path.map_or_else(
+            || Self::new(Arc::clone(&bytes)),
+            |path| Self::named(path, Arc::clone(&bytes)),
+        );
+        source.editor_revision = true;
         source
     }
 
@@ -182,6 +193,10 @@ impl GeneratedSource {
     #[must_use]
     pub fn logical_path(&self) -> Option<&str> {
         self.logical_path.as_deref().map(String::as_str)
+    }
+
+    const fn contributes_reachable_state_identity(&self) -> bool {
+        !self.editor_revision
     }
 
     #[must_use]
@@ -228,6 +243,16 @@ impl SourceDescriptor {
     #[must_use]
     pub fn named_generated(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
         Self::Generated(GeneratedSource::named(logical_path, bytes))
+    }
+
+    /// Describes an editor root substituted by the aggregate incremental
+    /// revision-rebind operation. Its bytes and path remain available to
+    /// provenance, but the registration itself is revision metadata rather
+    /// than an additional future-semantic input.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn editor_revision(logical_path: Option<&str>, bytes: Arc<[u8]>) -> Self {
+        Self::Generated(GeneratedSource::editor_revision(logical_path, bytes))
     }
 
     #[must_use]
@@ -528,7 +553,7 @@ impl SourceMap {
         let semantic_registration = self
             .reachable_state_identity
             .as_ref()
-            .map(|_| source_descriptor_identity(&descriptor));
+            .and_then(|_| source_descriptor_identity(&descriptor));
 
         let byte_len = descriptor.byte_len();
         let owned_descriptor = descriptor.clone();
@@ -944,24 +969,33 @@ impl SourceMap {
     }
 }
 
-fn source_descriptor_identity(descriptor: &SourceDescriptor) -> u64 {
-    semantic_scalar_root(0x736f_7572_6365_5f64, |hasher| match descriptor {
-        SourceDescriptor::World { byte_len, .. } => {
-            hasher.tag(0);
-            hasher.u64(*byte_len);
+fn source_descriptor_identity(descriptor: &SourceDescriptor) -> Option<u64> {
+    match descriptor {
+        SourceDescriptor::Generated(source) if !source.contributes_reachable_state_identity() => {
+            return None;
         }
-        SourceDescriptor::Generated(source) => {
-            hasher.tag(1);
-            match source.logical_path() {
-                Some(path) => {
-                    hasher.bool(true);
-                    hasher.str(path);
-                }
-                None => {
-                    hasher.bool(false);
-                    hasher.bytes(&source.hash().bytes());
+        SourceDescriptor::World { .. } | SourceDescriptor::Generated(_) => {}
+    }
+    Some(semantic_scalar_root(
+        0x736f_7572_6365_5f64,
+        |hasher| match descriptor {
+            SourceDescriptor::World { byte_len, .. } => {
+                hasher.tag(0);
+                hasher.u64(*byte_len);
+            }
+            SourceDescriptor::Generated(source) => {
+                hasher.tag(1);
+                match source.logical_path() {
+                    Some(path) => {
+                        hasher.bool(true);
+                        hasher.str(path);
+                    }
+                    None => {
+                        hasher.bool(false);
+                        hasher.bytes(&source.hash().bytes());
+                    }
                 }
             }
-        }
-    })
+        },
+    ))
 }

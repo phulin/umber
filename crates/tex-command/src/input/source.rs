@@ -389,9 +389,9 @@ impl RegisteredSource {
                 MalformedUnicodeRange { start, end },
             ));
         }
-        let descriptor = Arc::new(self.name.as_ref().map_or_else(
-            || SourceDescriptor::generated(Arc::clone(&bytes)),
-            |name| SourceDescriptor::named_generated(name.to_string(), Arc::clone(&bytes)),
+        let descriptor = Arc::new(SourceDescriptor::editor_revision(
+            self.name.as_deref(),
+            Arc::clone(&bytes),
         ));
         Ok(Self {
             id,

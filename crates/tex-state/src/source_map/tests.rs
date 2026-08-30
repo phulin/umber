@@ -28,6 +28,35 @@ fn semantic_root_excludes_logical_position_layout() {
 }
 
 #[test]
+fn semantic_root_excludes_rebound_editor_revision_registration() {
+    let mut map = SourceMap::default();
+    assert!(map.enable_reachable_state_identity());
+    let empty = map.reachable_state_identity_root();
+    map.register(
+        SourceId::new(3),
+        SourceDescriptor::named_generated("main.tex", Arc::from(&b"old"[..])),
+    )
+    .expect("initial editor source registers");
+    let accepted = map.reachable_state_identity_root();
+    assert_ne!(
+        accepted, empty,
+        "ordinary named source registration remains semantic"
+    );
+    map.register(
+        SourceId::new(4),
+        SourceDescriptor::editor_revision(Some("main.tex"), Arc::from(&b"replacement"[..])),
+    )
+    .expect("rebound editor source registers");
+    assert_eq!(map.reachable_state_identity_root(), accepted);
+    assert_eq!(
+        map.registered_source(SourceId::new(4))
+            .expect("rebound source is addressable")
+            .byte_len(),
+        11
+    );
+}
+
+#[test]
 fn regions_reserve_distinct_anchor_positions_and_validate_spans() {
     let mut map = SourceMap::default();
     map.set_next_position_for_test(0);

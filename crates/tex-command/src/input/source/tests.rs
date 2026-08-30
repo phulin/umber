@@ -158,8 +158,8 @@ fn named_generated_descriptor_survives_editor_rebinding() {
         .expect("named generated source rebinds");
     assert_eq!(
         rebound.source_descriptor(),
-        tex_state::source_map::SourceDescriptor::named_generated(
-            "/job/main.tex",
+        tex_state::source_map::SourceDescriptor::editor_revision(
+            Some("/job/main.tex"),
             Arc::from(&b"second"[..]),
         )
     );
