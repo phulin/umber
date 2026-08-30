@@ -596,7 +596,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("PendingCollectorExpansion"));
     assert!(collector.contains("self.expand_into(&mut destination, true)"));
     assert!(collector.contains("command: destination.take()"));
-    assert!(collector.contains("self.append_direct_the_toks(*output, &mut expansion_operand)"));
+    assert!(collector.contains("self.append_direct_the_toks(collector, &mut expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"
@@ -605,8 +605,16 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         splice.contains("self.get_x_token_into(target)?"),
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
-    assert!(splice.contains("self.push_scan_toks_word(output, token)?"));
+    assert!(splice.contains("self.push_scan_toks_word(collector, word)?"));
     assert!(scanner.contains("arena.push_definition_replacement(definition, word.token_word())"));
+    for retired_route in ["ScanToksSinks", "ScanToksSink", "ScannedToksPart"] {
+        assert!(
+            !scanner.contains(retired_route),
+            "resident collector must not retain retired route {retired_route}"
+        );
+    }
+    assert!(scanner.contains("collector: ScanToksCollector"));
+    assert!(scanner.contains("collector: &mut ScanToksCollector"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"

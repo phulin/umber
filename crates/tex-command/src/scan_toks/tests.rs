@@ -491,6 +491,139 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
     });
 }
 
+#[cfg(feature = "profiling")]
+fn mixed_scan_workload(rounds: usize) -> Vec<Token> {
+    let mut input = Vec::with_capacity(rounds * 15);
+    for _ in 0..rounds {
+        input.extend([
+            token('{', Catcode::BeginGroup),
+            token('u', Catcode::Letter),
+            token('}', Catcode::EndGroup),
+            token('{', Catcode::BeginGroup),
+            token('e', Catcode::Letter),
+            token('}', Catcode::EndGroup),
+            token('#', Catcode::Parameter),
+            token('1', Catcode::Other),
+            token('{', Catcode::BeginGroup),
+            token('#', Catcode::Parameter),
+            token('1', Catcode::Other),
+            token('}', Catcode::EndGroup),
+            token('{', Catcode::BeginGroup),
+            token('w', Catcode::Letter),
+            token('}', Catcode::EndGroup),
+        ]);
+    }
+    input
+}
+
+#[cfg(feature = "profiling")]
+fn run_mixed_scan_workload<G>(
+    processor: &mut crate::CommandProcessor<'_, '_, G>,
+    owner: tex_state::interner::Symbol,
+    rounds: usize,
+) {
+    for _ in 0..rounds {
+        processor
+            .scan_toks(ScanToksMode::General { expanded: false })
+            .expect("unexpanded general scan");
+        processor
+            .scan_toks(ScanToksMode::General { expanded: true })
+            .expect("expanded general scan");
+        processor
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("definition scan");
+        processor
+            .scan_toks(ScanToksMode::GeneralFor {
+                expanded: false,
+                owner,
+            })
+            .expect("write-like owned scan");
+    }
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
+    for rounds in [1, 4096] {
+        crate::test_harness::with_universe(|universe| {
+            let owner = universe.intern("mixedscanowner").expect("owner").symbol();
+            let mut command = CommandState::default();
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+            crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
+            let warm_operation = command.begin_attempt_operation();
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                run_mixed_scan_workload(&mut processor, owner, rounds);
+            }
+            command
+                .rollback_attempt_operation(warm_operation)
+                .expect("warm scanner scratch rollback");
+
+            crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
+            let measured_operation = command.begin_attempt_operation();
+            command.profile_reset_scan_toks_path_counters();
+            let delivery_owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+            let scratch_owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
+            let delivery_before =
+                tex_state::measurement::hot_core_thread_allocation_measurement(delivery_owner);
+            let scratch_before =
+                tex_state::measurement::hot_core_thread_allocation_measurement(scratch_owner);
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                let _scope = tex_state::measurement::hot_core_allocation_scope(delivery_owner);
+                run_mixed_scan_workload(&mut processor, owner, rounds);
+            }
+            let delivery_after =
+                tex_state::measurement::hot_core_thread_allocation_measurement(delivery_owner);
+            let scratch_after =
+                tex_state::measurement::hot_core_thread_allocation_measurement(scratch_owner);
+            let counters = command.profile_scan_toks_path_counters();
+
+            assert_eq!(counters.0, 4 * rounds as u64, "collectors");
+            assert_eq!(counters.1, 5 * rounds as u64, "appends");
+            assert_eq!(counters.2, counters.1, "one fact update per append");
+            assert_eq!(counters.3, counters.0, "one monotonic phase transition");
+            assert_eq!(counters.4, 0, "duplicate phase dispatches");
+            assert_eq!(counters.5, 0, "fact rescans");
+            assert_eq!(counters.6, counters.0, "one final settlement");
+            assert_eq!(counters.7, 0, "whole token-list copies");
+            assert_eq!(counters.8, 0, "whole command copies");
+            assert_eq!(counters.9, 0, "whole frame copies");
+            assert_eq!(delivery_after.calls - delivery_before.calls, 0);
+            assert_eq!(
+                delivery_after.requested_bytes - delivery_before.requested_bytes,
+                0
+            );
+            assert_eq!(scratch_after.calls - scratch_before.calls, 0);
+            assert_eq!(
+                scratch_after.requested_bytes - scratch_before.requested_bytes,
+                0
+            );
+
+            command
+                .rollback_attempt_operation(measured_operation)
+                .expect("measured scanner scratch rollback");
+        });
+    }
+}
+
 #[test]
 fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
     crate::test_harness::with_universe(|universe| {

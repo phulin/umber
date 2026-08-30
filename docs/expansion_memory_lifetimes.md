@@ -459,17 +459,22 @@ resumption takes that exact row back and continues through the same mutable
 phase. There is no replacement-progress failure carrier or per-token phase
 reconstruction.
 
-The same scanner frame retains the deferred-diagnostic cursor established
-when its parameter and replacement sink routes opened. For a macro definition,
-both routes name the same `AttemptDefinitionId` builder rather than separate
-lists. Successful completion finds no episode-owned runaway report and returns
-without allocating, copying, or rendering diagnostic context. If EOF or
-outer-validity recovery did publish a report, completion borrows those existing
-sinks before their scope retires and walks each word once into the report's
-final selector-aware partial string, carrying the macro match character across
-the synthetic `->` separator. No diagnostic token vector, second token
-traversal, or success-path string exists; resource suspension retains only the
-sinks and cursor already owned by the scanner frame.
+The same scanner frame retains the one phase-tagged `ScanToksCollector` and
+the deferred-diagnostic cursor established when its destination was reserved.
+For a general list the collector advances its active writer from the parameter
+branch to the replacement branch. For a macro definition it advances the same
+`AttemptDefinitionId` from parameter validation to replacement writing rather
+than publishing two route values. Every accepted word is appended once to
+that active final or rollback-truncatable storage; sealing changes metadata and
+returns typed coordinates without a whole-list handoff copy. Successful
+completion finds no episode-owned runaway report and returns without
+allocating, copying, or rendering diagnostic context. If EOF or outer-validity
+recovery did publish a report, completion borrows the existing collector views
+before their scope retires and walks each word once into the report's final
+selector-aware partial string, carrying the macro match character across the
+synthetic `->` separator. No diagnostic token vector, second token traversal,
+or success-path string exists; resource suspension retains only the collector
+and cursor already owned by the scanner frame.
 
 ### Diagnostic-context publication coordinates
 

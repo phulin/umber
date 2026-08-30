@@ -2720,6 +2720,26 @@ It owns:
 - possible `#{` handling; and
 - expanded versus unexpanded collection.
 
+That ownership is concrete rather than a pair of phase-local sink handles.
+One non-`Copy` `ScanToksCollector` reserves the final attempt token branches
+or definition builder before the scanner scope opens. Its phase tag advances
+once from parameter text to replacement text, changes the one active writer
+in place, and advances once more when the resident storage is sealed. The
+opening scanner, parameter validation, replacement loop, direct expansion
+splices, `read_toks`, suspension frame, and publication all borrow or retain
+that same collector. They do not return a parameter part for redispatch or
+handoff a completed replacement list through an intermediate collection.
+
+Every accepted word enters that writer once. The append updates the lane's
+length and packed provenance at the same boundary; parameter and brace facts
+are updated by the consuming loop, not reconstructed from a second list walk.
+Direct `\the`, `\unexpanded`, and `\detokenize` splices stream their source or
+rendered characters into the active writer without a temporary token vector.
+Only committed observation output and recovered runaway diagnostics may
+traverse sealed words, and both remain outside the unobserved success path.
+Attempt rollback truncates the exact pre-collector mark and returns its chunks
+or definition builder for reuse.
+
 For the `#{` parameter-text case, TeX82 §476 stores the left brace in the
 parameter text, terminates that text with `end_match`, and appends the same
 left-brace token after the completed replacement body. The parameter character
@@ -2765,13 +2785,13 @@ typed child edge in place. Synchronous success and failure return only their
 small semantic result; only an immutable-resource suspension moves the row
 into the recyclable typed scanner lane, and resumption restores that exact row.
 
-The parameter and replacement sinks are also the only source for TeX82
+The collector's parameter and replacement storage is also the only source for TeX82
 §306's partial runaway display. A scanner episode records the deferred-
-diagnostic cursor at entry and retains it with those sinks across resource
+diagnostic cursor at entry and retains it with that collector across resource
 suspension. Completion first checks only that episode's diagnostic suffix. An
 ordinary successful scan returns without constructing, copying, or rendering
 diagnostic tokens; when EOF or outer-command recovery has actually published
-the matching runaway report, completion borrows the two scanner slices and
+the matching runaway report, completion borrows the two resident scanner views and
 streams them once, with the synthetic `->` separator, into the report's final
 selector-aware string before the attempt scope retires. There is no parallel
 diagnostic token buffer or success-path recovery fast path.

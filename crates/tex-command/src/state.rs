@@ -155,6 +155,10 @@ pub struct CommandState<G> {
     /// interception. Shipping builds contain neither the counters nor updates.
     #[cfg(test)]
     pub(crate) raw_delivery_path_counters: RawDeliveryPathCounters,
+    /// Assertion-bearing proof for the resident token-list collector. These
+    /// counters are operational test/profiling evidence, never semantic state.
+    #[cfg(test)]
+    pub(crate) scan_toks_path_counters: ScanToksPathCounters,
 }
 
 #[cfg(test)]
@@ -167,6 +171,21 @@ pub(crate) struct RawDeliveryPathCounters {
     pub(crate) resident_transitions: u64,
     pub(crate) intermediate_result_redispatches: u64,
     pub(crate) whole_input_frame_copies: u64,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ScanToksPathCounters {
+    pub(crate) collectors_started: u64,
+    pub(crate) collector_appends: u64,
+    pub(crate) fact_updates: u64,
+    pub(crate) phase_transitions: u64,
+    pub(crate) duplicate_phase_dispatches: u64,
+    pub(crate) fact_rescans: u64,
+    pub(crate) settlements: u64,
+    pub(crate) whole_token_list_copies: u64,
+    pub(crate) whole_command_copies: u64,
+    pub(crate) whole_frame_copies: u64,
 }
 
 /// Compact coordinate for TeX82's live §310 input display.
@@ -347,6 +366,8 @@ impl<G> Default for CommandState<G> {
             active_attempt_operation: None,
             #[cfg(test)]
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
+            #[cfg(test)]
+            scan_toks_path_counters: ScanToksPathCounters::default(),
         }
     }
 }
@@ -1153,6 +1174,36 @@ impl<G> CommandState<G> {
             counters.resident_transitions,
             counters.intermediate_result_redispatches,
             counters.whole_input_frame_copies,
+        )
+    }
+
+    /// Resets focused resident token-list collector counters.
+    #[doc(hidden)]
+    #[cfg(test)]
+    pub fn profile_reset_scan_toks_path_counters(&mut self) {
+        self.scan_toks_path_counters = ScanToksPathCounters::default();
+    }
+
+    /// Returns append/fact/phase/rescan/settlement and whole-value-copy facts
+    /// for focused token-list collector gates.
+    #[doc(hidden)]
+    #[cfg(test)]
+    #[must_use]
+    pub fn profile_scan_toks_path_counters(
+        &self,
+    ) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) {
+        let counters = self.scan_toks_path_counters;
+        (
+            counters.collectors_started,
+            counters.collector_appends,
+            counters.fact_updates,
+            counters.phase_transitions,
+            counters.duplicate_phase_dispatches,
+            counters.fact_rescans,
+            counters.settlements,
+            counters.whole_token_list_copies,
+            counters.whole_command_copies,
+            counters.whole_frame_copies,
         )
     }
 
