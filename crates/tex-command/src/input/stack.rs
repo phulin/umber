@@ -45,7 +45,11 @@ pub(crate) enum ResidentCommandTransition {
     InvalidCharacter,
     NeedLine(InputLevelId),
     SourceExhausted(InputLevelId),
-    TokenExhausted(InputLevelId),
+    TokenExhausted {
+        identity: InputLevelId,
+        resident_index: usize,
+    },
+    ReplayCompleted(crate::CommandReplayEpisode),
     Empty,
 }
 
@@ -118,7 +122,7 @@ pub(crate) struct FileWarningBoundary {
     pub(crate) condition_start: u32,
 }
 
-enum RetiredInputLevel<G> {
+pub(super) enum RetiredInputLevel<G> {
     Source {
         identity: InputLevelId,
         name_class: SourceNameClass,
@@ -405,6 +409,80 @@ impl<G> CommandState<G> {
 
     fn pop_retired_input_level(&mut self) -> Option<RetiredInputLevel<G>> {
         self.input.levels.pop_project(RetiredInputLevel::borrowed)
+    }
+
+    /// Retires an exhausted ordinary token or macro-argument row selected by
+    /// the resident delivery transition itself.
+    ///
+    /// `index` is the already-admitted top coordinate. Terminal token input
+    /// and the retained v-template boundary deliberately return `None` so the
+    /// processor's explicit cold handling remains authoritative.
+    pub(crate) fn retire_resident_ordinary_input(
+        &mut self,
+        index: usize,
+    ) -> Result<Option<InputRetirement>, InputRetirementError> {
+        let level = self.input.levels.resident_at(index);
+        let ordinary = match level {
+            InputLevel::MacroArgument(_) => true,
+            InputLevel::Tokens(cursor) => matches!(
+                cursor.retirement,
+                RetirementBehavior::Pop | RetirementBehavior::AwaitingVTemplateRetirement
+            ),
+            InputLevel::Source(_) => false,
+        };
+        if !ordinary {
+            return Ok(None);
+        }
+        if let InputLevel::Tokens(cursor) = level {
+            self.validate_macro_body_retirement(&cursor.behavior)?;
+        }
+        let RetiredInputLevel::Tokens {
+            identity,
+            behavior,
+            retirement,
+            reason,
+            replay,
+        } = self
+            .input
+            .levels
+            .pop_resident_project(index, |level| RetiredInputLevel::borrowed(level, None))
+        else {
+            unreachable!("resident ordinary retirement excludes source rows");
+        };
+        self.finish_macro_body_retirement(&behavior)
+            .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+        if let Some(replay) = replay {
+            self.input
+                .replay
+                .release(replay)
+                .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+        }
+        let action = match retirement {
+            RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
+            RetirementBehavior::AwaitingVTemplateRetirement => {
+                InputRetirementAction::VTemplatePopped
+            }
+            RetirementBehavior::StopAtEnd | RetirementBehavior::RetainExhaustedVTemplate => {
+                unreachable!("cold retirement returned before resident pop")
+            }
+        };
+        #[cfg(test)]
+        {
+            self.raw_delivery_path_counters
+                .resident_ordinary_retirements = self
+                .raw_delivery_path_counters
+                .resident_ordinary_retirements
+                .saturating_add(1);
+        }
+        Ok(Some(InputRetirement {
+            identity,
+            action,
+            reason,
+            name_class: None,
+            source: None,
+            file_warning_boundary: None,
+            closes_file_frame: false,
+        }))
     }
 
     /// TeX82 one-word nodes owned by live command input and argument buffers.

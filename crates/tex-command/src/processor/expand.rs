@@ -803,10 +803,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     *destination = Some(CurrentCommand::empty());
                 }
                 let raw_status = loop {
-                    if let Some(episode) = self.take_ready_replay_completion() {
-                        destination.take();
-                        break DeliveryStatus::ReplayCompleted(episode);
-                    }
                     let transition = self
                         .command
                         .advance_resident_command_into(
@@ -818,6 +814,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .expect("delivery machine owns its reusable command slot")
                                 .empty_for_raw_delivery(),
                             self.next_delivery_sequence,
+                            (&mut self.observer, &mut self.immediate_write_retirement),
                         )
                         .map_err(|()| CommandError::input_invariant());
                     let transition = match transition {
@@ -905,6 +902,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                             continue;
                         }
                         ResidentCommandTransition::SourceExhausted(identity) => {
+                            #[cfg(test)]
+                            {
+                                self.command
+                                    .raw_delivery_path_counters
+                                    .cold_source_retirements = self
+                                    .command
+                                    .raw_delivery_path_counters
+                                    .cold_source_retirements
+                                    .saturating_add(1);
+                            }
                             let exhausted = match self.finish_exhausted_source(identity) {
                                 Ok(status) => matches!(status, SourceExhaustionStatus::End),
                                 Err(failure) => return error.fail(failure),
@@ -922,7 +929,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                             }
                             continue;
                         }
-                        ResidentCommandTransition::TokenExhausted(identity) => {
+                        ResidentCommandTransition::TokenExhausted { identity, .. } => {
+                            #[cfg(test)]
+                            {
+                                self.command
+                                    .raw_delivery_path_counters
+                                    .exhaustion_status_relays = self
+                                    .command
+                                    .raw_delivery_path_counters
+                                    .exhaustion_status_relays
+                                    .saturating_add(1);
+                            }
                             let Some((index, active_source)) = self
                                 .command
                                 .input
@@ -989,6 +1006,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     ResidentCommandInterception::Ready
                                 }
                             }
+                        }
+                        ResidentCommandTransition::ReplayCompleted(episode) => {
+                            destination.take();
+                            break DeliveryStatus::ReplayCompleted(episode);
                         }
                     };
 

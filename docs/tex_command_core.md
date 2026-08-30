@@ -1802,7 +1802,13 @@ authoritative line remains singular and there is no parallel mutable
 character-index representation.
 
 Ordinary delivery selects and discriminates the semantic top once inside the
-authoritative `InputStack`. The source branch lends its row and checked slot
+authoritative `InputStack`. Exhausted ordinary token and macro-argument rows
+are popped from that already-selected resident coordinate, their macro/replay/
+alignment and observation effects settle there, and the same transition
+continues immediately from the new top. No exhaustion status, second top
+lookup, or repeated owner validation returns through the processor. Terminal
+token input and retained v-templates remain explicit cold token boundaries;
+source EOF remains the cold file-warning/framing boundary. The source branch lends its row and checked slot
 together, tokenizes into the caller's final command slot, and advances the
 row's compact position before ending that borrow. Stored-token and macro-
 argument branches project their resident packed word and meaning into that same
@@ -2312,7 +2318,9 @@ There is one semantic raw-command operation. In conceptual order it:
 
 Steps may restart without returning a command, exactly as TeX restarts after
 ignored characters, exhausted input, parameter insertion, and template
-insertion.
+insertion. Ordinary token and macro exhaustion is an internal resident restart
+rather than a processor-visible exhaustion status. Source EOF, terminal token
+input, and retained v-template completion are the explicit cold exceptions.
 
 For direct source, creation or lookup consumes the transient tokenizer name and
 returns an escaped control-sequence token that already contains its compact
@@ -2324,7 +2332,7 @@ tokens and resolve through their distinct active-character namespace before
 the same compact meaning lookup.
 
 The implemented destination-directed state machine owns source and
-token-cursor selection, exact retirement/restart, stored token/origin
+token-cursor selection, resident ordinary retirement/restart, stored token/origin
 reconstruction, `OutParameter` replay, one-delivery backed-up suppression,
 current-meaning resolution, and literal brace `align_state` accounting.
 `get_token` is routed through that same loop.

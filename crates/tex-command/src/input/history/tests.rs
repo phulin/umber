@@ -120,6 +120,7 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
                     true,
                     command.empty_for_raw_delivery(),
                     7,
+                    (&mut None, &mut None),
                 )
                 .expect("token delivery succeeds");
             assert!(matches!(
@@ -185,6 +186,7 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
                     true,
                     command.empty_for_raw_delivery(),
                     11,
+                    (&mut None, &mut None),
                 )
                 .expect("macro-argument delivery succeeds");
             assert!(matches!(

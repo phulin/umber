@@ -248,7 +248,10 @@ collector (see `src/conditionals.rs`).
   transition are the only mutable access. Source, token-list, and macro-
   argument cursors share its single top access, matching first-touch
   transition, direct final-command write, fuel/alignment/parameter settlement,
-  and diagnostic revision without a callback or returned delivery result. The
+  ordinary exhaustion pop, retirement observation/alignment/replay settlement,
+  and diagnostic revision without a callback or returned exhaustion result.
+  The resident transition continues immediately from the new top after an
+  ordinary token or macro-argument pop. The
   resident packed frame is read through only the required scalar fields and is
   never copied as a whole. No raw mutable top or mutable index survives.
   Focused gates prove exact coalescing and zero-allocation hot mutation. A resident source row
@@ -256,9 +259,10 @@ collector (see `src/conditionals.rs`).
   delivery borrows that slot by physical index without repeating the ABA
   generation check. Cold history, rollback, and detached coordinates continue
   to validate the complete slot key.
-- `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement and
-  the copy-small status vocabulary consumed inside the destination-directed
-  resident transition. EOF, recovery, parameter, and exhaustion results retain
+- `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
+  Ordinary exhausted token and macro-argument rows are projected and popped
+  from the already-selected resident coordinate; terminal token input,
+  retained v-templates, source EOF, recovery, and parameter results retain
   no command-slot borrow; an ordinary final result has already resolved
   meaning, applied one-delivery suppression, classified only required
   alignment work, and ended the resolved borrow. The files also own the singular
@@ -298,9 +302,9 @@ collector (see `src/conditionals.rs`).
   recovery, and alignment interception directly to their private semantic
   modules without introducing another command or input owner.
 - `src/processor/end_input.rs`: physical-line acquisition, source exhaustion,
-  `\everyeof`, replay-completion fencing, final cleanup, exact top retirement,
-  and stack conservation. It is the only processor-level input-retirement
-  choke point and returns only compact transition facts to `next.rs`.
+  `\everyeof`, final cleanup, terminal/v-template retirement, and explicit
+  §§325/390 stack conservation. It is the cold processor retirement boundary;
+  ordinary delivery retirement stays inside the resident input transition.
 - `src/processor/backup.rs`, `src/processor/recovery.rs`, and
   `src/processor/outer_recovery.rs`: exact command backup/replay insertion,
   executor-facing recovery operations, and scanner-status outer/runaway
@@ -401,8 +405,8 @@ collector (see `src/conditionals.rs`).
   `file_warning` -- "Warning: end of file when ... is incomplete" for every
   group and conditional still open at a source level's natural EOF, compared
   against the depth `state.rs`'s `record_source_open_depths` recorded when
-  that level opened. Called from `processor/end_input.rs`'s `retire_input_top`,
-  the one choke point every input-level retirement passes through. The
+  that level opened. Called from `processor/end_input.rs`'s cold
+  `retire_input_top` source branch. The
   source-only boundary probe checks the validated top row directly; ordinary
   token and macro retirement never searches the enclosing input stack. Prints
   through the ambient selector (`CommandContext::printer`), not

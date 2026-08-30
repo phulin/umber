@@ -684,6 +684,13 @@ impl<G> CurrentCommand<G> {
 }
 
 impl<'slot, G> EmptyCommand<'slot, G> {
+    /// Reborrows the same empty destination while resident input discards an
+    /// exhausted ordinary level and continues with the new top.
+    #[inline(always)]
+    pub(crate) fn reborrow(&mut self) -> EmptyCommand<'_, G> {
+        EmptyCommand(self.0)
+    }
+
     /// Writes and resolves one resident input word in the final caller-owned
     /// slot.
     ///

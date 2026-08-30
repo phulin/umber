@@ -663,17 +663,4 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         debug_assert!(self.immediate_write_retirement.is_none());
         self.immediate_write_retirement = Some(level);
     }
-
-    /// Returns whether the just-retired raw level is the §53 write-list level.
-    /// This deliberately consumes identity rather than consulting `ReplayTrace`:
-    /// trace/provenance explains an input frame but cannot select delivery
-    /// observation semantics.
-    pub(crate) fn take_immediate_write_retirement(&mut self, level: InputLevelId) -> bool {
-        if self.immediate_write_retirement == Some(level) {
-            self.immediate_write_retirement = None;
-            true
-        } else {
-            false
-        }
-    }
 }

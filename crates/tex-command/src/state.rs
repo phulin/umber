@@ -174,6 +174,13 @@ pub(crate) struct RawDeliveryPathCounters {
     pub(crate) resident_transitions: u64,
     pub(crate) intermediate_result_redispatches: u64,
     pub(crate) whole_input_frame_copies: u64,
+    pub(crate) resident_ordinary_retirements: u64,
+    pub(crate) exhaustion_status_relays: u64,
+    pub(crate) retirement_top_lookups: u64,
+    pub(crate) retirement_owner_validations: u64,
+    pub(crate) retirement_whole_token_copies: u64,
+    pub(crate) cold_source_retirements: u64,
+    pub(crate) conservation_retirements: u64,
 }
 
 #[cfg(test)]
@@ -1184,6 +1191,25 @@ impl<G> CommandState<G> {
             counters.resident_transitions,
             counters.intermediate_result_redispatches,
             counters.whole_input_frame_copies,
+        )
+    }
+
+    /// Returns structural resident-retirement facts in field order: ordinary
+    /// pops, status relays, repeated top lookups, repeated owner validations,
+    /// whole-token copies, cold source retirements, conservation retirements.
+    #[doc(hidden)]
+    #[cfg(test)]
+    #[must_use]
+    pub fn profile_resident_retirement_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+        let counters = self.raw_delivery_path_counters;
+        (
+            counters.resident_ordinary_retirements,
+            counters.exhaustion_status_relays,
+            counters.retirement_top_lookups,
+            counters.retirement_owner_validations,
+            counters.retirement_whole_token_copies,
+            counters.cold_source_retirements,
+            counters.conservation_retirements,
         )
     }
 

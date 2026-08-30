@@ -877,6 +877,29 @@ assigned-base archive, binaries, paired output, counter reports, and profiles
 are under `target/umber2-66p0.8.40.17/`; the coordinator retains ownership of
 the final authenticated 50M production profile.
 
+Issue `umber2-66p0.8.40.58` used the already-saved authenticated `.8.40.56`
+50M capture to isolate ordinary exhausted-input retirement. Its exact default
+path was `delivery_driver -> retire_input_top ->
+retire_exhausted_input_with_file_warning -> pop_project`, with stack
+conservation as another caller. `retire_input_top` accounted for 1.01% self and
+2.61% inclusive; the disjoint selected retirement owners accounted for 2.18%
+self, including 0.75 profile points directly below `delivery_driver`.
+
+The resident `CommandState::advance_resident_command_into` transition now
+pops ordinary exhausted token and macro-argument rows from its already-selected
+coordinate, settles macro/replay/alignment/observation effects, and continues
+from the new top. The optimized test binary retains separate symbols for the
+resident transition and cold `CommandProcessor::retire_input_top`; disassembly
+of the former contains direct calls only to its specialized
+`InputStack::pop_resident_project` and shared `settle_input_retirement` seams,
+not to `retire_input_top`, `retire_exhausted_input_with_file_warning`, or the
+general `InputStack::pop_project`. The focused one-versus-4,096 gate changes the old source-boundary
+probe count from `N` to zero and records four resident ordinary pops, zero
+exhaustion relays/top lookups/owner validations/whole-token copies, zero whole-
+frame or command copies, and zero warmed allocations. Its mixed source branch
+records one explicit cold EOF; a separate control records two explicit
+conservation retirements.
+
 ## Compact line-breaking routes
 
 Issue `umber2-7asg` followed the exact ffbdb9861 20M profile's 1.691B weighted

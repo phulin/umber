@@ -6,13 +6,11 @@ use tex_state::token::{Catcode, Token};
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
-    InputLevel, InputLevelId, InputRetirementAction, InputRetirementReason, PackedTokenSources,
-    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
-    TokenCursor,
+    InputLevel, InputLevelId, InputRetirementAction, PackedTokenSources, PackedTokenSpanHandle,
+    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor,
+    observed_retirement_reason,
 };
-use crate::observation::{
-    AlignmentRecord, CommandObservation, InputReason, InputRecord, InputTransition,
-};
+use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 
 use super::CommandProcessor;
 
@@ -415,9 +413,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.acquire_source_line_with_pending(true, true)?
             .ok_or_else(CommandError::input_invariant)
     }
-    pub(super) fn take_ready_replay_completion(&mut self) -> Option<crate::CommandReplayEpisode> {
-        self.command.take_ready_replay_completion()
-    }
     /// Retires the validated top input row and returns only the scalar phase
     /// the caller's existing delivery loop must advance to. The caller-owned
     /// command destination remains in place; retirement does not reconstruct
@@ -453,50 +448,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         if closes_file_frame {
             self.state.print_file_close();
         }
-        if !matches!(action, InputRetirementAction::VTemplateRetained) {
-            let reason = if self.take_immediate_write_retirement(identity) {
-                InputReason::Write
-            } else {
-                observed_retirement_reason(action, retirement.reason)
-            };
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: if matches!(action, InputRetirementAction::TerminalStop) {
-                    InputTransition::Stop
-                } else {
-                    InputTransition::Retire
-                },
-                reason,
-                source_name: retirement.name_class,
-                source: retirement.source,
-                level: identity.0,
-                position: 0,
-            }));
-        }
-        // The pinned observer names a retiring alignment template from the
-        // token list the level holds, exactly as tex.web's `end_token_list`
-        // distinguishes `start=omit_template` from a column's ⟨v_j⟩ part.
-        // A retained v-template has not left the stack yet, so it is not
-        // named here.
-        if let Some(transition) = match retirement.reason {
-            _ if matches!(action, InputRetirementAction::VTemplateRetained) => None,
-            InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
-            InputRetirementReason::AlignmentVTemplate => Some("v_template_retire"),
-            InputRetirementReason::AlignmentOmitTemplate => Some("omit_template_retire"),
-            _ => None,
-        } {
-            self.observe(CommandObservation::Alignment(AlignmentRecord {
-                transition,
-                alignment: self
-                    .command
-                    .alignment
-                    .active_alignment
-                    .map(|alignment| alignment.raw()),
-                nesting: self.command.alignment_observation_nesting(),
-                align_state: self.command.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            }));
-        }
+        let completed = self.command.settle_input_retirement(
+            retirement,
+            &mut self.observer,
+            &mut self.immediate_write_retirement,
+        );
         match action {
             // §360's `\read` line end is `cur_cmd:=cur_chr:=0; return`: the
             // level is gone and delivery stops, rather than resuming whatever
@@ -515,26 +471,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::VTemplatePopped => {
-                let previous_align_state = self.command.alignment.align_state;
-                self.command.record_alignment_phase();
-                if self.command.alignment.finish_u_template(identity) {
-                    observe!(
-                        self,
-                        CommandObservation::Alignment(AlignmentRecord {
-                            transition: "state_change",
-                            alignment: self
-                                .command
-                                .alignment
-                                .active_alignment
-                                .map(|alignment| alignment.raw()),
-                            nesting: self.command.alignment_observation_nesting(),
-                            align_state: self.command.alignment.align_state,
-                            delimiter: None,
-                            previous_align_state: Some(previous_align_state),
-                        }),
-                    );
-                }
-                if self.command.complete_replay(identity).is_some() {
+                if completed {
                     Ok(RetirementHandoff::Completed)
                 } else {
                     Ok(RetirementHandoff::Continue)
@@ -590,6 +527,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             let Some(identity) = depleted else {
                 return Ok(());
             };
+            #[cfg(test)]
+            {
+                self.command
+                    .raw_delivery_path_counters
+                    .conservation_retirements = self
+                    .command
+                    .raw_delivery_path_counters
+                    .conservation_retirements
+                    .saturating_add(1);
+            }
             let retirement = self.retire_input_top(identity)?;
             match retirement {
                 // Finished stored replay episodes queue their completion in
@@ -602,32 +549,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
-    }
-}
-
-fn observed_retirement_reason(
-    action: InputRetirementAction,
-    reason: InputRetirementReason,
-) -> InputReason {
-    match (action, reason) {
-        (
-            InputRetirementAction::SourcePopped
-            | InputRetirementAction::TerminalStop
-            | InputRetirementAction::ReadLineEnded,
-            _,
-        ) => InputReason::Source,
-        (_, InputRetirementReason::Backup) => InputReason::Backup,
-        (_, InputRetirementReason::Macro) => InputReason::Macro,
-        (_, InputRetirementReason::Parameter) => InputReason::Parameter,
-        (_, InputRetirementReason::AlignmentUTemplate) => InputReason::AlignmentUTemplate,
-        (
-            _,
-            InputRetirementReason::AlignmentVTemplate
-            | InputRetirementReason::AlignmentOmitTemplate,
-        ) => InputReason::AlignmentVTemplate,
-        (_, InputRetirementReason::Recovery) => InputReason::Recovery,
-        (_, InputRetirementReason::TokenList(stored)) => stored_input_reason(stored),
-        (_, InputRetirementReason::Source) => InputReason::Source,
     }
 }
 

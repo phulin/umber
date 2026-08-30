@@ -364,6 +364,9 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     let module = fs::read_to_string(processor.join("mod.rs")).expect("read processor module");
     let next = fs::read_to_string(processor.join("next.rs")).expect("read raw delivery");
     let expansion = fs::read_to_string(processor.join("expand.rs")).expect("read fused delivery");
+    let input = test_support::repository_root().join("crates/tex-command/src/input");
+    let history = fs::read_to_string(input.join("history.rs")).expect("read resident input");
+    let stack = fs::read_to_string(input.join("stack.rs")).expect("read input retirement");
     let end_input =
         fs::read_to_string(processor.join("end_input.rs")).expect("read end-input handling");
     let alignment = fs::read_to_string(processor.join("alignment_interception.rs"))
@@ -401,6 +404,10 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(outer.contains("fn check_outer_validity_entry("));
     assert!(recovery.contains("fn recover_off_save("));
     assert!(expansion.contains("self.retire_input_top(identity)"));
+    assert!(stack.contains("fn retire_resident_ordinary_input("));
+    assert!(history.contains("self.settle_resident_ordinary_retirement("));
+    assert!(history.contains("destination.reborrow()"));
+    assert!(!history.contains("self.retire_input_top("));
     assert!(expansion.contains("self.check_outer_validity_entry(command)"));
 }
 

@@ -13,7 +13,7 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use history::{InputStack, InputStackMark};
+pub(crate) use history::{InputStack, InputStackMark, observed_retirement_reason};
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{

@@ -759,6 +759,13 @@ command rather than walking input ancestry after delivery. The stack exposes
 no raw mutable top or mutable index. Its allocation gate proves
 that 4,096 warmed lexer mutations perform zero allocations and one inverse at
 both one and 4,096 live source rows.
+When that resident selection finds an exhausted ordinary token or macro-
+argument row, it projects and pops the same coordinate, settles macro scratch,
+replay completion, alignment, and observation, then loops on the new top.
+Nothing returns an exhaustion status through the processor, and no second top
+lookup or owner validation occurs. Source EOF/file warning, terminal token and
+retained v-template behavior, and TeX82 §§325/390 backup/macro stack
+conservation remain explicit cold branches.
 While that source row is resident, it is the structural lifetime proof for its
 occupied physical source slot: row retirement is the only release path.
 Ordinary delivery uses that resident projection without repeating the slot's
@@ -805,8 +812,10 @@ create no returned command envelope.
 The physical processor split follows those same transitions without splitting
 ownership: `processor/expand.rs` owns one const-specialized raw/expanded
 fetch-and-inspect state machine, while `processor/next.rs` owns the public raw
-policy entries and resident-command observation; `end_input.rs` owns cold
-acquisition, exhaustion, and retirement;
+policy entries and resident-command observation; the `CommandState` resident
+transition owns ordinary token/macro retirement and immediate retry;
+`end_input.rs` owns cold source acquisition/EOF, terminal/v-template
+retirement, and explicit stack conservation;
 `outer_recovery.rs` owns scanner-status interception; `backup.rs` and
 `recovery.rs` own exact replay insertion and executor-facing recovery; and
 `alignment_interception.rs` owns the delimiter/v-template handoff. Every call

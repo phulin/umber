@@ -115,12 +115,12 @@ fn retirement_handoff_evidence(empty_levels: usize) -> RetirementHandoffEvidence
 }
 
 #[test]
-fn one_and_4096_retirements_reuse_one_command_slot_with_linear_scalar_work() {
+fn one_and_4096_resident_retirements_skip_source_checks_and_reuse_one_command_slot() {
     let one = retirement_handoff_evidence(1);
     let many = retirement_handoff_evidence(4_096);
 
-    assert_eq!(one.top_source_checks, 1);
-    assert_eq!(many.top_source_checks, 4_096);
+    assert_eq!(one.top_source_checks, 0);
+    assert_eq!(many.top_source_checks, 0);
     for evidence in [one, many] {
         assert_eq!(evidence.slot_initializations, 1);
         assert_eq!(evidence.resolved_writes, 1);
@@ -129,6 +129,43 @@ fn one_and_4096_retirements_reuse_one_command_slot_with_linear_scalar_work() {
         assert_eq!(evidence.expansion_moves_in, 0);
         assert_eq!(evidence.expansion_moves_out, 0);
     }
+}
+
+#[test]
+fn stack_conservation_remains_an_explicit_counted_retirement_branch() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        for _ in 0..2 {
+            command.push_token_level(
+                PackedTokenSpanHandle::transient([]),
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::Inserted,
+            );
+        }
+        command.profile_reset_raw_delivery_path_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        processor
+            .conserve_input_stack()
+            .expect("explicit conservation drains exhausted levels");
+
+        assert_eq!(processor.command.input_level_count(), 0);
+        assert_eq!(
+            processor.command.profile_resident_retirement_counters(),
+            (0, 0, 0, 0, 0, 0, 2)
+        );
+    });
 }
 
 #[test]
@@ -597,6 +634,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     struct Evidence {
         path: (u64, u64, u64, u64),
         transitions: (u64, u64, u64),
+        retirements: (u64, u64, u64, u64, u64, u64, u64),
         allocation_calls: u64,
         requested_bytes: u64,
         whole_frame_copies: u64,
@@ -624,7 +662,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let source = command
                 .register_source(crate::SourceRegistration::new(
                     crate::RegisteredSourceKind::Generated,
-                    std::sync::Arc::<[u8]>::from(vec![b'x'; operations + 1]),
+                    std::sync::Arc::<[u8]>::from(vec![b'x'; operations]),
                 ))
                 .expect("mixed delivery source registration");
             command
@@ -734,11 +772,34 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             }
             let allocations_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("normalized source terminator delivery"),
+                    DeliveryStatus::Command
+                );
+                destination.take().expect("normalized source terminator");
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("mixed source exhaustion"),
+                    DeliveryStatus::End
+                );
+            }
             let commands_after = crate::command::command_ownership_counters();
             let timeline_after = command.profile_timeline_counters();
             Evidence {
                 path: command.profile_raw_delivery_path_counters(),
                 transitions: command.profile_resident_delivery_transition_counters(),
+                retirements: command.profile_resident_retirement_counters(),
                 allocation_calls: allocations_after.calls - allocations_before.calls,
                 requested_bytes: allocations_after.requested_bytes
                     - allocations_before.requested_bytes,
@@ -753,8 +814,9 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(
         one,
         Evidence {
-            path: (1, 3, 1, 0),
-            transitions: (9, 0, 0),
+            path: (2, 3, 1, 0),
+            transitions: (11, 0, 0),
+            retirements: (4, 0, 0, 0, 0, 1, 0),
             allocation_calls: 0,
             requested_bytes: 0,
             whole_frame_copies: 0,
@@ -762,8 +824,9 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         }
     );
     let four_k = run(4_096);
-    assert_eq!(four_k.path, (4_096, 12_288, 4_096, 0));
-    assert_eq!(four_k.transitions, (20_484, 0, 0));
+    assert_eq!(four_k.path, (4_097, 12_288, 4_096, 0));
+    assert_eq!(four_k.transitions, (20_486, 0, 0));
+    assert_eq!(four_k.retirements, (4, 0, 0, 0, 0, 1, 0));
     assert_eq!(four_k.allocation_calls, 0);
     assert_eq!(four_k.requested_bytes, 0);
     assert_eq!(four_k.whole_frame_copies, 0);

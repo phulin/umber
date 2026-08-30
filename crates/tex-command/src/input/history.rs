@@ -7,6 +7,9 @@ use core::hash::{Hash, Hasher};
 use core::ops::{Deref, Index};
 use core::slice::SliceIndex;
 
+use crate::observation::{
+    AlignmentRecord, CommandObservation, CommandObserver, InputReason, InputRecord, InputTransition,
+};
 use crate::scalar_journal::{PackedJournal, PackedJournalMark};
 use crate::timeline::{PayloadHandle, PayloadSlab};
 
@@ -556,6 +559,52 @@ impl<G> crate::CommandState<G> {
         state: &mut tex_state::CommandContext<'_, G>,
         fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
+        mut destination: crate::command::EmptyCommand<'_, G>,
+        sequence: u64,
+        retirement_publication: (
+            &mut Option<&mut dyn CommandObserver>,
+            &mut Option<super::InputLevelId>,
+        ),
+    ) -> Result<super::ResidentCommandTransition, ()> {
+        let (observer, immediate_write_retirement) = retirement_publication;
+        loop {
+            if let Some(episode) = self.take_ready_replay_completion() {
+                return Ok(super::ResidentCommandTransition::ReplayCompleted(episode));
+            }
+            let transition = self.advance_resident_top_into(
+                state,
+                fuel,
+                create_control_sequences,
+                destination.reborrow(),
+                sequence,
+            )?;
+            let super::ResidentCommandTransition::TokenExhausted {
+                identity,
+                resident_index,
+            } = transition
+            else {
+                return Ok(transition);
+            };
+            let Some(retirement) = self
+                .retire_resident_ordinary_input(resident_index)
+                .map_err(|_| ())?
+            else {
+                // Terminal token input and retained v-templates are explicit
+                // cold boundaries and still carry their identity outward.
+                return Ok(super::ResidentCommandTransition::TokenExhausted {
+                    identity,
+                    resident_index,
+                });
+            };
+            self.settle_input_retirement(retirement, observer, immediate_write_retirement);
+        }
+    }
+
+    fn advance_resident_top_into(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        fuel: &mut crate::fuel::CommandFuel,
+        create_control_sequences: bool,
         destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
     ) -> Result<super::ResidentCommandTransition, ()> {
@@ -824,10 +873,131 @@ impl<G> crate::CommandState<G> {
                 Ok(super::ResidentCommandTransition::SourceExhausted(identity))
             }
             super::InputTopTransition::TokenExhausted(identity) => {
-                Ok(super::ResidentCommandTransition::TokenExhausted(identity))
+                Ok(super::ResidentCommandTransition::TokenExhausted {
+                    identity,
+                    resident_index: index,
+                })
             }
             super::InputTopTransition::Empty => Ok(super::ResidentCommandTransition::Empty),
         }
+    }
+
+    pub(crate) fn settle_input_retirement(
+        &mut self,
+        retirement: super::InputRetirement,
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
+    ) -> bool {
+        let identity = retirement.identity;
+        let reason = if *immediate_write_retirement == Some(identity) {
+            *immediate_write_retirement = None;
+            InputReason::Write
+        } else {
+            observed_retirement_reason(retirement.action, retirement.reason)
+        };
+        if !matches!(
+            retirement.action,
+            super::InputRetirementAction::VTemplateRetained
+        ) && let Some(sink) = observer.as_deref_mut()
+        {
+            sink.committed(CommandObservation::Input(InputRecord {
+                transition: if matches!(
+                    retirement.action,
+                    super::InputRetirementAction::TerminalStop
+                ) {
+                    InputTransition::Stop
+                } else {
+                    InputTransition::Retire
+                },
+                reason,
+                source_name: retirement.name_class,
+                source: retirement.source,
+                level: identity.0,
+                position: 0,
+            }));
+        }
+        if let Some(transition) = match retirement.reason {
+            _ if matches!(
+                retirement.action,
+                super::InputRetirementAction::VTemplateRetained
+            ) =>
+            {
+                None
+            }
+            super::InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
+            super::InputRetirementReason::AlignmentVTemplate => Some("v_template_retire"),
+            super::InputRetirementReason::AlignmentOmitTemplate => Some("omit_template_retire"),
+            _ => None,
+        } && let Some(sink) = observer.as_deref_mut()
+        {
+            sink.committed(CommandObservation::Alignment(AlignmentRecord {
+                transition,
+                alignment: self
+                    .roots
+                    .alignment
+                    .active_alignment
+                    .map(|alignment| alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
+                align_state: self.roots.alignment.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            }));
+        }
+        let popped = matches!(
+            retirement.action,
+            super::InputRetirementAction::SourcePopped
+                | super::InputRetirementAction::TokenListPopped
+                | super::InputRetirementAction::VTemplatePopped
+        );
+        if popped {
+            let previous_align_state = self.roots.alignment.align_state;
+            self.record_alignment_phase();
+            if self.roots.alignment.finish_u_template(identity)
+                && let Some(sink) = observer.as_deref_mut()
+            {
+                sink.committed(CommandObservation::Alignment(AlignmentRecord {
+                    transition: "state_change",
+                    alignment: self
+                        .roots
+                        .alignment
+                        .active_alignment
+                        .map(|alignment| alignment.raw()),
+                    nesting: self.alignment_observation_nesting(),
+                    align_state: self.roots.alignment.align_state,
+                    delimiter: None,
+                    previous_align_state: Some(previous_align_state),
+                }));
+            }
+        }
+        popped && self.complete_replay(identity).is_some()
+    }
+}
+
+pub(crate) fn observed_retirement_reason(
+    action: super::InputRetirementAction,
+    reason: super::InputRetirementReason,
+) -> InputReason {
+    match (action, reason) {
+        (
+            super::InputRetirementAction::SourcePopped
+            | super::InputRetirementAction::TerminalStop
+            | super::InputRetirementAction::ReadLineEnded,
+            _,
+        ) => InputReason::Source,
+        (_, super::InputRetirementReason::Backup) => InputReason::Backup,
+        (_, super::InputRetirementReason::Macro) => InputReason::Macro,
+        (_, super::InputRetirementReason::Parameter) => InputReason::Parameter,
+        (_, super::InputRetirementReason::AlignmentUTemplate) => InputReason::AlignmentUTemplate,
+        (
+            _,
+            super::InputRetirementReason::AlignmentVTemplate
+            | super::InputRetirementReason::AlignmentOmitTemplate,
+        ) => InputReason::AlignmentVTemplate,
+        (_, super::InputRetirementReason::Recovery) => InputReason::Recovery,
+        (_, super::InputRetirementReason::TokenList(stored)) => {
+            crate::processor::stored_input_reason(stored)
+        }
+        (_, super::InputRetirementReason::Source) => InputReason::Source,
     }
 }
 
@@ -981,6 +1151,35 @@ impl<G> InputStack<G> {
             self.source_owner_captured.pop();
         }
         Some(result)
+    }
+
+    /// Pops a non-source row already admitted as the resident semantic top.
+    ///
+    /// The caller carries `index` from the one top selection which found
+    /// exhaustion, so this performs neither another top lookup nor the
+    /// identity validation required by cold detached coordinates.
+    pub(super) fn pop_resident_project<R>(
+        &mut self,
+        index: usize,
+        project: impl FnOnce(&InputLevel<G>) -> R,
+    ) -> R {
+        debug_assert_eq!(index.checked_add(1), Some(self.top));
+        debug_assert!(!matches!(self.rows[index], InputLevel::Source(_)));
+        let result = project(&self.rows[index]);
+        self.note_context_mutation();
+        self.top = index;
+        if !self.recording {
+            self.rows.pop();
+            self.touched.pop();
+            self.partially_captured.pop();
+            self.source_owner_captured.pop();
+        }
+        result
+    }
+
+    pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {
+        debug_assert_eq!(index.checked_add(1), Some(self.top));
+        &self.rows[index]
     }
 
     /// Moves the first source-owner inverse in an interval into the same
