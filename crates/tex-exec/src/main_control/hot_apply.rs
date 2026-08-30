@@ -49,7 +49,7 @@ pub(super) enum HotDefinitionRoot<G> {
 impl<G> HotDefinitionRoot<G> {
     fn prepare(
         &mut self,
-        command: &tex_command::CommandState<G>,
+        command: &mut tex_command::CommandState<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), tex_command::AttemptError> {
         let Self::Attempt(attempt) = self else {
@@ -92,7 +92,7 @@ impl<G> HotOperation<G> {
 /// Promotes every declared hot-operation root before command-state admission.
 pub(super) fn prepare<G>(
     operation: &mut HotOperation<G>,
-    command: &tex_command::CommandState<G>,
+    command: &mut tex_command::CommandState<G>,
     stores: &mut Universe<G>,
 ) -> Result<(), tex_command::AttemptError> {
     if let HotOperation::MacroDefinition { definition, .. } = operation {

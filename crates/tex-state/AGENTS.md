@@ -42,15 +42,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
 - `src/definition_arena.rs`: Private generation-branded non-atomic shared
-  macro-definition owners, the checked destination-policy definition builder,
-  one explicit publication traversal into a contiguous immutable token
-  payload, and the exact publisher cursor which returns a rejected checkpoint
-  loan to its private suffix mark without retaining released bodies. Generic
-  promotion borrows an already-checked attempt builder through complete batch
-  preflight; success publishes it before the attempt owner recycles it, while
-  failure leaves it in place. Preflight must validate every preserved identity
-  policy before the first row is published and must never reconstruct a
-  destination-policy builder from parameter/replacement slices.
+  macro-definition owners and the checked destination-policy builder which
+  constructs their single allocation in place. Publication adds the serial,
+  accounting charge, and semantic owner without allocating or copying words;
+  successful attempt retirement releases scratch ownership, while the last
+  semantic owner releases both accounting and payload. The exact publisher
+  cursor returns a rejected checkpoint loan to its private suffix mark without
+  retaining released bodies. Generic promotion borrows an already-checked
+  attempt builder through complete batch preflight; failure leaves it in place.
+  Preflight must validate every preserved identity policy before the first row
+  is published and must never reconstruct a destination-policy builder from
+  parameter/replacement slices.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and

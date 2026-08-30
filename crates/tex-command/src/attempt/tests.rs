@@ -191,7 +191,7 @@ fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
 }
 
 #[test]
-fn generic_promotion_recycles_the_original_definition_builder() {
+fn generic_promotion_transfers_the_original_builder_allocation() {
     tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
         let definition = definition(&mut attempt, &[], &[word('x'); 32]);
@@ -210,26 +210,71 @@ fn generic_promotion_recycles_the_original_definition_builder() {
                 },
             )
             .expect("definition promotion");
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("admission")
-                .definition(promoted.definitions[0].clone())
-                .replacement_text()
-                .len(),
-            32
-        );
+        let context = universe.command_context().expect("admission");
+        let promoted_view = context.definition(promoted.definitions[0].clone());
+        assert_eq!(promoted_view.replacement_text().len(), 32);
+        assert_eq!(promoted_view.replacement_text().as_ptr(), storage);
         assert!(attempt.definition_builder(definition).is_err());
         let recycled = attempt
             .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
             .expect("recycled builder");
+        let recycled = attempt
+            .definition_builder(recycled)
+            .expect("recycled builder");
+        assert!(recycled.words().is_empty());
+        assert_eq!(recycled.capacity(), 0);
+    })
+    .expect("test fixture is valid");
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations() {
+    tex_state::with_universe(budget(), |universe| {
+        let mut attempt = AttemptArena::default();
+        let warm = definition(&mut attempt, &[], &[word('x')]);
+        attempt
+            .promote(
+                universe,
+                AttemptEscapeRoots {
+                    definitions: &[warm],
+                    ..AttemptEscapeRoots::default()
+                },
+            )
+            .expect("warm generic promotion");
+
+        let definition = definition(&mut attempt, &[], &[word('x')]);
+        let storage = attempt
+            .definition_builder(definition)
+            .expect("measured builder")
+            .words()
+            .as_ptr();
+        let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let promoted;
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            promoted = attempt
+                .promote(
+                    universe,
+                    AttemptEscapeRoots {
+                        definitions: &[definition],
+                        ..AttemptEscapeRoots::default()
+                    },
+                )
+                .expect("measured generic promotion");
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+
+        let context = universe.command_context().expect("definition context");
+        let promoted = context.definition(promoted.definitions[0].clone());
+        assert_eq!(promoted.replacement_text(), [word('x').token_word()]);
         assert_eq!(
-            attempt
-                .definition_builder(recycled)
-                .expect("recycled builder")
-                .words()
-                .as_ptr(),
-            storage
+            promoted.replacement_text().as_ptr(),
+            storage,
+            "generic promotion moves the builder words without copying them"
         );
     })
     .expect("test fixture is valid");

@@ -1389,7 +1389,6 @@ dependencies = [
  "tex-arith",
  "tex-content",
  "tex-fonts",
- "thin-dst",
  "umber-hot-core-allocator",
  "unicode-width",
 ]
@@ -1405,12 +1404,6 @@ dependencies = [
  "tex-state",
  "woff2-patched",
 ]
-
-[[package]]
-name = "thin-dst"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db3c46be180f1af9673ebb27bc1235396f61ef6965b3fe0dbb2e624deb604f0e"
 
 [[package]]
 name = "thiserror"

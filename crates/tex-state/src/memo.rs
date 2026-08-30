@@ -442,7 +442,10 @@ impl<G> Universe<G> {
             .map(|token| import_token(self, token))
             .collect::<Result<Vec<_>, _>>()?;
         let promotions = [TokenListPromotion { words: &words }];
-        Ok(self.promote_values(&[], &promotions, &[], &[])?.token_lists[0].clone())
+        Ok(self
+            .promote_values(&mut [], &promotions, &[], &[])?
+            .token_lists[0]
+            .clone())
     }
 
     pub fn import_memo_token_list(
@@ -464,7 +467,9 @@ impl<G> Universe<G> {
         &mut self,
         staged: StagedMemoGlue,
     ) -> Result<GlueId<G>, MemoValueError> {
-        Ok(self.promote_values(&[], &[], &[staged.value], &[])?.glue[0])
+        Ok(self
+            .promote_values(&mut [], &[], &[staged.value], &[])?
+            .glue[0])
     }
 
     pub fn import_memo_glue(
@@ -531,9 +536,9 @@ impl<G> Universe<G> {
                 .map_err(PromotionError::from)?;
         }
         builder.seal().map_err(PromotionError::from)?;
-        let definitions = [DefinitionPromotion::new(builder)];
+        let mut definitions = [DefinitionPromotion::new(builder)];
         let id = self
-            .promote_values(&definitions, &[], &[], &[])?
+            .promote_values(&mut definitions, &[], &[], &[])?
             .definitions[0]
             .clone();
         Ok(MeaningWord::macro_definition(flags, id))

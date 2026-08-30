@@ -4,6 +4,7 @@ use super::{
 };
 use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
+use std::rc::Rc;
 
 fn checked_builder(
     policy: DefinitionIdentityPolicy,
@@ -23,7 +24,7 @@ fn checked_builder(
 }
 
 #[test]
-fn definition_handle_is_one_thin_non_atomic_owner() {
+fn definition_handle_is_one_pointer_sized_non_atomic_owner() {
     assert_eq!(
         std::mem::size_of::<super::DefinitionId<()>>(),
         std::mem::size_of::<usize>()
@@ -89,6 +90,7 @@ fn equal_definitions_receive_distinct_ids() {
 #[test]
 fn definition_aliases_release_exactly_on_owner_drop() {
     with_generation(|mut generation| {
+        let baseline = generation.memory_accounting().words(false);
         let id = generation
             .definitions_mut()
             .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
@@ -101,6 +103,67 @@ fn definition_aliases_release_exactly_on_owner_drop() {
         assert_eq!(id.semantic_owner_count(), 2);
         drop(view);
         assert_eq!(id.semantic_owner_count(), 1);
+        drop(id);
+        assert_eq!(generation.memory_accounting().words(false), baseline);
+    });
+}
+
+#[test]
+fn one_way_builder_transfer_prevents_cross_generation_aliasing() {
+    let word = TokenWord::pack(Token::frozen_relax());
+    let mut builder = checked_builder(DefinitionIdentityPolicy::Disabled, &[], &[word]);
+    with_generation(|mut first_generation| {
+        let first_baseline = first_generation.memory_accounting().words(false);
+        let first = first_generation
+            .definitions_mut()
+            .publish(&mut builder)
+            .expect("first publication transfers the builder allocation");
+        assert_eq!(first.semantic_owner_count(), 1);
+        assert_ne!(
+            first_generation.memory_accounting().words(false),
+            first_baseline
+        );
+
+        with_generation(|mut second_generation| {
+            let second_baseline = second_generation.memory_accounting().words(false);
+            let second_cursor = second_generation.definitions().cursor();
+            assert_eq!(
+                second_generation.definitions_mut().publish(&mut builder),
+                Err(DefinitionAllocationError::InvalidDefinition),
+                "the transferred allocation cannot be republished in another generation"
+            );
+            assert_eq!(second_generation.definitions().cursor(), second_cursor);
+            assert_eq!(
+                second_generation.memory_accounting().words(false),
+                second_baseline
+            );
+
+            builder.reset(DefinitionIdentityPolicy::Disabled);
+            builder.finish_parameters().expect("empty parameter text");
+            builder.seal().expect("empty replacement text");
+            let second = second_generation
+                .definitions_mut()
+                .publish(&mut builder)
+                .expect("reset builder owns a new allocation for the second generation");
+            assert_eq!(second.semantic_owner_count(), 1);
+            assert!(
+                !Rc::ptr_eq(&first.data, &second.data),
+                "a reset builder must not retain the prior generation's allocation"
+            );
+            assert!(second.replacement_text().is_empty());
+            drop(second);
+            assert_eq!(
+                second_generation.memory_accounting().words(false),
+                second_baseline
+            );
+        });
+
+        assert_eq!(first.replacement_text(), [word]);
+        drop(first);
+        assert_eq!(
+            first_generation.memory_accounting().words(false),
+            first_baseline
+        );
     });
 }
 
@@ -150,14 +213,14 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
             parameters.push(TokenWord::pack(Token::param(slot)));
         }
         let replacement = [TokenWord::pack(Token::param(9))];
-        let builder = checked_builder(
+        let mut builder = checked_builder(
             DefinitionIdentityPolicy::Disabled,
             &parameters,
             &replacement,
         );
         let definition = generation
             .definitions_mut()
-            .publish(&builder)
+            .publish(&mut builder)
             .expect("publish checked program");
         let view = generation.definitions().get(definition);
         let reference = crate::macro_definition::MacroParameterPattern::from_words(&parameters)
@@ -241,7 +304,7 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
         .expect("replacement reference");
     builder.seal().expect("sealed row");
 
-    let reference = checked_builder(
+    let mut reference = checked_builder(
         DefinitionIdentityPolicy::Enabled,
         &[TokenWord::pack(Token::param(1))],
         &[TokenWord::pack(Token::param(1))],
@@ -250,11 +313,11 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
         assert!(generation.enable_semantic_identity());
         let after_failure = generation
             .definitions_mut()
-            .publish(&builder)
+            .publish(&mut builder)
             .expect("row after reserve failure");
         let reference = generation
             .definitions_mut()
-            .publish(&reference)
+            .publish(&mut reference)
             .expect("reference row");
         assert_eq!(
             after_failure.semantic_identity(),
@@ -279,7 +342,7 @@ fn destination_policy_mismatch_changes_no_serial_or_accounting() {
         let cursor = generation.definitions().cursor();
         let accounting = generation.memory_accounting().words(false);
         assert_eq!(
-            generation.definitions_mut().publish(&builder),
+            generation.definitions_mut().publish(&mut builder),
             Err(DefinitionAllocationError::IdentityPolicyMismatch)
         );
         assert_eq!(generation.definitions().cursor(), cursor);
@@ -308,7 +371,7 @@ fn v2_identity_is_shared_by_streaming_and_ordinary_paths_and_frames_boundaries()
         streamed.seal().expect("seal");
         let streamed = generation
             .definitions_mut()
-            .publish(&streamed)
+            .publish(&mut streamed)
             .expect("streamed publication");
         assert_eq!(ordinary.semantic_identity(), streamed.semantic_identity());
 

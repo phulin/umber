@@ -6751,7 +6751,7 @@ impl<G> MainControl<G> {
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let fires_afterassignment = operation.fires_afterassignment();
-        hot_apply::prepare(operation, &self.command, stores).map_err(|_| {
+        hot_apply::prepare(operation, &mut self.command, stores).map_err(|_| {
             ExecError::MissingToken {
                 context: "hot operation root preparation",
             }

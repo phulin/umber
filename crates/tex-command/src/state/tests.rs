@@ -365,6 +365,65 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
     });
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        for _ in 0..16_384 {
+            state
+                .attempt
+                .arena_mut()
+                .allocate_token_list([word('z')])
+                .expect("large unrelated attempt row");
+        }
+
+        for _ in 0..17 {
+            let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
+            state
+                .promote_attempt_definition(universe, definition)
+                .expect("warm definition promotion");
+        }
+        let definitions: [crate::AttemptDefinitionId; 8] =
+            std::array::from_fn(|_| attempt_definition(&mut state, &[word('#')], &[word('x')]));
+        let mut published: [Option<_>; 8] = std::array::from_fn(|_| None);
+        let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for (definition, destination) in definitions.into_iter().zip(&mut published) {
+                *destination = Some(
+                    state
+                        .promote_attempt_definition(universe, definition)
+                        .expect("measured distinct definition promotion"),
+                );
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        for (index, definition) in published.iter().enumerate() {
+            let definition = definition.as_ref().expect("measured publication");
+            assert_eq!(definition.replacement_text(), [word('x').token_word()]);
+            for other in &published[..index] {
+                assert_ne!(
+                    definition,
+                    other.as_ref().expect("earlier measured publication"),
+                    "each measured publication receives its own destination serial"
+                );
+            }
+        }
+
+        let final_definition = published[7].take().expect("last durable definition");
+        drop(published);
+        assert_eq!(
+            final_definition.replacement_text(),
+            [word('x').token_word()],
+            "dropping the other durable ids cannot release this definition"
+        );
+    });
+}
+
 #[test]
 fn foreign_attempt_root_rejection_is_mutation_free() {
     crate::test_harness::with_universe(|universe| {

@@ -42,6 +42,7 @@ use crate::source_map::{AcceptedSourceMapTail, SourceMap, SourceMapMark};
 use crate::stores::{AcceptedStateCoreTail, StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::{AcceptedWorldTail, World, WorldSnapshot};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 fn tex_memory_words(nodes: &[Node], etex_node_sizes: bool) -> (usize, usize) {
@@ -600,9 +601,10 @@ pub enum InteractionMode {
 /// One checked macro-definition builder moved through a promotion batch.
 ///
 /// The owner preserves the identity policy and incremental parameter-program
-/// state selected where collection began. Generic promotion may borrow the
-/// builder to publish its one immutable row, but cannot rebuild it from token
-/// slices under a different destination policy.
+/// state selected where collection began. Generic promotion validates the
+/// builder in place, then transfers its allocation into one immutable row; it
+/// cannot rebuild the row from token slices under a different destination
+/// policy.
 #[derive(Debug)]
 pub struct DefinitionPromotion {
     builder: crate::DefinitionBuilder,
@@ -616,6 +618,10 @@ impl DefinitionPromotion {
 
     pub(crate) const fn builder(&self) -> &crate::DefinitionBuilder {
         &self.builder
+    }
+
+    pub(crate) fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
+        &mut self.builder
     }
 
     #[must_use]
@@ -685,10 +691,10 @@ impl From<DurableAllocationError> for PromotionError {
 /// Destination coordinates published together after complete batch staging.
 #[derive(Debug)]
 pub struct PromotionReceipt<G> {
-    pub definitions: Vec<DefinitionId<G>>,
-    pub token_lists: Vec<TokenListId<G>>,
-    pub glue: Vec<GlueId<G>>,
-    pub provenance: Vec<ProvenanceId<G>>,
+    pub definitions: SmallVec<[DefinitionId<G>; 4]>,
+    pub token_lists: SmallVec<[TokenListId<G>; 4]>,
+    pub glue: SmallVec<[GlueId<G>; 4]>,
+    pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
 }
 
 /// Failure to promote an exact page-node closure into durable generation
@@ -1994,9 +2000,8 @@ impl<G> Universe<G> {
     /// accounting or publisher serial changes.
     pub fn promote_definition_builder(
         &mut self,
-        builder: &crate::DefinitionBuilder,
+        builder: &mut crate::DefinitionBuilder,
     ) -> Result<DefinitionId<G>, PromotionError> {
-        let word_len = builder.words().len();
         let id = self
             .core
             .as_mut()
@@ -2008,8 +2013,13 @@ impl<G> Universe<G> {
             })?
             .publish_definition_builder(builder)
             .map_err(PromotionError::from)?;
-        self.engine_usage
-            .observe_transient_memory(0, word_len.saturating_add(2));
+        self.engine_usage.observe_transient_memory(
+            0,
+            id.parameter_text()
+                .len()
+                .saturating_add(id.replacement_text().len())
+                .saturating_add(2),
+        );
         Ok(id)
     }
 
@@ -2085,7 +2095,7 @@ impl<G> Universe<G> {
     /// relocation.
     pub fn promote_values(
         &mut self,
-        definitions: &[DefinitionPromotion],
+        definitions: &mut [DefinitionPromotion],
         token_lists: &[TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],
@@ -2107,15 +2117,14 @@ impl<G> Universe<G> {
     /// Each iterator must be repeatable because complete validation and
     /// reservation precede publication. After reservation succeeds, the word
     /// streams are consumed directly by the final token-list publisher.
-    pub fn promote_value_streams<'source, Definitions, TokenLists, Words, Glue, Provenance>(
+    pub fn promote_value_streams<TokenLists, Words, Glue, Provenance>(
         &mut self,
-        definitions: Definitions,
+        definitions: &mut [crate::DefinitionBuilder],
         token_lists: TokenLists,
         glue_values: Glue,
         provenance: Provenance,
     ) -> Result<PromotionReceipt<G>, PromotionError>
     where
-        Definitions: Clone + Iterator<Item = &'source crate::DefinitionBuilder>,
         TokenLists: Clone + Iterator<Item = Words>,
         Words: ExactSizeIterator<Item = TokenWord>,
         Glue: Clone + Iterator<Item = GlueSpec>,

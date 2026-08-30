@@ -6,6 +6,7 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tex_state::glue::GlueSpec;
@@ -268,14 +269,14 @@ impl<'a, G> AttemptPromotionRoots<'a, G> {
 
 /// Durable coordinates produced by one atomic attempt-root promotion.
 ///
-/// Each vector follows the exact order of its corresponding request slice,
+/// Each sequence follows the exact order of its corresponding request slice,
 /// including repeated roots.
 #[derive(Debug)]
 pub struct AttemptPromotionReceipt<G> {
-    pub token_lists: Vec<TokenListId<G>>,
-    pub glue: Vec<GlueId<G>>,
-    pub definitions: Vec<DefinitionId<G>>,
-    pub provenance: Vec<ProvenanceId<G>>,
+    pub token_lists: SmallVec<[TokenListId<G>; 4]>,
+    pub glue: SmallVec<[GlueId<G>; 4]>,
+    pub definitions: SmallVec<[DefinitionId<G>; 4]>,
+    pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
 }
 
 /// Provenance beside one attempt token: either an already-admitted compact
@@ -1348,12 +1349,12 @@ impl<G> AttemptArena<G> {
 
     /// Publishes declared roots directly from their attempt-owned storage.
     ///
-    /// Complete source validation and destination reservation happen while the
-    /// attempt rows remain in place. Token words then stream once into their
-    /// final publisher, and successful definition publication recycles the
-    /// original builders. Failure leaves every attempt row untouched. Duplicate
-    /// declarations share the one published owner without an id relocation
-    /// table or a payload-bearing batch carrier.
+    /// Complete source validation precedes moving the declared definition
+    /// builders into one temporary owner batch. Destination preflight leaves
+    /// them unchanged on failure; successful publication transfers each
+    /// allocation exactly once and recycles the vacant builders. Duplicate
+    /// declarations share one published owner without an id relocation table
+    /// or a second payload representation.
     pub(crate) fn promote(
         &mut self,
         universe: &mut Universe<G>,
@@ -1380,16 +1381,22 @@ impl<G> AttemptArena<G> {
         self.recycled_definition_builders
             .try_reserve(definition_count)
             .map_err(|_| AttemptError::AllocationFailed)?;
-
-        let definitions = roots
-            .definitions
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| is_first_occurrence(roots.definitions, *index))
-            .map(|(_, id)| {
-                self.definition_builder(*id)
-                    .expect("the complete definition source set was validated")
-            });
+        let mut definitions = SmallVec::<[DefinitionBuilder; 4]>::new();
+        definitions
+            .try_reserve_exact(definition_count)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        for (index, &id) in roots.definitions.iter().enumerate() {
+            if !is_first_occurrence(roots.definitions, index) {
+                continue;
+            }
+            definitions.push(
+                self.definitions
+                    .get_mut(id.index())
+                    .filter(|row| row.serial == id.serial)
+                    .and_then(|row| row.value.builder.take())
+                    .expect("the complete definition source set was validated"),
+            );
+        }
         let token_lists = roots
             .token_lists
             .iter()
@@ -1419,22 +1426,31 @@ impl<G> AttemptArena<G> {
                 self.provenance(*id)
                     .expect("the complete provenance source set was validated")
             });
-        let receipt = universe
-            .promote_value_streams(definitions, token_lists, glue_values, provenance)
-            .map_err(AttemptError::from)?;
-
-        for (index, &id) in roots.definitions.iter().enumerate() {
-            if !is_first_occurrence(roots.definitions, index) {
-                continue;
+        let receipt = match universe.promote_value_streams(
+            &mut definitions,
+            token_lists,
+            glue_values,
+            provenance,
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let mut definitions = definitions.into_iter();
+                for (index, &id) in roots.definitions.iter().enumerate() {
+                    if !is_first_occurrence(roots.definitions, index) {
+                        continue;
+                    }
+                    self.definitions
+                        .get_mut(id.index())
+                        .filter(|row| row.serial == id.serial)
+                        .expect("validated attempt definition row remains live")
+                        .value
+                        .builder = definitions.next();
+                }
+                return Err(AttemptError::from(error));
             }
-            let builder = self
-                .definitions
-                .get_mut(id.index())
-                .filter(|row| row.serial == id.serial)
-                .and_then(|row| row.value.builder.take())
-                .expect("successful publication retains the original attempt builder");
-            self.recycled_definition_builders.push(builder);
-        }
+        };
+
+        self.recycled_definition_builders.extend(definitions);
 
         Ok(AttemptPromotion {
             token_lists: roots
@@ -1475,16 +1491,16 @@ impl<G> AttemptArena<G> {
     /// Promotes one macro definition without arena-sized relocation tables,
     /// temporary semantic-word vectors, or a heap-allocated receipt.
     pub(crate) fn promote_definition(
-        &self,
+        &mut self,
         universe: &mut Universe<G>,
         id: AttemptDefinitionId,
     ) -> Result<DefinitionId<G>, AttemptError> {
         self.validate_key(id.key)?;
         let definition = self
             .definitions
-            .get(id.index())
+            .get_mut(id.index())
             .filter(|row| row.serial == id.serial)
-            .and_then(|row| row.value.builder.as_ref())
+            .and_then(|row| row.value.builder.as_mut())
             .ok_or(AttemptError::InvalidCoordinate)?;
         universe
             .promote_definition_builder(definition)
@@ -1532,10 +1548,10 @@ fn unique_index<T: PartialEq>(values: &[T], value: &T) -> usize {
 /// Durable coordinates returned in the caller's declared root order.
 #[derive(Debug)]
 pub(crate) struct AttemptPromotion<G> {
-    pub(crate) token_lists: Vec<TokenListId<G>>,
-    pub(crate) glue: Vec<GlueId<G>>,
-    pub(crate) definitions: Vec<DefinitionId<G>>,
-    pub(crate) provenance: Vec<ProvenanceId<G>>,
+    pub(crate) token_lists: SmallVec<[TokenListId<G>; 4]>,
+    pub(crate) glue: SmallVec<[GlueId<G>; 4]>,
+    pub(crate) definitions: SmallVec<[DefinitionId<G>; 4]>,
+    pub(crate) provenance: SmallVec<[ProvenanceId<G>; 4]>,
 }
 
 /// Opaque owner transferred between consecutive command operations.

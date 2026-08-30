@@ -769,11 +769,11 @@ impl<G> CommandState<G> {
     /// Promotes one declared macro-definition root and its schema-owned text
     /// into the current generation's definition arena.
     pub fn promote_attempt_definition(
-        &self,
+        &mut self,
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptDefinitionId,
     ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
-        self.attempt.arena().promote_definition(universe, id)
+        self.attempt.arena_mut().promote_definition(universe, id)
     }
 
     /// Returns the number of live TeX input levels retained by this command state.

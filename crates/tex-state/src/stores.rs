@@ -13,11 +13,37 @@ use crate::generation::{
 use crate::glue::GlueSpec;
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
+use smallvec::SmallVec;
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(test)]
 #[path = "stores/tests.rs"]
 mod tests;
+
+trait DefinitionBatchItem {
+    fn builder(&self) -> &crate::DefinitionBuilder;
+    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder;
+}
+
+impl DefinitionBatchItem for crate::DefinitionBuilder {
+    fn builder(&self) -> &crate::DefinitionBuilder {
+        self
+    }
+
+    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
+        self
+    }
+}
+
+impl DefinitionBatchItem for crate::universe::DefinitionPromotion {
+    fn builder(&self) -> &crate::DefinitionBuilder {
+        self.builder()
+    }
+
+    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
+        self.builder_mut()
+    }
+}
 
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
@@ -331,7 +357,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     pub(crate) fn publish_definition_builder(
         &mut self,
-        builder: &crate::DefinitionBuilder,
+        builder: &mut crate::DefinitionBuilder,
     ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
         self.generation.definitions_mut().publish(builder)
     }
@@ -395,13 +421,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// prevents any consumer from observing partial destination state.
     pub(crate) fn promote_values(
         &mut self,
-        definitions: &[crate::universe::DefinitionPromotion],
+        definitions: &mut [crate::universe::DefinitionPromotion],
         token_lists: &[crate::universe::TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError> {
-        self.promote_value_streams(
-            definitions.iter().map(|definition| definition.builder()),
+        self.promote_value_streams_from(
+            definitions,
             token_lists.iter().map(|list| list.words.iter().copied()),
             glue_values.iter().copied(),
             provenance.iter().copied(),
@@ -414,39 +440,55 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// Once all capacity is reserved, publication streams directly into the
     /// destination publishers and cannot fail. No batch-local payload owner is
     /// constructed merely to cross this boundary.
-    pub(crate) fn promote_value_streams<'source, Definitions, TokenLists, Words, Glue, Provenance>(
+    pub(crate) fn promote_value_streams<TokenLists, Words, Glue, Provenance>(
         &mut self,
-        definitions: Definitions,
+        definitions: &mut [crate::DefinitionBuilder],
         token_lists: TokenLists,
         glue_values: Glue,
         provenance: Provenance,
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError>
     where
-        Definitions: Clone + Iterator<Item = &'source crate::DefinitionBuilder>,
         TokenLists: Clone + Iterator<Item = Words>,
         Words: ExactSizeIterator<Item = TokenWord>,
         Glue: Clone + Iterator<Item = GlueSpec>,
         Provenance: Clone + Iterator<Item = OriginRecord>,
     {
-        let definition_count = definitions.clone().count();
+        self.promote_value_streams_from(definitions, token_lists, glue_values, provenance)
+    }
+
+    fn promote_value_streams_from<Definition, TokenLists, Words, Glue, Provenance>(
+        &mut self,
+        definitions: &mut [Definition],
+        token_lists: TokenLists,
+        glue_values: Glue,
+        provenance: Provenance,
+    ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError>
+    where
+        Definition: DefinitionBatchItem,
+        TokenLists: Clone + Iterator<Item = Words>,
+        Words: ExactSizeIterator<Item = TokenWord>,
+        Glue: Clone + Iterator<Item = GlueSpec>,
+        Provenance: Clone + Iterator<Item = OriginRecord>,
+    {
+        let definitions_arena = self.generation.definitions();
+        for definition in definitions.iter() {
+            definitions_arena.validate_builder(definition.builder())?;
+        }
+
+        let definition_count = definitions.len();
         let token_list_count = token_lists.clone().count();
         let glue_count = glue_values.clone().count();
         let provenance_count = provenance.clone().count();
         let definition_words = definitions
-            .clone()
+            .iter()
             .try_fold(0usize, |total, definition| {
-                total.checked_add(definition.words().len())
+                total.checked_add(definition.builder().words().len())
             })
             .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
         let token_words = token_lists
             .clone()
             .try_fold(0usize, |total, words| total.checked_add(words.len()))
             .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
-
-        let definitions_arena = self.generation.definitions();
-        for definition in definitions.clone() {
-            definitions_arena.validate_builder(definition)?;
-        }
 
         // Reserve every destination before the first logical length changes.
         // Once these calls succeed, the individual arena allocators cannot
@@ -462,10 +504,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .provenance_mut()
             .reserve_batch(provenance_count)?;
 
-        let mut promoted_definitions = Vec::new();
-        let mut promoted_token_lists = Vec::new();
-        let mut promoted_glue = Vec::new();
-        let mut promoted_provenance = Vec::new();
+        let mut promoted_definitions = SmallVec::<[DefinitionId<G>; 4]>::new();
+        let mut promoted_token_lists = SmallVec::<[TokenListId<G>; 4]>::new();
+        let mut promoted_glue = SmallVec::<[GlueId<G>; 4]>::new();
+        let mut promoted_provenance = SmallVec::<[ProvenanceId<G>; 4]>::new();
         promoted_definitions
             .try_reserve_exact(definition_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
@@ -479,12 +521,11 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(provenance_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for definition in definitions {
+        for definition in definitions.iter_mut() {
             promoted_definitions.push(
                 self.generation
                     .definitions_mut()
-                    .publish(definition)
-                    .expect("validated destination-policy definition publication"),
+                    .publish_prevalidated(definition.builder_mut()),
             );
         }
         for words in token_lists {
@@ -573,6 +614,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             });
         }
 
+        for definition in definition_builders.iter().flatten() {
+            self.generation.definitions().validate_builder(definition)?;
+        }
+
         self.generation
             .definitions_mut()
             .reserve_batch(definition_rows, definition_words)?;
@@ -597,15 +642,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(glue_values.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for (row, definition) in definition_builders.iter().enumerate() {
+        for (row, definition) in definition_builders.iter_mut().enumerate() {
             if !live_definitions[row] {
                 continue;
             }
             let id = self
                 .generation
                 .definitions_mut()
-                .publish(definition.as_ref().expect("live builder was staged"))
-                .expect("validated destination-policy format publication");
+                .publish_prevalidated(definition.as_mut().expect("live builder was staged"));
             promoted_definitions[row] = Some(id);
         }
         for words in token_lists {

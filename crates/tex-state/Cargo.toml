@@ -26,7 +26,6 @@ smallvec.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }
 tex-fonts = { path = "../tex-fonts" }
-thin-dst.workspace = true
 umber-hot-core-allocator = { path = "profiling-allocator", optional = true }
 unicode-width.workspace = true
 

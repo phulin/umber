@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::num::NonZeroU32;
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
 use std::cell::Cell;
-use thin_dst::ThinRc;
+use std::rc::Rc;
 
 use crate::generation::ArenaToken;
 use crate::macro_definition::{
@@ -65,14 +65,15 @@ impl From<MacroParameterProgramError> for DefinitionBuildError {
     }
 }
 
-/// Attempt-owned reusable semantic definition buffer.
-///
-/// Layout is always `[parameter words][replacement words]`. The value is
-/// mutable only before sealing, carries no generation owner, and is never a
-/// checkpoint root. Publication performs one explicit traversal into the
-/// immutable contiguous `ThinRc` representation.
 #[derive(Debug)]
-pub struct DefinitionBuilder {
+struct DefinitionPublication {
+    serial: NonZeroU32,
+    accounting: MemoryAccounting,
+    memory_words: usize,
+}
+
+#[derive(Debug)]
+struct DefinitionData {
     words: Vec<TokenWord>,
     parameter_len: u32,
     replacement_len: u32,
@@ -81,14 +82,14 @@ pub struct DefinitionBuilder {
     sealed_identity: u64,
     policy: DefinitionIdentityPolicy,
     phase: DefinitionBuildPhase,
+    publication: Option<DefinitionPublication>,
     #[cfg(test)]
     fail_next_reserve: bool,
 }
 
-impl DefinitionBuilder {
-    #[must_use]
-    pub fn new(policy: DefinitionIdentityPolicy) -> Self {
-        let mut builder = Self {
+impl DefinitionData {
+    fn new(policy: DefinitionIdentityPolicy) -> Self {
+        let mut data = Self {
             words: Vec::new(),
             parameter_len: 0,
             replacement_len: 0,
@@ -97,15 +98,16 @@ impl DefinitionBuilder {
             sealed_identity: 0,
             policy,
             phase: DefinitionBuildPhase::OpenParameters,
+            publication: None,
             #[cfg(test)]
             fail_next_reserve: false,
         };
-        builder.reset(policy);
-        builder
+        data.reset(policy);
+        data
     }
 
-    /// Clears one recycled row while retaining its high-water allocation.
-    pub fn reset(&mut self, policy: DefinitionIdentityPolicy) {
+    fn reset(&mut self, policy: DefinitionIdentityPolicy) {
+        debug_assert!(self.publication.is_none());
         self.words.clear();
         self.parameter_len = 0;
         self.replacement_len = 0;
@@ -118,154 +120,210 @@ impl DefinitionBuilder {
         self.sealed_identity = 0;
         self.policy = policy;
         self.phase = DefinitionBuildPhase::OpenParameters;
+        self.publication = None;
         #[cfg(test)]
         {
             self.fail_next_reserve = false;
         }
     }
 
+    fn release_accounting(&self) {
+        if let Some(publication) = &self.publication {
+            publication
+                .accounting
+                .release_shared_dynamic(publication.memory_words);
+        }
+    }
+}
+
+impl Drop for DefinitionData {
+    fn drop(&mut self) {
+        self.release_accounting();
+    }
+}
+
+/// Attempt-owned reusable semantic definition buffer.
+///
+/// Layout is always `[parameter words][replacement words]`. The builder is
+/// the first owner of the allocation which later becomes the immutable
+/// definition. Publication transfers that allocation into its first semantic
+/// owner without allocating or copying the checked words. The now-vacant
+/// builder allocates a fresh resident owner when the next definition begins.
+#[derive(Debug)]
+pub struct DefinitionBuilder {
+    data: Option<Rc<DefinitionData>>,
+}
+
+impl DefinitionBuilder {
+    #[must_use]
+    pub fn new(policy: DefinitionIdentityPolicy) -> Self {
+        Self {
+            data: Some(Rc::new(DefinitionData::new(policy))),
+        }
+    }
+
+    /// Clears one recycled row.
+    ///
+    /// A builder whose allocation was published is deliberately vacant, so
+    /// resetting it creates a new attempt-owned allocation rather than
+    /// retaining an alias to the immutable definition.
+    pub fn reset(&mut self, policy: DefinitionIdentityPolicy) {
+        let Some(data) = &mut self.data else {
+            self.data = Some(Rc::new(DefinitionData::new(policy)));
+            return;
+        };
+        Rc::get_mut(data)
+            .expect("an unpublished builder is the sole allocation owner")
+            .reset(policy);
+    }
+
     pub fn push_parameter(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
-        if self.phase != DefinitionBuildPhase::OpenParameters {
+        let data = self.data_mut();
+        if data.phase != DefinitionBuildPhase::OpenParameters {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        let mut pattern = self.pattern;
+        let mut pattern = data.pattern;
         pattern.push_parameter(word)?;
-        let parameter_len = self
+        let parameter_len = data
             .parameter_len
             .checked_add(1)
             .ok_or(DefinitionBuildError::CapacityOverflow)?;
-        self.reserve_word()?;
-        self.parameter_len = parameter_len;
-        self.pattern = pattern;
-        if let Some(identity) = &mut self.identity {
+        Self::reserve_word(data)?;
+        data.parameter_len = parameter_len;
+        data.pattern = pattern;
+        if let Some(identity) = &mut data.identity {
             identity.u32(word.raw());
         }
-        self.words.push(word);
+        data.words.push(word);
         Ok(())
     }
 
     pub fn finish_parameters(&mut self) -> Result<(), DefinitionBuildError> {
-        if self.phase != DefinitionBuildPhase::OpenParameters {
+        let data = self.data_mut();
+        if data.phase != DefinitionBuildPhase::OpenParameters {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        if let Some(identity) = &mut self.identity {
+        if let Some(identity) = &mut data.identity {
             identity.tag(PARAMETER_END);
-            identity.u32(self.parameter_len);
+            identity.u32(data.parameter_len);
             identity.tag(REPLACEMENT_START);
         }
-        self.phase = DefinitionBuildPhase::OpenReplacement;
+        data.phase = DefinitionBuildPhase::OpenReplacement;
         Ok(())
     }
 
     pub fn push_replacement(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
-        if self.phase != DefinitionBuildPhase::OpenReplacement {
+        let data = self.data_mut();
+        if data.phase != DefinitionBuildPhase::OpenReplacement {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        self.pattern.validate_replacement(word)?;
-        let replacement_len = self
+        data.pattern.validate_replacement(word)?;
+        let replacement_len = data
             .replacement_len
             .checked_add(1)
             .ok_or(DefinitionBuildError::CapacityOverflow)?;
-        self.reserve_word()?;
-        if let Some(identity) = &mut self.identity {
+        Self::reserve_word(data)?;
+        if let Some(identity) = &mut data.identity {
             identity.u32(word.raw());
         }
-        self.words.push(word);
-        self.replacement_len = replacement_len;
+        data.words.push(word);
+        data.replacement_len = replacement_len;
         Ok(())
     }
 
     pub fn seal(&mut self) -> Result<(), DefinitionBuildError> {
-        if self.phase != DefinitionBuildPhase::OpenReplacement {
+        let data = self.data_mut();
+        if data.phase != DefinitionBuildPhase::OpenReplacement {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        if let Some(mut identity) = self.identity.take() {
+        if let Some(mut identity) = data.identity.take() {
             identity.tag(REPLACEMENT_END);
-            identity.u32(self.replacement_len);
-            self.sealed_identity = identity.finish().max(1);
+            identity.u32(data.replacement_len);
+            data.sealed_identity = identity.finish().max(1);
         }
-        self.phase = DefinitionBuildPhase::Sealed;
+        data.phase = DefinitionBuildPhase::Sealed;
         Ok(())
     }
 
     #[must_use]
-    pub const fn phase(&self) -> DefinitionBuildPhase {
-        self.phase
+    pub fn phase(&self) -> DefinitionBuildPhase {
+        self.data().phase
     }
 
     #[must_use]
-    pub const fn policy(&self) -> DefinitionIdentityPolicy {
-        self.policy
+    pub fn policy(&self) -> DefinitionIdentityPolicy {
+        self.data().policy
     }
 
     #[must_use]
     pub fn parameter_text(&self) -> &[TokenWord] {
-        &self.words[..self.parameter_len as usize]
+        let data = self.data();
+        &data.words[..data.parameter_len as usize]
     }
 
     #[must_use]
     pub fn replacement_text(&self) -> &[TokenWord] {
-        &self.words[self.parameter_len as usize..]
+        let data = self.data();
+        &data.words[data.parameter_len as usize..]
     }
 
     #[must_use]
     pub fn words(&self) -> &[TokenWord] {
-        &self.words
+        &self.data().words
     }
 
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.words.capacity()
+        self.data().words.capacity()
     }
 
-    fn reserve_word(&mut self) -> Result<(), DefinitionBuildError> {
+    fn data(&self) -> &DefinitionData {
+        self.data
+            .as_deref()
+            .expect("vacant definition builder must be reset before use")
+    }
+
+    fn data_mut(&mut self) -> &mut DefinitionData {
+        Rc::get_mut(
+            self.data
+                .as_mut()
+                .expect("vacant definition builder must be reset before use"),
+        )
+        .expect("a mutable builder has no published semantic owner")
+    }
+
+    fn reserve_word(data: &mut DefinitionData) -> Result<(), DefinitionBuildError> {
         #[cfg(test)]
-        if core::mem::take(&mut self.fail_next_reserve) {
+        if core::mem::take(&mut data.fail_next_reserve) {
             return Err(DefinitionBuildError::AllocationFailed);
         }
-        self.words
+        data.words
             .try_reserve(1)
             .map_err(|_| DefinitionBuildError::AllocationFailed)
     }
 
     #[cfg(test)]
     fn force_next_reserve_failure(&mut self) {
-        self.fail_next_reserve = true;
+        self.data_mut().fail_next_reserve = true;
     }
 
-    fn metadata(&self) -> Result<CompletedDefinitionMetadata, DefinitionAllocationError> {
-        if self.phase != DefinitionBuildPhase::Sealed
-            || self.words.len() != self.parameter_len as usize + self.replacement_len as usize
+    fn validate_completed(&self) -> Result<(), DefinitionAllocationError> {
+        let data = self
+            .data
+            .as_deref()
+            .ok_or(DefinitionAllocationError::InvalidDefinition)?;
+        if data.phase != DefinitionBuildPhase::Sealed
+            || data.words.len() != data.parameter_len as usize + data.replacement_len as usize
         {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
-        Ok(CompletedDefinitionMetadata {
-            parameter_len: self.parameter_len,
-            parameters: self.pattern.finish(),
-            semantic_identity: self.sealed_identity,
-        })
+        Ok(())
     }
-}
 
-#[derive(Clone, Copy)]
-struct CompletedDefinitionMetadata {
-    parameter_len: u32,
-    parameters: MacroParameterPattern,
-    semantic_identity: u64,
-}
-
-struct DefinitionHeader {
-    serial: NonZeroU32,
-    parameter_len: u32,
-    parameters: MacroParameterPattern,
-    accounting: MemoryAccounting,
-    memory_words: usize,
-    semantic_identity: u64,
-}
-
-impl Drop for DefinitionHeader {
-    fn drop(&mut self) {
-        self.accounting.release_shared_dynamic(self.memory_words);
+    fn take_data(&mut self) -> Rc<DefinitionData> {
+        self.data
+            .take()
+            .expect("prevalidated definition builder is occupied")
     }
 }
 
@@ -274,7 +332,7 @@ impl Drop for DefinitionHeader {
 /// There is deliberately no raw constructor or integer projection. Only a
 /// successful `DefinitionArena::allocate` can publish an id.
 pub struct DefinitionId<G> {
-    allocation: ThinRc<DefinitionHeader, TokenWord>,
+    data: Rc<DefinitionData>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -299,7 +357,7 @@ impl<G> Clone for DefinitionId<G> {
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         DEFINITION_RETAIN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
         Self {
-            allocation: self.allocation.clone(),
+            data: self.data.clone(),
             _brand: PhantomData,
         }
     }
@@ -307,7 +365,7 @@ impl<G> Clone for DefinitionId<G> {
 
 impl<G> PartialEq for DefinitionId<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.allocation.head.serial == other.allocation.head.serial
+        self.serial() == other.serial()
     }
 }
 
@@ -315,7 +373,7 @@ impl<G> Eq for DefinitionId<G> {}
 
 impl<G> core::hash::Hash for DefinitionId<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.allocation.head.serial.hash(state);
+        self.serial().hash(state);
     }
 }
 
@@ -326,8 +384,16 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
 }
 
 impl<G> DefinitionId<G> {
+    fn serial(&self) -> NonZeroU32 {
+        self.data
+            .publication
+            .as_ref()
+            .expect("definition owner has a publication identity")
+            .serial
+    }
+
     pub(crate) fn semantic_identity(&self) -> Option<u64> {
-        match self.allocation.head.semantic_identity {
+        match self.data.sealed_identity {
             0 => None,
             identity => Some(identity),
         }
@@ -336,14 +402,14 @@ impl<G> DefinitionId<G> {
     /// owner.
     #[must_use]
     pub fn parameter_text(&self) -> &[TokenWord] {
-        &self.allocation.slice[..self.allocation.head.parameter_len as usize]
+        &self.data.words[..self.data.parameter_len as usize]
     }
 
     /// Borrows the packed replacement text through this definition's existing
     /// owner.
     #[must_use]
     pub fn replacement_text(&self) -> &[TokenWord] {
-        &self.allocation.slice[self.allocation.head.parameter_len as usize..]
+        &self.data.words[self.data.parameter_len as usize..]
     }
 
     /// Borrows one packed replacement word through this already-owned
@@ -354,22 +420,22 @@ impl<G> DefinitionId<G> {
     /// [`DefinitionView`].
     #[must_use]
     pub fn replacement_word(&self, index: usize) -> Option<TokenWord> {
-        self.allocation.slice[self.allocation.head.parameter_len as usize..]
+        self.data.words[self.data.parameter_len as usize..]
             .get(index)
             .copied()
     }
 
     pub(crate) fn format_index(&self) -> u32 {
-        self.allocation.head.serial.get() - 1
+        self.serial().get() - 1
     }
 
     pub(crate) fn capture_format(&self) -> crate::format::schema::FormatDefinition {
         crate::format::schema::FormatDefinition {
-            parameter_text: self.allocation.slice[..self.allocation.head.parameter_len as usize]
+            parameter_text: self.data.words[..self.data.parameter_len as usize]
                 .iter()
                 .map(|word| word.raw())
                 .collect(),
-            replacement_text: self.allocation.slice[self.allocation.head.parameter_len as usize..]
+            replacement_text: self.data.words[self.data.parameter_len as usize..]
                 .iter()
                 .map(|word| word.raw())
                 .collect(),
@@ -380,9 +446,7 @@ impl<G> DefinitionId<G> {
     #[cfg(any(test, feature = "testing"))]
     #[doc(hidden)]
     pub fn semantic_owner_count(&self) -> usize {
-        let owner: std::rc::Rc<thin_dst::ThinData<DefinitionHeader, TokenWord>> =
-            self.allocation.clone().into();
-        std::rc::Rc::strong_count(&owner) - 1
+        Rc::strong_count(&self.data)
     }
 }
 
@@ -445,9 +509,8 @@ impl<G> DefinitionArena<G> {
 
     /// Atomically publishes one complete definition.
     ///
-    /// Both backing vectors reserve before either length changes. The row is
-    /// appended only after both token spans have been copied into arena-owned
-    /// storage, so no partially initialized definition can be resolved.
+    /// Cold callers fill one checked builder allocation before publication,
+    /// so no partially initialized definition can be resolved.
     pub(crate) fn allocate(
         &mut self,
         parameter_text: &[TokenWord],
@@ -461,8 +524,8 @@ impl<G> DefinitionArena<G> {
 
     /// Atomically publishes one definition from token streams.
     ///
-    /// Cold callers use the same checked builder as the scanner before one
-    /// explicit publication traversal constructs the contiguous owner.
+    /// Cold callers use the same checked builder as the scanner. Publication
+    /// retains that allocation without traversing or copying its words.
     pub(crate) fn allocate_from_iter<Parameters, Replacement>(
         &mut self,
         parameter_text: Parameters,
@@ -481,41 +544,52 @@ impl<G> DefinitionArena<G> {
             builder.push_replacement(word).map_err(map_build_error)?;
         }
         builder.seal().map_err(map_build_error)?;
-        self.publish(&builder)
+        self.publish(&mut builder)
     }
 
     /// Publishes one completely validated attempt builder.
+    ///
+    /// The builder already owns the final allocation. Publication assigns its
+    /// destination serial and accounting charge through unique access, then
+    /// transfers that allocation into the first semantic owner.
     pub(crate) fn publish(
         &mut self,
-        builder: &DefinitionBuilder,
+        builder: &mut DefinitionBuilder,
     ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
         self.validate_builder(builder)?;
-        let metadata = builder.metadata()?;
-        let final_word_len = builder.words().len();
-        let serial = self
-            .next_serial
-            .checked_add(1)
-            .and_then(NonZeroU32::new)
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
-        let memory_words = definition_memory_words(final_word_len);
-        let allocation = ThinRc::new(
-            DefinitionHeader {
-                serial,
-                parameter_len: metadata.parameter_len,
-                parameters: metadata.parameters,
-                accounting: self.accounting.clone(),
-                memory_words,
-                semantic_identity: metadata.semantic_identity,
-            },
-            builder.words().iter().copied(),
-        );
+        self.reserve_batch(1, builder.words().len())?;
+        Ok(self.publish_prevalidated(builder))
+    }
+
+    /// Moves one builder allocation after complete destination preflight.
+    ///
+    /// This is intentionally infallible: callers validate every builder and
+    /// reserve the complete batch before the first builder becomes vacant.
+    pub(crate) fn publish_prevalidated(
+        &mut self,
+        builder: &mut DefinitionBuilder,
+    ) -> DefinitionId<G> {
+        let serial = NonZeroU32::new(
+            self.next_serial
+                .checked_add(1)
+                .expect("batch preflight reserved a definition serial"),
+        )
+        .expect("definition serial zero is not publishable");
+        let memory_words = definition_memory_words(builder.words().len());
+        let mut data = builder.take_data();
+        Rc::get_mut(&mut data)
+            .expect("publication receives the unique builder allocation")
+            .publication = Some(DefinitionPublication {
+            serial,
+            accounting: self.accounting.clone(),
+            memory_words,
+        });
         self.accounting.allocate_shared_dynamic(memory_words);
         self.next_serial = serial.get();
-        Ok(DefinitionId {
-            allocation,
+        DefinitionId {
+            data,
             _brand: PhantomData,
-        })
+        }
     }
 
     /// Validates every fallible destination-specific property without
@@ -524,10 +598,10 @@ impl<G> DefinitionArena<G> {
         &self,
         builder: &DefinitionBuilder,
     ) -> Result<(), DefinitionAllocationError> {
+        builder.validate_completed()?;
         if builder.policy() != self.identity_policy() {
             return Err(DefinitionAllocationError::IdentityPolicyMismatch);
         }
-        builder.metadata()?;
         u32::try_from(builder.words().len())
             .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         Ok(())
@@ -613,7 +687,7 @@ pub struct DefinitionView<G> {
 impl<G> DefinitionView<G> {
     #[must_use]
     pub fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.id.allocation.head.parameters
+        self.id.data.pattern.finish()
     }
 
     #[must_use]

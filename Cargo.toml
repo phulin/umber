@@ -80,7 +80,6 @@ similar = "2"
 smallvec = "1.15"
 subsetter = { version = "0.2.6", default-features = false }
 tempfile = "3"
-thin-dst = "1.1"
 ts-rs = { version = "11", features = ["serde-compat"] }
 unicode-bidi = "0.3.18"
 unicode-script = "0.5.8"

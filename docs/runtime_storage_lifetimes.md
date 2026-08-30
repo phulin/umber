@@ -99,10 +99,12 @@ process
 
 An owner may keep a coarser generation lease alive, but macro definitions and
 stored token lists additionally follow their exact semantic carriers. A macro
-definition's private generation-branded handle is one thin non-atomic `Rc`
-owner whose allocation header stores its serial, parameter split, parsed
-parameter program, and final-drop accounting capability immediately before
-the immutable token tail. Stored token lists retain their private
+definition's private generation-branded handle is one non-atomic `Rc` owner of
+the allocation that its attempt-local builder filled. That allocation stores
+the token words, parameter split, parsed parameter program, serial, and
+final-semantic-drop accounting capability. Successful operation retirement
+relinquishes the builder's scratch owner, so the durable allocation then has
+only its exact semantic carriers. Stored token lists retain their private
 `Rc<[TokenWord]>`. Both handles are deliberately non-`Copy`; cloning records a
 true alias and moving transfers an existing owner. They never own an arena. Other compact runtime values remain
 copyable ids or inline scalars where that is cheaper. No per-value `Arc`,
@@ -282,13 +284,12 @@ widths remain operational state outside the format and dense banks.
 ## Immutable definitions
 
 `DefinitionArena` is now a publisher, not the lifetime owner of published
-macro bodies. A `DefinitionId<G>` privately contains one thin non-atomic owner
-of a single header-plus-token-tail allocation and the invariant generation
-brand. The header contains the parameter/replacement split, parsed parameter
-program, monotonic cold-format serial, and exact final-drop accounting
-capability. Construction occurs only after the complete immutable value is
-ready. Equal definitions published twice remain distinct allocations and
-distinct identities.
+macro bodies. A `DefinitionId<G>` privately contains one non-atomic owner of
+the same allocation that the attempt-local builder filled, plus the invariant
+generation brand. The allocation contains the token words,
+parameter/replacement split, parsed parameter program, monotonic cold-format
+serial, and exact final-semantic-drop accounting capability. Independently
+built equal definitions remain distinct allocations and identities.
 
 One recyclable, attempt-local `DefinitionBuilder` constructs semantic words in
 monotonic parameter and replacement phases. It incrementally maintains the
@@ -298,20 +299,21 @@ suspension and recycle it on cancellation; it is never part of checkpoint
 state. Generic cold promotion borrows that exact row while validating its
 preserved identity policy and reserving the complete mixed batch. Rejection
 therefore performs no owner restoration; the builder never left its attempt
-row. Successful publication takes the original builder only afterward and
-recycles it. Attempt token lists likewise stream their existing semantic words
-into the destination publisher without a batch-local word vector. This creates
-no temporary parameter/replacement vectors, second builder, payload-bearing
-inline promotion carrier, or failure-only ownership transaction. Ordinary
-allocation, memo import, and format restore use the same checked metadata path,
-so malformed parameter numbering or replacement references fail before
-publication. The final `ThinRc` construction traverses the builder once. This
-is deliberately not a claim that the thin-DST allocator performs only one
-physical copy internally.
+row. Successful publication retains the builder's allocation without
+traversing or copying its words. Attempt retirement then relinquishes the
+scratch owner and recycles a vacant builder slot. If a builder is deliberately
+reused while an older published definition remains live, its next reset
+detaches into a fresh allocation before accepting new words. Attempt token
+lists likewise stream their existing semantic words into the destination
+publisher without a batch-local word vector. This creates no temporary
+parameter/replacement vectors, second representation, payload-bearing inline
+promotion carrier, or failure-only ownership transaction. Ordinary allocation,
+memo import, and format restore use the same checked metadata path, so malformed
+parameter numbering or replacement references fail before publication.
 
 ```rust
 pub struct DefinitionId<G> {
-    allocation: ThinRc<DefinitionHeader, TokenWord>,
+    data: Rc<DefinitionData>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -334,9 +336,10 @@ typed ids from different admitted generations from mixing. Module privacy
 prevents callers from forging ids, accessing the `Rc`, constructing views, or
 changing serials. The owning view and iterator may cross an arena borrow
 because they carry the same exact owner; dropping them decrements only the
-non-atomic count and never walks or calls back into a store. The final owner
-also subtracts its precomputed canonical word charge from the generation's
-scalar memory total.
+non-atomic count and never walks or calls back into a store. The final semantic
+owner also subtracts its precomputed canonical word charge from the
+generation's scalar memory total. After successful operation retirement it is
+also the allocation's final owner.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final
@@ -369,9 +372,9 @@ existing arena slots and scalar marks remain the sole scratch lifetime
 authority. Glue remains inline/direct-index because shared heap ownership would
 cost more than the value.
 
-The allocation event records a definition's canonical word cost and generation
-accounting capability once in the same shared header as its immutable metadata;
-the header's one final destruction subtracts the cost. A token-list handle
+Publication records a definition's canonical word cost and generation
+accounting capability once in the same shared allocation as its immutable
+metadata; the last semantic owner subtracts the cost. A token-list handle
 continues to carry that information beside its shared slice and tests the real
 payload's last-owner state. No table, scan, hash, tracing pass, or second
 reference count participates.

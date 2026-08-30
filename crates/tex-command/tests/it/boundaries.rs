@@ -616,7 +616,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn definition_promotion_borrows_the_checked_builder_and_preflights_its_policy() {
+fn definition_promotion_preflights_then_moves_the_checked_builder_once() {
     let repository = test_support::repository_root();
     let attempt = fs::read_to_string(repository.join("crates/tex-command/src/attempt.rs"))
         .expect("read attempt promotion implementation");
@@ -633,22 +633,24 @@ fn definition_promotion_borrows_the_checked_builder_and_preflights_its_policy() 
         .and_then(|tail| tail.split("pub(crate) fn promote_format_values(").next())
         .expect("locate streamed destination promotion");
 
-    assert!(promotion.contains("universe\n            .promote_value_streams("));
-    assert!(promotion.contains("self.definition_builder(*id)"));
+    assert!(promotion.contains("universe.promote_value_streams("));
     assert!(promotion.contains("row.value.builder.take()"));
+    assert!(promotion.contains("definitions.into_iter()"));
+    assert!(promotion.contains("SmallVec::<[DefinitionBuilder; 4]>::new()"));
     assert!(!promotion.contains("DefinitionPromotion::new("));
-    assert!(!promotion.contains("SmallVec"));
+    assert!(!promotion.contains("Vec<DefinitionBuilder>"));
     assert!(!promotion.contains("Vec<TokenWord>"));
     assert!(!promotion.contains("parameter_text().to_vec()"));
     assert!(!promotion.contains("replacement_text().to_vec()"));
     assert!(!destination.contains("DefinitionBuilder::from_slices"));
     let validation = destination
-        .find("definitions_arena.validate_builder(definition)")
+        .find("definitions_arena.validate_builder(definition.builder())")
         .expect("destination-policy preflight");
     let publication = destination
-        .find(".publish(definition)")
-        .expect("checked builder publication");
+        .find(".publish_prevalidated(definition.builder_mut())")
+        .expect("infallible checked builder transfer");
     assert!(validation < publication);
+    assert!(destination.contains("reserve_batch(definition_count, definition_words)?"));
     assert!(destination.contains(".allocate_from_iter(words)"));
 }
 
