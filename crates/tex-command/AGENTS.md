@@ -104,8 +104,10 @@ collector (see `src/conditionals.rs`).
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   resident input writes its packed spelling and resolved meaning together
-  through one `EmptyCommand` to `ResolvedCommand` handoff, after which the
-  executor borrows the one caller-owned value through preflight and scanning,
+  through one `EmptyCommand` to `ResolvedCommand` handoff. That reference-only
+  proof ends inside the `CommandState` resident transition after suppression
+  and required alignment treatment; the processor receives only a copy-small
+  ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded-delivery driver and static
@@ -198,6 +200,7 @@ collector (see `src/conditionals.rs`).
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` through a reference-only `EmptyCommand` to
   `ResolvedCommand` phase proof, resolves the resident packed word directly,
+  reuses the resolver's literal-catcode classification for brace treatment,
   and advances only the packed frame scalar. A
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
@@ -237,9 +240,11 @@ collector (see `src/conditionals.rs`).
   carrier. No raw mutable top or mutable index survives. Focused gates prove
   exact coalescing and zero-allocation hot mutation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  the destination-directed `next_raw_into` delegation into the resident top,
+  the destination-directed `advance_resident_command_into` transition over the resident top,
   whose EOF, recovery, parameter, and exhaustion results retain no command-
-  slot borrow, the singular
+  slot borrow; its ordinary result has already resolved meaning, applied
+  one-delivery suppression, classified only required alignment work, and ended
+  the resolved borrow. The files also own the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, borrowed source-ancestry comparison with copy-only
@@ -268,9 +273,10 @@ collector (see `src/conditionals.rs`).
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
-- `src/processor/next.rs`: the sole raw Empty-to-Resolved delivery
-  orchestration, including policy settlement and raw observation after all
-  dense borrows end. It delegates cold source retirement, outer recovery, and
+- `src/processor/next.rs`: the sole raw delivery orchestration over the
+  completed resident `CommandState` transition, including command-work
+  accounting, explicit outer recovery, and demand-only raw observation after
+  all dense borrows end. It delegates cold source retirement, outer recovery, and
   alignment interception directly to their private semantic modules without
   introducing another command or input owner.
 - `src/processor/end_input.rs`: physical-line acquisition, source exhaustion,

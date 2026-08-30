@@ -322,7 +322,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/tests/replay.rs`: Feature-gated generated invariant test for exact
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
-  classification helpers, and inline-small rooted traced-token buffers with
+  classification helpers, destination-directed packed meaning resolution
+  which returns its already-decoded literal catcode for command-side delivery
+  interception, and inline-small rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
   one origin pack every word against its id and move that structural root into
   the sparse owner set once; they never clone it per token before deduplication.

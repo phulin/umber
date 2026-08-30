@@ -191,8 +191,13 @@ The driver is destination-directed. Its caller provides the one final
 `EmptyCommand` and `ResolvedCommand` typestates: the resident input row passes
 its packed word directly to the dense meaning lookup, which writes spelling,
 resolved meaning, and delivery facts into the same address before delivery
-policy settles it once. No semantic-token value or unresolved command crosses
-that ownership boundary. The return is only a compact `DeliveryStatus` naming end of input,
+policy settles it once. The reference-only resolved proof ends inside the
+authoritative `CommandState` resident transition: it applies one-delivery
+suppression, reuses the dense resolver's already-decoded literal catcode for
+brace handling, and classifies an alignment delimiter only when an active cell
+can require it. No semantic-token value, unresolved command, or resolved borrow
+crosses that ownership boundary. The processor receives a copy-small
+ready/outer result, and its public return is only a compact `DeliveryStatus` naming end of input,
 command completion, replay completion, pending observation, or an alignment
 boundary. Internal delivery steps pair that status with a zero-sized failure
 marker and move a real `CommandError` into one caller-owned cold slot. Only the
@@ -253,9 +258,12 @@ meaning after delivery.
 
 Consuming `EmptyCommand::write_resolved_delivery` writes and resolves the
 resident packed spelling directly in the caller destination and returns the
-only `ResolvedCommand` proof. One delivery settlement then applies
-`\noexpand`, outer-validity recovery,
-alignment classification, and optional observation in canonical order.
+only `ResolvedCommand` proof plus the literal catcode already decoded by dense
+resolution. The enclosing `CommandState` transition consumes both immediately:
+it applies `\noexpand`, identifies the exceptional outer-recovery branch, and
+performs only required brace or live-cell alignment classification. The
+processor then owns outer recovery and demand-only observation in canonical
+order without a second ordinary settlement stage.
 The singular `CommandState` alignment transition classifies that resident
 command once, journals the prior `align_state` immediately before a literal
 brace mutation only, and writes its exact `AlignmentDeliveryAdjustment` into
@@ -1777,7 +1785,7 @@ authoritative `InputStack`. The source branch lends its row and checked slot
 together, tokenizes into the caller's final command slot, and advances the
 row's compact position before ending that borrow. Stored-token and macro-
 argument branches project their resident packed word and meaning into that same
-slot before the same top borrow ends. `next_raw_into` neither looks the top up
+slot before the same top borrow ends. `advance_resident_command_into` neither looks the top up
 again nor receives a token/cursor carrier. Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the

@@ -634,7 +634,7 @@ impl<G> InputStack<G> {
                                     range.end(),
                                 )
                             };
-                            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+                            let (resolved, resolution) = destination.write_resolved_delivery(
                                 token.word,
                                 origin,
                                 identity.0,
@@ -654,7 +654,7 @@ impl<G> InputStack<G> {
                             }
                             Ok(super::InputTopTransition::Delivered {
                                 resolved,
-                                meaning_lookup,
+                                resolution,
                             })
                         }
                     }

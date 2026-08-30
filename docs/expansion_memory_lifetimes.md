@@ -304,7 +304,10 @@ not the number of physical copies made inside the thin-DST allocator.
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
 `EmptyCommand` and `ResolvedCommand` borrows prove that resident input and
-delivery settlement mutate that one slot in order. The input row passes its
+delivery settlement mutate that one slot in order. The resolved proof never
+crosses the `CommandState` transition: that owner consumes the resolver's
+already-decoded literal catcode for required brace handling, applies
+one-delivery suppression, and returns only a copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; no semantic-token
 value or raw-command phase crosses to `next_command_into`. Nested delivery has
@@ -672,7 +675,8 @@ the `InputStack` looks up and discriminates the semantic top once. Its source
 branch lends the row and checked slot together, while its stored and macro-
 argument branches borrow the admitted span directly; each writes the caller's
 final command and advances the compact position before that top borrow ends.
-No cursor/token carrier or second top lookup returns to `next_raw_into`. The
+No cursor/token carrier or second top lookup returns to
+`advance_resident_command_into`. The
 common packed frame on every row carries the active external-source context;
 source rows install it and replay rows inherit it at admission. Main-control
 root-file eligibility therefore consumes the source fact delivered with the

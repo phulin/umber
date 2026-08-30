@@ -36,7 +36,7 @@ pub(crate) use stack::source_registration_counters;
 pub(crate) use stack::{
     FileWarningBoundary, InputRetirement, InputRetirementAction, InputRetirementError,
     InputRetirementReason, InputTopTransition, OutParameterReplay, ParameterReplayError,
-    input_level_identity,
+    ResidentCommandInterception, ResidentCommandTransition, input_level_identity,
 };
 
 pub use lines::{

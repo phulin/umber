@@ -241,7 +241,7 @@ impl<G> MacroArgumentCursor<G> {
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
             return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
         };
-        let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+        let (resolved, resolution) = destination.write_resolved_delivery(
             word.token_word(),
             word.origin(),
             frame.identity(),
@@ -261,7 +261,7 @@ impl<G> MacroArgumentCursor<G> {
         }
         Ok(super::InputTopTransition::Delivered {
             resolved,
-            meaning_lookup,
+            resolution,
         })
     }
 }
@@ -321,7 +321,7 @@ impl<G> TokenCursor<G> {
                 active_source: frame.source_id(),
             }
         } else {
-            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+            let (resolved, resolution) = destination.write_resolved_delivery(
                 word,
                 origin,
                 frame.identity(),
@@ -338,7 +338,7 @@ impl<G> TokenCursor<G> {
             );
             super::InputTopTransition::Delivered {
                 resolved,
-                meaning_lookup,
+                resolution,
             }
         };
         if self.frame.advance() != Some(position) {

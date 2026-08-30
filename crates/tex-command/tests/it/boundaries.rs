@@ -135,9 +135,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "the command core must have exactly one destination-directed next-command pipeline"
     );
     assert_eq!(
-        next.matches("fn apply_delivery_rules(").count(),
+        input_stack
+            .matches("fn advance_resident_command_into(")
+            .count(),
         1,
-        "the next-command pipeline must settle each resolved delivery once"
+        "command state must own exactly one completed resident transition"
     );
     for retired in [
         "fn take_input_token(",
@@ -152,8 +154,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert!(next.contains("Some(CurrentCommand::empty())"));
-    assert!(next.contains(".next_raw_into("));
-    assert!(next.contains("self.apply_delivery_rules(resolved, delivery_stamp)"));
+    assert!(next.contains(".advance_resident_command_into("));
+    assert!(!next.contains("fn apply_delivery_rules("));
+    assert!(input_stack.contains("self.classify_alignment_delivery("));
+    assert!(input_stack.contains("resolution.literal_catcode()"));
+    assert!(input_stack.contains("ResidentCommandInterception::Outer"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
     assert!(command.contains("struct ResolvedCommand<'slot, G>"));
     assert!(levels.contains("crate::command::EmptyCommand<'slot, G>"));
@@ -175,7 +180,9 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert_eq!(
-        input_stack.matches("fn next_raw_into<'slot>(").count(),
+        input_stack
+            .matches("fn advance_resident_command_into(")
+            .count(),
         1,
         "source and stored input must share one destination-directed top transition"
     );
@@ -380,7 +387,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(outer.contains("fn check_outer_validity_entry("));
     assert!(recovery.contains("fn recover_off_save("));
     assert!(next.contains("self.retire_input_top(identity)"));
-    assert!(next.contains("self.check_outer_validity_entry(resolved.as_mut())?"));
+    assert!(next.contains("self.check_outer_validity_entry(command)"));
 }
 
 #[test]
@@ -722,6 +729,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         .expect("read conditional implementation");
     let input =
         fs::read_to_string(manifest_dir.join("src/input/mod.rs")).expect("read input facade");
+    let input_stack = fs::read_to_string(manifest_dir.join("src/input/stack.rs"))
+        .expect("read resident command transition");
     let state = fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read command state");
     let alignment = fs::read_to_string(manifest_dir.join("src/processor/alignment.rs"))
         .expect("read alignment delivery implementation");
@@ -782,8 +791,10 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         alignment.matches("fn classify_alignment_delivery(").count(),
         1
     );
+    assert_eq!(next.matches(".classify_alignment_delivery(").count(), 0);
     assert_eq!(
-        next.matches(".classify_alignment_delivery(resolved.as_mut())")
+        input_stack
+            .matches("self.classify_alignment_delivery(")
             .count(),
         1
     );
@@ -796,7 +807,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
                 .next()
         })
         .expect("locate the singular alignment delivery classifier");
-    assert_eq!(classifier.matches("semantic_token()").count(), 1);
+    assert_eq!(classifier.matches("semantic_token()").count(), 0);
+    assert!(classifier.contains("match literal_catcode"));
     assert_eq!(
         classifier.matches("record_delivery_align_state(").count(),
         2

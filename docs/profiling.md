@@ -855,6 +855,28 @@ reference perf walls were 13.20 and 14.21 seconds, but the candidate includes
 two post-c167 integration fixes, so the symbol reductions and focused controls,
 not that whole-run wall delta, are the issue-local CPU evidence.
 
+Issue `umber2-66p0.8.40.17` then fused the remaining resident command stages.
+The authoritative `CommandState` transition now ends its resolved borrow only
+after one-delivery suppression and required alignment treatment, returns only a
+copy-small ready/outer result, and skips processor observation work entirely
+when no observer is present. Dense packed meaning resolution also returns the
+literal catcode it already decoded, so ordinary brace classification does not
+decode the spelling a second time.
+
+Seven same-host, order-balanced one-million-token full raw-delivery pairs all
+favored the candidate. Median latency fell from 65.95 to 54.70 ns/token
+(17.1%); every warmed allocation scope reported zero calls and zero requested
+bytes. Ten-run hardware-counter controls reduced mean cycles from 233,632,585
+to 198,915,926 (14.9%), instructions from 673,426,213 to 593,375,461 (11.9%),
+and branches from 110,738,895 to 101,728,871 (8.1%). Both sampled captures lost
+zero samples; the candidate has no separate resident next-raw or alignment
+classifier frame. This focused comparison exercises the complete stored-input
+cursor, meaning resolution, resident settlement, raw next-command, and static
+delivery driver rather than the cursor mutation microgate alone. The exact
+assigned-base archive, binaries, paired output, counter reports, and profiles
+are under `target/umber2-66p0.8.40.17/`; the coordinator retains ownership of
+the final authenticated 50M production profile.
+
 ## Compact line-breaking routes
 
 Issue `umber2-7asg` followed the exact ffbdb9861 20M profile's 1.691B weighted

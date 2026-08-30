@@ -395,7 +395,7 @@ fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
                 None,
                 &context,
             );
-            command.classify_alignment_delivery(&mut delivered);
+            command.classify_alignment_delivery(&mut delivered, Some(Catcode::AlignmentTab));
             assert!(matches!(
                 delivered.alignment_adjustment(),
                 super::AlignmentDeliveryAdjustment::Delimiter(_)

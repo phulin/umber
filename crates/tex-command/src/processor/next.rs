@@ -7,9 +7,9 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CurrentCommand, DeliveryStamp, ResolvedCommand};
+use crate::command::CurrentCommand;
 use crate::error::CommandError;
-use crate::input::{InputLevel, InputTopTransition};
+use crate::input::{InputLevel, ResidentCommandInterception, ResidentCommandTransition};
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::CommandReplayDelivery;
 use crate::input::SourceNameClass;
@@ -205,7 +205,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             let transition = self
                 .command
-                .next_raw_into(
+                .advance_resident_command_into(
                     self.state,
                     self.create_source_control_sequences,
                     destination
@@ -222,8 +222,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return error.fail(failure);
                 }
             };
-            let (resolved, meaning_lookup) = match transition {
-                InputTopTransition::Empty => {
+            let (meaning_lookup, interception) = match transition {
+                ResidentCommandTransition::Empty => {
                     observe!(
                         self,
                         CommandObservation::Input(InputRecord {
@@ -245,11 +245,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination.take();
                     return Ok(super::DeliveryStatus::End);
                 }
-                InputTopTransition::Delivered {
-                    resolved,
+                ResidentCommandTransition::Delivered {
                     meaning_lookup,
-                } => (resolved, meaning_lookup),
-                InputTopTransition::ParameterPushed(parameter_level) => {
+                    interception,
+                } => (meaning_lookup, interception),
+                ResidentCommandTransition::ParameterPushed(parameter_level) => {
                     observe!(
                         self,
                         CommandObservation::Input(InputRecord {
@@ -263,10 +263,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                     continue;
                 }
-                InputTopTransition::OutParameter { .. } => {
-                    return error.fail(CommandError::input_invariant());
-                }
-                InputTopTransition::InvalidCharacter => {
+                ResidentCommandTransition::InvalidCharacter => {
                     self.report_recoverable(
                         INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
                         "Text line contains an invalid character".into(),
@@ -277,7 +274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                     continue;
                 }
-                InputTopTransition::NeedLine(identity) => {
+                ResidentCommandTransition::NeedLine(identity) => {
                     let line = match self.acquire_source_line(true) {
                         Ok(line) => line,
                         Err(failure) => return error.fail(failure),
@@ -303,7 +300,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     continue;
                 }
-                InputTopTransition::SourceExhausted(identity) => {
+                ResidentCommandTransition::SourceExhausted(identity) => {
                     let exhausted = match self.finish_exhausted_source(identity) {
                         Ok(status) => matches!(status, SourceExhaustionStatus::End),
                         Err(failure) => return error.fail(failure),
@@ -321,7 +318,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     continue;
                 }
-                InputTopTransition::TokenExhausted(identity) => {
+                ResidentCommandTransition::TokenExhausted(identity) => {
                     let Some((index, active_source)) =
                         self.command
                             .input
@@ -359,60 +356,69 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         RetirementHandoff::Completed => continue,
                         RetirementHandoff::Continue => continue,
-                        RetirementHandoff::EndV(level) => destination
-                            .as_mut()
-                            .expect("next-command pipeline owns its reusable command slot")
-                            .empty_for_raw_delivery()
-                            .write_resolved_delivery(
-                                TokenWord::pack(self.state.frozen_end_template_token()),
-                                OriginId::UNKNOWN,
-                                level.0,
-                                u64::from(index),
-                                self.next_delivery_sequence,
-                                None,
-                                active_source,
-                                false,
-                                None,
-                                false,
-                                self.state,
-                            ),
+                        RetirementHandoff::EndV(level) => {
+                            let (_, resolution) = destination
+                                .as_mut()
+                                .expect("next-command pipeline owns its reusable command slot")
+                                .empty_for_raw_delivery()
+                                .write_resolved_delivery(
+                                    TokenWord::pack(self.state.frozen_end_template_token()),
+                                    OriginId::UNKNOWN,
+                                    level.0,
+                                    u64::from(index),
+                                    self.next_delivery_sequence,
+                                    None,
+                                    active_source,
+                                    false,
+                                    None,
+                                    false,
+                                    self.state,
+                                );
+                            (
+                                resolution.meaning_lookup(),
+                                ResidentCommandInterception::Ready,
+                            )
+                        }
                     }
                 }
             };
 
-            let delivery_stamp = resolved.as_ref().delivery_stamp();
+            let command = destination
+                .as_mut()
+                .expect("delivered transition initializes the command slot");
+            let delivery_stamp = command.delivery_stamp();
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
             let scanner = !matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
             );
             self.record_raw_delivery(scanner, meaning_lookup);
-            if let Err(failure) = self.apply_delivery_rules(resolved, delivery_stamp) {
+            self.last_delivery = Some(delivery_stamp);
+            if matches!(interception, ResidentCommandInterception::Outer)
+                && let Err(failure) = self.check_outer_validity_entry(command)
+            {
                 destination.take();
                 return error.fail(failure);
+            }
+            if self.is_observed() {
+                self.observe_resident_command(command);
             }
             return Ok(super::DeliveryStatus::Command);
         }
     }
-    /// Applies the remaining §341 delivery rules to one resolved command.
-    /// Resolution has ended its dense meaning borrow before this function can
-    /// perform recovery, alignment mutation, or observation.
-    fn apply_delivery_rules(
-        &mut self,
-        mut resolved: ResolvedCommand<'_, G>,
-        delivery_stamp: DeliveryStamp,
-    ) -> Result<(), CommandError> {
-        if resolved.as_ref().suppresses_expandable_control_sequence() {
-            resolved.as_mut().suppress_expandable();
-        }
-        // Outer-validity recovery canonically backs up this exact raw
-        // delivery before substituting its recovery space.
-        self.last_delivery = Some(delivery_stamp);
-        self.check_outer_validity_entry(resolved.as_mut())?;
-        let previous_align_state = self.command.alignment.align_state;
-        self.command.classify_alignment_delivery(resolved.as_mut());
-        let command = resolved.as_ref();
+    /// Publishes one command after the authoritative resident transition has
+    /// completed its ordinary semantic treatment.
+    fn observe_resident_command(&mut self, command: &CurrentCommand<G>) {
         let adjustment = command.alignment_adjustment();
+        let previous_align_state = match adjustment {
+            crate::processor::AlignmentDeliveryAdjustment::BeginGroup => {
+                self.command.alignment.align_state - 1
+            }
+            crate::processor::AlignmentDeliveryAdjustment::EndGroup => {
+                self.command.alignment.align_state + 1
+            }
+            _ => self.command.alignment.align_state,
+        };
         if self.command.alignment.active_alignment.is_some()
             && !matches!(
                 adjustment,
@@ -460,7 +466,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         ) {
             self.observe_raw_delivery(command);
         }
-        Ok(())
     }
     pub(crate) fn observed_token(
         &self,

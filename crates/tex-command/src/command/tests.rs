@@ -99,7 +99,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         );
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
-        let (resolved, meaning_lookup) = command.empty_for_raw_delivery().write_resolved_delivery(
+        let (resolved, resolution) = command.empty_for_raw_delivery().write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
             17,
@@ -112,7 +112,8 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
             false,
             &context,
         );
-        assert!(!meaning_lookup);
+        assert!(!resolution.meaning_lookup());
+        assert_eq!(resolution.literal_catcode(), Some(Catcode::Letter));
         assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
 
         fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {

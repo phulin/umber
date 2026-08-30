@@ -686,7 +686,10 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
-    ) -> (ResolvedCommand<'slot, G>, bool) {
+    ) -> (
+        ResolvedCommand<'slot, G>,
+        tex_state::token::PackedMeaningResolution,
+    ) {
         #[cfg(any(test, feature = "profiling"))]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
@@ -714,13 +717,13 @@ impl<'slot, G> EmptyCommand<'slot, G> {
             CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
             suppress_expandable,
         );
-        let meaning_lookup = state.resolve_packed_token_meaning_into(
+        let resolution = state.resolve_packed_token_meaning_into(
             word,
             &mut command.meaning,
             &mut command.control_sequence,
         );
         command.identity = CommandIdentity::from_meaning(&command.meaning);
-        (ResolvedCommand(command), meaning_lookup)
+        (ResolvedCommand(command), resolution)
     }
 }
 

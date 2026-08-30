@@ -781,21 +781,20 @@ impl<G> crate::CommandState<G> {
     /// `align_state`, so they alone first-touch its rollback scalar. Delimiter
     /// interception remains owned by [`AlignmentDeliveryState`] and records no
     /// delivery-owned scalar undo.
-    pub(crate) fn classify_alignment_delivery(&mut self, command: &mut CurrentCommand<G>) {
-        let adjustment = match command.spelling().semantic_token() {
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            } => {
+    #[inline(always)]
+    pub(crate) fn classify_alignment_delivery(
+        &mut self,
+        command: &mut CurrentCommand<G>,
+        literal_catcode: Option<Catcode>,
+    ) {
+        let adjustment = match literal_catcode {
+            Some(Catcode::BeginGroup) => {
                 self.timeline
                     .record_delivery_align_state(self.roots.alignment.align_state);
                 self.roots.alignment.align_state += 1;
                 AlignmentDeliveryAdjustment::BeginGroup
             }
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            } => {
+            Some(Catcode::EndGroup) => {
                 self.timeline
                     .record_delivery_align_state(self.roots.alignment.align_state);
                 self.roots.alignment.align_state -= 1;

@@ -17,12 +17,29 @@ use super::{
 pub(crate) enum InputTopTransition<'slot, G> {
     Delivered {
         resolved: crate::command::ResolvedCommand<'slot, G>,
-        meaning_lookup: bool,
+        resolution: tex_state::token::PackedMeaningResolution,
     },
     OutParameter {
         slot: u8,
         has_macro_lineage: bool,
         active_source: Option<tex_state::SourceId>,
+    },
+    InvalidCharacter,
+    NeedLine(InputLevelId),
+    SourceExhausted(InputLevelId),
+    TokenExhausted(InputLevelId),
+    Empty,
+}
+
+/// Completed command-state outcome of one resident input transition.
+///
+/// Ordinary commands have already received their one-delivery suppression and
+/// alignment treatment. Only a forbidden outer command crosses back to the
+/// processor, whose cold recovery path owns diagnostics and input insertion.
+pub(crate) enum ResidentCommandTransition {
+    Delivered {
+        meaning_lookup: bool,
+        interception: ResidentCommandInterception,
     },
     ParameterPushed(InputLevelId),
     InvalidCharacter,
@@ -30,6 +47,12 @@ pub(crate) enum InputTopTransition<'slot, G> {
     SourceExhausted(InputLevelId),
     TokenExhausted(InputLevelId),
     Empty,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResidentCommandInterception {
+    Ready,
+    Outer,
 }
 
 #[cfg(test)]
@@ -239,13 +262,14 @@ impl<G> CommandState<G> {
     /// command value in place. Physical-line acquisition is deliberately a
     /// separate transition: a cursor without a loaded line returns
     /// [`InputTopTransition::NeedLine`] without loading or journaling one.
-    pub(crate) fn next_raw_into<'slot>(
+    #[inline(always)]
+    pub(crate) fn advance_resident_command_into(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
         create_control_sequences: bool,
-        destination: crate::command::EmptyCommand<'slot, G>,
+        destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
-    ) -> Result<InputTopTransition<'slot, G>, ()> {
+    ) -> Result<ResidentCommandTransition, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
         let transition = {
@@ -266,17 +290,57 @@ impl<G> CommandState<G> {
                 &mut self.raw_delivery_path_counters,
             )?
         };
-        let InputTopTransition::OutParameter {
-            slot,
-            has_macro_lineage,
-            active_source,
-        } = transition
-        else {
-            return Ok(transition);
-        };
-        match self.replay_out_parameter_after_admission(has_macro_lineage, active_source, slot) {
-            Ok(OutParameterReplay::Pushed(level)) => Ok(InputTopTransition::ParameterPushed(level)),
-            Ok(OutParameterReplay::Literal) | Err(_) => Err(()),
+        match transition {
+            InputTopTransition::Delivered {
+                mut resolved,
+                resolution,
+            } => {
+                if resolved.as_ref().suppresses_expandable_control_sequence() {
+                    resolved.as_mut().suppress_expandable();
+                }
+                let interception = if resolved.as_ref().is_outer()
+                    && !matches!(
+                        self.roots.scanner.status(),
+                        crate::processor::ScannerStatus::Normal
+                    ) {
+                    ResidentCommandInterception::Outer
+                } else {
+                    self.classify_alignment_delivery(
+                        resolved.as_mut(),
+                        resolution.literal_catcode(),
+                    );
+                    ResidentCommandInterception::Ready
+                };
+                Ok(ResidentCommandTransition::Delivered {
+                    meaning_lookup: resolution.meaning_lookup(),
+                    interception,
+                })
+            }
+            InputTopTransition::OutParameter {
+                slot,
+                has_macro_lineage,
+                active_source,
+            } => match self.replay_out_parameter_after_admission(
+                has_macro_lineage,
+                active_source,
+                slot,
+            ) {
+                Ok(OutParameterReplay::Pushed(level)) => {
+                    Ok(ResidentCommandTransition::ParameterPushed(level))
+                }
+                Ok(OutParameterReplay::Literal) | Err(_) => Err(()),
+            },
+            InputTopTransition::InvalidCharacter => Ok(ResidentCommandTransition::InvalidCharacter),
+            InputTopTransition::NeedLine(identity) => {
+                Ok(ResidentCommandTransition::NeedLine(identity))
+            }
+            InputTopTransition::SourceExhausted(identity) => {
+                Ok(ResidentCommandTransition::SourceExhausted(identity))
+            }
+            InputTopTransition::TokenExhausted(identity) => {
+                Ok(ResidentCommandTransition::TokenExhausted(identity))
+            }
+            InputTopTransition::Empty => Ok(ResidentCommandTransition::Empty),
         }
     }
 

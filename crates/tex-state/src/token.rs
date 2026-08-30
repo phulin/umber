@@ -177,6 +177,29 @@ const _: () = assert!(core::mem::size_of::<Token>() == 8);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TokenWord(u32);
 
+/// Copy-small result of resolving one resident packed token.
+///
+/// The resolver already decodes a literal character's category to construct
+/// its meaning. Command delivery consumes that same fact for brace handling
+/// instead of decoding the packed spelling a second time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackedMeaningResolution {
+    meaning_lookup: bool,
+    literal_catcode: Option<Catcode>,
+}
+
+impl PackedMeaningResolution {
+    #[must_use]
+    pub const fn meaning_lookup(self) -> bool {
+        self.meaning_lookup
+    }
+
+    #[must_use]
+    pub const fn literal_catcode(self) -> Option<Catcode> {
+        self.literal_catcode
+    }
+}
+
 impl TokenWord {
     const KIND_SHIFT: u32 = 30;
     const PAYLOAD_MASK: u32 = (1 << Self::KIND_SHIFT) - 1;
@@ -297,7 +320,7 @@ impl<G> crate::CommandContext<'_, G> {
         word: TokenWord,
         meaning: &mut crate::meaning::ResolvedMeaning<G>,
         control_sequence: &mut Option<Symbol>,
-    ) -> bool {
+    ) -> PackedMeaningResolution {
         use crate::meaning::{Meaning, ResolvedMeaning};
 
         let kind = word.0 >> TokenWord::KIND_SHIFT;
@@ -308,7 +331,7 @@ impl<G> crate::CommandContext<'_, G> {
                 let ch = char::from_u32(payload >> TokenWord::CATCODE_BITS)
                     .expect("packed token scalar is valid");
                 let cat = ALL_CATCODES[raw_cat];
-                if cat == Catcode::Active {
+                let meaning_lookup = if cat == Catcode::Active {
                     let symbol = self.active_character_symbol(ch);
                     *control_sequence = symbol;
                     *meaning = symbol
@@ -319,18 +342,28 @@ impl<G> crate::CommandContext<'_, G> {
                     *control_sequence = None;
                     *meaning = ResolvedMeaning::Static(Meaning::CharToken { ch, cat });
                     false
+                };
+                PackedMeaningResolution {
+                    meaning_lookup,
+                    literal_catcode: Some(cat),
                 }
             }
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
                 *control_sequence = Some(symbol);
                 *meaning = self.compact_control_sequence_meaning(symbol);
-                true
+                PackedMeaningResolution {
+                    meaning_lookup: true,
+                    literal_catcode: None,
+                }
             }
             TokenWord::KIND_PARAM => {
                 *control_sequence = None;
                 *meaning = ResolvedMeaning::Static(Meaning::Undefined);
-                false
+                PackedMeaningResolution {
+                    meaning_lookup: false,
+                    literal_catcode: None,
+                }
             }
             TokenWord::KIND_FROZEN => {
                 let frozen = FrozenToken::from_raw(payload as u16);
@@ -349,7 +382,10 @@ impl<G> crate::CommandContext<'_, G> {
                     self.frozen_primitive_resolved(Token::Frozen(frozen))
                         .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined))
                 };
-                false
+                PackedMeaningResolution {
+                    meaning_lookup: false,
+                    literal_catcode: None,
+                }
             }
             _ => unreachable!("two-bit packed-token kind"),
         }
