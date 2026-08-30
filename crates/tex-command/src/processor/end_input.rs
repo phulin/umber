@@ -141,6 +141,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
+                                    &self.command.parameters,
                                 ))
                                 .is_none())
                         .then(|| cursor.identity())
@@ -226,6 +227,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_at(PackedTokenSources::new(
                     &self.command.input.replay,
                     self.command.attempt.arena(),
+                    &self.command.parameters,
                 ))
                 .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
@@ -242,6 +244,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
+                                    &self.command.parameters,
                                 ))
                             .is_none()
                 )
@@ -271,6 +274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
+                                    &self.command.parameters,
                                 ))
                                 .is_some(),
                         )
@@ -311,6 +315,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_at(PackedTokenSources::new(
                     &self.command.input.replay,
                     self.command.attempt.arena(),
+                    &self.command.parameters,
                 ))
                 .is_some()
             || !matches!(
@@ -526,6 +531,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .token_at(PackedTokenSources::new(
                                 &self.command.input.replay,
                                 self.command.attempt.arena(),
+                                &self.command.parameters,
                             ))
                             .is_none() =>
                 {

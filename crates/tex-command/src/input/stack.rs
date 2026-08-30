@@ -582,12 +582,11 @@ impl<G> CommandState<G> {
             .sum::<usize>()
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
-        let activation =
-            self.parameters
-                .push_activation(name, definition.clone(), arguments, invocation);
+        let activation = self
+            .parameters
+            .push_activation(name, definition, arguments, invocation);
         self.push_token_level_with_macro_lineage(
             PackedTokenSpanHandle::MacroReplacement {
-                definition,
                 len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),
             },
             TokenBehavior::MacroBody(activation),

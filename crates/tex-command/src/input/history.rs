@@ -637,8 +637,9 @@ impl<G> crate::CommandState<G> {
         let stack_usage = &mut self.stack_usage;
         #[cfg(test)]
         let path_counters = &mut self.raw_delivery_path_counters;
+        let parameters = &roots.parameters;
         let input = &mut roots.input;
-        let sources = super::PackedTokenSources::new(&input.replay, attempt);
+        let sources = super::PackedTokenSources::new(&input.replay, attempt, parameters);
         let levels = &mut input.levels;
 
         let Some(index) = levels.top.checked_sub(1) else {

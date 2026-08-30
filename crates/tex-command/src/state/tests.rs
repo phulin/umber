@@ -920,6 +920,72 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
 }
 
 #[test]
+fn warmed_macro_activations_retain_one_definition_owner_each() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty macro definition");
+        let name = universe.intern("ownerprobe").expect("macro name").symbol();
+        let context = universe.command_context().expect("command context");
+        let mut state = CommandState::default();
+
+        let mut run = |activations: u64| {
+            let retained_before = tex_state::definition_retain_count();
+            for _ in 0..activations {
+                let matching = state.scratch.begin_macro_match().expect("macro match");
+                let frame = state
+                    .scratch
+                    .commit_macro_match(matching)
+                    .expect("sealed empty frame");
+                let level = state.push_macro_activation(
+                    name,
+                    definition.clone(),
+                    crate::macro_call::MacroArguments::new(frame),
+                    OriginId::UNKNOWN,
+                    0,
+                );
+                let activation = state
+                    .parameters
+                    .activations
+                    .last()
+                    .expect("live macro activation");
+                assert_eq!(activation.definition.semantic_owner_count(), 2);
+                assert!(matches!(
+                    state.input.levels.last(),
+                    Some(crate::input::InputLevel::Tokens(
+                        crate::input::TokenCursor {
+                            span: crate::input::PackedTokenSpanHandle::MacroReplacement { len: 0 },
+                            ..
+                        }
+                    ))
+                ));
+                let retained_before_context = tex_state::definition_retain_count();
+                assert!(state.output_open_context(&context).contains("ownerprobe"));
+                assert_eq!(
+                    tex_state::definition_retain_count(),
+                    retained_before_context,
+                    "context projection borrows the activation definition"
+                );
+                state
+                    .retire_exhausted_input(level)
+                    .expect("empty macro body retirement");
+                assert_eq!(definition.semantic_owner_count(), 1);
+            }
+            assert_eq!(
+                tex_state::definition_retain_count() - retained_before,
+                activations,
+                "the caller creates the activation owner and the span retains none"
+            );
+        };
+
+        // Warm every reusable activation/input/scratch lane before measuring.
+        run(1);
+        run(1);
+        run(4_096);
+    });
+}
+
+#[test]
 fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();

@@ -165,6 +165,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .token_at(PackedTokenSources::new(
                             &self.command.input.replay,
                             self.command.attempt.arena(),
+                            &self.command.parameters,
                         ))
                         .is_some()
                     {

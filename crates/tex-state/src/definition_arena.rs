@@ -415,9 +415,9 @@ impl<G> DefinitionId<G> {
     /// Borrows one packed replacement word through this already-owned
     /// definition handle.
     ///
-    /// Stored-token delivery keeps the handle in its input span, so this
-    /// access neither clones the non-atomic owner nor reconstructs a
-    /// [`DefinitionView`].
+    /// Macro replacement delivery reaches this handle through its live
+    /// activation, so the input span neither clones the non-atomic owner nor
+    /// reconstructs a [`DefinitionView`].
     #[must_use]
     pub fn replacement_word(&self, index: usize) -> Option<TokenWord> {
         self.data.words[self.data.parameter_len as usize..]

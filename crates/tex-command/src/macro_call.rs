@@ -25,8 +25,8 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 /// Semantic ownership of live macro activations.
 ///
 /// Macro-body input behavior carries a typed activation identity. Each
-/// activation holds only a private generation-branded descriptor for its
-/// stable execution-scratch slot.
+/// activation solely owns the live-call definition and holds a private
+/// generation-branded descriptor for its stable execution-scratch slot.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ParameterState<G> {
     pub(crate) activations: crate::timeline::LogicalStack<MacroActivation<G>>,
@@ -197,6 +197,23 @@ impl<G> ParameterState<G> {
         self.activations
             .last()
             .map(|activation| activation.invocation)
+    }
+
+    /// Borrows one activation by its authoritative live identity.
+    pub(crate) fn activation(&self, identity: MacroActivationId) -> Option<&MacroActivation<G>> {
+        self.activations
+            .iter()
+            .find(|activation| activation.identity == identity)
+    }
+
+    /// Borrows the exact LIFO activation whose body is currently delivering.
+    pub(crate) fn active_activation(
+        &self,
+        identity: MacroActivationId,
+    ) -> Option<&MacroActivation<G>> {
+        self.activations
+            .last()
+            .filter(|activation| activation.identity == identity)
     }
 
     pub(crate) fn retire_last_activation(&mut self) -> Option<MacroArguments<G>> {

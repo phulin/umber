@@ -857,15 +857,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
             );
-            command.push_token_level(
-                PackedTokenSpanHandle::MacroReplacement {
-                    definition: definition.clone(),
-                    len: u32::try_from(operations).expect("operation count fits u32"),
-                },
-                TokenBehavior::Ordinary,
-                RetirementBehavior::Pop,
-                ReplayTrace::MacroReplacement,
-            );
             let matching = command.scratch.begin_macro_match().expect("macro match");
             let mut writer = command
                 .scratch
@@ -889,6 +880,17 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .scratch
                 .commit_macro_match(matching)
                 .expect("macro frame");
+            let macro_name = universe
+                .intern("mixeddelivery")
+                .expect("mixed delivery macro name")
+                .symbol();
+            command.push_macro_activation(
+                macro_name,
+                definition,
+                crate::macro_call::MacroArguments::new(macro_frame),
+                OriginId::UNKNOWN,
+                operations,
+            );
             let range = command
                 .scratch
                 .argument_range(macro_frame, 1)

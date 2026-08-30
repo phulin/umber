@@ -876,13 +876,10 @@ impl<G> InputState<G> {
                     let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                         return false;
                     };
-                    let PackedTokenSpanHandle::MacroReplacement { definition, .. } = &tokens.span
-                    else {
+                    let PackedTokenSpanHandle::MacroReplacement { .. } = &tokens.span else {
                         return false;
                     };
-                    return parameters.activations.iter().any(|candidate| {
-                        candidate.identity == activation && &candidate.definition == definition
-                    });
+                    return parameters.activation(activation).is_some();
                 }
                 true
             }
@@ -1134,12 +1131,12 @@ impl<G> InputState<G> {
             tokens: &TokenCursor<G>,
             replay_lane: &ReplayLane<G>,
             index: usize,
-            _parameters: &crate::macro_call::ParameterState<G>,
+            parameters: &crate::macro_call::ParameterState<G>,
             attempt: &crate::attempt::AttemptArena<G>,
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
-            PackedTokenSources::new(replay_lane, attempt)
-                .token_at(&tokens.span, index)
+            PackedTokenSources::new(replay_lane, attempt, parameters)
+                .token_at(&tokens.span, tokens.behavior, index)
                 .map(|(word, _, _)| word.semantic_token())
         }
 
@@ -1168,22 +1165,16 @@ impl<G> InputState<G> {
             let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                 return None;
             };
-            let PackedTokenSpanHandle::MacroReplacement { definition, .. } = &tokens.span else {
+            let PackedTokenSpanHandle::MacroReplacement { .. } = &tokens.span else {
                 return None;
             };
-            let activation = parameters
-                .activations
-                .iter()
-                .find(|candidate| candidate.identity == activation)?;
-            if &activation.definition != definition {
-                return None;
-            }
+            let activation = parameters.activation(activation)?;
             Some((
                 crate::processor::expand_render::token_list_token_text(
                     stores,
                     tex_state::token::Token::Cs(activation.name),
                 ),
-                definition.clone(),
+                &activation.definition,
             ))
         } else {
             None
@@ -1231,12 +1222,11 @@ impl<G> InputState<G> {
             if !before.is_complete() {
                 before.prepend_str("->");
             }
-            let owner = stores.definition(definition.clone());
-            for index in (0..owner.parameter_text().len()).rev() {
+            for index in (0..definition.parameter_text().len()).rev() {
                 if before.is_complete() {
                     break;
                 }
-                let token = owner.parameter_text().get(index)?.semantic_token();
+                let token = definition.parameter_text().get(index)?.semantic_token();
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }

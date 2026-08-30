@@ -1896,10 +1896,7 @@ struct TokenCursor {
 
 enum PackedTokenSpanHandle {
     Replay { replay: ReplayPayloadId, len: u32 },
-    MacroReplacement {
-        definition: MacroDefinitionId,
-        len: u32,
-    },
+    MacroReplacement { len: u32 },
     DurableList { cursor: TokenListCursor, len: u32 },
     AttemptList { list: AttemptTokenListId, len: u32 },
 }
@@ -1913,7 +1910,7 @@ struct MacroArgumentCursor {
 enum TokenBehavior {
     Ordinary,
     Recovery,
-    MacroBody(MacroActivation),
+    MacroBody(MacroActivationId),
     BackedUp(BackupTreatment),
     UTemplate(TemplateId),
     VTemplate(TemplateId),
@@ -1943,8 +1940,10 @@ retained v-template retirement independently of storage.
 
 Every source is adapted once at level creation into the same
 `PackedTokenSpanHandle` plus the packed frame's scalar offset. Stored delivery
-then calls `PackedTokenSources::token_at(handle, offset)` and advances only
-that offset. The storage boundary makes one small direct owner-domain match
+then calls `PackedTokenSources::token_at(handle, behavior, offset)` and advances
+only that offset. A macro-replacement behavior resolves its activation identity
+and borrows that activation's definition; the span retains no second owner.
+The storage boundary makes one small direct owner-domain match
 required by safe Rust; no delivery caller discriminates source variants,
 builds a generic stored-delivery object, advances a second durable or macro
 cursor, or clones a definition/token-list owner per word. `token_at` returns
@@ -1969,8 +1968,11 @@ span to the top entry and delivers that span before its body without shifting
 either span.
 
 Macro replacement, argument-range, durable-list, and attempt-list spans remain
-direct coordinates into their existing owners. They do not enter the replay
-lane, acquire a shared token buffer, or copy their packed words at admission.
+direct coordinates into their existing owners. A macro-replacement span is
+only its length; the adjacent `MacroBody` behavior carries the authoritative
+activation identity, whose definition owner supplies replacement words. These
+spans do not enter the replay lane, acquire a shared token buffer, or copy their
+packed words at admission.
 
 The generation-tied `InputStack` separates each stable row payload from its
 mutable execution phase. A token row owns its span, behavior, trace, and identity once;
@@ -2017,7 +2019,9 @@ coordinates.
 
 The implemented ownership model keeps stable `MacroActivation` payloads in
 the `ParameterState` activation chain and stores a typed activation identity
-in `TokenBehavior::MacroBody`. One admitted owner retains up to 64 macro
+in `TokenBehavior::MacroBody`. The activation is the sole live-call definition
+owner; replacement delivery and diagnostic context borrow through its identity,
+and context projection performs no duplicate-owner equality validation. One admitted owner retains up to 64 macro
 records and their live token/provenance closure. `MacroArguments` and every
 live `ArgumentRange` name the same command-owned argument chunk by compact
 coordinates. `InputLevelId` is typed separately from source identity and is
@@ -2025,10 +2029,11 @@ present on both source and token levels. Exact-byte and Unicode source cursors
 use this identical enum.
 
 An executing macro resolves its generation-safe meaning identifier through the
-strong environment root already held for that meaning, without cloning the
-root or upgrading a weak entry. Diagnostic parameter/replacement context is
-rendered from the admitted packed macro owner, so retirement of the original
-definition-store entry cannot invalidate an active input level. General cold
+strong environment root already held for that meaning. Activation admission
+creates one live-call retain and moves it into `MacroActivation`; the input span
+creates none. Diagnostic parameter/replacement context is rendered by borrowing
+that activation owner, so retirement of the original definition-store entry
+cannot invalidate an active input level. General cold
 and stale lookup APIs retain their validation and rejection behavior.
 
 The centralized transient and backed-up constructors avoid caller-side rich

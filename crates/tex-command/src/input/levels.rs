@@ -4,7 +4,6 @@
 use core::marker::PhantomData;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::token::{OriginId, Token, TokenWord, TracedTokenWord};
 
@@ -285,7 +284,7 @@ impl<G> TokenCursor<G> {
     /// Peeks without advancing for stack-conservation and lifecycle checks.
     #[inline(always)]
     pub(crate) fn token_at(&self, sources: PackedTokenSources<'_, G>) -> Option<PackedTokenAt> {
-        sources.token_at(&self.span, self.position())
+        sources.token_at(&self.span, self.behavior, self.position())
     }
 
     /// Delivers the canonical word at the fixed frame's scalar position.
@@ -304,9 +303,16 @@ impl<G> TokenCursor<G> {
                 .replay
                 .get(*replay, index)
                 .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
-            PackedTokenSpanHandle::MacroReplacement { definition, .. } => definition
-                .replacement_word(index)
-                .map(|word| (word, OriginId::UNKNOWN, None)),
+            PackedTokenSpanHandle::MacroReplacement { .. } => {
+                let TokenBehavior::MacroBody(activation) = self.behavior else {
+                    return Err(());
+                };
+                sources
+                    .parameters
+                    .active_activation(activation)
+                    .and_then(|activation| activation.definition.replacement_word(index))
+                    .map(|word| (word, OriginId::UNKNOWN, None))
+            }
             PackedTokenSpanHandle::AttemptList { list, .. } => sources
                 .attempt
                 .token_word(*list, index)
@@ -377,11 +383,8 @@ pub(crate) enum PackedTokenSpanHandle<G> {
         replay: ReplayPayloadId<G>,
         len: u32,
     },
-    /// Replacement replay borrowed from one command-admitted macro chunk.
-    MacroReplacement {
-        definition: DefinitionId<G>,
-        len: u32,
-    },
+    /// Replacement replay borrowed through one live macro activation.
+    MacroReplacement { len: u32 },
     /// One generation-durable immutable token list.
     DurableList {
         list: tex_state::TokenListId<G>,
@@ -398,10 +401,7 @@ impl<G> Clone for PackedTokenSpanHandle<G> {
                 replay: *replay,
                 len: *len,
             },
-            Self::MacroReplacement { definition, len } => Self::MacroReplacement {
-                definition: definition.clone(),
-                len: *len,
-            },
+            Self::MacroReplacement { len } => Self::MacroReplacement { len: *len },
             Self::DurableList { list, len } => Self::DurableList {
                 list: list.clone(),
                 len: *len,
@@ -418,20 +418,27 @@ impl<G> Clone for PackedTokenSpanHandle<G> {
 pub(crate) struct PackedTokenSources<'a, G> {
     replay: &'a ReplayLane<G>,
     attempt: &'a crate::attempt::AttemptArena<G>,
+    parameters: &'a crate::macro_call::ParameterState<G>,
 }
 
 impl<'a, G> PackedTokenSources<'a, G> {
     pub(crate) const fn new(
         replay: &'a ReplayLane<G>,
         attempt: &'a crate::attempt::AttemptArena<G>,
+        parameters: &'a crate::macro_call::ParameterState<G>,
     ) -> Self {
-        Self { replay, attempt }
+        Self {
+            replay,
+            attempt,
+            parameters,
+        }
     }
 
     /// Peeks through an admitted span without advancing its input frame.
     pub(crate) fn token_at(
         &self,
         span: &PackedTokenSpanHandle<G>,
+        behavior: TokenBehavior,
         index: usize,
     ) -> Option<PackedTokenAt> {
         match span {
@@ -439,9 +446,15 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 .replay
                 .get(*replay, index)
                 .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
-            PackedTokenSpanHandle::MacroReplacement { definition, .. } => definition
-                .replacement_word(index)
-                .map(|word| (word, OriginId::UNKNOWN, None)),
+            PackedTokenSpanHandle::MacroReplacement { .. } => {
+                let TokenBehavior::MacroBody(identity) = behavior else {
+                    return None;
+                };
+                self.parameters
+                    .activation(identity)
+                    .and_then(|activation| activation.definition.replacement_word(index))
+                    .map(|word| (word, OriginId::UNKNOWN, None))
+            }
             PackedTokenSpanHandle::AttemptList { list, .. } => self
                 .attempt
                 .token_word(*list, index)
@@ -1427,10 +1440,12 @@ impl<G> PackedTokenSpanHandle<G> {
 #[cfg(any(test, feature = "profiling"))]
 pub struct MixedPackedCursorBenchmark<G> {
     spans: [PackedTokenSpanHandle<G>; 4],
+    behaviors: [TokenBehavior; 4],
     macro_argument: crate::execution_scratch::MacroArgumentRange<G>,
     positions: [u32; 5],
     replay: ReplayLane<G>,
     attempt: crate::attempt::AttemptArena<G>,
+    parameters: crate::macro_call::ParameterState<G>,
     scratch: crate::execution_scratch::ExecutionScratch<G>,
 }
 
@@ -1509,12 +1524,22 @@ impl<G> MixedPackedCursorBenchmark<G> {
             .argument_range(frame, 1)
             .expect("mixed-cursor live frame")
             .expect("mixed-cursor first argument");
+        let name = universe
+            .intern("mixedcursor")
+            .expect("mixed-cursor macro name")
+            .symbol();
+        let mut parameters = crate::macro_call::ParameterState::default();
+        let activation = parameters.push_activation(
+            name,
+            definition,
+            crate::macro_call::MacroArguments::new(frame),
+            OriginId::UNKNOWN,
+        );
 
         Self {
             spans: [
                 replay_span,
                 PackedTokenSpanHandle::MacroReplacement {
-                    definition,
                     len: semantic.len() as u32,
                 },
                 PackedTokenSpanHandle::AttemptList {
@@ -1523,12 +1548,19 @@ impl<G> MixedPackedCursorBenchmark<G> {
                 },
                 durable,
             ],
+            behaviors: [
+                TokenBehavior::Ordinary,
+                TokenBehavior::MacroBody(activation),
+                TokenBehavior::Ordinary,
+                TokenBehavior::Ordinary,
+            ],
             macro_argument: range,
             // Keep the rollback mark nonzero so restoration proves an exact
             // cursor rather than merely resetting empty spans.
             positions: [1; 5],
             replay,
             attempt,
+            parameters,
             scratch,
         }
     }
@@ -1537,13 +1569,18 @@ impl<G> MixedPackedCursorBenchmark<G> {
     /// scalar cursors after every source has crossed real span ends.
     pub fn run(&mut self, rounds: u32) -> MixedPackedCursorReceipt {
         let opening = self.positions;
-        let sources = PackedTokenSources::new(&self.replay, &self.attempt);
+        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.parameters);
         let mut checksum = 0_u64;
         let mut retirements = 0_u64;
         for _ in 0..rounds {
-            for (span, position) in self.spans.iter().zip(&mut self.positions[..4]) {
+            for ((span, behavior), position) in self
+                .spans
+                .iter()
+                .zip(self.behaviors)
+                .zip(&mut self.positions[..4])
+            {
                 let (word, origin, provenance) = sources
-                    .token_at(span, *position as usize)
+                    .token_at(span, behavior, *position as usize)
                     .expect("mixed packed cursor remains within its span");
                 debug_assert_eq!(origin, OriginId::UNKNOWN);
                 debug_assert!(provenance.is_none());
@@ -1567,9 +1604,14 @@ impl<G> MixedPackedCursorBenchmark<G> {
             }
         }
         self.positions = opening;
-        for (span, position) in self.spans.iter().zip(self.positions[..4].iter().copied()) {
+        for ((span, behavior), position) in self
+            .spans
+            .iter()
+            .zip(self.behaviors)
+            .zip(self.positions[..4].iter().copied())
+        {
             let _ = sources
-                .token_at(span, position as usize)
+                .token_at(span, behavior, position as usize)
                 .expect("rollback restores the exact packed cursor");
         }
         let _ = self

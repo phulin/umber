@@ -389,17 +389,21 @@ in a detached format rather than a live runtime value. There is no runtime
 compaction, forwarding pointer, id rewrite, or move to another generation.
 
 Execution scratch segments can recycle because their last semantic user is
-known. The macro activation owns its frame id; its replacement input retires
-only after all argument replay above it has ended; `pop_macro_frame` then
-invalidates the slot serial, rewinds the exact frame watermark, and returns
-the physical suffix to the spare pool. No
+known. The macro activation is the sole live-call definition owner and also
+owns its frame id. Its replacement input carries only that activation identity
+and a length; delivery and cold context rendering borrow the parameter and
+replacement spans through the activation without retaining or equality-checking
+a duplicate definition. The replacement input retires only after all argument
+replay above it has ended; `pop_macro_frame` then invalidates the slot serial,
+rewinds the exact frame watermark, and returns the physical suffix to the spare pool. No
 durable state or checkpoint is allowed to hold that frame afterward. The
 difference is exact lifetime knowledge, not the physical chunk size.
 
 ### Macro, scanner, and operation nesting
 
 `ParameterState::activations` is the logical macro stack. Each
-`MacroActivation` names its definition and one sealed scratch `MacroFrameId`.
+`MacroActivation` solely owns its live-call definition and names one sealed
+scratch `MacroFrameId`.
 During collection, one checked resident match writer holds the direct lane
 cursor plus first-scan facts locally; it publishes that argument once when it
 completes (or remains intact for a future typed suspension). The frame then
