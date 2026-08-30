@@ -503,18 +503,23 @@ An ordinary function local cannot survive suspension. Every value needed on
 resume is moved into a typed pending state. For the resource path,
 `PendingCommandAttempt` owns the complete attempt, a non-`Copy`
 `CommandAttemptOperation` capability, a fixed resume point, the typed requested
-operation frame, and one coarse generation owner. Preparation writes the
-prepared or diagnostic payload into one caller-loop `OperationFrame` and
-returns only a compact readiness coordinate. Completion consumes its occupied
-fields and immediately reuses the empty slot; resource suspension moves that
-exact frame into the attempt instead of boxing a prepared operation or
-retaining completed operations in a generation-long lane. `MainControl` owns one singular
-direct-retry slot: the same operation capability moves together with exactly
-one in-place operation frame or alignment destination. The operation frame
-owns its admitted `CurrentCommand`, parked expansion, scalar phase, delivery
-cursor, scanner child, and partial direct-scan phase directly; no nested
-preflight projection is constructed or extracted at preparation, suspension,
-or resumption. A settled command discovered by
+operation frame, and one coarse generation owner. Preparation writes
+diagnostic fields into one caller-loop `OperationFrame` and returns only a
+compact readiness coordinate. A successful ordinary scan installs one hot or
+cold payload into that frame and returns only a compact tag. Preparation
+changes the payload's small attempt-root fields to prepared-root fields in
+place; application consumes semantic leaves through a mutable borrow, then
+clears and immediately reuses the slot. Resource suspension moves that exact
+frame into the attempt instead of boxing a prepared operation or retaining
+completed operations in a generation-long lane. `MainControl` owns one
+singular direct-retry slot: the same operation capability moves together with
+exactly one in-place operation frame or alignment destination. The operation
+frame owns its admitted `CurrentCommand`, parked expansion, scalar phase,
+delivery cursor, scanner child, partial direct-scan phase, and mutually
+exclusive operation payload directly; no nested preflight or scanned-operation
+projection is constructed or extracted at preparation, suspension, or
+resumption. The sole by-value scanned-operation carrier exists only while
+rebuilding a genuinely suspended typed scanner. A settled command discovered by
 alignment dispatch installs its command/cursor destination before operand
 scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.
@@ -689,12 +694,14 @@ The general ordinary scanner then borrows the same slot in the same admitted
 command context. A resource, transaction, diagnostic, alignment, or tracked
 observation boundary stops before that scan and retains only the exact frame
 state required by its established path. Delivery returns only a compact status;
-an already-scanned hot or cold operation bypasses the command-context front of
-operation preparation, and cold resource rooting consumes the frame payload
-without another command processor. Filler loops overwrite and reuse the slot,
-and only the final consumer, an explicit backup, or an exact typed suspension
-moves the settled owner out. No command is cloned merely to cross the delivery
-API, and no settled command is backed up or redelivered across preflight.
+an already-scanned hot or cold operation resides in the caller-owned operation
+frame and bypasses the command-context front of operation preparation. Cold
+resource rooting changes only resident root fields, and hot/cold application
+consumes only semantic leaves without another command processor or whole-frame
+move. Filler loops overwrite and reuse the command slot, and only the final
+consumer, an explicit backup, or an exact typed suspension moves the settled
+owner out. No command is cloned merely to cross the delivery API, and no
+settled command is backed up or redelivered across preflight.
 
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered

@@ -641,13 +641,13 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
 /// here, exactly like `\box<n>`, `\lastbox`, and `\vsplit` do outside a
 /// shift.
 pub(in crate::main_control) fn apply_box_shift<G>(
-    shift: ScannedBoxShift,
+    shift: &mut ScannedBoxShift,
     command: &mut CommandMachine<'_, G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    match shift.payload {
+    match &mut shift.payload {
         ScannedBoxShiftPayload::Missing => {
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
@@ -656,7 +656,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            let id = read_box_register(index, copy, stores, command);
+            let id = read_box_register(*index, *copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
@@ -667,7 +667,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                |_| Ok(error_context),
+                |_| Ok(std::mem::take(error_context)),
             )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)

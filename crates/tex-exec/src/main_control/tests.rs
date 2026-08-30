@@ -2683,7 +2683,7 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
         );
 
         assert_eq!(
-            admitted!(stores, |context| write_text(tokens, context)),
+            admitted!(stores, |context| write_text(&tokens, context)),
             "A\nB\n"
         );
     });
@@ -6325,7 +6325,8 @@ fn operation_frame_phase_evidence(
             frame.write_hot(hot_apply::HotOperation::end_ordinary_group());
             frame.assert_hot_only();
             scalar_transitions += 1;
-            let _ = frame.take_hot();
+            let _ = frame.hot_mut();
+            frame.payload = None;
             frame.assert_empty();
             scalar_transitions += 1;
         }

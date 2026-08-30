@@ -30,11 +30,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
   structurally absent: every retained root uses this same dispatcher loop.
 - `src/main_control.rs`: generation-typed sole production command delivery and execution driver, including one same-borrow raw-fetch/classification/expansion entry followed by the general ordinary scanner in that admitted context, with retry state retained only at a typed resource barrier, trace-mode continuity across that borrow, command-owned undefined recovery before stomach dispatch, typed alignment, diagnostic-assignment, and nested-immediate continuations, snapshot-free direct episodes, a singular caller-owned `OperationFrame` written by preparation and consumed fieldwise by application or moved intact into typed suspension, complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, attempt-owned macro operands across scanned assignment apply seams, the execution-owned memo capability, demand-selected convergence-root activation before execution, and direct tracked-region lifecycle and mode projection.
 - The `OperationFrame` owns the admitted current command, parked expansion,
-  scalar phase, delivery cursor, scanner child, partial direct scan, and the
-  completed hot operation awaiting application in its own fields. Preflight
-  returns only a compact delivery tag. Do not recreate a nested
-  preflight-command or scanned-operation projection, or extract those fields
-  merely to cross prepare, retry, rollback, or resume.
+  scalar phase, delivery cursor, scanner child, partial direct scan, and one
+  mutually exclusive hot/cold operation payload in its own fields. Scanning
+  installs the payload once; a compact `ScannedOperation` tag selects the next
+  phase, preparation changes only attempt-root fields to prepared-root fields,
+  and application consumes semantic leaves through a mutable borrow before
+  clearing the slot. Only a genuine typed suspension may move the whole frame.
+  Do not recreate a nested preflight-command or scanned-operation projection,
+  or extract those fields merely to cross prepare, retry, rollback, or resume.
 - Each topology-stable operation prepares executor host capabilities once from
   the authoritative live list. A stack-branded preparation carries the mode
   and shared effective-tail result through delivery/scanning into application;
@@ -43,15 +46,16 @@ Command operands are scanned by `tex-command` into typed request and result valu
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; the scanner
   writes the completed hot operation into the existing caller-owned
-  `OperationFrame`, and application consumes that field without a second
-  carrier. Detached mutation values and macro-body walks are demand-selected
-  cold evidence.
+  `OperationFrame`, root preparation mutates that resident operation, and
+  application consumes its fields without a second carrier. Detached mutation
+  values and macro-body walks are demand-selected cold evidence.
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
-  values; `scan.rs` owns uncommon operand collection; `apply.rs` consumes the
-  prepared field from the caller's direct operation frame; `alignment.rs`,
-  `pdf.rs`, and `support.rs` isolate the corresponding complex families without
-  introducing another executor.
+  values and the small attempt/prepared root fields that change domain in
+  place; `scan.rs` owns uncommon operand collection; `apply.rs` mutably borrows
+  the resident prepared operation and consumes only its semantic leaves;
+  `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
+  families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
   caller-owned fixed-chunk output ledger for coordinate-only checkpoint
   publication, exact prior/current settlement, resource fulfillment,

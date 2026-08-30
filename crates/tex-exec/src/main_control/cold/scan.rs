@@ -519,7 +519,7 @@ pub(in crate::main_control) fn scan<G>(
                 .map_err(command_error)?;
             Ok(ColdOperation::Toks {
                 index: assignment.index,
-                tokens: assignment.tokens,
+                tokens: assignment.tokens.map(Into::into),
                 source: assignment.source,
                 global,
             })
@@ -533,7 +533,7 @@ pub(in crate::main_control) fn scan<G>(
                 .map_err(command_error)?;
             Ok(ColdOperation::Toks {
                 index,
-                tokens,
+                tokens: tokens.map(Into::into),
                 source,
                 global,
             })
@@ -592,7 +592,7 @@ pub(in crate::main_control) fn scan<G>(
                 .map_err(command_error)?;
             Ok(ColdOperation::TokParam {
                 index,
-                tokens: tokens.tokens,
+                tokens: tokens.tokens.map(Into::into),
                 source: tokens.source,
                 global,
             })
@@ -734,7 +734,8 @@ pub(in crate::main_control) fn scan<G>(
                 processor
                     .scan_balanced_text(true)
                     .map_err(command_error)?
-                    .tokens,
+                    .tokens
+                    .into(),
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
@@ -895,7 +896,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::Font(font) => Ok(ColdOperation::FontSelect {
             font,
-            selector: command.control_sequence(),
+            _selector: command.control_sequence(),
             global,
         }),
         // tex.web §578's `find_font_dimen` scans the number *and* the font
@@ -967,8 +968,8 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::PdfFontAction {
                 primitive,
                 font: scanned.font,
-                first: scanned.first,
-                second: scanned.second,
+                first: scanned.first.map(Into::into),
+                second: scanned.second.map(Into::into),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
@@ -980,13 +981,16 @@ pub(in crate::main_control) fn scan<G>(
                 .scan_balanced_text(false)
                 .map_err(command_error)?
                 .tokens;
-            Ok(ColdOperation::DeferredWrite { stream, tokens })
+            Ok(ColdOperation::DeferredWrite {
+                stream,
+                tokens: tokens.into(),
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Special) => {
             let (deferred, text) = processor.scan_special().map_err(command_error)?;
             Ok(ColdOperation::DeferredSpecial {
                 deferred,
-                tokens: text.tokens,
+                tokens: text.tokens.into(),
             })
         }
         // TeX82 §1377's `@<Implement \setlanguage@>`, the `set_language_code`
@@ -1164,7 +1168,7 @@ pub(in crate::main_control) fn scan<G>(
         ) => {
             let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
             Ok(ColdOperation::Message {
-                tokens: tokens.tokens,
+                tokens: tokens.tokens.into(),
                 error: primitive == UnexpandablePrimitive::ErrMessage,
             })
         }
@@ -1177,7 +1181,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowTokens) => {
             let text = processor.scan_showtokens().map_err(command_error)?;
             Ok(ColdOperation::ShowTokens {
-                tokens: text.tokens,
+                tokens: text.tokens.into(),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowIfs) => {
@@ -1491,7 +1495,8 @@ pub(in crate::main_control) fn scan<G>(
             tokens: processor
                 .scan_balanced_text(true)
                 .map_err(command_error)?
-                .tokens,
+                .tokens
+                .into(),
         }),
         // e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: `\marks` first scans
         // one extended register number (recovering an invalid selector to

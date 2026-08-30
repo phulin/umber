@@ -14,12 +14,10 @@ pub(in crate::main_control) struct RootedBalancedText<T> {
     pub(in crate::main_control) provenance: tex_command::StructuredProvenance,
 }
 
-impl From<tex_command::ScannedBalancedText>
-    for RootedBalancedText<tex_command::AttemptTokenListId>
-{
+impl<G> From<tex_command::ScannedBalancedText> for RootedBalancedText<OperationTokenRoot<G>> {
     fn from(text: tex_command::ScannedBalancedText) -> Self {
         Self {
-            tokens: text.tokens,
+            tokens: text.tokens.into(),
             provenance: text.provenance,
         }
     }
@@ -38,7 +36,7 @@ pub(in crate::main_control) struct RootedPdfImageRequest<T> {
     pub(in crate::main_control) attr: Option<T>,
 }
 
-impl From<tex_command::PdfImageRequest> for RootedPdfImageRequest<tex_command::AttemptTokenListId> {
+impl<G> From<tex_command::PdfImageRequest> for RootedPdfImageRequest<OperationTokenRoot<G>> {
     fn from(request: tex_command::PdfImageRequest) -> Self {
         Self {
             name: request.name,
@@ -49,7 +47,7 @@ impl From<tex_command::PdfImageRequest> for RootedPdfImageRequest<tex_command::A
             color_space_object: request.color_space_object,
             page_box: request.page_box,
             page_box_explicit: request.page_box_explicit,
-            attr: request.attr,
+            attr: request.attr.map(Into::into),
         }
     }
 }
@@ -239,52 +237,57 @@ pub(in crate::main_control) enum RootedImmediateExtension<T> {
     PdfImage(RootedPdfImageRequest<T>),
 }
 
-fn rooted_pdf_identifier(
+fn rooted_pdf_identifier<G>(
     identifier: tex_command::PdfActionIdentifier,
-) -> RootedPdfActionIdentifier<tex_command::AttemptTokenListId> {
+) -> RootedPdfActionIdentifier<OperationTokenRoot<G>> {
     match identifier {
-        tex_command::PdfActionIdentifier::Name(tokens) => RootedPdfActionIdentifier::Name(tokens),
+        tex_command::PdfActionIdentifier::Name(tokens) => {
+            RootedPdfActionIdentifier::Name(tokens.into())
+        }
         tex_command::PdfActionIdentifier::Number(number) => {
             RootedPdfActionIdentifier::Number(number)
         }
-        tex_command::PdfActionIdentifier::Raw(tokens) => RootedPdfActionIdentifier::Raw(tokens),
+        tex_command::PdfActionIdentifier::Raw(tokens) => {
+            RootedPdfActionIdentifier::Raw(tokens.into())
+        }
     }
 }
 
-fn rooted_pdf_action(
+fn rooted_pdf_action<G>(
     action: tex_command::PdfActionSpec,
-) -> RootedPdfActionSpec<tex_command::AttemptTokenListId> {
-    fn destination(
+) -> RootedPdfActionSpec<OperationTokenRoot<G>> {
+    fn destination<G>(
         destination: tex_command::PdfActionDestination,
-    ) -> RootedPdfActionDestination<tex_command::AttemptTokenListId> {
+    ) -> RootedPdfActionDestination<OperationTokenRoot<G>> {
         let target = match destination.target {
-            tex_command::PdfActionTarget::Page { number, view } => {
-                RootedPdfActionTarget::Page { number, view }
-            }
+            tex_command::PdfActionTarget::Page { number, view } => RootedPdfActionTarget::Page {
+                number,
+                view: view.into(),
+            },
             tex_command::PdfActionTarget::Destination(identifier) => {
                 RootedPdfActionTarget::Destination(rooted_pdf_identifier(identifier))
             }
         };
         RootedPdfActionDestination {
-            file: destination.file,
-            structure: destination.structure.map(rooted_pdf_identifier),
+            file: destination.file.map(Into::into),
+            structure: destination.structure.map(rooted_pdf_identifier::<G>),
             target,
             window: destination.window,
         }
     }
 
     match action {
-        tex_command::PdfActionSpec::User(tokens) => RootedPdfActionSpec::User(tokens),
-        tex_command::PdfActionSpec::GoTo(value) => RootedPdfActionSpec::GoTo(destination(value)),
+        tex_command::PdfActionSpec::User(tokens) => RootedPdfActionSpec::User(tokens.into()),
+        tex_command::PdfActionSpec::GoTo(value) => {
+            RootedPdfActionSpec::GoTo(destination::<G>(value))
+        }
         tex_command::PdfActionSpec::Thread(value) => {
-            RootedPdfActionSpec::Thread(destination(value))
+            RootedPdfActionSpec::Thread(destination::<G>(value))
         }
     }
 }
 
-impl From<tex_command::PdfGraphicsRequest>
-    for RootedPdfGraphicsRequest<tex_command::AttemptTokenListId>
-{
+impl<G> From<tex_command::PdfGraphicsRequest> for RootedPdfGraphicsRequest<OperationTokenRoot<G>> {
     fn from(request: tex_command::PdfGraphicsRequest) -> Self {
         match request {
             tex_command::PdfGraphicsRequest::Literal {
@@ -324,9 +327,7 @@ impl From<tex_command::PdfGraphicsRequest>
     }
 }
 
-impl From<tex_command::PdfObjectRequest>
-    for RootedPdfObjectRequest<tex_command::AttemptTokenListId>
-{
+impl<G> From<tex_command::PdfObjectRequest> for RootedPdfObjectRequest<OperationTokenRoot<G>> {
     fn from(request: tex_command::PdfObjectRequest) -> Self {
         match request {
             tex_command::PdfObjectRequest::Reserve => Self::Reserve,
@@ -347,7 +348,7 @@ impl From<tex_command::PdfObjectRequest>
     }
 }
 
-impl From<tex_command::PdfFormRequest> for RootedPdfFormRequest<tex_command::AttemptTokenListId> {
+impl<G> From<tex_command::PdfFormRequest> for RootedPdfFormRequest<OperationTokenRoot<G>> {
     fn from(request: tex_command::PdfFormRequest) -> Self {
         match request {
             tex_command::PdfFormRequest::Create {
@@ -364,20 +365,20 @@ impl From<tex_command::PdfFormRequest> for RootedPdfFormRequest<tex_command::Att
     }
 }
 
-impl From<tex_command::PdfDocumentFragmentRequest>
-    for RootedPdfDocumentFragmentRequest<tex_command::AttemptTokenListId>
+impl<G> From<tex_command::PdfDocumentFragmentRequest>
+    for RootedPdfDocumentFragmentRequest<OperationTokenRoot<G>>
 {
     fn from(request: tex_command::PdfDocumentFragmentRequest) -> Self {
         Self {
             kind: request.kind,
             text: request.text.into(),
-            open_action: request.open_action.map(rooted_pdf_action),
+            open_action: request.open_action.map(rooted_pdf_action::<G>),
         }
     }
 }
 
-impl From<tex_command::PdfNavigationRequest>
-    for RootedPdfNavigationRequest<tex_command::AttemptTokenListId>
+impl<G> From<tex_command::PdfNavigationRequest>
+    for RootedPdfNavigationRequest<OperationTokenRoot<G>>
 {
     fn from(request: tex_command::PdfNavigationRequest) -> Self {
         match request {
@@ -401,14 +402,14 @@ impl From<tex_command::PdfNavigationRequest>
                 Self::StartLink(RootedPdfStartLinkRequest {
                     dimensions: request.dimensions,
                     attributes: request.attributes.map(Into::into),
-                    action: rooted_pdf_action(request.action),
+                    action: rooted_pdf_action::<G>(request.action),
                 })
             }
             tex_command::PdfNavigationRequest::EndLink => Self::EndLink,
             tex_command::PdfNavigationRequest::Outline(request) => {
                 Self::Outline(RootedPdfOutlineRequest {
                     attributes: request.attributes.map(Into::into),
-                    action: rooted_pdf_action(request.action),
+                    action: rooted_pdf_action::<G>(request.action),
                     count: request.count,
                     title: request.title.into(),
                 })
@@ -416,7 +417,7 @@ impl From<tex_command::PdfNavigationRequest>
             tex_command::PdfNavigationRequest::Destination(request) => {
                 Self::Destination(RootedPdfDestinationRequest {
                     structure: request.structure,
-                    identifier: rooted_pdf_identifier(request.identifier),
+                    identifier: rooted_pdf_identifier::<G>(request.identifier),
                     kind: request.kind,
                 })
             }
@@ -424,7 +425,7 @@ impl From<tex_command::PdfNavigationRequest>
                 Self::Thread(RootedPdfThreadRequest {
                     dimensions: request.dimensions,
                     attributes: request.attributes.map(Into::into),
-                    identifier: rooted_pdf_identifier(request.identifier),
+                    identifier: rooted_pdf_identifier::<G>(request.identifier),
                     running: request.running,
                 })
             }
@@ -433,8 +434,8 @@ impl From<tex_command::PdfNavigationRequest>
     }
 }
 
-impl From<tex_command::InputStreamRequest>
-    for RootedInputStreamRequest<tex_command::AttemptDefinitionId>
+impl<G> From<tex_command::InputStreamRequest>
+    for RootedInputStreamRequest<OperationDefinitionRoot<G>>
 {
     fn from(request: tex_command::InputStreamRequest) -> Self {
         match request {
@@ -467,15 +468,13 @@ impl From<tex_command::InputStreamRequest>
                 stream,
                 target,
                 global,
-                definition,
+                definition: definition.into(),
             },
         }
     }
 }
 
-impl From<tex_command::ImmediateExtension>
-    for RootedImmediateExtension<tex_command::AttemptTokenListId>
-{
+impl<G> From<tex_command::ImmediateExtension> for RootedImmediateExtension<OperationTokenRoot<G>> {
     fn from(request: tex_command::ImmediateExtension) -> Self {
         match request {
             tex_command::ImmediateExtension::Continue => Self::Continue,
@@ -485,9 +484,10 @@ impl From<tex_command::ImmediateExtension>
             tex_command::ImmediateExtension::OpenOut { stream, file_name } => {
                 Self::OpenOut { stream, file_name }
             }
-            tex_command::ImmediateExtension::Write { stream, tokens } => {
-                Self::Write { stream, tokens }
-            }
+            tex_command::ImmediateExtension::Write { stream, tokens } => Self::Write {
+                stream,
+                tokens: tokens.into(),
+            },
             tex_command::ImmediateExtension::CloseOut { stream } => Self::CloseOut { stream },
             tex_command::ImmediateExtension::PdfObject(request) => Self::PdfObject(request.into()),
             tex_command::ImmediateExtension::PdfForm(request) => Self::PdfForm(request.into()),
@@ -496,11 +496,122 @@ impl From<tex_command::ImmediateExtension>
     }
 }
 
+/// One token-list root whose storage domain changes without moving its
+/// enclosing operation.
+///
+/// Scanning installs the attempt coordinate. The outer preparation boundary
+/// replaces only this small field with the durable owner; the surrounding
+/// [`ColdOperation`] remains at its caller-owned address.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::main_control) enum OperationTokenRoot<G> {
+    Attempt(tex_command::AttemptTokenListId),
+    Prepared(Option<tex_state::TokenListId<G>>),
+}
+
+impl<G> OperationTokenRoot<G> {
+    pub(in crate::main_control) const fn attempt(id: tex_command::AttemptTokenListId) -> Self {
+        Self::Attempt(id)
+    }
+
+    pub(in crate::main_control) fn attempt_id(
+        &self,
+    ) -> Result<tex_command::AttemptTokenListId, ColdPreparationError> {
+        match self {
+            Self::Attempt(id) => Ok(*id),
+            Self::Prepared(_) => Err(ColdPreparationError::ReceiptRemainder),
+        }
+    }
+
+    fn prepare(&mut self, id: tex_state::TokenListId<G>) -> Result<(), ColdPreparationError> {
+        if !matches!(self, Self::Attempt(_)) {
+            return Err(ColdPreparationError::ReceiptRemainder);
+        }
+        *self = Self::Prepared(Some(id));
+        Ok(())
+    }
+
+    pub(in crate::main_control) fn prepared(&self) -> &tex_state::TokenListId<G> {
+        match self {
+            Self::Prepared(Some(id)) => id,
+            Self::Attempt(_) | Self::Prepared(None) => {
+                panic!("cold operation token root is not prepared")
+            }
+        }
+    }
+
+    pub(in crate::main_control) fn take_prepared(&mut self) -> tex_state::TokenListId<G> {
+        match self {
+            Self::Prepared(id) => id
+                .take()
+                .expect("prepared cold operation token root is consumed once"),
+            Self::Attempt(_) => panic!("cold operation token root is not prepared"),
+        }
+    }
+}
+
+impl<G> From<tex_command::AttemptTokenListId> for OperationTokenRoot<G> {
+    fn from(value: tex_command::AttemptTokenListId) -> Self {
+        Self::attempt(value)
+    }
+}
+
+/// One definition root promoted in place with its enclosing operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::main_control) enum OperationDefinitionRoot<G> {
+    Attempt(tex_command::AttemptDefinitionId),
+    Prepared(Option<tex_state::DefinitionId<G>>),
+}
+
+impl<G> OperationDefinitionRoot<G> {
+    pub(in crate::main_control) const fn attempt(id: tex_command::AttemptDefinitionId) -> Self {
+        Self::Attempt(id)
+    }
+
+    fn attempt_id(&self) -> Result<tex_command::AttemptDefinitionId, ColdPreparationError> {
+        match self {
+            Self::Attempt(id) => Ok(*id),
+            Self::Prepared(_) => Err(ColdPreparationError::ReceiptRemainder),
+        }
+    }
+
+    pub(in crate::main_control) fn prepared(&self) -> &tex_state::DefinitionId<G> {
+        match self {
+            Self::Prepared(Some(id)) => id,
+            Self::Attempt(_) | Self::Prepared(None) => {
+                panic!("cold operation definition root is not prepared")
+            }
+        }
+    }
+
+    pub(in crate::main_control) fn take_prepared(&mut self) -> tex_state::DefinitionId<G> {
+        match self {
+            Self::Prepared(id) => id
+                .take()
+                .expect("prepared cold operation definition root is consumed once"),
+            Self::Attempt(_) => panic!("cold operation definition root is not prepared"),
+        }
+    }
+
+    fn prepare(&mut self, id: tex_state::DefinitionId<G>) -> Result<(), ColdPreparationError> {
+        if !matches!(self, Self::Attempt(_)) {
+            return Err(ColdPreparationError::ReceiptRemainder);
+        }
+        *self = Self::Prepared(Some(id));
+        Ok(())
+    }
+}
+
+impl<G> From<tex_command::AttemptDefinitionId> for OperationDefinitionRoot<G> {
+    fn from(value: tex_command::AttemptDefinitionId) -> Self {
+        Self::attempt(value)
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::main_control) enum ColdOperation<
     G,
-    T = tex_command::AttemptTokenListId,
-    D = tex_command::AttemptDefinitionId,
+    T = OperationTokenRoot<G>,
+    D = OperationDefinitionRoot<G>,
 > {
     Continue,
     Relax,
@@ -832,7 +943,7 @@ pub(in crate::main_control) enum ColdOperation<
     },
     FontSelect {
         font: FontId,
-        selector: Option<Symbol>,
+        _selector: Option<Symbol>,
         global: bool,
     },
     FontDefinition {
@@ -1271,14 +1382,11 @@ pub(in crate::main_control) enum MathShiftPairing {
 
 /// A cold operation after its complete attempt-root set has crossed the one
 /// outer promotion boundary. The type contains no attempt-local coordinate.
-pub(in crate::main_control) type PreparedColdCommand<G> =
-    ColdOperation<G, tex_state::TokenListId<G>, tex_state::DefinitionId<G>>;
+pub(in crate::main_control) type PreparedColdCommand<G> = ColdOperation<G>;
 
 #[derive(Debug)]
 pub(in crate::main_control) enum ColdPreparationError {
     Promotion,
-    Allocation,
-    ReceiptUnderflow,
     ReceiptRemainder,
 }
 
@@ -1288,945 +1396,93 @@ impl From<tex_command::AttemptError> for ColdPreparationError {
     }
 }
 
-struct PromotionCursor<T> {
-    token_lists: std::vec::IntoIter<T>,
-}
-
-impl<T> PromotionCursor<T> {
-    fn new(token_lists: Vec<T>) -> Self {
-        Self {
-            token_lists: token_lists.into_iter(),
-        }
-    }
-
-    fn token(&mut self) -> Result<T, ColdPreparationError> {
-        self.token_lists
-            .next()
-            .ok_or(ColdPreparationError::ReceiptUnderflow)
-    }
-
-    fn finish(self) -> Result<(), ColdPreparationError> {
-        if self.token_lists.len() == 0 {
-            Ok(())
-        } else {
-            Err(ColdPreparationError::ReceiptRemainder)
-        }
-    }
-}
-
-fn prepare_balanced<G>(
-    text: RootedBalancedText<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedBalancedText<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(RootedBalancedText {
-        tokens: cursor.token()?,
-        provenance: text.provenance,
-    })
-}
-
-fn prepare_pdf_identifier<G>(
-    identifier: RootedPdfActionIdentifier<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfActionIdentifier<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match identifier {
-        RootedPdfActionIdentifier::Name(_) => RootedPdfActionIdentifier::Name(cursor.token()?),
-        RootedPdfActionIdentifier::Number(number) => RootedPdfActionIdentifier::Number(number),
-        RootedPdfActionIdentifier::Raw(_) => RootedPdfActionIdentifier::Raw(cursor.token()?),
-    })
-}
-
-fn prepare_pdf_target<G>(
-    target: RootedPdfActionTarget<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfActionTarget<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match target {
-        RootedPdfActionTarget::Page { number, .. } => RootedPdfActionTarget::Page {
-            number,
-            view: cursor.token()?,
-        },
-        RootedPdfActionTarget::Destination(identifier) => {
-            RootedPdfActionTarget::Destination(prepare_pdf_identifier(identifier, cursor)?)
-        }
-    })
-}
-
-fn prepare_pdf_destination<G>(
-    destination: RootedPdfActionDestination<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfActionDestination<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(RootedPdfActionDestination {
-        file: destination.file.map(|_| cursor.token()).transpose()?,
-        structure: destination
-            .structure
-            .map(|identifier| prepare_pdf_identifier(identifier, cursor))
-            .transpose()?,
-        target: prepare_pdf_target(destination.target, cursor)?,
-        window: destination.window,
-    })
-}
-
-fn prepare_pdf_action<G>(
-    action: RootedPdfActionSpec<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfActionSpec<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match action {
-        RootedPdfActionSpec::User(_) => RootedPdfActionSpec::User(cursor.token()?),
-        RootedPdfActionSpec::GoTo(destination) => {
-            RootedPdfActionSpec::GoTo(prepare_pdf_destination(destination, cursor)?)
-        }
-        RootedPdfActionSpec::Thread(destination) => {
-            RootedPdfActionSpec::Thread(prepare_pdf_destination(destination, cursor)?)
-        }
-    })
-}
-
-fn prepare_pdf_graphics<G>(
-    request: RootedPdfGraphicsRequest<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfGraphicsRequest<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match request {
-        RootedPdfGraphicsRequest::Literal {
-            mode,
-            deferred,
-            text,
-        } => RootedPdfGraphicsRequest::Literal {
-            mode,
-            deferred,
-            text: prepare_balanced(text, cursor)?,
-        },
-        RootedPdfGraphicsRequest::SetMatrix { text } => RootedPdfGraphicsRequest::SetMatrix {
-            text: prepare_balanced(text, cursor)?,
-        },
-        RootedPdfGraphicsRequest::Save => RootedPdfGraphicsRequest::Save,
-        RootedPdfGraphicsRequest::Restore => RootedPdfGraphicsRequest::Restore,
-        RootedPdfGraphicsRequest::ColorStack { id, action } => {
-            RootedPdfGraphicsRequest::ColorStack {
-                id,
-                action: action
-                    .map(|action| {
-                        Ok::<_, ColdPreparationError>(match action {
-                            RootedPdfColorStackAction::Set(text) => {
-                                RootedPdfColorStackAction::Set(prepare_balanced(text, cursor)?)
-                            }
-                            RootedPdfColorStackAction::Push(text) => {
-                                RootedPdfColorStackAction::Push(prepare_balanced(text, cursor)?)
-                            }
-                            RootedPdfColorStackAction::Pop => RootedPdfColorStackAction::Pop,
-                            RootedPdfColorStackAction::Current => {
-                                RootedPdfColorStackAction::Current
-                            }
-                        })
-                    })
-                    .transpose()?,
-            }
-        }
-        RootedPdfGraphicsRequest::SavePosition => RootedPdfGraphicsRequest::SavePosition,
-        RootedPdfGraphicsRequest::SnapReferencePoint => {
-            RootedPdfGraphicsRequest::SnapReferencePoint
-        }
-        RootedPdfGraphicsRequest::SnapY { glue } => RootedPdfGraphicsRequest::SnapY { glue },
-        RootedPdfGraphicsRequest::SnapYComp { ratio } => {
-            RootedPdfGraphicsRequest::SnapYComp { ratio }
-        }
-    })
-}
-
-fn prepare_pdf_object<G>(
-    request: RootedPdfObjectRequest<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfObjectRequest<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match request {
-        RootedPdfObjectRequest::Reserve => RootedPdfObjectRequest::Reserve,
-        RootedPdfObjectRequest::Define {
-            use_object,
-            stream,
-            stream_attr,
-            file,
-            data,
-        } => RootedPdfObjectRequest::Define {
-            use_object,
-            stream,
-            stream_attr: stream_attr
-                .map(|text| prepare_balanced(text, cursor))
-                .transpose()?,
-            file,
-            data: prepare_balanced(data, cursor)?,
-        },
-    })
-}
-
-fn prepare_pdf_form<G>(
-    request: RootedPdfFormRequest<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfFormRequest<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match request {
-        RootedPdfFormRequest::Create {
-            attr,
-            resources,
-            box_register,
-        } => RootedPdfFormRequest::Create {
-            attr: attr
-                .map(|text| prepare_balanced(text, cursor))
-                .transpose()?,
-            resources: resources
-                .map(|text| prepare_balanced(text, cursor))
-                .transpose()?,
-            box_register,
-        },
-        RootedPdfFormRequest::Reference { object } => RootedPdfFormRequest::Reference { object },
-    })
-}
-
-fn prepare_pdf_navigation<G>(
-    request: RootedPdfNavigationRequest<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfNavigationRequest<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match request {
-        RootedPdfNavigationRequest::Annotation(request) => {
-            RootedPdfNavigationRequest::Annotation(match request {
-                RootedPdfAnnotationRequest::Reserve => RootedPdfAnnotationRequest::Reserve,
-                RootedPdfAnnotationRequest::Define {
-                    use_object,
-                    dimensions,
-                    entries,
-                } => RootedPdfAnnotationRequest::Define {
-                    use_object,
-                    dimensions,
-                    entries: prepare_balanced(entries, cursor)?,
-                },
-            })
-        }
-        RootedPdfNavigationRequest::StartLink(request) => {
-            RootedPdfNavigationRequest::StartLink(RootedPdfStartLinkRequest {
-                dimensions: request.dimensions,
-                attributes: request
-                    .attributes
-                    .map(|text| prepare_balanced(text, cursor))
-                    .transpose()?,
-                action: prepare_pdf_action(request.action, cursor)?,
-            })
-        }
-        RootedPdfNavigationRequest::EndLink => RootedPdfNavigationRequest::EndLink,
-        RootedPdfNavigationRequest::Outline(request) => {
-            RootedPdfNavigationRequest::Outline(RootedPdfOutlineRequest {
-                attributes: request
-                    .attributes
-                    .map(|text| prepare_balanced(text, cursor))
-                    .transpose()?,
-                action: prepare_pdf_action(request.action, cursor)?,
-                count: request.count,
-                title: prepare_balanced(request.title, cursor)?,
-            })
-        }
-        RootedPdfNavigationRequest::Destination(request) => {
-            RootedPdfNavigationRequest::Destination(RootedPdfDestinationRequest {
-                structure: request.structure,
-                identifier: prepare_pdf_identifier(request.identifier, cursor)?,
-                kind: request.kind,
-            })
-        }
-        RootedPdfNavigationRequest::Thread(request) => {
-            RootedPdfNavigationRequest::Thread(RootedPdfThreadRequest {
-                dimensions: request.dimensions,
-                attributes: request
-                    .attributes
-                    .map(|text| prepare_balanced(text, cursor))
-                    .transpose()?,
-                identifier: prepare_pdf_identifier(request.identifier, cursor)?,
-                running: request.running,
-            })
-        }
-        RootedPdfNavigationRequest::EndThread => RootedPdfNavigationRequest::EndThread,
-    })
-}
-
-fn prepare_pdf_image<G>(
-    request: RootedPdfImageRequest<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedPdfImageRequest<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(RootedPdfImageRequest {
-        name: request.name,
-        width: request.width,
-        height: request.height,
-        depth: request.depth,
-        page: request.page,
-        color_space_object: request.color_space_object,
-        page_box: request.page_box,
-        page_box_explicit: request.page_box_explicit,
-        attr: request.attr.map(|_| cursor.token()).transpose()?,
-    })
-}
-
-fn prepare_immediate_extension<G>(
-    request: RootedImmediateExtension<tex_command::AttemptTokenListId>,
-    cursor: &mut PromotionCursor<tex_state::TokenListId<G>>,
-) -> Result<RootedImmediateExtension<tex_state::TokenListId<G>>, ColdPreparationError> {
-    Ok(match request {
-        RootedImmediateExtension::Continue => RootedImmediateExtension::Continue,
-        RootedImmediateExtension::PdfExtensionInDviMode(primitive) => {
-            RootedImmediateExtension::PdfExtensionInDviMode(primitive)
-        }
-        RootedImmediateExtension::OpenOut { stream, file_name } => {
-            RootedImmediateExtension::OpenOut { stream, file_name }
-        }
-        RootedImmediateExtension::Write { stream, .. } => RootedImmediateExtension::Write {
-            stream,
-            tokens: cursor.token()?,
-        },
-        RootedImmediateExtension::CloseOut { stream } => {
-            RootedImmediateExtension::CloseOut { stream }
-        }
-        RootedImmediateExtension::PdfObject(request) => {
-            RootedImmediateExtension::PdfObject(prepare_pdf_object(request, cursor)?)
-        }
-        RootedImmediateExtension::PdfForm(request) => {
-            RootedImmediateExtension::PdfForm(prepare_pdf_form(request, cursor)?)
-        }
-        RootedImmediateExtension::PdfImage(request) => {
-            RootedImmediateExtension::PdfImage(prepare_pdf_image(request, cursor)?)
-        }
-    })
-}
-
-/// Promotes all attempt-local roots in one validated batch, then rebuilds the
-/// operation by consuming the ordered receipt exactly once.
+/// Promotes the operation's attempt roots without relocating the operation.
+///
+/// The root walk is deterministic and validated in full before the first
+/// field changes. Each successful replacement is pointer-sized; the enclosing
+/// enum remains in the caller's singular operation payload throughout.
 pub(in crate::main_control) fn prepare_cold_operation<G>(
-    operation: ColdOperation<G>,
+    operation: &mut PreparedColdCommand<G>,
     command: &mut tex_command::CommandState<G>,
     stores: &mut Universe<G>,
     additional_token_roots: &[tex_command::AttemptTokenListId],
-) -> Result<(PreparedColdCommand<G>, Vec<tex_state::TokenListId<G>>), ColdPreparationError> {
+) -> Result<Vec<tex_state::TokenListId<G>>, ColdPreparationError> {
+    operation.adopt_durable_token_sources();
     let mut roots = Vec::new();
     operation.attempt_token_roots(&mut roots);
     roots.extend_from_slice(additional_token_roots);
     let mut definitions = Vec::new();
     operation.attempt_definition_roots(&mut definitions);
-    let mut additional_tokens = Vec::new();
-    additional_tokens
-        .try_reserve_exact(additional_token_roots.len())
-        .map_err(|_| ColdPreparationError::Allocation)?;
     let receipt = command.promote_attempt_roots(
         stores,
         tex_command::AttemptPromotionRoots::new(&roots, &[], &definitions, &[]),
     )?;
-    let mut cursor = PromotionCursor::new(receipt.token_lists);
-    let mut definition_cursor = PromotionCursor::new(receipt.definitions);
-    let prepared = match operation {
-        ColdOperation::Continue => ColdOperation::Continue,
-        ColdOperation::Relax => ColdOperation::Relax,
-        ColdOperation::TextDirection { direction, enabled } => {
-            ColdOperation::TextDirection { direction, enabled }
-        }
-        ColdOperation::AlignPeekRestart { alignment } => {
-            ColdOperation::AlignPeekRestart { alignment }
-        }
-        ColdOperation::MisplacedAlignmentDelimiter { token, context } => {
-            ColdOperation::MisplacedAlignmentDelimiter { token, context }
-        }
-        ColdOperation::MisplacedAlignmentCommand { omit } => {
-            ColdOperation::MisplacedAlignmentCommand { omit }
-        }
-        ColdOperation::AlignmentTemplateEntered => ColdOperation::AlignmentTemplateEntered,
-        ColdOperation::MissingAlignmentCr => ColdOperation::MissingAlignmentCr,
-        ColdOperation::MissingMathShift => ColdOperation::MissingMathShift,
-        ColdOperation::ReplayCompleted(episode) => ColdOperation::ReplayCompleted(episode),
-        ColdOperation::Math(request) => ColdOperation::Math(request),
-        ColdOperation::DisplayAlignmentRecovery => ColdOperation::DisplayAlignmentRecovery,
-        ColdOperation::MathDelimiter(boundary) => ColdOperation::MathDelimiter(boundary),
-        ColdOperation::MathFamily {
-            family,
-            font,
-            global,
-        } => ColdOperation::MathFamily {
-            family,
-            font,
-            global,
-        },
-        ColdOperation::EndOfInput => ColdOperation::EndOfInput,
-        ColdOperation::End {
-            dump,
-            incomplete_conditions,
-        } => ColdOperation::End {
-            dump,
-            incomplete_conditions,
-        },
-        ColdOperation::IllegalStop { token } => ColdOperation::IllegalStop { token },
-        ColdOperation::IllegalMacroParameter { token } => {
-            ColdOperation::IllegalMacroParameter { token }
-        }
-        ColdOperation::ExtraEndCsName => ColdOperation::ExtraEndCsName,
-        ColdOperation::EjectResidualPage => ColdOperation::EjectResidualPage,
-        ColdOperation::Count {
-            index,
-            value,
-            global,
-        } => ColdOperation::Count {
-            index,
-            value,
-            global,
-        },
-        ColdOperation::Dimen {
-            index,
-            value,
-            global,
-        } => ColdOperation::Dimen {
-            index,
-            value,
-            global,
-        },
-        ColdOperation::BoxDimensionAssignment {
-            index,
-            dimension,
-            value,
-            global,
-        } => ColdOperation::BoxDimensionAssignment {
-            index,
-            dimension,
-            value,
-            global,
-        },
-        ColdOperation::Skip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant,
-            reassigning,
-            global,
-        } => ColdOperation::Skip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant,
-            reassigning,
-            global,
-        },
-        ColdOperation::Muskip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant,
-            reassigning,
-            global,
-        } => ColdOperation::Muskip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant,
-            reassigning,
-            global,
-        },
-        ColdOperation::HorizontalSkip { value } => ColdOperation::HorizontalSkip { value },
-        ColdOperation::VerticalSkip { value } => ColdOperation::VerticalSkip { value },
-        ColdOperation::Kern { amount } => ColdOperation::Kern { amount },
-        ColdOperation::Penalty { amount } => ColdOperation::Penalty { amount },
-        ColdOperation::CharacterCode {
-            value,
-            origin,
-            suppress_left_boundary,
-        } => ColdOperation::CharacterCode {
-            value,
-            origin,
-            suppress_left_boundary,
-        },
-        ColdOperation::DeleteLast { primitive, context } => {
-            ColdOperation::DeleteLast { primitive, context }
-        }
-        ColdOperation::SetInteractionMode(primitive) => {
-            ColdOperation::SetInteractionMode(primitive)
-        }
-        ColdOperation::SetInteractionModeValue { value, context } => {
-            ColdOperation::SetInteractionModeValue { value, context }
-        }
-        ColdOperation::ItalicCorrection => ColdOperation::ItalicCorrection,
-        ColdOperation::IllegalItalicCorrection { token } => {
-            ColdOperation::IllegalItalicCorrection { token }
-        }
-        ColdOperation::NoBoundary { suppress_right } => {
-            ColdOperation::NoBoundary { suppress_right }
-        }
-        ColdOperation::NonScript => ColdOperation::NonScript,
-        ColdOperation::ControlSpace => ColdOperation::ControlSpace,
-        ColdOperation::PrevDepth { value } => ColdOperation::PrevDepth { value },
-        ColdOperation::IllegalPrevDepth { token } => ColdOperation::IllegalPrevDepth { token },
-        ColdOperation::SpaceFactor { value } => ColdOperation::SpaceFactor { value },
-        ColdOperation::IllegalSpaceFactor { token } => ColdOperation::IllegalSpaceFactor { token },
-        ColdOperation::PrevGraf { value } => ColdOperation::PrevGraf { value },
-        ColdOperation::PageDimension { dimension, value } => {
-            ColdOperation::PageDimension { dimension, value }
-        }
-        ColdOperation::PageInteger { integer, value } => {
-            ColdOperation::PageInteger { integer, value }
-        }
-        ColdOperation::FixedHorizontalGlue { primitive } => {
-            ColdOperation::FixedHorizontalGlue { primitive }
-        }
-        ColdOperation::FixedVerticalGlue { primitive } => {
-            ColdOperation::FixedVerticalGlue { primitive }
-        }
-        ColdOperation::ParagraphIndent { indent } => ColdOperation::ParagraphIndent { indent },
-        ColdOperation::ParagraphShape { lines, global } => {
-            ColdOperation::ParagraphShape { lines, global }
-        }
-        ColdOperation::PenaltyArray {
-            kind,
-            values,
-            global,
-        } => ColdOperation::PenaltyArray {
-            kind,
-            values,
-            global,
-        },
-        ColdOperation::Toks {
-            index,
-            tokens,
-            source,
-            global,
-        } => ColdOperation::Toks {
-            index,
-            tokens: match (source, tokens) {
-                (Some(source), _) => Some(source),
-                (None, Some(_)) => Some(cursor.token()?),
-                (None, None) => None,
-            },
-            source: None,
-            global,
-        },
-        ColdOperation::IntParam {
-            index,
-            value,
-            global,
-        } => ColdOperation::IntParam {
-            index,
-            value,
-            global,
-        },
-        ColdOperation::DimenParam {
-            index,
-            value,
-            global,
-        } => ColdOperation::DimenParam {
-            index,
-            value,
-            global,
-        },
-        ColdOperation::TokParam {
-            index,
-            tokens,
-            source,
-            global,
-        } => ColdOperation::TokParam {
-            index,
-            tokens: match (source, tokens) {
-                (Some(source), _) => Some(source),
-                (None, Some(_)) => Some(cursor.token()?),
-                (None, None) => None,
-            },
-            source: None,
-            global,
-        },
-        ColdOperation::GlueParam {
-            index,
-            value,
-            global,
-        } => ColdOperation::GlueParam {
-            index,
-            value,
-            global,
-        },
-        ColdOperation::CodeTable {
-            primitive,
-            character,
-            value,
-            global,
-        } => ColdOperation::CodeTable {
-            primitive,
-            character,
-            value,
-            global,
-        },
-        ColdOperation::PdfFontCode {
-            table,
-            font,
-            character,
-            value,
-        } => ColdOperation::PdfFontCode {
-            table,
-            font,
-            character,
-            value,
-        },
-        ColdOperation::PdfNoLigatures { font } => ColdOperation::PdfNoLigatures { font },
-        ColdOperation::FontSelect {
-            font,
-            selector,
-            global,
-        } => ColdOperation::FontSelect {
-            font,
-            selector,
-            global,
-        },
-        ColdOperation::FontDefinition { request, global } => {
-            ColdOperation::FontDefinition { request, global }
-        }
-        ColdOperation::GeneratedFontDefinition { definition, global } => {
-            ColdOperation::GeneratedFontDefinition { definition, global }
-        }
-        ColdOperation::InputStream { request, resource } => {
-            let request = match request {
-                RootedInputStreamRequest::Open {
-                    stream,
-                    scanned,
-                    recovered,
-                    file_name,
-                } => RootedInputStreamRequest::Open {
-                    stream,
-                    scanned,
-                    recovered,
-                    file_name,
-                },
-                RootedInputStreamRequest::Close {
-                    stream,
-                    scanned,
-                    recovered,
-                } => RootedInputStreamRequest::Close {
-                    stream,
-                    scanned,
-                    recovered,
-                },
-                RootedInputStreamRequest::Read {
-                    stream,
-                    target,
-                    global,
-                    definition: _,
-                } => {
-                    let definition = definition_cursor.token()?;
-                    RootedInputStreamRequest::Read {
-                        stream,
-                        target,
-                        global,
-                        definition,
-                    }
-                }
-            };
-            ColdOperation::InputStream { request, resource }
-        }
-        ColdOperation::PdfXImage { request, resource } => ColdOperation::PdfXImage {
-            request: prepare_pdf_image(request, &mut cursor)?,
-            resource,
-        },
-        ColdOperation::PdfRefXImage { object } => ColdOperation::PdfRefXImage { object },
-        ColdOperation::PdfSetRandomSeed { seed } => ColdOperation::PdfSetRandomSeed { seed },
-        ColdOperation::PdfResetTimer => ColdOperation::PdfResetTimer,
-        ColdOperation::PdfInterwordSpace(control) => ColdOperation::PdfInterwordSpace(control),
-        ColdOperation::PdfRunningLink(enabled) => ColdOperation::PdfRunningLink(enabled),
-        ColdOperation::PdfSpaceFont(_) => ColdOperation::PdfSpaceFont(cursor.token()?),
-        ColdOperation::PdfGraphics(request) => {
-            ColdOperation::PdfGraphics(prepare_pdf_graphics(request, &mut cursor)?)
-        }
-        ColdOperation::PdfObject(request) => {
-            ColdOperation::PdfObject(prepare_pdf_object(request, &mut cursor)?)
-        }
-        ColdOperation::PdfReferenceObject(request) => ColdOperation::PdfReferenceObject(request),
-        ColdOperation::PdfForm(request) => {
-            ColdOperation::PdfForm(prepare_pdf_form(request, &mut cursor)?)
-        }
-        ColdOperation::PdfDocumentFragment(request) => {
-            ColdOperation::PdfDocumentFragment(RootedPdfDocumentFragmentRequest {
-                kind: request.kind,
-                text: prepare_balanced(request.text, &mut cursor)?,
-                open_action: request
-                    .open_action
-                    .map(|action| prepare_pdf_action(action, &mut cursor))
-                    .transpose()?,
-            })
-        }
-        ColdOperation::PdfNavigation(request) => {
-            ColdOperation::PdfNavigation(prepare_pdf_navigation(request, &mut cursor)?)
-        }
-        ColdOperation::FontDimen {
-            font,
-            number,
-            value,
-            recovery_context,
-        } => ColdOperation::FontDimen {
-            font,
-            number,
-            value,
-            recovery_context,
-        },
-        ColdOperation::FontInteger { font, skew, value } => {
-            ColdOperation::FontInteger { font, skew, value }
-        }
-        ColdOperation::PdfFontExpand { font, spec } => ColdOperation::PdfFontExpand { font, spec },
-        ColdOperation::PdfFontAction {
-            primitive,
-            font,
-            first,
-            second,
-        } => ColdOperation::PdfFontAction {
-            primitive,
-            font,
-            first: first.map(|_| cursor.token()).transpose()?,
-            second: second.map(|_| cursor.token()).transpose()?,
-        },
-        ColdOperation::DeferredOpenOut { stream, file_name } => {
-            ColdOperation::DeferredOpenOut { stream, file_name }
-        }
-        ColdOperation::DeferredCloseOut { stream } => ColdOperation::DeferredCloseOut { stream },
-        ColdOperation::DeferredWrite { stream, tokens: _ } => ColdOperation::DeferredWrite {
-            stream,
-            tokens: cursor.token()?,
-        },
-        ColdOperation::DeferredSpecial {
-            deferred,
-            tokens: _,
-        } => ColdOperation::DeferredSpecial {
-            deferred,
-            tokens: cursor.token()?,
-        },
-        ColdOperation::SetLanguage { language } => ColdOperation::SetLanguage { language },
-        ColdOperation::IllegalSetLanguage { token } => ColdOperation::IllegalSetLanguage { token },
-        ColdOperation::Arithmetic {
-            primitive,
-            target,
-            operand,
-            global,
-        } => ColdOperation::Arithmetic {
-            primitive,
-            target,
-            operand,
-            global,
-        },
-        ColdOperation::InvalidArithmeticTarget { primitive, target } => {
-            ColdOperation::InvalidArithmeticTarget { primitive, target }
-        }
-        ColdOperation::CharacterDefinition {
-            primitive,
-            target,
-            provisional_old,
-            value,
-            global,
-        } => ColdOperation::CharacterDefinition {
-            primitive,
-            target,
-            provisional_old,
-            value,
-            global,
-        },
-        ColdOperation::HyphenationData {
-            words,
-            pattern_specs,
-            patterns,
-            rejection_context,
-            trie_built,
-        } => ColdOperation::HyphenationData {
-            words,
-            pattern_specs,
-            patterns,
-            rejection_context,
-            trie_built,
-        },
-        ColdOperation::RegisterDefinition {
-            primitive,
-            target,
-            provisional_old,
-            index,
-            global,
-        } => ColdOperation::RegisterDefinition {
-            primitive,
-            target,
-            provisional_old,
-            index,
-            global,
-        },
-        ColdOperation::AfterGroup(token) => ColdOperation::AfterGroup(token),
-        ColdOperation::AfterAssignment(token) => ColdOperation::AfterAssignment(token),
-        ColdOperation::Rule {
-            width,
-            height,
-            depth,
-            horizontal,
-        } => ColdOperation::Rule {
-            width,
-            height,
-            depth,
-            horizontal,
-        },
-        ColdOperation::HRuleHereExceptLeaders => ColdOperation::HRuleHereExceptLeaders,
-        ColdOperation::Message { tokens: _, error } => ColdOperation::Message {
-            tokens: cursor.token()?,
-            error,
-        },
-        ColdOperation::DisplayDiagnostic(diagnostic) => {
-            ColdOperation::DisplayDiagnostic(diagnostic)
-        }
-        ColdOperation::ShowBox { index } => ColdOperation::ShowBox { index },
-        ColdOperation::ShowLists => ColdOperation::ShowLists,
-        ColdOperation::ShowTokens { tokens: _ } => ColdOperation::ShowTokens {
-            tokens: cursor.token()?,
-        },
-        ColdOperation::ShowIfs { conditions } => ColdOperation::ShowIfs { conditions },
-        ColdOperation::ShowGroups { diagnostic } => ColdOperation::ShowGroups { diagnostic },
-        ColdOperation::VSplit(split) => ColdOperation::VSplit(split),
-        ColdOperation::ImmediateExtension(request) => {
-            ColdOperation::ImmediateExtension(prepare_immediate_extension(request, &mut cursor)?)
-        }
-        ColdOperation::BoxRegister {
-            index,
-            copy,
-            ships_out,
-        } => ColdOperation::BoxRegister {
-            index,
-            copy,
-            ships_out,
-        },
-        ColdOperation::Unbox {
-            primitive,
-            index,
-            error_context,
-        } => ColdOperation::Unbox {
-            primitive,
-            index,
-            error_context,
-        },
-        ColdOperation::SavedVerticalDiscards(primitive) => {
-            ColdOperation::SavedVerticalDiscards(primitive)
-        }
-        ColdOperation::LastBox { error_context } => ColdOperation::LastBox { error_context },
-        ColdOperation::Leaders {
-            kind,
-            payload,
-            glue,
-        } => ColdOperation::Leaders {
-            kind,
-            payload,
-            glue,
-        },
-        ColdOperation::LeaderRegister {
-            kind,
-            index,
-            copy,
-            glue,
-        } => ColdOperation::LeaderRegister {
-            kind,
-            index,
-            copy,
-            glue,
-        },
-        ColdOperation::MissingLeaderPayload => ColdOperation::MissingLeaderPayload,
-        ColdOperation::LeadersNotFollowedByGlue => ColdOperation::LeadersNotFollowedByGlue,
-        ColdOperation::BeginShipout => ColdOperation::BeginShipout,
-        ColdOperation::BeginAlignment { vertical, owner } => {
-            ColdOperation::BeginAlignment { vertical, owner }
-        }
-        ColdOperation::AlignmentPreambleOpening { alignment, packing } => {
-            ColdOperation::AlignmentPreambleOpening { alignment, packing }
-        }
-        ColdOperation::AlignmentPreambleStart { alignment } => {
-            ColdOperation::AlignmentPreambleStart { alignment }
-        }
-        ColdOperation::AlignmentCellOpening { alignment, opening } => {
-            ColdOperation::AlignmentCellOpening { alignment, opening }
-        }
-        ColdOperation::AlignmentCellFinish { alignment } => {
-            ColdOperation::AlignmentCellFinish { alignment }
-        }
-        ColdOperation::AlignmentFinish {
-            alignment,
-            current_line,
-        } => ColdOperation::AlignmentFinish {
-            alignment,
-            current_line,
-        },
-        ColdOperation::BeginNoAlign { alignment } => ColdOperation::BeginNoAlign { alignment },
-        ColdOperation::AlignmentRecovery { brace } => ColdOperation::AlignmentRecovery { brace },
-        ColdOperation::BeginSimpleGroup => ColdOperation::BeginSimpleGroup,
-        ColdOperation::EndSimpleGroup => ColdOperation::EndSimpleGroup,
-        ColdOperation::ExtraRightBrace { forgotten } => {
-            ColdOperation::ExtraRightBrace { forgotten }
-        }
-        ColdOperation::EndMathGroup(kind) => ColdOperation::EndMathGroup(kind),
-        ColdOperation::OffSave(closer) => ColdOperation::OffSave(closer),
-        ColdOperation::OffSaveBottomDrop { token } => ColdOperation::OffSaveBottomDrop { token },
-        ColdOperation::OutputRoutineOpeningBrace => ColdOperation::OutputRoutineOpeningBrace,
-        ColdOperation::EndOutputRoutine => ColdOperation::EndOutputRoutine,
-        ColdOperation::AlignmentPeekCell { alignment, omit } => {
-            ColdOperation::AlignmentPeekCell { alignment, omit }
-        }
-        ColdOperation::NoAlignEndGroup { alignment } => {
-            ColdOperation::NoAlignEndGroup { alignment }
-        }
-        ColdOperation::SetBox { target, path } => ColdOperation::SetBox { target, path },
-        ColdOperation::BeginBox(construction) => ColdOperation::BeginBox(construction),
-        ColdOperation::BeginLeaderBox { construction, kind } => {
-            ColdOperation::BeginLeaderBox { construction, kind }
-        }
-        ColdOperation::BoxShift(shift) => ColdOperation::BoxShift(shift),
-        ColdOperation::IllegalBoxShift { token } => ColdOperation::IllegalBoxShift { token },
-        ColdOperation::BeginInsert(construction) => ColdOperation::BeginInsert(construction),
-        ColdOperation::IllegalInsertOrAdjust { token } => {
-            ColdOperation::IllegalInsertOrAdjust { token }
-        }
-        ColdOperation::IllegalEqNo { token } => ColdOperation::IllegalEqNo { token },
-        ColdOperation::IllegalHAlign { token } => ColdOperation::IllegalHAlign { token },
-        ColdOperation::IllegalLastItem { token, context } => {
-            ColdOperation::IllegalLastItem { token, context }
-        }
-        ColdOperation::BoxEndGroup {
-            ships_out,
-            current_line,
-        } => ColdOperation::BoxEndGroup {
-            ships_out,
-            current_line,
-        },
-        ColdOperation::Mark { class, tokens: _ } => ColdOperation::Mark {
-            class,
-            tokens: cursor.token()?,
-        },
-        ColdOperation::Paragraph { current_line } => ColdOperation::Paragraph { current_line },
-        ColdOperation::MathShift { pairing } => ColdOperation::MathShift { pairing },
-        ColdOperation::ParagraphStart => ColdOperation::ParagraphStart,
-        ColdOperation::Character {
-            ch,
-            cat,
-            origin,
-            suppress_left_boundary,
-        } => ColdOperation::Character {
-            ch,
-            cat,
-            origin,
-            suppress_left_boundary,
-        },
-        ColdOperation::Accent(accent) => ColdOperation::Accent(accent),
-        ColdOperation::DiscretionaryOpening(opening) => {
-            ColdOperation::DiscretionaryOpening(opening)
-        }
-        ColdOperation::DiscretionaryPartEnd => ColdOperation::DiscretionaryPartEnd,
-        ColdOperation::DiscretionaryHyphen { origin } => {
-            ColdOperation::DiscretionaryHyphen { origin }
-        }
-    };
-    for _ in additional_token_roots {
-        additional_tokens.push(cursor.token()?);
+    if receipt.token_lists.len() != roots.len() || receipt.definitions.len() != definitions.len() {
+        return Err(ColdPreparationError::ReceiptRemainder);
     }
-    cursor.finish()?;
-    definition_cursor.finish()?;
-    Ok((prepared, additional_tokens))
+
+    let operation_token_count = roots.len() - additional_token_roots.len();
+    let mut tokens = receipt.token_lists.into_iter();
+    let mut installed_tokens = 0_usize;
+    operation.visit_token_roots_mut(&mut |root| {
+        if !matches!(root, OperationTokenRoot::Attempt(_)) {
+            return;
+        }
+        let token = tokens
+            .next()
+            .expect("validated promotion receipt covers every operation token root");
+        root.prepare(token)
+            .expect("validated operation token roots are installed once");
+        installed_tokens += 1;
+    });
+    debug_assert_eq!(installed_tokens, operation_token_count);
+
+    let mut definitions = receipt.definitions.into_iter();
+    operation.visit_definition_roots_mut(&mut |root| {
+        let definition = definitions
+            .next()
+            .expect("validated promotion receipt covers every operation definition root");
+        root.prepare(definition)
+            .expect("validated operation definition roots are installed once");
+    });
+    debug_assert!(definitions.next().is_none());
+
+    let additional_tokens = tokens.collect::<Vec<_>>();
+    debug_assert_eq!(additional_tokens.len(), additional_token_roots.len());
+    Ok(additional_tokens)
 }
 
 impl<G> ColdOperation<G> {
+    /// Moves an already-durable token-list right-hand side into the same root
+    /// field used by freshly scanned token lists. No promotion or owner copy
+    /// is needed for TeX's pointer-assignment case.
+    fn adopt_durable_token_sources(&mut self) {
+        match self {
+            Self::Toks { tokens, source, .. } | Self::TokParam { tokens, source, .. } => {
+                if let Some(source) = source.take() {
+                    *tokens = Some(OperationTokenRoot::Prepared(Some(source)));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Collects every attempt-local token root in deterministic field order.
     /// The outer preparation barrier passes this exact sequence to
-    /// `CommandState::promote_attempt_roots`; reconstruction consumes the
-    /// receipt in the same order.
+    /// `CommandState::promote_attempt_roots`; the resident root fields consume
+    /// the receipt in the same order.
     pub(in crate::main_control) fn attempt_token_roots(
         &self,
         roots: &mut Vec<tex_command::AttemptTokenListId>,
     ) {
+        self.visit_token_roots(&mut |root| {
+            if let Ok(id) = root.attempt_id() {
+                roots.push(id);
+            }
+        });
+    }
+
+    fn visit_token_roots(&self, visit: &mut impl FnMut(&OperationTokenRoot<G>)) {
         match self {
             Self::Toks {
                 tokens: Some(tokens),
@@ -2237,30 +1493,83 @@ impl<G> ColdOperation<G> {
             | Self::DeferredSpecial { tokens, .. }
             | Self::Message { tokens, .. }
             | Self::ShowTokens { tokens }
-            | Self::Mark { tokens, .. } => roots.push(*tokens),
+            | Self::Mark { tokens, .. } => visit(tokens),
             Self::TokParam {
                 tokens: Some(tokens),
                 ..
-            } => roots.push(*tokens),
+            } => visit(tokens),
             Self::PdfFontAction { first, second, .. } => {
-                roots.extend(first);
-                roots.extend(second);
+                if let Some(first) = first {
+                    visit(first);
+                }
+                if let Some(second) = second {
+                    visit(second);
+                }
             }
             Self::InputStream { .. } => {}
             Self::PdfXImage { request, .. } => {
-                roots.extend(request.attr);
-            }
-            Self::PdfGraphics(request) => pdf_graphics_attempt_roots(request, roots),
-            Self::PdfObject(request) => pdf_object_attempt_roots(request, roots),
-            Self::PdfForm(request) => pdf_form_attempt_roots(request, roots),
-            Self::PdfDocumentFragment(request) => {
-                roots.push(request.text.tokens);
-                if let Some(action) = &request.open_action {
-                    pdf_action_attempt_roots(action, roots);
+                if let Some(attr) = &request.attr {
+                    visit(attr);
                 }
             }
-            Self::PdfNavigation(request) => pdf_navigation_attempt_roots(request, roots),
-            Self::ImmediateExtension(request) => immediate_extension_attempt_roots(request, roots),
+            Self::PdfGraphics(request) => visit_pdf_graphics_roots(request, visit),
+            Self::PdfObject(request) => visit_pdf_object_roots(request, visit),
+            Self::PdfForm(request) => visit_pdf_form_roots(request, visit),
+            Self::PdfDocumentFragment(request) => {
+                visit(&request.text.tokens);
+                if let Some(action) = &request.open_action {
+                    visit_pdf_action_roots(action, visit);
+                }
+            }
+            Self::PdfNavigation(request) => visit_pdf_navigation_roots(request, visit),
+            Self::ImmediateExtension(request) => visit_immediate_extension_roots(request, visit),
+            _ => {}
+        }
+    }
+
+    fn visit_token_roots_mut(&mut self, visit: &mut impl FnMut(&mut OperationTokenRoot<G>)) {
+        match self {
+            Self::Toks {
+                tokens: Some(tokens),
+                ..
+            }
+            | Self::PdfSpaceFont(tokens)
+            | Self::DeferredWrite { tokens, .. }
+            | Self::DeferredSpecial { tokens, .. }
+            | Self::Message { tokens, .. }
+            | Self::ShowTokens { tokens }
+            | Self::Mark { tokens, .. } => visit(tokens),
+            Self::TokParam {
+                tokens: Some(tokens),
+                ..
+            } => visit(tokens),
+            Self::PdfFontAction { first, second, .. } => {
+                if let Some(first) = first {
+                    visit(first);
+                }
+                if let Some(second) = second {
+                    visit(second);
+                }
+            }
+            Self::InputStream { .. } => {}
+            Self::PdfXImage { request, .. } => {
+                if let Some(attr) = &mut request.attr {
+                    visit(attr);
+                }
+            }
+            Self::PdfGraphics(request) => visit_pdf_graphics_roots_mut(request, visit),
+            Self::PdfObject(request) => visit_pdf_object_roots_mut(request, visit),
+            Self::PdfForm(request) => visit_pdf_form_roots_mut(request, visit),
+            Self::PdfDocumentFragment(request) => {
+                visit(&mut request.text.tokens);
+                if let Some(action) = &mut request.open_action {
+                    visit_pdf_action_roots_mut(action, visit);
+                }
+            }
+            Self::PdfNavigation(request) => visit_pdf_navigation_roots_mut(request, visit),
+            Self::ImmediateExtension(request) => {
+                visit_immediate_extension_roots_mut(request, visit);
+            }
             _ => {}
         }
     }
@@ -2271,119 +1580,225 @@ impl<G> ColdOperation<G> {
         &self,
         roots: &mut Vec<tex_command::AttemptDefinitionId>,
     ) {
-        if let Self::InputStream { request, .. } = self {
-            input_stream_attempt_definition_roots(request, roots);
+        if let Self::InputStream {
+            request: RootedInputStreamRequest::Read { definition, .. },
+            ..
+        } = self
+        {
+            roots.push(
+                definition
+                    .attempt_id()
+                    .expect("cold operation definitions are promoted exactly once"),
+            );
+        }
+    }
+
+    fn visit_definition_roots_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut OperationDefinitionRoot<G>),
+    ) {
+        if let Self::InputStream {
+            request: RootedInputStreamRequest::Read { definition, .. },
+            ..
+        } = self
+        {
+            visit(definition);
         }
     }
 }
 
-fn balanced_attempt_root<T: Copy>(text: &RootedBalancedText<T>, roots: &mut Vec<T>) {
-    roots.push(text.tokens);
+fn visit_balanced_root<T>(text: &RootedBalancedText<T>, visit: &mut impl FnMut(&T)) {
+    visit(&text.tokens);
 }
 
-fn pdf_identifier_attempt_roots<T: Copy>(
+fn visit_balanced_root_mut<T>(text: &mut RootedBalancedText<T>, visit: &mut impl FnMut(&mut T)) {
+    visit(&mut text.tokens);
+}
+
+fn visit_pdf_identifier_roots<T>(
     identifier: &RootedPdfActionIdentifier<T>,
-    roots: &mut Vec<T>,
+    visit: &mut impl FnMut(&T),
 ) {
     match identifier {
         RootedPdfActionIdentifier::Name(tokens) | RootedPdfActionIdentifier::Raw(tokens) => {
-            roots.push(*tokens);
+            visit(tokens);
         }
         RootedPdfActionIdentifier::Number(_) => {}
     }
 }
 
-fn pdf_action_attempt_roots<T: Copy>(action: &RootedPdfActionSpec<T>, roots: &mut Vec<T>) {
+fn visit_pdf_identifier_roots_mut<T>(
+    identifier: &mut RootedPdfActionIdentifier<T>,
+    visit: &mut impl FnMut(&mut T),
+) {
+    match identifier {
+        RootedPdfActionIdentifier::Name(tokens) | RootedPdfActionIdentifier::Raw(tokens) => {
+            visit(tokens);
+        }
+        RootedPdfActionIdentifier::Number(_) => {}
+    }
+}
+
+fn visit_pdf_action_roots<T>(action: &RootedPdfActionSpec<T>, visit: &mut impl FnMut(&T)) {
     match action {
-        RootedPdfActionSpec::User(tokens) => roots.push(*tokens),
+        RootedPdfActionSpec::User(tokens) => visit(tokens),
         RootedPdfActionSpec::GoTo(destination) | RootedPdfActionSpec::Thread(destination) => {
-            roots.extend(destination.file);
+            if let Some(file) = &destination.file {
+                visit(file);
+            }
             if let Some(identifier) = &destination.structure {
-                pdf_identifier_attempt_roots(identifier, roots);
+                visit_pdf_identifier_roots(identifier, visit);
             }
             match &destination.target {
-                RootedPdfActionTarget::Page { view, .. } => roots.push(*view),
+                RootedPdfActionTarget::Page { view, .. } => visit(view),
                 RootedPdfActionTarget::Destination(identifier) => {
-                    pdf_identifier_attempt_roots(identifier, roots);
+                    visit_pdf_identifier_roots(identifier, visit);
                 }
             }
         }
     }
 }
 
-fn pdf_graphics_attempt_roots<T: Copy>(request: &RootedPdfGraphicsRequest<T>, roots: &mut Vec<T>) {
+fn visit_pdf_action_roots_mut<T>(
+    action: &mut RootedPdfActionSpec<T>,
+    visit: &mut impl FnMut(&mut T),
+) {
+    match action {
+        RootedPdfActionSpec::User(tokens) => visit(tokens),
+        RootedPdfActionSpec::GoTo(destination) | RootedPdfActionSpec::Thread(destination) => {
+            if let Some(file) = &mut destination.file {
+                visit(file);
+            }
+            if let Some(identifier) = &mut destination.structure {
+                visit_pdf_identifier_roots_mut(identifier, visit);
+            }
+            match &mut destination.target {
+                RootedPdfActionTarget::Page { view, .. } => visit(view),
+                RootedPdfActionTarget::Destination(identifier) => {
+                    visit_pdf_identifier_roots_mut(identifier, visit);
+                }
+            }
+        }
+    }
+}
+
+fn visit_pdf_graphics_roots<T>(request: &RootedPdfGraphicsRequest<T>, visit: &mut impl FnMut(&T)) {
     match request {
         RootedPdfGraphicsRequest::Literal { text, .. }
-        | RootedPdfGraphicsRequest::SetMatrix { text } => {
-            balanced_attempt_root(text, roots);
-        }
+        | RootedPdfGraphicsRequest::SetMatrix { text } => visit_balanced_root(text, visit),
         RootedPdfGraphicsRequest::ColorStack {
             action:
                 Some(RootedPdfColorStackAction::Set(text) | RootedPdfColorStackAction::Push(text)),
             ..
-        } => balanced_attempt_root(text, roots),
+        } => visit_balanced_root(text, visit),
         _ => {}
     }
 }
 
-fn pdf_object_attempt_roots<T: Copy>(request: &RootedPdfObjectRequest<T>, roots: &mut Vec<T>) {
+fn visit_pdf_graphics_roots_mut<T>(
+    request: &mut RootedPdfGraphicsRequest<T>,
+    visit: &mut impl FnMut(&mut T),
+) {
+    match request {
+        RootedPdfGraphicsRequest::Literal { text, .. }
+        | RootedPdfGraphicsRequest::SetMatrix { text } => visit_balanced_root_mut(text, visit),
+        RootedPdfGraphicsRequest::ColorStack {
+            action:
+                Some(RootedPdfColorStackAction::Set(text) | RootedPdfColorStackAction::Push(text)),
+            ..
+        } => visit_balanced_root_mut(text, visit),
+        _ => {}
+    }
+}
+
+fn visit_pdf_object_roots<T>(request: &RootedPdfObjectRequest<T>, visit: &mut impl FnMut(&T)) {
     if let RootedPdfObjectRequest::Define {
         stream_attr, data, ..
     } = request
     {
         if let Some(text) = stream_attr {
-            balanced_attempt_root(text, roots);
+            visit_balanced_root(text, visit);
         }
-        balanced_attempt_root(data, roots);
+        visit_balanced_root(data, visit);
     }
 }
 
-fn pdf_form_attempt_roots<T: Copy>(request: &RootedPdfFormRequest<T>, roots: &mut Vec<T>) {
+fn visit_pdf_object_roots_mut<T>(
+    request: &mut RootedPdfObjectRequest<T>,
+    visit: &mut impl FnMut(&mut T),
+) {
+    if let RootedPdfObjectRequest::Define {
+        stream_attr, data, ..
+    } = request
+    {
+        if let Some(text) = stream_attr {
+            visit_balanced_root_mut(text, visit);
+        }
+        visit_balanced_root_mut(data, visit);
+    }
+}
+
+fn visit_pdf_form_roots<T>(request: &RootedPdfFormRequest<T>, visit: &mut impl FnMut(&T)) {
     if let RootedPdfFormRequest::Create {
         attr, resources, ..
     } = request
     {
         if let Some(text) = attr {
-            balanced_attempt_root(text, roots);
+            visit_balanced_root(text, visit);
         }
         if let Some(text) = resources {
-            balanced_attempt_root(text, roots);
+            visit_balanced_root(text, visit);
         }
     }
 }
 
-fn pdf_navigation_attempt_roots<T: Copy>(
+fn visit_pdf_form_roots_mut<T>(
+    request: &mut RootedPdfFormRequest<T>,
+    visit: &mut impl FnMut(&mut T),
+) {
+    if let RootedPdfFormRequest::Create {
+        attr, resources, ..
+    } = request
+    {
+        if let Some(text) = attr {
+            visit_balanced_root_mut(text, visit);
+        }
+        if let Some(text) = resources {
+            visit_balanced_root_mut(text, visit);
+        }
+    }
+}
+
+fn visit_pdf_navigation_roots<T>(
     request: &RootedPdfNavigationRequest<T>,
-    roots: &mut Vec<T>,
+    visit: &mut impl FnMut(&T),
 ) {
     match request {
         RootedPdfNavigationRequest::Annotation(RootedPdfAnnotationRequest::Define {
             entries,
             ..
-        }) => {
-            balanced_attempt_root(entries, roots);
-        }
+        }) => visit_balanced_root(entries, visit),
         RootedPdfNavigationRequest::StartLink(request) => {
             if let Some(text) = &request.attributes {
-                balanced_attempt_root(text, roots);
+                visit_balanced_root(text, visit);
             }
-            pdf_action_attempt_roots(&request.action, roots);
+            visit_pdf_action_roots(&request.action, visit);
         }
         RootedPdfNavigationRequest::Outline(request) => {
             if let Some(text) = &request.attributes {
-                balanced_attempt_root(text, roots);
+                visit_balanced_root(text, visit);
             }
-            pdf_action_attempt_roots(&request.action, roots);
-            balanced_attempt_root(&request.title, roots);
+            visit_pdf_action_roots(&request.action, visit);
+            visit_balanced_root(&request.title, visit);
         }
         RootedPdfNavigationRequest::Destination(request) => {
-            pdf_identifier_attempt_roots(&request.identifier, roots);
+            visit_pdf_identifier_roots(&request.identifier, visit);
         }
         RootedPdfNavigationRequest::Thread(request) => {
             if let Some(text) = &request.attributes {
-                balanced_attempt_root(text, roots);
+                visit_balanced_root(text, visit);
             }
-            pdf_identifier_attempt_roots(&request.identifier, roots);
+            visit_pdf_identifier_roots(&request.identifier, visit);
         }
         RootedPdfNavigationRequest::Annotation(RootedPdfAnnotationRequest::Reserve)
         | RootedPdfNavigationRequest::EndLink
@@ -2391,15 +1806,56 @@ fn pdf_navigation_attempt_roots<T: Copy>(
     }
 }
 
-fn immediate_extension_attempt_roots<T: Copy>(
-    request: &RootedImmediateExtension<T>,
-    roots: &mut Vec<T>,
+fn visit_pdf_navigation_roots_mut<T>(
+    request: &mut RootedPdfNavigationRequest<T>,
+    visit: &mut impl FnMut(&mut T),
 ) {
     match request {
-        RootedImmediateExtension::Write { tokens, .. } => roots.push(*tokens),
-        RootedImmediateExtension::PdfObject(request) => pdf_object_attempt_roots(request, roots),
-        RootedImmediateExtension::PdfForm(request) => pdf_form_attempt_roots(request, roots),
-        RootedImmediateExtension::PdfImage(request) => roots.extend(request.attr),
+        RootedPdfNavigationRequest::Annotation(RootedPdfAnnotationRequest::Define {
+            entries,
+            ..
+        }) => visit_balanced_root_mut(entries, visit),
+        RootedPdfNavigationRequest::StartLink(request) => {
+            if let Some(text) = &mut request.attributes {
+                visit_balanced_root_mut(text, visit);
+            }
+            visit_pdf_action_roots_mut(&mut request.action, visit);
+        }
+        RootedPdfNavigationRequest::Outline(request) => {
+            if let Some(text) = &mut request.attributes {
+                visit_balanced_root_mut(text, visit);
+            }
+            visit_pdf_action_roots_mut(&mut request.action, visit);
+            visit_balanced_root_mut(&mut request.title, visit);
+        }
+        RootedPdfNavigationRequest::Destination(request) => {
+            visit_pdf_identifier_roots_mut(&mut request.identifier, visit);
+        }
+        RootedPdfNavigationRequest::Thread(request) => {
+            if let Some(text) = &mut request.attributes {
+                visit_balanced_root_mut(text, visit);
+            }
+            visit_pdf_identifier_roots_mut(&mut request.identifier, visit);
+        }
+        RootedPdfNavigationRequest::Annotation(RootedPdfAnnotationRequest::Reserve)
+        | RootedPdfNavigationRequest::EndLink
+        | RootedPdfNavigationRequest::EndThread => {}
+    }
+}
+
+fn visit_immediate_extension_roots<T>(
+    request: &RootedImmediateExtension<T>,
+    visit: &mut impl FnMut(&T),
+) {
+    match request {
+        RootedImmediateExtension::Write { tokens, .. } => visit(tokens),
+        RootedImmediateExtension::PdfObject(request) => visit_pdf_object_roots(request, visit),
+        RootedImmediateExtension::PdfForm(request) => visit_pdf_form_roots(request, visit),
+        RootedImmediateExtension::PdfImage(request) => {
+            if let Some(attr) = &request.attr {
+                visit(attr);
+            }
+        }
         RootedImmediateExtension::Continue
         | RootedImmediateExtension::PdfExtensionInDviMode(_)
         | RootedImmediateExtension::OpenOut { .. }
@@ -2407,12 +1863,23 @@ fn immediate_extension_attempt_roots<T: Copy>(
     }
 }
 
-fn input_stream_attempt_definition_roots<D: Copy, S>(
-    request: &RootedInputStreamRequest<D, S>,
-    roots: &mut Vec<D>,
+fn visit_immediate_extension_roots_mut<T>(
+    request: &mut RootedImmediateExtension<T>,
+    visit: &mut impl FnMut(&mut T),
 ) {
-    if let RootedInputStreamRequest::Read { definition, .. } = request {
-        roots.push(*definition);
+    match request {
+        RootedImmediateExtension::Write { tokens, .. } => visit(tokens),
+        RootedImmediateExtension::PdfObject(request) => visit_pdf_object_roots_mut(request, visit),
+        RootedImmediateExtension::PdfForm(request) => visit_pdf_form_roots_mut(request, visit),
+        RootedImmediateExtension::PdfImage(request) => {
+            if let Some(attr) = &mut request.attr {
+                visit(attr);
+            }
+        }
+        RootedImmediateExtension::Continue
+        | RootedImmediateExtension::PdfExtensionInDviMode(_)
+        | RootedImmediateExtension::OpenOut { .. }
+        | RootedImmediateExtension::CloseOut { .. } => {}
     }
 }
 
@@ -2433,74 +1900,4 @@ pub(in crate::main_control) enum ArithmeticOperand {
     Integer(i32),
     Dimension(Scaled),
     Glue(GlueSpec),
-}
-
-#[cfg(test)]
-mod preparation_tests {
-    use super::*;
-
-    fn text(tokens: u8) -> RootedBalancedText<u8> {
-        RootedBalancedText {
-            tokens,
-            provenance: tex_command::StructuredProvenance {
-                primary: tex_state::token::OriginId::UNKNOWN,
-            },
-        }
-    }
-
-    #[test]
-    fn nested_navigation_roots_follow_reconstruction_order() {
-        let request = RootedPdfNavigationRequest::Outline(RootedPdfOutlineRequest {
-            attributes: Some(text(1)),
-            action: RootedPdfActionSpec::GoTo(RootedPdfActionDestination {
-                file: Some(2),
-                structure: Some(RootedPdfActionIdentifier::Name(3)),
-                target: RootedPdfActionTarget::Page { number: 7, view: 4 },
-                window: tex_state::PdfActionWindow::New,
-            }),
-            count: -2,
-            title: text(5),
-        });
-        let mut roots = Vec::new();
-        pdf_navigation_attempt_roots(&request, &mut roots);
-        assert_eq!(roots, [1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn immediate_pdf_and_input_roots_are_structural() {
-        let immediate = RootedImmediateExtension::PdfObject(RootedPdfObjectRequest::Define {
-            use_object: None,
-            stream: true,
-            stream_attr: Some(text(6)),
-            file: false,
-            data: text(7),
-        });
-        let input = RootedInputStreamRequest::Read {
-            stream: 3,
-            target: (),
-            global: false,
-            definition: 9,
-        };
-        let mut roots = Vec::new();
-        immediate_extension_attempt_roots(&immediate, &mut roots);
-        assert_eq!(roots, [6, 7]);
-        let mut definitions = Vec::new();
-        input_stream_attempt_definition_roots(&input, &mut definitions);
-        assert_eq!(definitions, [9]);
-    }
-
-    #[test]
-    fn promotion_cursor_rejects_underflow_and_remainder() {
-        let mut short = PromotionCursor::new(Vec::<u8>::new());
-        assert!(matches!(
-            short.token(),
-            Err(ColdPreparationError::ReceiptUnderflow)
-        ));
-
-        let extra = PromotionCursor::new(vec![1_u8, 2]);
-        assert!(matches!(
-            extra.finish(),
-            Err(ColdPreparationError::ReceiptRemainder)
-        ));
-    }
 }

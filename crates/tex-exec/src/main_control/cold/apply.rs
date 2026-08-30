@@ -56,7 +56,7 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
-    scanned: PreparedColdCommand<G>,
+    scanned: &mut PreparedColdCommand<G>,
     stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
@@ -100,7 +100,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::TextDirection { direction, enabled } => {
-            if enabled {
+            if *enabled {
                 crate::box_runtime::flush_pending_hchars_with_fuel(
                     modes,
                     stores,
@@ -109,7 +109,7 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
                 modes
                     .current_list_mutation()
-                    .push(stores, Node::Direction(direction));
+                    .push(stores, Node::Direction(*direction));
             } else {
                 let name = match direction {
                     tex_state::node::Direction::BeginM => "beginM",
@@ -138,7 +138,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::AlignPeekRestart { alignment } => {
             let active = active_alignment
                 .as_mut()
-                .filter(|active| active.identity == alignment)
+                .filter(|active| active.identity == *alignment)
                 .ok_or(ExecError::MissingToken {
                     context: "alignment restart lookahead",
                 })?;
@@ -196,8 +196,8 @@ pub(in crate::main_control) fn apply<G>(
                         stores,
                         MathFontSize::from(family.size),
                         family.family,
-                        font,
-                        global,
+                        *font,
+                        *global,
                     )
                 },
             )?;
@@ -233,7 +233,7 @@ pub(in crate::main_control) fn apply<G>(
             // discard lists, so the host-side format encoder still rejects
             // genuine page material instead of mistaking `last_penalty` or
             // `last_node_type` for it.
-            if dump && command.initex && crate::page_output::job_is_all_over(stores) {
+            if *dump && command.initex && crate::page_output::job_is_all_over(stores) {
                 stores.start_new_page();
             }
             // TeX82 §1378 closes every still-open numbered output file after
@@ -262,7 +262,7 @@ pub(in crate::main_control) fn apply<G>(
             global,
         } => {
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .count(index, value, global);
+                .count(*index, *value, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -272,7 +272,7 @@ pub(in crate::main_control) fn apply<G>(
             global,
         } => {
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .dimension(index, value, global);
+                .dimension(*index, *value, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -288,7 +288,7 @@ pub(in crate::main_control) fn apply<G>(
             // prefix does not change which binding level is affected.
             let _ = global;
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
-                assign_box_dimension(stores, index, dimension, value)
+                assign_box_dimension(stores, *index, *dimension, *value)
             });
             Ok(ReplayStep::Continue)
         }
@@ -301,12 +301,12 @@ pub(in crate::main_control) fn apply<G>(
             ..
         } => {
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).skip(
-                index,
-                value,
-                global,
+                *index,
+                *value,
+                *global,
                 false,
-                redundant,
-                reassigning,
+                *redundant,
+                *reassigning,
             );
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -320,12 +320,12 @@ pub(in crate::main_control) fn apply<G>(
             ..
         } => {
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).skip(
-                index,
-                value,
-                global,
+                *index,
+                *value,
+                *global,
                 true,
-                redundant,
-                reassigning,
+                *redundant,
+                *reassigning,
             );
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -352,7 +352,7 @@ pub(in crate::main_control) fn apply<G>(
             modes.current_list_mutation().push(
                 stores,
                 Node::Glue {
-                    spec: value,
+                    spec: *value,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -379,7 +379,7 @@ pub(in crate::main_control) fn apply<G>(
                 modes,
                 stores,
                 Node::Kern {
-                    amount,
+                    amount: *amount,
                     kind: KernKind::Explicit,
                 },
             );
@@ -398,7 +398,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
+            crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(*amount));
             crate::vertical::build_page_if_outer_vertical(
                 modes,
                 stores,
@@ -410,10 +410,10 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::DeleteLast { primitive, context } => {
             let state = &*command.state;
             crate::box_runtime::execute_delete_last(
-                primitive,
+                *primitive,
                 |stores| {
                     state
-                        .render_diagnostic_context(context, stores)
+                        .render_diagnostic_context(*context, stores)
                         .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
                 },
                 modes,
@@ -454,11 +454,11 @@ pub(in crate::main_control) fn apply<G>(
                 2 => tex_state::InteractionMode::Scroll,
                 3 => tex_state::InteractionMode::ErrorStop,
                 value => {
-                    let context = render_diagnostic_coordinate(command, stores, context)?;
+                    let context = render_diagnostic_coordinate(command, stores, *context)?;
                     crate::diagnostics::report_bad_interaction_mode_with_context(
                         stores,
                         command.diagnostic_effects,
-                        value,
+                        *value,
                         context,
                     )?;
                     return Ok(ReplayStep::Continue);
@@ -506,7 +506,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -517,7 +517,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -538,7 +538,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::NoBoundary { suppress_right } => {
-            if suppress_right {
+            if *suppress_right {
                 crate::box_runtime::flush_pending_hchars_without_right_boundary(
                     modes,
                     stores,
@@ -565,10 +565,10 @@ pub(in crate::main_control) fn apply<G>(
             origin,
             suppress_left_boundary,
         } => {
-            let ch = u32::try_from(value).ok().and_then(char::from_u32).ok_or(
+            let ch = u32::try_from(*value).ok().and_then(char::from_u32).ok_or(
                 ExecError::InvalidCode {
                     context: "\\char",
-                    value,
+                    value: *value,
                 },
             )?;
             if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
@@ -578,7 +578,7 @@ pub(in crate::main_control) fn apply<G>(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_math_char(ch, origin, stores, modes, command)?;
+                set_math_char(ch, *origin, stores, modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -595,13 +595,13 @@ pub(in crate::main_control) fn apply<G>(
             }
             modes
                 .current_list_mutation()
-                .set_no_boundary(suppress_left_boundary);
+                .set_no_boundary(*suppress_left_boundary);
             crate::box_runtime::append_character_with_fuel(
                 modes,
                 stores,
                 command.diagnostic_effects,
                 ch,
-                origin,
+                *origin,
                 command.state.profile() == CommandProfile::ETEX26,
                 command.fuel,
             )?;
@@ -655,7 +655,7 @@ pub(in crate::main_control) fn apply<G>(
                 Mode::Vertical | Mode::InternalVertical
             ));
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
-                modes.current_list_mutation().set_prev_depth(value)
+                modes.current_list_mutation().set_prev_depth(*value)
             });
             Ok(ReplayStep::Continue)
         }
@@ -664,7 +664,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -679,9 +679,9 @@ pub(in crate::main_control) fn apply<G>(
             // then int_error(cur_val) else space_factor:=cur_val` -- an
             // out-of-range value is diagnosed and left unchanged rather than
             // clamped.
-            if (1..=32767).contains(&value) {
+            if (1..=32767).contains(value) {
                 AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
-                    modes.current_list_mutation().set_space_factor(value);
+                    modes.current_list_mutation().set_space_factor(*value);
                 });
             } else {
                 // §91's `int_error` appends ` (value)` to the message before
@@ -693,7 +693,7 @@ pub(in crate::main_control) fn apply<G>(
                     .help(&["I allow only values in the range 1..32767 here."])
                     .context(context);
                 report
-                    .int_error(value)
+                    .int_error(*value)
                     .defer_recovery(command.diagnostic_effects)?;
             }
             Ok(ReplayStep::Continue)
@@ -703,7 +703,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -714,7 +714,7 @@ pub(in crate::main_control) fn apply<G>(
             // walks the mode nest up to its nearest enclosing vertical level
             // rather than checking the current mode), unlike `\spacefactor`/
             // `\prevdepth`'s §1243 `report_illegal_case`.
-            if value < 0 {
+            if *value < 0 {
                 let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Bad ");
                 report
@@ -722,11 +722,11 @@ pub(in crate::main_control) fn apply<G>(
                     .help(&["I allow only nonnegative values here."])
                     .context(context);
                 report
-                    .int_error(value)
+                    .int_error(*value)
                     .defer_recovery(command.diagnostic_effects)?;
             } else {
                 AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
-                    modes.set_enclosing_vertical_prev_graf(value);
+                    modes.set_enclosing_vertical_prev_graf(*value);
                 });
             }
             Ok(ReplayStep::Continue)
@@ -737,7 +737,7 @@ pub(in crate::main_control) fn apply<G>(
             // diagnostic, and no save-stack entry (§1242: "these definitions
             // are always global"). The page builder reads the same slots.
             AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .unscoped(None, |stores| stores.set_page_dimension(dimension, value));
+                .unscoped(None, |stores| stores.set_page_dimension(*dimension, *value));
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PageInteger { integer, value } => {
@@ -747,7 +747,7 @@ pub(in crate::main_control) fn apply<G>(
             // `\maxdeadcycles`, so a wrong value here is only visible once a
             // page ships.
             AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .unscoped(None, |stores| stores.set_page_integer(integer, value));
+                .unscoped(None, |stores| stores.set_page_integer(*integer, *value));
             Ok(ReplayStep::Continue)
         }
         ColdOperation::FixedHorizontalGlue { primitive } => {
@@ -772,7 +772,7 @@ pub(in crate::main_control) fn apply<G>(
             modes.current_list_mutation().push(
                 stores,
                 Node::Glue {
-                    spec: crate::box_runtime::fixed_infinite_glue(primitive),
+                    spec: crate::box_runtime::fixed_infinite_glue(*primitive),
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -793,7 +793,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 Node::Glue {
-                    spec: value,
+                    spec: *value,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -804,7 +804,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::FixedVerticalGlue { primitive } => {
             // See `ColdOperation::VerticalSkip` above: same §1054/§1057
             // `append_glue`, no paragraph start, no page build.
-            let spec = crate::box_runtime::fixed_infinite_glue(primitive);
+            let spec = crate::box_runtime::fixed_infinite_glue(*primitive);
             crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
@@ -835,14 +835,14 @@ pub(in crate::main_control) fn apply<G>(
                     modes,
                     stores,
                     command.diagnostic_effects,
-                    indent,
+                    *indent,
                 )?;
             } else {
                 crate::box_runtime::indent_in_hmode(
                     modes,
                     stores,
                     command.diagnostic_effects,
-                    indent,
+                    *indent,
                     command.fuel,
                 )?;
             }
@@ -863,7 +863,7 @@ pub(in crate::main_control) fn apply<G>(
             // `set_shape` belongs to neither definition family.
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
                 stores
-                    .assign_paragraph_shape(&lines, assignment_scope(global))
+                    .assign_paragraph_shape(&lines, assignment_scope(*global))
                     .expect("paragraph shape fits admitted durable storage")
             });
             Ok(ReplayStep::Continue)
@@ -888,19 +888,19 @@ pub(in crate::main_control) fn apply<G>(
                     }
                 )),
                 value: ObservationValue::Tokens(Vec::new()),
-                global,
+                global: *global,
             };
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                 .unscoped_with_effects(Some(record), |stores, diagnostic_effects| {
-                    let old = stores.penalty_array(kind);
+                    let old = stores.penalty_array(*kind);
                     stores
-                        .assign_penalty_array(kind, &values, assignment_scope(global))
+                        .assign_penalty_array(*kind, &values, assignment_scope(*global))
                         .expect("penalty array fits admitted durable storage");
                     assignment_tracing::trace_penalty_array(
                         stores,
                         diagnostic_effects,
-                        kind,
-                        global,
+                        *kind,
+                        *global,
                         &old,
                         &values,
                     );
@@ -914,20 +914,23 @@ pub(in crate::main_control) fn apply<G>(
             global,
             ..
         } => {
-            let new = tokens;
+            let new = tokens.as_ref().map(|tokens| tokens.prepared());
             let observed = ObservationValue::Tokens(
-                new.clone()
-                    .map(|new| {
-                        stores
-                            .token_list(new)
-                            .iter()
-                            .map(|word| observed_macro_token(word.semantic_token(), stores))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                new.map(|new| {
+                    stores
+                        .token_list(new.clone())
+                        .iter()
+                        .map(|word| observed_macro_token(word.semantic_token(), stores))
+                        .collect()
+                })
+                .unwrap_or_default(),
             );
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .toks(index, new, observed, global);
+            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).toks(
+                *index,
+                tokens.as_mut().map(OperationTokenRoot::take_prepared),
+                observed,
+                *global,
+            );
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -939,10 +942,10 @@ pub(in crate::main_control) fn apply<G>(
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),
                 ParameterClass::Integer,
-                index,
+                *index,
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .int_parameter(index, value, key, global);
+                .int_parameter(*index, *value, key, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -954,10 +957,10 @@ pub(in crate::main_control) fn apply<G>(
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),
                 ParameterClass::Dimension,
-                index,
+                *index,
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .dimension_parameter(index, value, key, global);
+                .dimension_parameter(*index, *value, key, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -967,25 +970,30 @@ pub(in crate::main_control) fn apply<G>(
             global,
             ..
         } => {
-            let new = tokens;
+            let new = tokens.as_ref().map(|tokens| tokens.prepared());
             let observed = ObservationValue::Tokens(
-                new.clone()
-                    .map(|tokens| {
-                        stores
-                            .token_list(tokens)
-                            .iter()
-                            .map(|word| observed_macro_token(word.semantic_token(), stores))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                new.map(|tokens| {
+                    stores
+                        .token_list(tokens.clone())
+                        .iter()
+                        .map(|word| observed_macro_token(word.semantic_token(), stores))
+                        .collect()
+                })
+                .unwrap_or_default(),
             );
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),
                 ParameterClass::Token,
-                index,
+                *index,
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .token_parameter(index, new, observed, key, global);
+                .token_parameter(
+                    *index,
+                    tokens.as_mut().map(OperationTokenRoot::take_prepared),
+                    observed,
+                    key,
+                    *global,
+                );
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -997,10 +1005,10 @@ pub(in crate::main_control) fn apply<G>(
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),
                 ParameterClass::Glue,
-                index,
+                *index,
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .glue_parameter(index, value, key, global);
+                .glue_parameter(*index, *value, key, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -1013,12 +1021,12 @@ pub(in crate::main_control) fn apply<G>(
             let record = MutationRecord {
                 target: MutationTarget::Register,
                 key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
-                value: ObservationValue::Integer(i64::from(value)),
+                value: ObservationValue::Integer(i64::from(*value)),
                 global: true,
             };
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                 .unscoped(Some(record), |stores| {
-                    stores.set_pdf_font_code(table, font, character, value)
+                    stores.set_pdf_font_code(*table, *font, *character, *value)
                 });
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -1032,7 +1040,7 @@ pub(in crate::main_control) fn apply<G>(
             };
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                 .unscoped(Some(record), |stores| {
-                    stores.disable_pdf_font_ligatures(font)
+                    stores.disable_pdf_font_ligatures(*font)
                 });
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -1040,9 +1048,10 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::CodeTable {
             primitive,
             character,
-            mut value,
+            value,
             global,
         } => {
+            let mut value = *value;
             // TeX82 §§1230--1234's `def_code` reports an invalid table
             // value after scanning it, substitutes zero, and commits the
             // assignment. In particular, this is not an operation failure:
@@ -1057,7 +1066,7 @@ pub(in crate::main_control) fn apply<G>(
                 _ => unreachable!("only code-table primitives are scanned"),
             };
             let valid = (0..=maximum).contains(&value)
-                || (primitive == UnexpandablePrimitive::DelCode && value == -1);
+                || (*primitive == UnexpandablePrimitive::DelCode && value == -1);
             if !valid {
                 let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Invalid code (");
@@ -1079,19 +1088,19 @@ pub(in crate::main_control) fn apply<G>(
                         context: "\\lccode",
                         value,
                     })? as LcCode;
-                    let old = stores.lccode(character);
-                    let record = code_table_mutation("lccode", character, value as i64, global);
+                    let old = stores.lccode(*character);
+                    let record = code_table_mutation("lccode", *character, value as i64, *global);
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .scoped_word(
                             old,
                             value,
-                            global,
+                            *global,
                             record,
                             |stores, global| {
                                 stores
                                     .assign_code(
                                         tex_state::env::CodeTableKind::Lccode,
-                                        character,
+                                        *character,
                                         i64::from(value),
                                         assignment_scope(global),
                                     )
@@ -1102,8 +1111,8 @@ pub(in crate::main_control) fn apply<G>(
                                     stores,
                                     diagnostic_effects,
                                     "lccode",
-                                    character,
-                                    global,
+                                    *character,
+                                    *global,
                                     old as i32,
                                     value as i32,
                                 )
@@ -1113,19 +1122,19 @@ pub(in crate::main_control) fn apply<G>(
                 }
                 UnexpandablePrimitive::UcCode => {
                     let value = checked_character_code(value, "\\uccode")? as UcCode;
-                    let old = stores.uccode(character);
-                    let record = code_table_mutation("uccode", character, value as i64, global);
+                    let old = stores.uccode(*character);
+                    let record = code_table_mutation("uccode", *character, value as i64, *global);
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .scoped_word(
                             old,
                             value,
-                            global,
+                            *global,
                             record,
                             |stores, global| {
                                 stores
                                     .assign_code(
                                         tex_state::env::CodeTableKind::Uccode,
-                                        character,
+                                        *character,
                                         i64::from(value),
                                         assignment_scope(global),
                                     )
@@ -1136,8 +1145,8 @@ pub(in crate::main_control) fn apply<G>(
                                     stores,
                                     diagnostic_effects,
                                     "uccode",
-                                    character,
-                                    global,
+                                    *character,
+                                    *global,
                                     old as i32,
                                     value as i32,
                                 )
@@ -1153,19 +1162,20 @@ pub(in crate::main_control) fn apply<G>(
                             context: "\\sfcode",
                             value,
                         })? as SfCode;
-                    let old = stores.sfcode(character);
-                    let record = code_table_mutation("sfcode", character, i64::from(value), global);
+                    let old = stores.sfcode(*character);
+                    let record =
+                        code_table_mutation("sfcode", *character, i64::from(value), *global);
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .scoped_word(
                             old,
                             value,
-                            global,
+                            *global,
                             record,
                             |stores, global| {
                                 stores
                                     .assign_code(
                                         tex_state::env::CodeTableKind::Sfcode,
-                                        character,
+                                        *character,
                                         i64::from(value),
                                         assignment_scope(global),
                                     )
@@ -1176,8 +1186,8 @@ pub(in crate::main_control) fn apply<G>(
                                     stores,
                                     diagnostic_effects,
                                     "sfcode",
-                                    character,
-                                    global,
+                                    *character,
+                                    *global,
                                     i32::from(old),
                                     i32::from(value),
                                 )
@@ -1193,19 +1203,19 @@ pub(in crate::main_control) fn apply<G>(
                             context: "\\mathcode",
                             value,
                         })? as MathCode;
-                    let old = stores.mathcode(character);
-                    let record = code_table_mutation("mathcode", character, value as i64, global);
+                    let old = stores.mathcode(*character);
+                    let record = code_table_mutation("mathcode", *character, value as i64, *global);
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .scoped_word(
                             old,
                             value,
-                            global,
+                            *global,
                             record,
                             |stores, global| {
                                 stores
                                     .assign_code(
                                         tex_state::env::CodeTableKind::Mathcode,
-                                        character,
+                                        *character,
                                         i64::from(value),
                                         assignment_scope(global),
                                     )
@@ -1216,8 +1226,8 @@ pub(in crate::main_control) fn apply<G>(
                                     stores,
                                     diagnostic_effects,
                                     "mathcode",
-                                    character,
-                                    global,
+                                    *character,
+                                    *global,
                                     old as i32,
                                     value as i32,
                                 )
@@ -1233,20 +1243,20 @@ pub(in crate::main_control) fn apply<G>(
                             context: "\\delcode",
                             value,
                         })?;
-                    let old = stores.delcode(character);
+                    let old = stores.delcode(*character);
                     let record =
-                        code_table_mutation("delcode", character, i64::from(value), global);
+                        code_table_mutation("delcode", *character, i64::from(value), *global);
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .scoped_word(
                             old,
                             value,
-                            global,
+                            *global,
                             record,
                             |stores, global| {
                                 stores
                                     .assign_code(
                                         tex_state::env::CodeTableKind::Delcode,
-                                        character,
+                                        *character,
                                         i64::from(value),
                                         assignment_scope(global),
                                     )
@@ -1257,8 +1267,8 @@ pub(in crate::main_control) fn apply<G>(
                                     stores,
                                     diagnostic_effects,
                                     "delcode",
-                                    character,
-                                    global,
+                                    *character,
+                                    *global,
                                     old,
                                     value,
                                 )
@@ -1272,12 +1282,12 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::FontSelect {
             font,
-            selector: _,
+            _selector: _,
             global,
         } => {
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
                 stores
-                    .assign_current_font(font, assignment_scope(global))
+                    .assign_current_font(*font, assignment_scope(*global))
                     .expect("current font belongs to admitted state")
             });
             Ok(ReplayStep::Continue)
@@ -1302,7 +1312,7 @@ pub(in crate::main_control) fn apply<G>(
                     let record = font_definition_mutation(
                         stores,
                         request.target,
-                        global,
+                        *global,
                         observe_font_definition,
                     );
                     AssignmentCommitter::new(stores, diagnostic_effects).unscoped(
@@ -1314,7 +1324,7 @@ pub(in crate::main_control) fn apply<G>(
                                     tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(
                                         tex_state::font::NULL_FONT,
                                     )),
-                                    assignment_scope(global),
+                                    assignment_scope(*global),
                                 )
                                 .expect("font selector belongs to admitted state");
                             stores
@@ -1402,7 +1412,7 @@ pub(in crate::main_control) fn apply<G>(
             // [29.517]'s `slow_make_string` may have returned an older pool
             // string, so flushing it would retire an unrelated allocation.
             let record =
-                font_definition_mutation(stores, request.target, global, observe_font_definition);
+                font_definition_mutation(stores, request.target, *global, observe_font_definition);
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
                 record,
                 |stores| {
@@ -1410,7 +1420,7 @@ pub(in crate::main_control) fn apply<G>(
                         .assign_resolved_meaning(
                             request.target,
                             tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
-                            assignment_scope(global),
+                            assignment_scope(*global),
                         )
                         .expect("font selector belongs to admitted state")
                 },
@@ -1452,7 +1462,7 @@ pub(in crate::main_control) fn apply<G>(
                     id
                 }
             };
-            let record = font_definition_mutation(stores, definition.target, global, true);
+            let record = font_definition_mutation(stores, definition.target, *global, true);
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
                 record,
                 |stores| {
@@ -1460,7 +1470,7 @@ pub(in crate::main_control) fn apply<G>(
                         .assign_resolved_meaning(
                             definition.target,
                             tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
-                            assignment_scope(global),
+                            assignment_scope(*global),
                         )
                         .expect("generated-font selector belongs to admitted state")
                 },
@@ -1492,30 +1502,30 @@ pub(in crate::main_control) fn apply<G>(
                     // `\def`, immediately after collection and before the
                     // next command is fetched.
                     let observed =
-                        ObservationValue::Tokens(observed_read_body(&definition, stores));
+                        ObservationValue::Tokens(observed_read_body(definition.prepared(), stores));
                     let record = MutationRecord {
                         target: MutationTarget::Meaning,
-                        key: ObservationValue::Name(stores.resolve(target).to_owned()),
+                        key: ObservationValue::Name(stores.resolve(*target).to_owned()),
                         value: observed,
-                        global,
+                        global: *global,
                     };
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                         .unscoped_with_effects(Some(record), |stores, diagnostic_effects| {
                             assignment_tracing::trace_meaning_write(
                                 stores,
                                 diagnostic_effects,
-                                Token::Cs(target),
+                                Token::Cs(*target),
                                 true,
-                                global,
+                                *global,
                                 |stores| {
                                     stores
                                         .assign_resolved_meaning(
-                                            target,
+                                            *target,
                                             tex_state::meaning::ResolvedMeaning::Macro {
                                                 flags: MeaningFlags::EMPTY,
-                                                definition,
+                                                definition: definition.take_prepared(),
                                             },
-                                            assignment_scope(global),
+                                            assignment_scope(*global),
                                         )
                                         .expect(
                                             "prepared read definition belongs to admitted state",
@@ -1532,17 +1542,17 @@ pub(in crate::main_control) fn apply<G>(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
             }
-            let source = match resource {
+            let source = match std::mem::replace(resource, PdfImageResource::Unavailable) {
                 PdfImageResource::Available(source) => source,
                 PdfImageResource::Unavailable => {
                     return Err(ExecError::PdfImageOpen {
-                        name: request.name,
+                        name: std::mem::take(&mut request.name),
                         message: "image is unavailable".to_owned(),
                     });
                 }
                 PdfImageResource::Invalid(message) => {
                     return Err(ExecError::PdfImageOpen {
-                        name: request.name,
+                        name: std::mem::take(&mut request.name),
                         message,
                     });
                 }
@@ -1558,7 +1568,7 @@ pub(in crate::main_control) fn apply<G>(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
             }
-            let image = u32::try_from(object)
+            let image = u32::try_from(*object)
                 .ok()
                 .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok())
                 .and_then(|id| stores.pdf_external_image_record(id))
@@ -1599,13 +1609,13 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                Whatsit::PdfAccessibility(control),
+                Whatsit::PdfAccessibility(*control),
             )?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfRunningLink(enabled) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
-                return Err(ExecError::PdfExtensionInDviMode(if enabled {
+                return Err(ExecError::PdfExtensionInDviMode(if *enabled {
                     "pdfrunninglinkon"
                 } else {
                     "pdfrunninglinkoff"
@@ -1616,7 +1626,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                Whatsit::PdfRunningLink(enabled),
+                Whatsit::PdfRunningLink(*enabled),
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -1624,7 +1634,7 @@ pub(in crate::main_control) fn apply<G>(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
             }
-            let name = pdf_graphics_text(tokens, stores);
+            let name = pdf_graphics_text(tokens.prepared(), stores);
             stores.set_pdf_space_font_name(name);
             Ok(ReplayStep::Continue)
         }
@@ -1687,9 +1697,9 @@ pub(in crate::main_control) fn apply<G>(
                     ));
                 return Ok(ReplayStep::Continue);
             }
-            stores.append_pdf_document_fragment(request.kind, request.text.tokens);
-            if let Some(action) = request.open_action {
-                let action = admitted_pdf_action(action);
+            stores.append_pdf_document_fragment(request.kind, request.text.tokens.take_prepared());
+            if let Some(action) = &mut request.open_action {
+                let action = take_admitted_pdf_action(action);
                 if stores.pdf_catalog_open_action().is_some() {
                     return Err(ExecError::PdfDuplicateOpenAction);
                 }
@@ -1708,7 +1718,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::PdfFontExpand { font, spec } => {
             stores.configure_font_expansion(
-                font,
+                *font,
                 tex_state::font::FontExpansion {
                     stretch: spec.stretch() as u16,
                     shrink: spec.shrink() as u16,
@@ -1724,7 +1734,9 @@ pub(in crate::main_control) fn apply<G>(
             first,
             second,
         } => {
-            let first = first.map(|tokens| pdf_graphics_text(tokens, stores));
+            let first = first
+                .as_ref()
+                .map(|tokens| pdf_graphics_text(tokens.prepared(), stores));
             match primitive {
                 UnexpandablePrimitive::PdfFontAttr => stores.set_pdf_font_attribute(
                     font.expect("font attribute scanned a font"),
@@ -1741,7 +1753,10 @@ pub(in crate::main_control) fn apply<G>(
                 UnexpandablePrimitive::PdfGlyphToUnicode => {
                     let glyph = first.expect("glyph mapping scanned a glyph");
                     let unicode = pdf_graphics_text(
-                        second.expect("glyph mapping scanned a Unicode value"),
+                        second
+                            .as_ref()
+                            .expect("glyph mapping scanned a Unicode value")
+                            .prepared(),
                         stores,
                     );
                     match parse_glyph_to_unicode(&glyph, &unicode) {
@@ -1811,14 +1826,14 @@ pub(in crate::main_control) fn apply<G>(
                 Some(context) => report_font_parameter_recovery(
                     stores,
                     command.diagnostic_effects,
-                    font,
-                    context,
+                    *font,
+                    std::mem::take(context),
                 )?,
                 None => {
-                    let number = u32::try_from(number)
+                    let number = u32::try_from(*number)
                         .expect("a writable parameter number is a positive u32");
                     match AssignmentCommitter::new(stores, command.diagnostic_effects)
-                        .try_unscoped(None, |stores| stores.set_font_dimen(font, number, value))
+                        .try_unscoped(None, |stores| stores.set_font_dimen(*font, number, *value))
                     {
                         Ok(_) => {}
                         Err(capacity) => {
@@ -1834,10 +1849,10 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::FontInteger { font, skew, value } => {
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
-                if skew {
-                    stores.set_font_skew_char(font, value)
+                if *skew {
+                    stores.set_font_skew_char(*font, *value)
                 } else {
-                    stores.set_font_hyphen_char(font, value)
+                    stores.set_font_hyphen_char(*font, *value)
                 }
             });
             Ok(ReplayStep::Continue)
@@ -1849,8 +1864,8 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
                 Whatsit::OpenOut {
-                    slot: StreamSlot::new(stream),
-                    path: file_name,
+                    slot: StreamSlot::new(*stream),
+                    path: std::mem::take(file_name),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1868,14 +1883,14 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::DeferredWrite { stream, tokens } => {
-            let tokens = stores.node_token_list(&tokens);
+            let tokens = stores.node_token_list(tokens.prepared());
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
                 Whatsit::DeferredWrite {
-                    sink: replay_write_sink(stream),
+                    sink: replay_write_sink(*stream),
                     tokens,
                 },
             )?;
@@ -1885,7 +1900,7 @@ pub(in crate::main_control) fn apply<G>(
             deferred: true,
             tokens,
         } => {
-            let tokens = stores.node_token_list(&tokens);
+            let tokens = stores.node_token_list(tokens.prepared());
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -1903,7 +1918,7 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
         } => {
             let mut text = String::new();
-            for word in stores.token_list(tokens) {
+            for word in stores.token_list(tokens.prepared().clone()) {
                 tex_state::token_show::append_token_string_text(
                     &**stores,
                     word.semantic_token(),
@@ -1938,7 +1953,7 @@ pub(in crate::main_control) fn apply<G>(
             // `1..=255` survives. The pending character run is flushed
             // first, before `clang` moves, so it hyphenates under the
             // language that was current while it was being built.
-            let clang = u8::try_from(language).unwrap_or(0);
+            let clang = u8::try_from(*language).unwrap_or(0);
             let left_hyphen_min =
                 crate::box_runtime::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
             let right_hyphen_min =
@@ -1966,7 +1981,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -1984,10 +1999,10 @@ pub(in crate::main_control) fn apply<G>(
             // arm of `apply_arithmetic` computes its value before writing it,
             // so the target is provably unwritten on this path.
             match apply_arithmetic(
-                primitive,
-                target,
-                operand,
-                global,
+                *primitive,
+                *target,
+                *operand,
+                *global,
                 command.state.profile(),
                 stores,
                 command.diagnostic_effects,
@@ -2013,9 +2028,9 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1236 prints this error and returns from
             // `do_register_command`; §1269's common `done` path still gets
             // to replay a pending `\afterassignment` token.
-            let target = tex_command::print_cmd_chr_text(&**stores, target);
+            let target = tex_command::print_cmd_chr_text(&**stores, target.clone());
             let primitive = stores
-                .primitive_name(Meaning::UnexpandablePrimitive(primitive))
+                .primitive_name(Meaning::UnexpandablePrimitive(*primitive))
                 .expect("installed arithmetic primitive has a canonical name")
                 .to_owned();
             let context = command.state.output_open_context(&**stores);
@@ -2039,37 +2054,37 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let meaning = match primitive {
                 UnexpandablePrimitive::CharDef => Meaning::CharGiven(
-                    char::from_u32(value as u32)
+                    char::from_u32(*value as u32)
                         .expect("§434 recovers a character code to a character"),
                 ),
-                UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(value as u16),
+                UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(*value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
             assignment_tracing::trace_completed_provisional_meaning_write(
                 stores,
                 command.diagnostic_effects,
-                Token::Cs(target),
-                provisional_old,
+                Token::Cs(*target),
+                provisional_old.clone(),
                 Meaning::Relax,
-                global,
+                *global,
             );
             let observed = match primitive {
-                UnexpandablePrimitive::CharDef => ObservationValue::Character(value as u32),
-                UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(value)),
+                UnexpandablePrimitive::CharDef => ObservationValue::Character(*value as u32),
+                UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(*value)),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).meaning(
-                target,
-                Token::Cs(target),
+                *target,
+                Token::Cs(*target),
                 meaning,
                 observed,
-                global,
+                *global,
                 |stores| {
                     stores
                         .assign_resolved_meaning(
-                            target,
+                            *target,
                             tex_state::meaning::ResolvedMeaning::Static(meaning),
-                            assignment_scope(global),
+                            assignment_scope(*global),
                         )
                         .expect("character-definition target belongs to admitted state")
                 },
@@ -2085,24 +2100,24 @@ pub(in crate::main_control) fn apply<G>(
             global,
         } => {
             let meaning = match primitive {
-                UnexpandablePrimitive::CountDef => Meaning::CountRegister(index),
-                UnexpandablePrimitive::DimenDef => Meaning::DimenRegister(index),
-                UnexpandablePrimitive::SkipDef => Meaning::SkipRegister(index),
-                UnexpandablePrimitive::MuskipDef => Meaning::MuskipRegister(index),
-                UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
+                UnexpandablePrimitive::CountDef => Meaning::CountRegister(*index),
+                UnexpandablePrimitive::DimenDef => Meaning::DimenRegister(*index),
+                UnexpandablePrimitive::SkipDef => Meaning::SkipRegister(*index),
+                UnexpandablePrimitive::MuskipDef => Meaning::MuskipRegister(*index),
+                UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(*index),
                 _ => unreachable!("register-definition step carries only §1224 primitives"),
             };
             assignment_tracing::trace_completed_provisional_meaning_write(
                 stores,
                 command.diagnostic_effects,
-                Token::Cs(target),
-                provisional_old,
+                Token::Cs(*target),
+                provisional_old.clone(),
                 Meaning::Relax,
-                global,
+                *global,
             );
             let observed_name =
-                if command.state.profile().capabilities().supports_etex() && index > 255 {
-                    if primitive == UnexpandablePrimitive::ToksDef {
+                if command.state.profile().capabilities().supports_etex() && *index > 255 {
+                    if *primitive == UnexpandablePrimitive::ToksDef {
                         "toks_register"
                     } else {
                         "register"
@@ -2118,17 +2133,17 @@ pub(in crate::main_control) fn apply<G>(
                     }
                 };
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).meaning(
-                target,
-                Token::Cs(target),
+                *target,
+                Token::Cs(*target),
                 meaning,
                 ObservationValue::Name(observed_name.into()),
-                global,
+                *global,
                 |stores| {
                     stores
                         .assign_resolved_meaning(
-                            target,
+                            *target,
                             tex_state::meaning::ResolvedMeaning::Static(meaning),
-                            assignment_scope(global),
+                            assignment_scope(*global),
                         )
                         .expect("register-definition target belongs to admitted state")
                 },
@@ -2150,39 +2165,47 @@ pub(in crate::main_control) fn apply<G>(
             // and flushes the braced group. Only INITEX reaches §960, whose
             // own `trie_not_ready=false` guard is the "Too late" one, and it
             // does carry help. `\hyphenation` is legal in both binaries.
-            if patterns && !command.initex {
+            if *patterns && !command.initex {
                 let mut report = stores.print_err("Patterns can be loaded only by INITEX");
-                report.context(rejection_context);
+                report.context(std::mem::take(rejection_context));
                 report.error().defer_recovery(command.diagnostic_effects)?;
                 return Ok(ReplayStep::Continue);
             }
-            if trie_built {
+            if *trie_built {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
-                report.context(rejection_context);
+                report.context(std::mem::take(rejection_context));
                 report.error().defer_recovery(command.diagnostic_effects)?;
                 return Ok(ReplayStep::Continue);
             }
             // Both halves of §§935/963's diagnostics were already reported by
             // the live scan, where §82 could still show the character that
             // caused them; installing is all that is left here.
-            if patterns {
-                AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .try_unscoped(None, |stores| {
-                        crate::paragraph_end::apply_scanned_patterns(stores, pattern_specs)
-                    })?;
+            if *patterns {
+                AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(
+                    None,
+                    |stores| {
+                        crate::paragraph_end::apply_scanned_patterns(
+                            stores,
+                            std::mem::take(pattern_specs),
+                        )
+                    },
+                )?;
             } else {
                 AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
                     None,
                     |stores| {
-                        crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
+                        crate::paragraph_end::apply_scanned_hyphenation_exceptions(
+                            stores,
+                            std::mem::take(words),
+                        );
                     },
                 );
             }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterGroup(token) => {
-            match command.state.state_mut().save_aftergroup(&**stores, token) {
+            match command.state.state_mut().save_aftergroup(&**stores, *token) {
                 // TeX82 §280's `save_for_after` consumes the operand at every
                 // level, but creates an `insert_token` save word only when
                 // `cur_level > level_one`. `NoOpenGroup` is therefore the
@@ -2199,7 +2222,7 @@ pub(in crate::main_control) fn apply<G>(
             command
                 .state
                 .state_mut()
-                .set_afterassignment(&**stores, token)
+                .set_afterassignment(&**stores, *token)
                 .expect("afterassignment uses the synchronized command generation");
             Ok(ReplayStep::Continue)
         }
@@ -2208,7 +2231,7 @@ pub(in crate::main_control) fn apply<G>(
             height,
             depth,
             horizontal,
-        } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
+        } => apply_scanned_rule(command, modes, stores, *width, *height, *depth, *horizontal),
         ColdOperation::HRuleHereExceptLeaders => {
             let context = command.state.output_open_context(&**stores);
             report_escaped_error(
@@ -2229,8 +2252,8 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
             // §1283; neither branch formats or routes its own output.
-            let text = message_tokens_text(stores, tokens);
-            if error {
+            let text = message_tokens_text(stores, tokens.prepared().clone());
+            if *error {
                 let context = command.state.output_open_context(&**stores);
                 issue_error_message(stores, command.diagnostic_effects, &text, context)?;
             } else {
@@ -2255,7 +2278,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::execute_showbox(
                 stores,
                 command.diagnostic_effects,
-                index,
+                *index,
                 command.state.profile(),
             );
             command.defer_show_completion(true, context);
@@ -2286,7 +2309,7 @@ pub(in crate::main_control) fn apply<G>(
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
             let context = command.state.output_open_context(&**stores);
-            let text = show_tokens_tokens_text(stores, tokens);
+            let text = show_tokens_tokens_text(stores, tokens.prepared().clone());
             // §1297 opens with §62's `print_nl(">␣")`, whose break is
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
@@ -2348,7 +2371,7 @@ pub(in crate::main_control) fn apply<G>(
                 }
                 RootedImmediateExtension::OpenOut { stream, file_name } => {
                     let target = replay_openout_target(file_name.packed());
-                    stores.open_output_stream(StreamSlot::new(stream), target.clone().into());
+                    stores.open_output_stream(StreamSlot::new(*stream), target.clone().into());
                     command
                         .capabilities
                         .invalidate_input_unavailability_for_output(&target);
@@ -2362,15 +2385,15 @@ pub(in crate::main_control) fn apply<G>(
                             tracing_online,
                             terminal_line_is_open,
                             log_line_is_open,
-                            stream,
+                            *stream,
                             &target,
                         );
                         super::support::write_preframed_immediate_text(stores, command, sink, text);
                     }
                 }
                 RootedImmediateExtension::Write { stream, tokens } => {
-                    let text = write_text(tokens, stores);
-                    if let Some(sink) = immediate_write_sink(stream, stores) {
+                    let text = write_text(tokens.prepared(), stores);
+                    if let Some(sink) = immediate_write_sink(*stream, stores) {
                         write_immediate_text(stores, command, sink, &text);
                     }
                 }
@@ -2418,10 +2441,10 @@ pub(in crate::main_control) fn apply<G>(
                     stores,
                     command.diagnostic_effects,
                     command.fuel,
-                    |_| Ok(error_context),
+                    |_| Ok(std::mem::take(error_context)),
                 )?;
                 boxes.pending_setbox = Some(PendingSetBox {
-                    target,
+                    target: *target,
                     region: stores.begin_page_node_region(),
                 });
                 let context = boxes.take_box_context(false);
@@ -2430,7 +2453,7 @@ pub(in crate::main_control) fn apply<G>(
             }
 
             boxes.pending_setbox = Some(PendingSetBox {
-                target,
+                target: *target,
                 region: stores.begin_page_node_region(),
             });
             match path {
@@ -2440,7 +2463,11 @@ pub(in crate::main_control) fn apply<G>(
                             .release_page_node_region(pending.region)
                             .expect("rejected setbox releases its empty page region");
                     }
-                    report_improper_setbox(error_context, stores, command.diagnostic_effects)?;
+                    report_improper_setbox(
+                        std::mem::take(error_context),
+                        stores,
+                        command.diagnostic_effects,
+                    )?;
                 }
                 ScannedSetBoxPath::Payload(payload) => match payload {
                     ScannedBoxShiftPayload::Missing => {
@@ -2453,7 +2480,7 @@ pub(in crate::main_control) fn apply<G>(
                         report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        let id = read_box_register(index, copy, stores, command);
+                        let id = read_box_register(*index, *copy, stores, command);
                         let node = crate::box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -2480,7 +2507,7 @@ pub(in crate::main_control) fn apply<G>(
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
                     ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
-                        construction,
+                        *construction,
                         boxes.pending_setbox.take(),
                         None,
                         modes,
@@ -2516,9 +2543,9 @@ pub(in crate::main_control) fn apply<G>(
             copy,
             ships_out,
         } => {
-            let id = read_box_register(index, copy, stores, command);
+            let id = read_box_register(*index, *copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
-            let context = boxes.take_box_context(ships_out);
+            let context = boxes.take_box_context(*ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
@@ -2529,15 +2556,15 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let state = &*command.state;
             crate::box_runtime::execute_scanned_unbox_with_error_context(
-                primitive,
-                index,
+                *primitive,
+                *index,
                 modes,
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
                 |stores| {
                     state
-                        .render_diagnostic_context(error_context, stores)
+                        .render_diagnostic_context(*error_context, stores)
                         .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
                 },
             )?;
@@ -2545,7 +2572,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::SavedVerticalDiscards(primitive) => {
             crate::box_runtime::execute_scanned_saved_vertical_discards(
-                primitive,
+                *primitive,
                 modes,
                 stores,
                 command.diagnostic_effects,
@@ -2562,7 +2589,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 |stores| {
                     state
-                        .render_diagnostic_context(error_context, stores)
+                        .render_diagnostic_context(*error_context, stores)
                         .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
                 },
             )?;
@@ -2580,9 +2607,9 @@ pub(in crate::main_control) fn apply<G>(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                kind,
-                payload,
-                glue,
+                *kind,
+                *payload,
+                *glue,
                 command.fuel,
             )?;
             crate::vertical::build_page_if_outer_vertical(
@@ -2599,14 +2626,15 @@ pub(in crate::main_control) fn apply<G>(
             copy,
             glue,
         } => {
-            if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
+            if let Some(payload) = crate::box_runtime::take_register_payload(stores, *index, *copy)
+            {
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
                     command.diagnostic_effects,
-                    kind,
+                    *kind,
                     payload,
-                    glue,
+                    *glue,
                     command.fuel,
                 )?;
                 crate::vertical::build_page_if_outer_vertical(
@@ -2651,7 +2679,7 @@ pub(in crate::main_control) fn apply<G>(
             let target = boxes.pending_setbox.take();
             let shipout_region = boxes.pending_shipout.take();
             begin_replay_box(
-                construction,
+                *construction,
                 target,
                 shipout_region,
                 modes,
@@ -2677,7 +2705,7 @@ pub(in crate::main_control) fn apply<G>(
                     .print_esc("insert")
                     .print_int(255)
                     .help(&["I'm changing to \\insert0; box 255 is special."]);
-                if let Some(context) = construction.reserved_class_context {
+                if let Some(context) = construction.reserved_class_context.take() {
                     report.context(context);
                 }
                 report.error().defer_recovery(command.diagnostic_effects)?;
@@ -2716,7 +2744,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -2727,7 +2755,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -2738,7 +2766,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -2748,25 +2776,25 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
-                Some(context),
+                Some(std::mem::take(context)),
             )?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentDelimiter { token, context } => {
-            let context = render_diagnostic_coordinate(command, stores, context)?;
+            let context = render_diagnostic_coordinate(command, stores, *context)?;
             crate::diagnostics::report_misplaced_alignment_delimiter(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 Some(context),
             )?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentCommand { omit } => {
             let context = command.state.output_open_context(&**stores);
-            let (name, help) = if omit {
+            let (name, help) = if *omit {
                 (
                     "omit",
                     [
@@ -2802,11 +2830,14 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let tokens = stores.node_token_list(&tokens);
+            let tokens = stores.node_token_list(tokens.prepared());
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
-                Node::Mark { class, tokens },
+                Node::Mark {
+                    class: *class,
+                    tokens,
+                },
             );
             Ok(ReplayStep::Continue)
         }
@@ -2843,7 +2874,7 @@ pub(in crate::main_control) fn apply<G>(
                 kind,
                 group_kind: kind.group_kind(),
                 packing,
-                leader_kind: Some(leader_kind),
+                leader_kind: Some(*leader_kind),
                 shift: None,
             });
             schedule_everybox(command.state, stores, kind.horizontal());
@@ -2855,7 +2886,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -3011,7 +3042,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 command.diagnostic_effects,
-                token,
+                *token,
                 modes.current_mode(),
                 Some(context),
             )?;
@@ -3069,7 +3100,7 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
             // cur_chr)". `scan_off_save` already dropped the command itself
             // (no backup, nothing to replay); this only names it.
-            let name = tex_command::command_token_text(&mut **stores, token);
+            let name = tex_command::command_token_text(&mut **stores, *token);
             let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
@@ -3087,12 +3118,12 @@ pub(in crate::main_control) fn apply<G>(
             // scanner that opened the group, so `execute_live_math_group`
             // performs it once its level is gone.
             let aftergroup =
-                leave_group_payloads(stores, command.state, command.diagnostic_effects, kind)
+                leave_group_payloads(stores, command.state, command.diagnostic_effects, *kind)
                     .map_err(|_| ExecError::MissingToken {
                         context: "math group",
                     })?;
             schedule_aftergroup(command, stores, aftergroup)?;
-            if kind == GroupKind::Math {
+            if *kind == GroupKind::Math {
                 // TeX82 §1186 runs `fin_mlist` in the right-brace command
                 // itself, then writes the result through §1153's saved field
                 // pointer. This is the ordinary main-control closer for the
@@ -3170,7 +3201,7 @@ pub(in crate::main_control) fn apply<G>(
                 // uses the brace's live `line` as the ending line of every
                 // paragraph pack report, so retain that delivered scalar in
                 // `BoxEndGroup` instead of re-reading a now-empty input stack.
-                diagnostic_context.current_line = current_line;
+                diagnostic_context.current_line = *current_line;
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
@@ -3310,7 +3341,7 @@ pub(in crate::main_control) fn apply<G>(
                         context: "leader box payload",
                     })?;
                 boxes.pending_leader = Some((kind, payload));
-            } else if ships_out {
+            } else if *ships_out {
                 let region = box_state
                     .shipout_region
                     .expect("constructed shipout retains its page region");
@@ -3373,7 +3404,7 @@ pub(in crate::main_control) fn apply<G>(
                 let has_formula = !modes.current_list().nodes(stores).is_empty()
                     || modes.current_list().incomplete_fraction().is_some();
                 if has_formula {
-                    let primitive = if vertical { "\\valign" } else { "\\halign" };
+                    let primitive = if *vertical { "\\valign" } else { "\\halign" };
                     let context = command.state.output_open_context(&**stores);
                     let mut report = stores.print_err(&format!("Improper {primitive} inside $$'s"));
                     report.help(&[
@@ -3411,12 +3442,12 @@ pub(in crate::main_control) fn apply<G>(
                 .unwrap_or(GlueSpec::ZERO);
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
-                kind: if vertical {
+                kind: if *vertical {
                     AlignmentKind::VAlign
                 } else {
                     AlignmentKind::HAlign
                 },
-                owner,
+                owner: *owner,
                 packing: AlignmentPackSpec::Natural,
                 columns: Vec::new(),
                 repeat_start: None,
@@ -3451,7 +3482,7 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_list().prev_depth()
             };
             modes.push_at_line(
-                replay_alignment_mode(if vertical {
+                replay_alignment_mode(if *vertical {
                     AlignmentKind::VAlign
                 } else {
                     AlignmentKind::HAlign
@@ -3466,14 +3497,14 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::AlignmentPreambleOpening { alignment, packing } => {
             command
                 .state
-                .apply_alignment_request(&**stores, AlignmentRequest::Preamble(alignment))
+                .apply_alignment_request(&**stores, AlignmentRequest::Preamble(*alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment preamble lifecycle",
                 })?;
             if let Some(active) = active_alignment.as_mut()
-                && active.identity == alignment
+                && active.identity == *alignment
             {
-                active.packing = alignment_pack_spec(packing);
+                active.packing = alignment_pack_spec(*packing);
                 active.preamble_opening_pending = false;
                 active.preamble_start_pending = true;
             }
@@ -3497,7 +3528,7 @@ pub(in crate::main_control) fn apply<G>(
             // by `}`, which `align_peek` passes to `fin_align`.
             debug_assert!(
                 active_alignment.as_ref().is_some_and(
-                    |active| active.identity == alignment && !active.columns.is_empty()
+                    |active| active.identity == *alignment && !active.columns.is_empty()
                 )
             );
             // TeX82 §774 closes `init_align` with a second
@@ -3524,7 +3555,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::BeginNoAlign { alignment } => {
             let active = active_alignment
                 .as_mut()
-                .filter(|active| active.identity == alignment)
+                .filter(|active| active.identity == *alignment)
                 .ok_or(ExecError::MissingToken {
                     context: "active replay alignment",
                 })?;
@@ -3549,7 +3580,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::AlignmentPeekCell { alignment, omit } => {
             let active = active_alignment
                 .as_mut()
-                .filter(|active| active.identity == alignment)
+                .filter(|active| active.identity == *alignment)
                 .ok_or(ExecError::MissingToken {
                     context: "active replay alignment",
                 })?;
@@ -3563,18 +3594,18 @@ pub(in crate::main_control) fn apply<G>(
                     })?;
             command
                 .state
-                .begin_prepared_alignment_cell(alignment, templates)
+                .begin_prepared_alignment_cell(*alignment, templates)
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;
             begin_replay_alignment_cell(active, modes, stores, command.diagnostic_effects)?;
             active.align_peek_pending = false;
-            if omit {
+            if *omit {
                 command
                     .state
                     .apply_alignment_request(
                         &**stores,
-                        AlignmentRequest::PrepareCellLookahead(alignment),
+                        AlignmentRequest::PrepareCellLookahead(*alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit lookahead lifecycle",
@@ -3583,7 +3614,7 @@ pub(in crate::main_control) fn apply<G>(
                     .state
                     .apply_alignment_request(
                         &**stores,
-                        AlignmentRequest::InstallOmitCellTemplate(alignment),
+                        AlignmentRequest::InstallOmitCellTemplate(*alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit-cell lifecycle",
@@ -3597,7 +3628,7 @@ pub(in crate::main_control) fn apply<G>(
                     .state
                     .apply_alignment_request(
                         &**stores,
-                        AlignmentRequest::InstallCellTemplate(alignment),
+                        AlignmentRequest::InstallCellTemplate(*alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment next-row cell-template lifecycle",
@@ -3608,7 +3639,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::NoAlignEndGroup { alignment } => {
             let active = active_alignment
                 .as_mut()
-                .filter(|active| active.identity == alignment)
+                .filter(|active| active.identity == *alignment)
                 .ok_or(ExecError::MissingToken {
                     context: "active replay alignment",
                 })?;
@@ -3658,10 +3689,10 @@ pub(in crate::main_control) fn apply<G>(
                     &**stores,
                     match opening {
                         AlignmentCellOpening::Template => {
-                            AlignmentRequest::InstallCellTemplate(alignment)
+                            AlignmentRequest::InstallCellTemplate(*alignment)
                         }
                         AlignmentCellOpening::Omit => {
-                            AlignmentRequest::InstallOmitCellTemplate(alignment)
+                            AlignmentRequest::InstallOmitCellTemplate(*alignment)
                         }
                     },
                 )
@@ -3669,7 +3700,7 @@ pub(in crate::main_control) fn apply<G>(
                     context: "alignment cell-template lifecycle",
                 })?;
             if let Some(active) = active_alignment.as_mut()
-                && active.identity == alignment
+                && active.identity == *alignment
             {
                 active.cell_opening_pending = false;
                 active.next_cell_opening_pending = false;
@@ -3690,12 +3721,12 @@ pub(in crate::main_control) fn apply<G>(
             }
             let mut processor = command.processor(stores);
             let finished = processor
-                .finish_alignment_cell(alignment)
+                .finish_alignment_cell(*alignment)
                 .map_err(command_error);
             processor.retire();
             let finished = finished?;
             begin_next_replay_alignment_cell(
-                alignment,
+                *alignment,
                 finished.delimiter,
                 finished.delimiter_line,
                 command,
@@ -3709,7 +3740,7 @@ pub(in crate::main_control) fn apply<G>(
             alignment,
             current_line,
         } => {
-            if active_alignment.as_ref().map(|active| active.identity) != Some(alignment) {
+            if active_alignment.as_ref().map(|active| active.identity) != Some(*alignment) {
                 return Err(ExecError::MissingToken {
                     context: "active replay alignment",
                 });
@@ -3742,13 +3773,13 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 &mut geometry,
                 command.fuel,
-                AlignmentFinishSite::new(&error_context, current_line),
+                AlignmentFinishSite::new(&error_context, *current_line),
             )?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
                 .state
-                .apply_alignment_request(&**stores, AlignmentRequest::Finish(alignment))
+                .apply_alignment_request(&**stores, AlignmentRequest::Finish(*alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment finish lifecycle",
                 })?;
@@ -3778,7 +3809,7 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
             } else {
                 let mut diagnostic_context = command_diagnostic_context(command, stores);
-                diagnostic_context.current_line = current_line;
+                diagnostic_context.current_line = *current_line;
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
@@ -3818,7 +3849,7 @@ pub(in crate::main_control) fn apply<G>(
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
                     // set_math_char(ho(math_code(cur_chr)))`.
-                    set_math_char(ch, origin, stores, modes, command)?;
+                    set_math_char(*ch, *origin, stores, modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }
@@ -3858,13 +3889,13 @@ pub(in crate::main_control) fn apply<G>(
                     }
                     modes
                         .current_list_mutation()
-                        .set_no_boundary(suppress_left_boundary);
+                        .set_no_boundary(*suppress_left_boundary);
                     crate::box_runtime::append_character_with_fuel(
                         modes,
                         stores,
                         command.diagnostic_effects,
-                        ch,
-                        origin,
+                        *ch,
+                        *origin,
                         command.state.profile() == CommandProfile::ETEX26,
                         command.fuel,
                     )?;

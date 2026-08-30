@@ -440,7 +440,8 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .map(|(body, _)| body)
         .expect("locate pre-scanned preparation bypass");
     assert!(preparation_front.contains("OperationDelivery::Hot"));
-    assert!(preparation_front.contains("frame.take_hot()"));
+    assert!(preparation_front.contains("frame.hot_mut()"));
+    assert!(!preparation_front.contains("frame.take_hot()"));
     assert!(preparation_front.contains("OperationDelivery::Scanned"));
     assert_eq!(
         preparation_front

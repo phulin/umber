@@ -4,9 +4,9 @@
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
 //! processor releases its borrow. `ColdOperation` is not materialized on this
-//! path. The caller-owned [`OperationFrame`] moves the hot result through its
-//! one mutually exclusive operation-payload field, alongside its reusable
-//! scalar destination.
+//! path. The caller-owned [`OperationFrame`] stores the hot result in its one
+//! mutually exclusive operation-payload field, alongside its reusable scalar
+//! destination; preparation and application borrow that resident value.
 
 use super::*;
 
@@ -20,12 +20,14 @@ use super::*;
 #[allow(clippy::large_enum_variant)]
 pub(super) enum HotOperation<G> {
     MacroDefinition {
-        definition: tex_command::ScannedMacroDefinition,
+        target: Symbol,
+        definition: HotDefinitionRoot<G>,
         flags: MeaningFlags,
         global: bool,
     },
     Let {
-        assignment: tex_command::ScannedLetAssignment<G>,
+        target: Symbol,
+        meaning: Option<tex_state::meaning::ResolvedMeaning<G>>,
         global: bool,
     },
     CatCode {
@@ -40,31 +42,32 @@ pub(super) enum HotOperation<G> {
     },
 }
 
-/// A common operation after every attempt-local escape root has been
-/// promoted into the live generation. Semantic application accepts only this
-/// representation.
-pub(super) enum PreparedHotOperation<G> {
-    MacroDefinition {
-        target: Symbol,
-        definition: tex_state::DefinitionId<G>,
-        flags: MeaningFlags,
-        global: bool,
-    },
-    Let {
-        target: Symbol,
-        meaning: tex_state::meaning::ResolvedMeaning<G>,
-        global: bool,
-    },
-    CatCode {
-        character: char,
-        value: i32,
-        global: bool,
-    },
-    EnterGroup(GroupKind),
-    LeaveGroup {
-        kind: GroupKind,
-        context: &'static str,
-    },
+pub(super) enum HotDefinitionRoot<G> {
+    Attempt(tex_command::AttemptDefinitionId),
+    Prepared(Option<tex_state::DefinitionId<G>>),
+}
+
+impl<G> HotDefinitionRoot<G> {
+    fn prepare(
+        &mut self,
+        command: &tex_command::CommandState<G>,
+        stores: &mut Universe<G>,
+    ) -> Result<(), tex_command::AttemptError> {
+        let Self::Attempt(attempt) = self else {
+            panic!("hot definition root is prepared exactly once")
+        };
+        *self = Self::Prepared(Some(command.promote_attempt_definition(stores, *attempt)?));
+        Ok(())
+    }
+
+    fn take_prepared(&mut self) -> tex_state::DefinitionId<G> {
+        match self {
+            Self::Prepared(definition) => definition
+                .take()
+                .expect("prepared hot definition root is consumed exactly once"),
+            Self::Attempt(_) => panic!("hot definition root must be prepared before application"),
+        }
+    }
 }
 
 impl<G> HotOperation<G> {
@@ -89,40 +92,14 @@ impl<G> HotOperation<G> {
 
 /// Promotes every declared hot-operation root before command-state admission.
 pub(super) fn prepare<G>(
-    operation: HotOperation<G>,
+    operation: &mut HotOperation<G>,
     command: &tex_command::CommandState<G>,
     stores: &mut Universe<G>,
-) -> Result<PreparedHotOperation<G>, tex_command::AttemptError> {
-    Ok(match operation {
-        HotOperation::MacroDefinition {
-            definition,
-            flags,
-            global,
-        } => PreparedHotOperation::MacroDefinition {
-            target: definition.target,
-            definition: command.promote_attempt_definition(stores, definition.definition)?,
-            flags,
-            global,
-        },
-        HotOperation::Let { assignment, global } => PreparedHotOperation::Let {
-            target: assignment.target,
-            meaning: assignment.meaning,
-            global,
-        },
-        HotOperation::CatCode {
-            character,
-            value,
-            global,
-        } => PreparedHotOperation::CatCode {
-            character,
-            value,
-            global,
-        },
-        HotOperation::EnterGroup(kind) => PreparedHotOperation::EnterGroup(kind),
-        HotOperation::LeaveGroup { kind, context } => {
-            PreparedHotOperation::LeaveGroup { kind, context }
-        }
-    })
+) -> Result<(), tex_command::AttemptError> {
+    if let HotOperation::MacroDefinition { definition, .. } = operation {
+        definition.prepare(command, stores)?;
+    }
+    Ok(())
 }
 
 /// Scans a ranked common command after §1211's prefix loop and all contextual
@@ -134,7 +111,7 @@ pub(super) fn scan<G>(
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
     suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
-) -> Result<Option<HotOperation<G>>, ExecError> {
+) -> Result<bool, ExecError> {
     let operation = match command.meaning() {
         tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -163,27 +140,36 @@ pub(super) fn scan<G>(
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef),
-        )) => HotOperation::MacroDefinition {
-            definition: processor
+        )) => {
+            let definition = processor
                 .scan_macro_definition(matches!(
                     primitive,
                     UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
                 ))
-                .map_err(command_error)?,
-            flags,
-            global,
-        },
+                .map_err(command_error)?;
+            HotOperation::MacroDefinition {
+                target: definition.target,
+                definition: HotDefinitionRoot::Attempt(definition.definition),
+                flags,
+                global,
+            }
+        }
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet),
-        )) => HotOperation::Let {
-            assignment: processor
+        )) => {
+            let assignment = processor
                 .scan_let_assignment(primitive == UnexpandablePrimitive::FutureLet)
-                .map_err(command_error)?,
-            global,
-        },
-        _ => return Ok(None),
+                .map_err(command_error)?;
+            HotOperation::Let {
+                target: assignment.target,
+                meaning: Some(assignment.meaning),
+                global,
+            }
+        }
+        _ => return Ok(false),
     };
-    Ok(Some(operation))
+    command.write_hot(operation);
+    Ok(true)
 }
 
 pub(super) fn scan_catcode_assignment<G>(
@@ -255,7 +241,7 @@ pub(super) fn scan_catcode_assignment<G>(
 
 /// Applies one measured common operation to canonical state and journals.
 pub(super) fn apply<G>(
-    operation: &PreparedHotOperation<G>,
+    operation: &mut HotOperation<G>,
     stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
@@ -263,36 +249,42 @@ pub(super) fn apply<G>(
     let mut stores = LinearCommandContext::new(stores);
     let stores = &mut stores;
     match operation {
-        PreparedHotOperation::MacroDefinition {
+        HotOperation::MacroDefinition {
             target,
             definition,
             flags,
             global,
         } => apply_macro_definition(
             *target,
-            definition.clone(),
+            definition.take_prepared(),
             *flags,
             *global,
             stores,
             command,
         ),
-        PreparedHotOperation::Let {
+        HotOperation::Let {
             target,
             meaning,
             global,
-        } => apply_let(*target, meaning.clone(), *global, stores, command),
-        PreparedHotOperation::CatCode {
+        } => apply_let(
+            *target,
+            meaning
+                .take()
+                .expect("prepared hot let meaning is consumed exactly once"),
+            *global,
+            stores,
+            command,
+        ),
+        HotOperation::CatCode {
             character,
             value,
             global,
         } => apply_catcode(*character, *value, *global, stores, command),
-        PreparedHotOperation::EnterGroup(kind) => {
-            flush_group_boundary(modes, stores, command).map(|()| {
-                enter_group(stores, command.state, command.diagnostic_effects, *kind);
-                ReplayStep::Continue
-            })
-        }
-        PreparedHotOperation::LeaveGroup { kind, context } => {
+        HotOperation::EnterGroup(kind) => flush_group_boundary(modes, stores, command).map(|()| {
+            enter_group(stores, command.state, command.diagnostic_effects, *kind);
+            ReplayStep::Continue
+        }),
+        HotOperation::LeaveGroup { kind, context } => {
             leave_group(*kind, context, modes, stores, command)
         }
     }
