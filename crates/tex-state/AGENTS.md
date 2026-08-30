@@ -23,7 +23,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
   direct command and execution work, including name-free compact
-  control-sequence meaning delivery, typed register mutation,
+  control-sequence meaning delivery and the destination-directed packed-token
+  resolution entry implemented beside the token encoding, typed register mutation,
   page-list/page-builder access, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,
   detached paragraph-shape and e-TeX penalty-array projections with journaled

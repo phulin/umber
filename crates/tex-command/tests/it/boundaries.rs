@@ -151,16 +151,25 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     }
     assert!(next.contains("Some(CurrentCommand::empty())"));
     assert!(next.contains(".next_raw_into("));
-    assert!(next.contains("raw.resolve_in_place("));
     assert!(next.contains("self.apply_delivery_rules(resolved, delivery_stamp)"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
-    assert!(command.contains("struct RawCommand<'slot, G>"));
     assert!(command.contains("struct ResolvedCommand<'slot, G>"));
     assert!(levels.contains("crate::command::EmptyCommand<'slot, G>"));
-    for retired in ["RawDeliverySlot", "resolve_into"] {
+    assert_eq!(
+        command.matches("fn write_resolved_delivery(").count(),
+        1,
+        "resident input words must resolve through one final-slot write"
+    );
+    assert!(input_stack.contains("destination.write_resolved_delivery("));
+    assert!(levels.contains("destination.write_resolved_delivery("));
+    for retired in [
+        "RawDeliverySlot",
+        "struct RawCommand<'slot, G>",
+        "resolve_in_place(",
+    ] {
         assert!(
             !format!("{next}\n{levels}\n{command}").contains(retired),
-            "raw delivery must write the canonical command directly, without {retired}"
+            "input delivery must resolve the canonical command directly, without {retired}"
         );
     }
     assert_eq!(

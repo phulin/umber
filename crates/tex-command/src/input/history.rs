@@ -45,7 +45,8 @@ pub(crate) struct InputCursorMutationCounters {
 /// Copy-small facts produced by one direct stored-token cursor mutation.
 pub(crate) struct InputCursorDelivery<'slot, G> {
     pub(crate) identity: super::InputLevelId,
-    pub(crate) raw: Option<crate::command::RawCommand<'slot, G>>,
+    pub(crate) resolved: Option<crate::command::ResolvedCommand<'slot, G>>,
+    pub(crate) meaning_lookup: bool,
     pub(crate) out_parameter: Option<u8>,
 }
 
@@ -542,6 +543,8 @@ impl<G> InputStack<G> {
         sources: super::PackedTokenSources<'_, G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'slot, G>,
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
     ) -> Option<Result<InputCursorDelivery<'slot, G>, ()>> {
         let index = self.top.checked_sub(1)?;
         #[cfg(any(test, feature = "profiling"))]
@@ -565,15 +568,35 @@ impl<G> InputStack<G> {
                 recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
                 let identity = cursor.identity();
                 let behavior = cursor.behavior;
-                match cursor.deliver_into(sources, destination) {
-                    Ok(delivery) => Ok(InputCursorDelivery {
+                match cursor.deliver_into(
+                    sources,
+                    destination,
+                    !matches!(behavior, super::TokenBehavior::Parameter),
+                    sequence,
+                    state,
+                ) {
+                    Ok(Some(super::levels::PackedTokenDelivery::Command {
+                        resolved,
+                        meaning_lookup,
+                    })) => Ok(InputCursorDelivery {
                         identity,
-                        out_parameter: delivery.as_ref().and_then(|delivery| {
-                            (!matches!(behavior, super::TokenBehavior::Parameter))
-                                .then_some(delivery.out_parameter)
-                                .flatten()
-                        }),
-                        raw: delivery.map(|delivery| delivery.raw),
+                        resolved: Some(resolved),
+                        meaning_lookup,
+                        out_parameter: None,
+                    }),
+                    Ok(Some(super::levels::PackedTokenDelivery::OutParameter(slot))) => {
+                        Ok(InputCursorDelivery {
+                            identity,
+                            resolved: None,
+                            meaning_lookup: false,
+                            out_parameter: Some(slot),
+                        })
+                    }
+                    Ok(None) => Ok(InputCursorDelivery {
+                        identity,
+                        resolved: None,
+                        meaning_lookup: false,
+                        out_parameter: None,
                     }),
                     Err(()) => Err(()),
                 }
@@ -584,10 +607,13 @@ impl<G> InputStack<G> {
                     super::RetirementBehavior::Pop,
                 ));
                 let identity = cursor.identity();
-                match cursor.deliver_into(scratch, destination) {
-                    Ok(raw) => Ok(InputCursorDelivery {
+                match cursor.deliver_into(scratch, destination, sequence, state) {
+                    Ok(resolved) => Ok(InputCursorDelivery {
                         identity,
-                        raw,
+                        meaning_lookup: resolved
+                            .as_ref()
+                            .is_some_and(|(_, meaning_lookup)| *meaning_lookup),
+                        resolved: resolved.map(|(resolved, _)| resolved),
                         out_parameter: None,
                     }),
                     Err(()) => Err(()),

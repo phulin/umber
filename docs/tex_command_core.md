@@ -188,9 +188,11 @@ methods remain as thin entry points; they do not own alternate fetch loops.
 The driver is destination-directed. Its caller provides the one final
 `Option<CurrentCommand<G>>` slot for that active request. The private
 `next_command_into` pipeline advances that value through reference-only
-`EmptyCommand`, `RawCommand`, and `ResolvedCommand` typestates: input writes raw
-facts, resolution completes the same address, and delivery policy settles it
-once. The return is only a compact `DeliveryStatus` naming end of input,
+`EmptyCommand` and `ResolvedCommand` typestates: the resident input row passes
+its packed word directly to the dense meaning lookup, which writes spelling,
+resolved meaning, and delivery facts into the same address before delivery
+policy settles it once. No semantic-token value or unresolved command crosses
+that ownership boundary. The return is only a compact `DeliveryStatus` naming end of input,
 command completion, replay completion, pending observation, or an alignment
 boundary. Internal delivery steps pair that status with a zero-sized failure
 marker and move a real `CommandError` into one caller-owned cold slot. Only the
@@ -249,9 +251,10 @@ suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a
 meaning after delivery.
 
-Consuming `RawCommand::resolve_in_place` resolves the spelling already stored
-in the caller destination and returns the only `ResolvedCommand` proof. One
-delivery settlement then applies `\noexpand`, outer-validity recovery,
+Consuming `EmptyCommand::write_resolved_delivery` writes and resolves the
+resident packed spelling directly in the caller destination and returns the
+only `ResolvedCommand` proof. One delivery settlement then applies
+`\noexpand`, outer-validity recovery,
 alignment classification, and optional observation in canonical order.
 The singular `CommandState` alignment transition classifies that resident
 command once, journals the prior `align_state` immediately before a literal

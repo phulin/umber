@@ -3,7 +3,7 @@
 
 use crate::CommandState;
 use tex_state::DefinitionId;
-use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
@@ -16,7 +16,10 @@ use super::{
 
 /// Result of one admission of the current input top.
 pub(crate) enum InputTopTransition<'slot, G> {
-    Delivered(crate::command::RawCommand<'slot, G>),
+    Delivered {
+        resolved: crate::command::ResolvedCommand<'slot, G>,
+        meaning_lookup: bool,
+    },
     ParameterPushed(InputLevelId),
     InvalidCharacter,
     NeedLine(InputLevelId),
@@ -237,10 +240,11 @@ impl<G> CommandState<G> {
         state: &mut tex_state::CommandContext<'_, G>,
         create_control_sequences: bool,
         destination: crate::command::EmptyCommand<'slot, G>,
+        sequence: u64,
     ) -> Result<InputTopTransition<'slot, G>, ()> {
         let profile = self.profile();
         let force_eof = self.source_force_eof();
-        let (raw, admitted_identity, out_parameter) = {
+        let (admitted_identity, out_parameter) = {
             let attempt = self.attempt.arena();
             let scratch = &self.scratch;
             let roots = &mut self.roots;
@@ -319,15 +323,18 @@ impl<G> CommandState<G> {
                                     range.end(),
                                 )
                             };
-                            let raw = destination.write_raw_delivery(
-                                TracedTokenWord::from_parts(token.word, origin),
+                            let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+                                token.word,
+                                origin,
                                 identity.0,
                                 position,
+                                sequence,
                                 Some(token.provenance),
                                 active_source,
                                 true,
                                 direct_source_line,
                                 false,
+                                state,
                             );
                             #[cfg(test)]
                             {
@@ -336,7 +343,10 @@ impl<G> CommandState<G> {
                                     .source_direct
                                     .saturating_add(1);
                             }
-                            return Ok(InputTopTransition::Delivered(raw));
+                            return Ok(InputTopTransition::Delivered {
+                                resolved,
+                                meaning_lookup,
+                            });
                         }
                         CompactSourceTokenizationStep::InvalidCharacter => {
                             return Ok(InputTopTransition::InvalidCharacter);
@@ -357,29 +367,39 @@ impl<G> CommandState<G> {
                             PackedTokenSources::new(replay_lane, attempt),
                             scratch,
                             destination,
+                            sequence,
+                            state,
                         )
                         .expect("the inspected token row remains on top")?;
-                    let Some(raw) = delivery.raw else {
-                        return Ok(InputTopTransition::TokenExhausted(delivery.identity));
-                    };
-                    let Some(out_parameter) = delivery.out_parameter else {
-                        #[cfg(test)]
-                        {
-                            self.raw_delivery_path_counters.stored_direct = self
-                                .raw_delivery_path_counters
-                                .stored_direct
-                                .saturating_add(1);
+                    match (delivery.resolved, delivery.out_parameter) {
+                        (Some(resolved), None) => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.stored_direct = self
+                                    .raw_delivery_path_counters
+                                    .stored_direct
+                                    .saturating_add(1);
+                            }
+                            return Ok(InputTopTransition::Delivered {
+                                resolved,
+                                meaning_lookup: delivery.meaning_lookup,
+                            });
                         }
-                        return Ok(InputTopTransition::Delivered(raw));
-                    };
-                    #[cfg(test)]
-                    {
-                        self.raw_delivery_path_counters.out_parameter_interceptions = self
-                            .raw_delivery_path_counters
-                            .out_parameter_interceptions
-                            .saturating_add(1);
+                        (None, Some(out_parameter)) => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.out_parameter_interceptions = self
+                                    .raw_delivery_path_counters
+                                    .out_parameter_interceptions
+                                    .saturating_add(1);
+                            }
+                            (delivery.identity, out_parameter)
+                        }
+                        (None, None) => {
+                            return Ok(InputTopTransition::TokenExhausted(delivery.identity));
+                        }
+                        (Some(_), Some(_)) => return Err(()),
                     }
-                    (raw, delivery.identity, out_parameter)
                 }
                 InputLevel::MacroArgument(_) => {
                     let delivery = roots
@@ -389,9 +409,11 @@ impl<G> CommandState<G> {
                             PackedTokenSources::new(replay_lane, attempt),
                             scratch,
                             destination,
+                            sequence,
+                            state,
                         )
                         .expect("the inspected macro row remains on top")?;
-                    let Some(raw) = delivery.raw else {
+                    let Some(resolved) = delivery.resolved else {
                         return Ok(InputTopTransition::TokenExhausted(delivery.identity));
                     };
                     #[cfg(test)]
@@ -401,20 +423,19 @@ impl<G> CommandState<G> {
                             .macro_argument_direct
                             .saturating_add(1);
                     }
-                    return Ok(InputTopTransition::Delivered(raw));
+                    return Ok(InputTopTransition::Delivered {
+                        resolved,
+                        meaning_lookup: delivery.meaning_lookup,
+                    });
                 }
             }
         };
 
-        let delivering_level = InputLevelId(raw.delivery_coordinate().0);
-        if admitted_identity != delivering_level {
-            return Err(());
-        }
         match self
-            .replay_out_parameter_after_admission(delivering_level, false, out_parameter)
+            .replay_out_parameter_after_admission(admitted_identity, false, out_parameter)
             .map_err(|_| ())?
         {
-            OutParameterReplay::Literal => Ok(InputTopTransition::Delivered(raw)),
+            OutParameterReplay::Literal => Err(()),
             OutParameterReplay::Pushed(level) => Ok(InputTopTransition::ParameterPushed(level)),
         }
     }

@@ -282,6 +282,80 @@ impl TokenWord {
     }
 }
 
+impl<G> crate::CommandContext<'_, G> {
+    /// Resolves one admitted packed token directly into its final command
+    /// fields.
+    ///
+    /// Ordinary command delivery already has the canonical [`TokenWord`]
+    /// resident in its input row. Decoding its tag here lets the dense meaning
+    /// lookup consume that word without first constructing a semantic
+    /// [`Token`] and without returning a second resolved-command carrier.
+    /// Frozen engine sentinels remain on their distinct semantic branch.
+    #[inline(always)]
+    pub fn resolve_packed_token_meaning_into(
+        &self,
+        word: TokenWord,
+        meaning: &mut crate::meaning::ResolvedMeaning<G>,
+        control_sequence: &mut Option<Symbol>,
+    ) -> bool {
+        use crate::meaning::{Meaning, ResolvedMeaning};
+
+        let kind = word.0 >> TokenWord::KIND_SHIFT;
+        let payload = word.0 & TokenWord::PAYLOAD_MASK;
+        match kind {
+            TokenWord::KIND_CHAR => {
+                let raw_cat = (payload & 0xF) as usize;
+                let ch = char::from_u32(payload >> TokenWord::CATCODE_BITS)
+                    .expect("packed token scalar is valid");
+                let cat = ALL_CATCODES[raw_cat];
+                if cat == Catcode::Active {
+                    let symbol = self.active_character_symbol(ch);
+                    *control_sequence = symbol;
+                    *meaning = symbol
+                        .map(|symbol| self.compact_control_sequence_meaning(symbol))
+                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
+                    true
+                } else {
+                    *control_sequence = None;
+                    *meaning = ResolvedMeaning::Static(Meaning::CharToken { ch, cat });
+                    false
+                }
+            }
+            TokenWord::KIND_CS => {
+                let symbol = Symbol::from_packed_slot(payload);
+                *control_sequence = Some(symbol);
+                *meaning = self.compact_control_sequence_meaning(symbol);
+                true
+            }
+            TokenWord::KIND_PARAM => {
+                *control_sequence = None;
+                *meaning = ResolvedMeaning::Static(Meaning::Undefined);
+                false
+            }
+            TokenWord::KIND_FROZEN => {
+                let frozen = FrozenToken::from_raw(payload as u16);
+                *control_sequence = None;
+                *meaning = if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
+                    ResolvedMeaning::Static(Meaning::Undefined)
+                } else if frozen == FrozenToken::END_TEMPLATE {
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        crate::meaning::ExpandablePrimitive::EndTemplate,
+                    ))
+                } else if frozen == FrozenToken::END_V {
+                    ResolvedMeaning::Static(Meaning::EndV)
+                } else if frozen == FrozenToken::RELAX {
+                    ResolvedMeaning::Static(Meaning::Relax)
+                } else {
+                    self.frozen_primitive_resolved(Token::Frozen(frozen))
+                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined))
+                };
+                false
+            }
+            _ => unreachable!("two-bit packed-token kind"),
+        }
+    }
+}
+
 const _: () = assert!(core::mem::size_of::<TokenWord>() == 4);
 
 /// Provenance origin handle carried by traced token words.

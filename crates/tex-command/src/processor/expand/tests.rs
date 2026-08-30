@@ -95,7 +95,7 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OrdinaryDeliveryEvidence {
     slot_initializations: u64,
-    raw_writes: u64,
+    resolved_writes: u64,
     expanded_classifications: u64,
     command_clones: u64,
     token_frame_steps: u64,
@@ -208,7 +208,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         OrdinaryDeliveryEvidence {
             slot_initializations: after_ownership.slot_initializations
                 - before_ownership.slot_initializations,
-            raw_writes: after_ownership.raw_writes - before_ownership.raw_writes,
+            resolved_writes: after_ownership.resolved_writes - before_ownership.resolved_writes,
             expanded_classifications: super::expanded_classifications() - classifications_before,
             command_clones: after_ownership.clones - before_ownership.clones,
             token_frame_steps: work.token_frame_steps - work_before.token_frame_steps,
@@ -230,7 +230,7 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
 
     for (expansions, evidence) in [(1, one), (4_096, many)] {
         assert_eq!(evidence.slot_initializations, 1);
-        assert_eq!(evidence.raw_writes, expansions + 1);
+        assert_eq!(evidence.resolved_writes, expansions + 1);
         assert_eq!(evidence.expanded_classifications, expansions + 1);
         assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.token_frame_steps, expansions + 1);

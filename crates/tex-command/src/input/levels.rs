@@ -233,16 +233,20 @@ impl<G> MacroArgumentCursor<G> {
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'slot, G>,
-    ) -> Result<Option<crate::command::RawCommand<'slot, G>>, ()> {
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Result<Option<(crate::command::ResolvedCommand<'slot, G>, bool)>, ()> {
         let frame = self.frame;
         let position = frame.position();
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
             return Ok(None);
         };
-        let raw = destination.write_raw_delivery(
-            TracedTokenWord::from_parts(word.token_word(), word.origin()),
+        let resolved = destination.write_resolved_delivery(
+            word.token_word(),
+            word.origin(),
             frame.identity(),
             u64::from(position),
+            sequence,
             None,
             frame.source_id(),
             false,
@@ -250,11 +254,12 @@ impl<G> MacroArgumentCursor<G> {
             frame
                 .flags()
                 .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+            state,
         );
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(Some(raw))
+        Ok(Some(resolved))
     }
 }
 
@@ -279,34 +284,48 @@ impl<G> TokenCursor<G> {
         &mut self,
         sources: PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'slot, G>,
+        intercept_out_parameter: bool,
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
     ) -> Result<Option<PackedTokenDelivery<'slot, G>>, ()> {
         let frame = self.frame;
         let position = frame.position();
-        let Some(raw) = sources.deliver_at_into(&self.span, position, frame, destination) else {
+        let Some(delivery) = sources.deliver_at_into(
+            &self.span,
+            frame,
+            destination,
+            intercept_out_parameter,
+            sequence,
+            state,
+        ) else {
             return Ok(None);
         };
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(Some(raw))
+        Ok(Some(delivery))
     }
 }
 
 /// Canonical packed word plus its storage-independent diagnostic coordinates.
 ///
 /// This value-returning view is reserved for non-delivering lifecycle probes.
-/// The default raw-delivery path writes into the caller's final
+/// The default command-delivery path writes into the caller's final
 /// [`crate::CurrentCommand`] instead.
 pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
 
-/// One resident stored-token access written into the caller's final command.
+/// Result of one resident stored-token access.
 ///
 /// The packed out-parameter fact is projected while the storage word is
-/// already resident. It is consumed only by macro-parameter interception and
-/// is not a second token or command representation.
-pub(crate) struct PackedTokenDelivery<'slot, G> {
-    pub(crate) raw: crate::command::RawCommand<'slot, G>,
-    pub(crate) out_parameter: Option<u8>,
+/// already resident and before the destination is written. Every other word
+/// resolves directly in the final command slot. This status is not a second
+/// token or command representation.
+pub(crate) enum PackedTokenDelivery<'slot, G> {
+    Command {
+        resolved: crate::command::ResolvedCommand<'slot, G>,
+        meaning_lookup: bool,
+    },
+    OutParameter(u8),
 }
 
 /// Typed lifetime handle for one immutable packed-token span.
@@ -407,10 +426,13 @@ impl<'a, G> PackedTokenSources<'a, G> {
     pub(crate) fn deliver_at_into<'slot>(
         &self,
         span: &PackedTokenSpanHandle<G>,
-        position: u32,
         frame: PackedInputFrame,
         destination: crate::command::EmptyCommand<'slot, G>,
+        intercept_out_parameter: bool,
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenDelivery<'slot, G>> {
+        let position = frame.position();
         let index = position as usize;
         let (word, origin, source_provenance) = match span {
             PackedTokenSpanHandle::Replay { replay, .. } => {
@@ -432,20 +454,27 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 (word, OriginId::UNKNOWN, None)
             }
         };
-        Some(PackedTokenDelivery {
-            raw: destination.write_raw_delivery(
-                TracedTokenWord::from_parts(word, origin),
-                frame.identity(),
-                u64::from(position),
-                source_provenance,
-                frame.source_id(),
-                false,
-                None,
-                frame
-                    .flags()
-                    .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
-            ),
-            out_parameter: word.out_parameter_slot(),
+        if intercept_out_parameter && let Some(slot) = word.out_parameter_slot() {
+            return Some(PackedTokenDelivery::OutParameter(slot));
+        }
+        let (resolved, meaning_lookup) = destination.write_resolved_delivery(
+            word,
+            origin,
+            frame.identity(),
+            u64::from(position),
+            sequence,
+            source_provenance,
+            frame.source_id(),
+            false,
+            None,
+            frame
+                .flags()
+                .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+            state,
+        );
+        Some(PackedTokenDelivery::Command {
+            resolved,
+            meaning_lookup,
         })
     }
 }

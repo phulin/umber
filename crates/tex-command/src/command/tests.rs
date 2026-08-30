@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CurrentCommand, DeliveryStamp, EmptyCommand, RawCommand, ResolvedCommand};
+use super::{CurrentCommand, DeliveryStamp, EmptyCommand, ResolvedCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
@@ -17,10 +17,6 @@ fn command_delivery_layout_stays_compact() {
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
     assert_eq!(
         std::mem::size_of::<EmptyCommand<'_, ()>>(),
-        std::mem::size_of::<&mut CurrentCommand<()>>()
-    );
-    assert_eq!(
-        std::mem::size_of::<RawCommand<'_, ()>>(),
         std::mem::size_of::<&mut CurrentCommand<()>>()
     );
     assert_eq!(
@@ -91,7 +87,7 @@ fn ordinary_character_is_resolved_without_a_state_handle() {
 }
 
 #[test]
-fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
+fn packed_input_resolution_and_execution_borrow_one_command_address() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CurrentCommand::empty();
         let spelling = TracedTokenWord::pack(
@@ -102,12 +98,20 @@ fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
             OriginId::UNKNOWN,
         );
         let slot = core::ptr::from_ref(&command);
-        let raw = command
-            .empty_for_raw_delivery()
-            .write_raw_delivery(spelling, 17, 23, None, None, false, None, false);
-        assert_eq!(core::ptr::from_ref(raw.0), slot);
-        let (resolved, meaning_lookup) =
-            raw.resolve_in_place(29, &universe.command_context().expect("command context"));
+        let context = universe.command_context().expect("command context");
+        let (resolved, meaning_lookup) = command.empty_for_raw_delivery().write_resolved_delivery(
+            spelling.token_word(),
+            spelling.origin(),
+            17,
+            23,
+            29,
+            None,
+            None,
+            false,
+            None,
+            false,
+            &context,
+        );
         assert!(!meaning_lookup);
         assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
 
@@ -179,7 +183,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
 }
 
 #[test]
-fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
+fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
             .allocate_definition(
@@ -201,40 +205,40 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
         let baseline = definition.semantic_owner_count();
         let mut command = CurrentCommand::empty();
 
-        let raw = command.empty_for_raw_delivery().write_raw_delivery(
-            TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN),
+        let context = universe.command_context().expect("command context");
+        let _ = command.empty_for_raw_delivery().write_resolved_delivery(
+            TokenWord::pack(Token::Cs(symbol.symbol())),
+            OriginId::UNKNOWN,
             3,
             5,
+            7,
             None,
             None,
             false,
             None,
             false,
+            &context,
         );
-        assert_eq!(definition.semantic_owner_count(), baseline);
-        let _ = raw.resolve_in_place(7, &universe.command_context().expect("command context"));
         assert_eq!(definition.semantic_owner_count(), baseline + 1);
 
-        let raw = command.empty_for_raw_delivery().write_raw_delivery(
-            TracedTokenWord::pack(
-                Token::Char {
-                    ch: 'x',
-                    cat: Catcode::Letter,
-                },
-                OriginId::UNKNOWN,
-            ),
+        let _ = command.empty_for_raw_delivery().write_resolved_delivery(
+            TokenWord::pack(Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }),
+            OriginId::UNKNOWN,
             11,
             13,
+            17,
             None,
             None,
             false,
             None,
             false,
+            &context,
         );
-        // Raw preparation does not manufacture another owner. Resolution is
-        // the sole point that replaces the preceding resolved meaning.
-        assert_eq!(definition.semantic_owner_count(), baseline + 1);
-        let _ = raw.resolve_in_place(17, &universe.command_context().expect("command context"));
+        // The next destination-directed write replaces the sole prior owner;
+        // no intermediate resolved carrier acquires another one.
         assert_eq!(definition.semantic_owner_count(), baseline);
         assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13, 17));
     });

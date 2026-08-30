@@ -86,82 +86,92 @@ fn cursor_position<G>(level: &InputLevel<G>) -> usize {
 
 #[test]
 fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transition() {
-    let behavior = TokenBehavior::Ordinary;
-    let retirement = RetirementBehavior::Pop;
-    let trace = ReplayTrace::Inserted;
-    let mut replay = ReplayLane::default();
-    let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
-        .admit(&mut replay)
-        .expect("token span admits");
-    let attempt = crate::attempt::AttemptArena::default();
-    let scratch = crate::execution_scratch::ExecutionScratch::default();
-    let mut stack = InputStack::<()>::default();
-    stack.push(InputLevel::Tokens(TokenCursor {
-        span,
-        frame: packed_token_frame(InputLevelId(1), 2, &behavior, retirement, &trace),
-        behavior,
-        retirement,
-        trace,
-    }));
+    crate::test_harness::with_universe(|universe| {
+        let context = universe.command_context().expect("command context");
+        let behavior = TokenBehavior::Ordinary;
+        let retirement = RetirementBehavior::Pop;
+        let trace = ReplayTrace::Inserted;
+        let mut replay = ReplayLane::default();
+        let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
+            .admit(&mut replay)
+            .expect("token span admits");
+        let attempt = crate::attempt::AttemptArena::default();
+        let scratch = crate::execution_scratch::ExecutionScratch::default();
+        let mut stack = InputStack::default();
+        stack.push(InputLevel::Tokens(TokenCursor {
+            span,
+            frame: packed_token_frame(InputLevelId(1), 2, &behavior, retirement, &trace),
+            behavior,
+            retirement,
+            trace,
+        }));
 
-    assert_exact_direct_transition(&mut stack, |stack| {
-        let mut command = crate::command::CurrentCommand::empty();
-        let delivery = stack
-            .deliver_top_cursor_into(
-                PackedTokenSources::new(&replay, &attempt),
-                &scratch,
-                command.empty_for_raw_delivery(),
-            )
-            .expect("token cursor remains on top")
-            .expect("token delivery succeeds");
-        assert!(delivery.raw.is_some());
+        assert_exact_direct_transition(&mut stack, |stack| {
+            let mut command = crate::command::CurrentCommand::empty();
+            let delivery = stack
+                .deliver_top_cursor_into(
+                    PackedTokenSources::new(&replay, &attempt),
+                    &scratch,
+                    command.empty_for_raw_delivery(),
+                    7,
+                    &context,
+                )
+                .expect("token cursor remains on top")
+                .expect("token delivery succeeds");
+            assert!(delivery.resolved.is_some());
+        });
     });
 }
 
 #[test]
 fn macro_argument_mutation_uses_the_same_direct_transition() {
-    let mut scratch = crate::execution_scratch::ExecutionScratch::default();
-    let matching = scratch.begin_macro_match().expect("macro match");
-    let mut buffer = scratch.begin_match_buffer(&matching).expect("match buffer");
-    for spelling in [word('a'), word('b')] {
-        scratch
-            .push_match_word(
-                &mut buffer,
-                spelling,
-                crate::execution_scratch::MacroArgumentTokenFacts::default(),
-            )
-            .expect("argument word");
-    }
-    scratch.finish_match_buffer(buffer).expect("argument range");
-    let macro_frame = scratch
-        .commit_macro_match(matching)
-        .expect("sealed macro frame");
-    let range = scratch
-        .argument_range(macro_frame, 1)
-        .expect("live macro frame")
-        .expect("first argument");
-    let behavior = TokenBehavior::Parameter;
-    let retirement = RetirementBehavior::Pop;
-    let trace = ReplayTrace::MacroParameter { slot: 1 };
-    let mut stack = InputStack::<()>::default();
-    stack.push(InputLevel::MacroArgument(MacroArgumentCursor {
-        range,
-        slot: 1,
-        frame: packed_token_frame(InputLevelId(2), 2, &behavior, retirement, &trace),
-    }));
-    let replay = ReplayLane::default();
-    let attempt = crate::attempt::AttemptArena::default();
+    crate::test_harness::with_universe(|universe| {
+        let context = universe.command_context().expect("command context");
+        let mut scratch = crate::execution_scratch::ExecutionScratch::default();
+        let matching = scratch.begin_macro_match().expect("macro match");
+        let mut buffer = scratch.begin_match_buffer(&matching).expect("match buffer");
+        for spelling in [word('a'), word('b')] {
+            scratch
+                .push_match_word(
+                    &mut buffer,
+                    spelling,
+                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                )
+                .expect("argument word");
+        }
+        scratch.finish_match_buffer(buffer).expect("argument range");
+        let macro_frame = scratch
+            .commit_macro_match(matching)
+            .expect("sealed macro frame");
+        let range = scratch
+            .argument_range(macro_frame, 1)
+            .expect("live macro frame")
+            .expect("first argument");
+        let behavior = TokenBehavior::Parameter;
+        let retirement = RetirementBehavior::Pop;
+        let trace = ReplayTrace::MacroParameter { slot: 1 };
+        let mut stack = InputStack::default();
+        stack.push(InputLevel::MacroArgument(MacroArgumentCursor {
+            range,
+            slot: 1,
+            frame: packed_token_frame(InputLevelId(2), 2, &behavior, retirement, &trace),
+        }));
+        let replay = ReplayLane::default();
+        let attempt = crate::attempt::AttemptArena::default();
 
-    assert_exact_direct_transition(&mut stack, |stack| {
-        let mut command = crate::command::CurrentCommand::empty();
-        let delivery = stack
-            .deliver_top_cursor_into(
-                PackedTokenSources::new(&replay, &attempt),
-                &scratch,
-                command.empty_for_raw_delivery(),
-            )
-            .expect("macro argument remains on top")
-            .expect("macro-argument delivery succeeds");
-        assert!(delivery.raw.is_some());
+        assert_exact_direct_transition(&mut stack, |stack| {
+            let mut command = crate::command::CurrentCommand::empty();
+            let delivery = stack
+                .deliver_top_cursor_into(
+                    PackedTokenSources::new(&replay, &attempt),
+                    &scratch,
+                    command.empty_for_raw_delivery(),
+                    11,
+                    &context,
+                )
+                .expect("macro argument remains on top")
+                .expect("macro-argument delivery succeeds");
+            assert!(delivery.resolved.is_some());
+        });
     });
 }

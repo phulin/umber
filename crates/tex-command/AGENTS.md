@@ -103,9 +103,11 @@ collector (see `src/conditionals.rs`).
   bidirectional command-root journal, scalar marks, two-lineage suffix
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
-  the executor borrows the one caller-owned value through preflight and
-  scanning, and moves it only into an actual retry or another semantic owner;
-  it never enters a durable snapshot or format boundary.
+  resident input writes its packed spelling and resolved meaning together
+  through one `EmptyCommand` to `ResolvedCommand` handoff, after which the
+  executor borrows the one caller-owned value through preflight and scanning,
+  and moves it only into an actual retry or another semantic owner; it never
+  enters a durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded-delivery driver and static
   primitive dispatch, including one
   main-control preflight entry that raw-fetches into the caller's destination,
@@ -195,7 +197,8 @@ collector (see `src/conditionals.rs`).
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` through a reference-only `EmptyCommand` to
-  `RawCommand` phase proof and advances only the packed frame scalar. A
+  `ResolvedCommand` phase proof, resolves the resident packed word directly,
+  and advances only the packed frame scalar. A
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
@@ -247,7 +250,7 @@ collector (see `src/conditionals.rs`).
   level strings.
 - `src/processor/`: public borrow-only processor facade with specialized raw
   and expanded delivery loops, expansion, scanner-status, and alignment
-  orchestration. `next_command_into` is the one Empty-to-Raw-to-Resolved
+  orchestration. `next_command_into` is the one Empty-to-Resolved
   in-place pipeline; its sole delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
   has ended. The loops share canonical token-to-current-meaning delivery;
@@ -263,7 +266,7 @@ collector (see `src/conditionals.rs`).
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
-- `src/processor/next.rs`: the sole raw Empty-to-Raw-to-Resolved delivery
+- `src/processor/next.rs`: the sole raw Empty-to-Resolved delivery
   orchestration, including policy settlement and raw observation after all
   dense borrows end. It delegates cold source retirement, outer recovery, and
   alignment interception directly to their private semantic modules without

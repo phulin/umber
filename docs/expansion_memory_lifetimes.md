@@ -302,9 +302,12 @@ not the number of physical copies made inside the thin-DST allocator.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
-`EmptyCommand`, `RawCommand`, and `ResolvedCommand` borrows prove that input,
-resolution, and delivery settlement mutate that one slot in order; nested
-delivery has its own slot. One fetch/inspect state loop keeps the initialized
+`EmptyCommand` and `ResolvedCommand` borrows prove that resident input and
+delivery settlement mutate that one slot in order. The input row passes its
+already-resident `TokenWord` to the dense meaning lookup, which writes the
+final meaning and control-sequence fields before returning; no semantic-token
+value or raw-command phase crosses to `next_command_into`. Nested delivery has
+its own slot. One fetch/inspect state loop keeps the initialized
 value in place while synchronous expansion mutates input, then raw delivery
 overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between

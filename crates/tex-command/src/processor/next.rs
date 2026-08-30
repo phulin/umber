@@ -5,7 +5,7 @@
 //! the two explicit entry points below; they do not add another lexical path.
 
 use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CurrentCommand, DeliveryStamp, ResolvedCommand};
 use crate::error::CommandError;
@@ -182,18 +182,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(delivery)
     }
     /// Runs the one TeX82 §341 next-command pipeline in the caller's final
-    /// slot: authoritative raw input, in-place meaning resolution, then one
-    /// delivery-policy settlement. Cold input transitions re-enter this loop
-    /// only after their slot typestate borrow has ended.
+    /// slot: authoritative raw input resolves its resident packed word into
+    /// that slot, then one delivery-policy settlement runs. Cold input
+    /// transitions re-enter this loop only after their slot typestate borrow
+    /// has ended.
     pub(super) fn next_command_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         error: &mut DeliveryErrorSlot,
     ) -> Result<super::DeliveryStatus, DeliveryFailed> {
         // Expanded delivery keeps this same caller-owned value across every
-        // synchronous expansion. Raw input overwrites all delivery facts and
-        // meaning resolution overwrites the prior meaning, so rebuilding an
-        // empty command between tokens would only duplicate state movement.
+        // synchronous expansion. The fused input/meaning write overwrites all
+        // delivery facts and the prior meaning, so rebuilding an empty command
+        // between tokens would only duplicate state movement.
         if destination.is_none() {
             *destination = Some(CurrentCommand::empty());
         }
@@ -211,6 +212,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .as_mut()
                         .expect("next-command pipeline owns its reusable command slot")
                         .empty_for_raw_delivery(),
+                    self.next_delivery_sequence,
                 )
                 .map_err(|()| CommandError::input_invariant());
             let transition = match transition {
@@ -220,7 +222,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return error.fail(failure);
                 }
             };
-            let raw = match transition {
+            let (resolved, meaning_lookup) = match transition {
                 InputTopTransition::Empty => {
                     observe!(
                         self,
@@ -243,7 +245,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination.take();
                     return Ok(super::DeliveryStatus::End);
                 }
-                InputTopTransition::Delivered(raw) => raw,
+                InputTopTransition::Delivered {
+                    resolved,
+                    meaning_lookup,
+                } => (resolved, meaning_lookup),
                 InputTopTransition::ParameterPushed(parameter_level) => {
                     observe!(
                         self,
@@ -355,33 +360,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .as_mut()
                             .expect("next-command pipeline owns its reusable command slot")
                             .empty_for_raw_delivery()
-                            .write_raw_delivery(
-                                TracedTokenWord::pack(
-                                    self.state.frozen_end_template_token(),
-                                    OriginId::UNKNOWN,
-                                ),
+                            .write_resolved_delivery(
+                                TokenWord::pack(self.state.frozen_end_template_token()),
+                                OriginId::UNKNOWN,
                                 level.0,
                                 u64::from(index),
+                                self.next_delivery_sequence,
                                 None,
                                 active_source,
                                 false,
                                 None,
                                 false,
+                                self.state,
                             ),
                     }
                 }
             };
 
-            let (input_level, position) = raw.delivery_coordinate();
-            let delivery_stamp =
-                DeliveryStamp::new(input_level, position, self.next_delivery_sequence);
+            let delivery_stamp = resolved.as_ref().delivery_stamp();
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
             let scanner = !matches!(
                 self.command.scanner.status(),
                 crate::processor::ScannerStatus::Normal
             );
-            let (resolved, meaning_lookup) =
-                raw.resolve_in_place(delivery_stamp.sequence(), self.state);
             self.record_raw_delivery(scanner, meaning_lookup);
             if let Err(failure) = self.apply_delivery_rules(resolved, delivery_stamp) {
                 destination.take();
