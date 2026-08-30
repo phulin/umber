@@ -13,8 +13,7 @@ use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
     DefinitionBuildError, DefinitionBuilder, DefinitionId, DefinitionIdentityPolicy,
-    DefinitionPromotion, GenerationOwner, GlueId, PromotionError, ProvenanceId, TokenListId,
-    TokenListPromotion, Universe,
+    GenerationOwner, GlueId, PromotionError, ProvenanceId, TokenListId, Universe,
 };
 
 mod token_lane;
@@ -1382,114 +1381,94 @@ impl<G> AttemptArena<G> {
         std::str::from_utf8(bytes).map_err(|_| AttemptError::InvalidCoordinate)
     }
 
-    /// Moves declared definition builders and copies only the other declared
-    /// compact roots.
+    /// Publishes declared roots directly from their attempt-owned storage.
     ///
-    /// This is the multi-root cold preparation path. Its inline root staging
-    /// spills only when a declared batch exceeds four unique roots; work and
-    /// storage are proportional to that declaration, never to unrelated live
-    /// attempt rows. Definition owners retain their original identity policy
-    /// and word allocation through destination preflight; rejection restores
-    /// them to their exact attempt rows and success recycles them. Ordinary
-    /// one-definition promotion uses
-    /// [`Self::promote_definition`] and allocates no staging or receipt.
+    /// Complete source validation and destination reservation happen while the
+    /// attempt rows remain in place. Token words then stream once into their
+    /// final publisher, and successful definition publication recycles the
+    /// original builders. Failure leaves every attempt row untouched. Duplicate
+    /// declarations share the one published owner without an id relocation
+    /// table or a payload-bearing batch carrier.
     pub(crate) fn promote(
         &mut self,
         universe: &mut Universe<G>,
         roots: AttemptEscapeRoots<'_>,
     ) -> Result<AttemptPromotion<G>, AttemptError> {
-        let mut token_sources =
-            smallvec::SmallVec::<[(AttemptTokenListId, Vec<TokenWord>); 4]>::new();
-        let mut glue_sources = smallvec::SmallVec::<[(AttemptGlueId, GlueSpec); 4]>::new();
-        let mut definition_sources = smallvec::SmallVec::<[AttemptDefinitionId; 4]>::new();
-        let mut provenance_sources =
-            smallvec::SmallVec::<[(AttemptProvenanceId, OriginRecord); 4]>::new();
-
         for &id in roots.token_lists {
             self.validate_key(id.key)?;
             self.token_words(id)?;
-            if !token_sources.iter().any(|(source, _)| *source == id) {
-                token_sources.push((id, self.semantic_words(id)?));
-            }
         }
         for &id in roots.glue {
             self.validate_key(id.key)?;
-            let glue = self.glue(id)?;
-            if !glue_sources.iter().any(|(source, _)| *source == id) {
-                glue_sources.push((id, glue));
-            }
+            self.glue(id)?;
         }
         for &id in roots.definitions {
             self.validate_key(id.key)?;
             self.definition_builder(id)?;
-            if definition_sources.contains(&id) {
-                continue;
-            }
-            definition_sources.push(id);
         }
         for &id in roots.provenance {
             self.validate_key(id.key)?;
-            let record = self.provenance(id)?;
-            if !provenance_sources.iter().any(|(source, _)| *source == id) {
-                provenance_sources.push((id, record));
-            }
+            self.provenance(id)?;
         }
 
-        let token_lists = token_sources
-            .iter()
-            .map(|(_, words)| TokenListPromotion { words })
-            .collect::<smallvec::SmallVec<[_; 4]>>();
-        let glue_values = glue_sources
-            .iter()
-            .map(|(_, glue)| *glue)
-            .collect::<smallvec::SmallVec<[_; 4]>>();
-        let provenance = provenance_sources
-            .iter()
-            .map(|(_, record)| *record)
-            .collect::<smallvec::SmallVec<[_; 4]>>();
+        let definition_count = unique_count(roots.definitions);
         self.recycled_definition_builders
-            .try_reserve(definition_sources.len())
+            .try_reserve(definition_count)
             .map_err(|_| AttemptError::AllocationFailed)?;
-        let mut definitions = smallvec::SmallVec::<[DefinitionPromotion; 4]>::new();
-        definitions
-            .try_reserve(definition_sources.len())
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        for &id in &definition_sources {
-            let row = self
+
+        let definitions = roots
+            .definitions
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| is_first_occurrence(roots.definitions, *index))
+            .map(|(_, id)| {
+                self.definition_builder(*id)
+                    .expect("the complete definition source set was validated")
+            });
+        let token_lists = roots
+            .token_lists
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| is_first_occurrence(roots.token_lists, *index))
+            .map(|(_, id)| {
+                self.token_words(*id)
+                    .expect("the complete token source set was validated")
+                    .iter()
+                    .map(|word| word.token_word())
+            });
+        let glue_values = roots
+            .glue
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| is_first_occurrence(roots.glue, *index))
+            .map(|(_, id)| {
+                self.glue(*id)
+                    .expect("the complete glue source set was validated")
+            });
+        let provenance = roots
+            .provenance
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| is_first_occurrence(roots.provenance, *index))
+            .map(|(_, id)| {
+                self.provenance(*id)
+                    .expect("the complete provenance source set was validated")
+            });
+        let receipt = universe
+            .promote_value_streams(definitions, token_lists, glue_values, provenance)
+            .map_err(AttemptError::from)?;
+
+        for (index, &id) in roots.definitions.iter().enumerate() {
+            if !is_first_occurrence(roots.definitions, index) {
+                continue;
+            }
+            let builder = self
                 .definitions
                 .get_mut(id.index())
                 .filter(|row| row.serial == id.serial)
-                .expect("validated definition row remains live");
-            definitions.push(DefinitionPromotion::new(
-                row.value
-                    .builder
-                    .take()
-                    .expect("validated definition builder remains owned"),
-            ));
-        }
-        let receipt =
-            match universe.promote_values(&definitions, &token_lists, &glue_values, &provenance) {
-                Ok(receipt) => receipt,
-                Err(error) => {
-                    for (id, definition) in definition_sources
-                        .iter()
-                        .copied()
-                        .zip(definitions.into_iter())
-                    {
-                        let row = self
-                            .definitions
-                            .get_mut(id.index())
-                            .filter(|row| row.serial == id.serial)
-                            .expect("promotion failure retains the attempt row");
-                        debug_assert!(row.value.builder.is_none());
-                        row.value.builder = Some(definition.into_builder());
-                    }
-                    return Err(error.into());
-                }
-            };
-        for definition in definitions {
-            self.recycled_definition_builders
-                .push(definition.into_builder());
+                .and_then(|row| row.value.builder.take())
+                .expect("successful publication retains the original attempt builder");
+            self.recycled_definition_builders.push(builder);
         }
 
         Ok(AttemptPromotion {
@@ -1497,10 +1476,7 @@ impl<G> AttemptArena<G> {
                 .token_lists
                 .iter()
                 .map(|id| {
-                    let index = token_sources
-                        .iter()
-                        .position(|(source, _)| source == id)
-                        .expect("declared token root was promoted");
+                    let index = unique_index(roots.token_lists, id);
                     receipt.token_lists[index].clone()
                 })
                 .collect(),
@@ -1508,10 +1484,7 @@ impl<G> AttemptArena<G> {
                 .glue
                 .iter()
                 .map(|id| {
-                    let index = glue_sources
-                        .iter()
-                        .position(|(source, _)| source == id)
-                        .expect("declared glue root was promoted");
+                    let index = unique_index(roots.glue, id);
                     receipt.glue[index]
                 })
                 .collect(),
@@ -1519,10 +1492,7 @@ impl<G> AttemptArena<G> {
                 .definitions
                 .iter()
                 .map(|id| {
-                    let index = definition_sources
-                        .iter()
-                        .position(|source| source == id)
-                        .expect("declared definition root was promoted");
+                    let index = unique_index(roots.definitions, id);
                     receipt.definitions[index].clone()
                 })
                 .collect(),
@@ -1530,10 +1500,7 @@ impl<G> AttemptArena<G> {
                 .provenance
                 .iter()
                 .map(|id| {
-                    let index = provenance_sources
-                        .iter()
-                        .position(|(source, _)| source == id)
-                        .expect("declared provenance root was promoted");
+                    let index = unique_index(roots.provenance, id);
                     receipt.provenance[index]
                 })
                 .collect(),
@@ -1559,14 +1526,6 @@ impl<G> AttemptArena<G> {
             .map_err(AttemptError::from)
     }
 
-    fn semantic_words(&self, id: AttemptTokenListId) -> Result<Vec<TokenWord>, AttemptError> {
-        Ok(self
-            .token_words(id)?
-            .iter()
-            .map(|word| word.token_word())
-            .collect())
-    }
-
     fn validate_key(&self, key: NonZeroU64) -> Result<(), AttemptError> {
         if key == self.key.0 {
             Ok(())
@@ -1583,6 +1542,26 @@ pub(crate) struct AttemptEscapeRoots<'a> {
     pub(crate) glue: &'a [AttemptGlueId],
     pub(crate) definitions: &'a [AttemptDefinitionId],
     pub(crate) provenance: &'a [AttemptProvenanceId],
+}
+
+fn is_first_occurrence<T: PartialEq>(values: &[T], index: usize) -> bool {
+    !values[..index].contains(&values[index])
+}
+
+fn unique_count<T: PartialEq>(values: &[T]) -> usize {
+    values
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| is_first_occurrence(values, *index))
+        .count()
+}
+
+fn unique_index<T: PartialEq>(values: &[T], value: &T) -> usize {
+    let first = values
+        .iter()
+        .position(|candidate| candidate == value)
+        .expect("a declared promotion root is present in its source slice");
+    unique_count(&values[..first])
 }
 
 /// Durable coordinates returned in the caller's declared root order.

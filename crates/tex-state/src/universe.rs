@@ -2089,6 +2089,37 @@ impl<G> Universe<G> {
             .promote_values(definitions, token_lists, glue_values, provenance)
     }
 
+    /// Promotes borrowed sources without first moving them into batch-local
+    /// payload carriers.
+    ///
+    /// Each iterator must be repeatable because complete validation and
+    /// reservation precede publication. After reservation succeeds, the word
+    /// streams are consumed directly by the final token-list publisher.
+    pub fn promote_value_streams<'source, Definitions, TokenLists, Words, Glue, Provenance>(
+        &mut self,
+        definitions: Definitions,
+        token_lists: TokenLists,
+        glue_values: Glue,
+        provenance: Provenance,
+    ) -> Result<PromotionReceipt<G>, PromotionError>
+    where
+        Definitions: Clone + Iterator<Item = &'source crate::DefinitionBuilder>,
+        TokenLists: Clone + Iterator<Item = Words>,
+        Words: ExactSizeIterator<Item = TokenWord>,
+        Glue: Clone + Iterator<Item = GlueSpec>,
+        Provenance: Clone + Iterator<Item = OriginRecord>,
+    {
+        self.core
+            .as_mut()
+            .ok_or(PromotionError::Retired)?
+            .admit_mut()
+            .map_err(|error| match error {
+                StateError::GenerationInUse => PromotionError::GenerationInUse,
+                _ => PromotionError::AllocationFailed,
+            })?
+            .promote_value_streams(definitions, token_lists, glue_values, provenance)
+    }
+
     pub(crate) fn promote_format_values(
         &mut self,
         definitions: Vec<crate::format::schema::FormatDefinition>,

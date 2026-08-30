@@ -389,11 +389,12 @@ collector (see `src/conditionals.rs`).
   the scanner word/builder lanes. Macro `\def`/`\edef` and `read_toks`
   collect semantic words into one attempt-local recyclable definition builder;
   successful publication traverses that checked row once into its final
-  current-generation `DefinitionId`. Generic cold-operation promotion moves
-  that exact builder through a typed owner, validates its original destination
-  identity policy before publishing any batch row, then recycles the owner;
-  it never copies the parameter/replacement slices or reconstructs a second
-  builder. Read setup and finalization share one cleanup transaction which
+  current-generation `DefinitionId`. Generic cold-operation promotion borrows
+  that exact builder in its attempt row, validates its original destination
+  identity policy before publishing any batch row, then takes and recycles it
+  only after success; failure needs no owner restoration. It never copies the
+  parameter/replacement slices or reconstructs a second builder. Read setup and
+  finalization share one cleanup transaction which
   restores `align_state` and scanner status and truncates the exact child scope
   on every error. General token-list scans append directly to independent
   branches in the attempt's shared fixed-chunk lane; they never own or recycle

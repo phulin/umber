@@ -45,10 +45,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   one explicit publication traversal into a contiguous immutable token
   payload, and the exact publisher cursor which returns a rejected checkpoint
   loan to its private suffix mark without retaining released bodies. Generic
-  promotion accepts the already-checked builder through an owned typed value;
-  batch preflight must validate every preserved identity policy before the
-  first row is published and must never reconstruct a destination-policy
-  builder from parameter/replacement slices.
+  promotion borrows an already-checked attempt builder through complete batch
+  preflight; success publishes it before the attempt owner recycles it, while
+  failure leaves it in place. Preflight must validate every preserved identity
+  policy before the first row is published and must never reconstruct a
+  destination-policy builder from parameter/replacement slices.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and

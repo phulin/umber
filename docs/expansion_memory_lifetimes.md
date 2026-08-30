@@ -285,16 +285,20 @@ The scanner first fills one attempt-local `DefinitionBuilder` in monotonic
 parameter and replacement phases. Each append validates and updates the
 parameter program and, when requested by the destination generation, the
 framed semantic identity. `\def`, `\edef`, `\read`, and `\readline` share this
-path. The cold-operation promotion batch moves the original attempt builder
-through a typed `DefinitionPromotion` owner; destination preflight validates
-that builder's preserved identity policy before any batch row is published.
-Success recycles the same word allocation and rejection restores it to its
-exact attempt row. Neither path materializes parameter/replacement vectors or
-constructs a second builder. Ordinary allocation, memo import, and format
-restore construct their own checked builders because their inputs begin as
-cold detached data. Publication then performs one explicit word traversal into
-the contiguous `ThinRc`. This describes the observable traversal boundary, not
-the number of physical copies made inside the thin-DST allocator.
+path. Cold-operation promotion borrows each unique builder in its exact attempt
+row while destination preflight validates the preserved identity policy and
+reserves the complete mixed batch. Rejection therefore leaves the row and its
+word allocation untouched. After successful publication, the attempt takes the
+same builder and returns it to its reusable high water. Token-list roots follow
+the same preflight boundary but stream semantic words from their existing
+attempt range or scanner branch instead of first collecting a batch-local
+`Vec<TokenWord>`. Neither path materializes parameter/replacement vectors,
+constructs a second builder, or moves payload-bearing inline batches merely to
+cross the state boundary. Ordinary allocation, memo import, and format restore
+construct their own checked builders because their inputs begin as cold
+detached data. Definition publication then performs one explicit word traversal
+into the contiguous `ThinRc`. This describes the observable traversal boundary,
+not the number of physical copies made inside the thin-DST allocator.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized

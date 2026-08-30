@@ -400,22 +400,52 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError> {
-        let definition_words = definitions.iter().try_fold(0usize, |total, definition| {
-            total.checked_add(definition.builder().words().len())
-        });
+        self.promote_value_streams(
+            definitions.iter().map(|definition| definition.builder()),
+            token_lists.iter().map(|list| list.words.iter().copied()),
+            glue_values.iter().copied(),
+            provenance.iter().copied(),
+        )
+    }
+
+    /// Publishes a prevalidated batch from repeatable borrowed source walks.
+    ///
+    /// The caller keeps each source in its original owner through reservation.
+    /// Once all capacity is reserved, publication streams directly into the
+    /// destination publishers and cannot fail. No batch-local payload owner is
+    /// constructed merely to cross this boundary.
+    pub(crate) fn promote_value_streams<'source, Definitions, TokenLists, Words, Glue, Provenance>(
+        &mut self,
+        definitions: Definitions,
+        token_lists: TokenLists,
+        glue_values: Glue,
+        provenance: Provenance,
+    ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError>
+    where
+        Definitions: Clone + Iterator<Item = &'source crate::DefinitionBuilder>,
+        TokenLists: Clone + Iterator<Item = Words>,
+        Words: ExactSizeIterator<Item = TokenWord>,
+        Glue: Clone + Iterator<Item = GlueSpec>,
+        Provenance: Clone + Iterator<Item = OriginRecord>,
+    {
+        let definition_count = definitions.clone().count();
+        let token_list_count = token_lists.clone().count();
+        let glue_count = glue_values.clone().count();
+        let provenance_count = provenance.clone().count();
+        let definition_words = definitions
+            .clone()
+            .try_fold(0usize, |total, definition| {
+                total.checked_add(definition.words().len())
+            })
+            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
         let token_words = token_lists
-            .iter()
-            .try_fold(0usize, |total, list| total.checked_add(list.words.len()));
-        let Some(definition_words) = definition_words else {
-            return Err(crate::universe::PromotionError::CapacityOverflow);
-        };
-        let Some(token_words) = token_words else {
-            return Err(crate::universe::PromotionError::CapacityOverflow);
-        };
+            .clone()
+            .try_fold(0usize, |total, words| total.checked_add(words.len()))
+            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
 
         let definitions_arena = self.generation.definitions();
-        for definition in definitions {
-            definitions_arena.validate_builder(definition.builder())?;
+        for definition in definitions.clone() {
+            definitions_arena.validate_builder(definition)?;
         }
 
         // Reserve every destination before the first logical length changes.
@@ -423,51 +453,49 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         // allocate or fail for this validated batch.
         self.generation
             .definitions_mut()
-            .reserve_batch(definitions.len(), definition_words)?;
+            .reserve_batch(definition_count, definition_words)?;
         self.generation
             .token_lists_mut()
-            .reserve_batch(token_lists.len(), token_words)?;
-        self.generation
-            .glue_mut()
-            .reserve_batch(glue_values.len())?;
+            .reserve_batch(token_list_count, token_words)?;
+        self.generation.glue_mut().reserve_batch(glue_count)?;
         self.generation
             .provenance_mut()
-            .reserve_batch(provenance.len())?;
+            .reserve_batch(provenance_count)?;
 
         let mut promoted_definitions = Vec::new();
         let mut promoted_token_lists = Vec::new();
         let mut promoted_glue = Vec::new();
         let mut promoted_provenance = Vec::new();
         promoted_definitions
-            .try_reserve_exact(definitions.len())
+            .try_reserve_exact(definition_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         promoted_token_lists
-            .try_reserve_exact(token_lists.len())
+            .try_reserve_exact(token_list_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         promoted_glue
-            .try_reserve_exact(glue_values.len())
+            .try_reserve_exact(glue_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         promoted_provenance
-            .try_reserve_exact(provenance.len())
+            .try_reserve_exact(provenance_count)
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
         for definition in definitions {
             promoted_definitions.push(
                 self.generation
                     .definitions_mut()
-                    .publish(definition.builder())
+                    .publish(definition)
                     .expect("validated destination-policy definition publication"),
             );
         }
-        for list in token_lists {
+        for words in token_lists {
             promoted_token_lists.push(
                 self.generation
                     .token_lists_mut()
-                    .allocate(list.words)
+                    .allocate_from_iter(words)
                     .expect("the complete token-list promotion batch was reserved"),
             );
         }
-        for &glue in glue_values {
+        for glue in glue_values {
             promoted_glue.push(
                 self.generation
                     .glue_mut()
@@ -475,7 +503,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
                     .expect("the complete glue promotion batch was reserved"),
             );
         }
-        for &record in provenance {
+        for record in provenance {
             promoted_provenance.push(
                 self.generation
                     .provenance_mut()
