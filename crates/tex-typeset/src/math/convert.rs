@@ -1191,33 +1191,22 @@ fn convert_source_list(
         }
         if expanded {
             visiting.remove(&key);
+            let start = ctx.layout.begin_direct_list();
+            let state = ctx.state;
+            let source_lists = &ctx.source_lists;
+            let layout = &mut ctx.layout;
+            let nodes = state.page_nodes(current);
+            nodes.for_each_range(0..nodes.len(), |index, node| {
+                layout.push_direct_node(source_node(
+                    state,
+                    source_lists,
+                    Some((current, index)),
+                    node,
+                ));
+            });
             let converted = match current_role {
-                SourceListRole::HorizontalField => {
-                    ctx.layout
-                        .hlist(ctx.state.page_nodes(current).iter().enumerate().map(
-                            |(index, node)| {
-                                source_node(
-                                    ctx.state,
-                                    &ctx.source_lists,
-                                    Some((current, index)),
-                                    node,
-                                )
-                            },
-                        ))
-                }
-                SourceListRole::BoxPayload => {
-                    ctx.layout
-                        .box_payload(ctx.state.page_nodes(current).iter().enumerate().map(
-                            |(index, node)| {
-                                source_node(
-                                    ctx.state,
-                                    &ctx.source_lists,
-                                    Some((current, index)),
-                                    node,
-                                )
-                            },
-                        ))
-                }
+                SourceListRole::HorizontalField => ctx.layout.finish_hlist(start),
+                SourceListRole::BoxPayload => ctx.layout.finish_box_payload(start),
             };
             ctx.source_lists.insert(key, converted);
             continue;
@@ -1227,17 +1216,15 @@ fn convert_source_list(
             "source box lists must not contain structural cycles"
         );
         stack.push((current, current_role, true));
-        stack.extend(
-            ctx.state
-                .page_nodes(current)
-                .iter()
-                .rev()
-                .filter_map(|node| match node {
-                    Node::HList(boxed) | Node::VList(boxed) => Some(boxed.children),
-                    _ => None,
-                })
-                .map(|child| (child, SourceListRole::BoxPayload, false)),
-        );
+        let children_start = stack.len();
+        let nodes = ctx.state.page_nodes(current);
+        nodes.for_each(|node| {
+            if let Node::HList(boxed) | Node::VList(boxed) = node {
+                stack.push((boxed.children, SourceListRole::BoxPayload, false));
+            }
+        });
+        // The explicit postorder stack pops the first source child first.
+        stack[children_start..].reverse();
     }
     *ctx.source_lists
         .get(&(list, role))

@@ -748,6 +748,36 @@ fn emit_node_list<G>(
         return Ok(());
     }
 
+    if let ShipoutListId::Page(page) = *list {
+        let nodes = stores
+            .page_node_list(page)
+            .expect("shipout list belongs to the live page arena")
+            .nodes();
+        let completed =
+            nodes.try_for_each_range(
+                0..nodes.len(),
+                |index, node| match emit_resolved_page_index(
+                    stores,
+                    overlay,
+                    list,
+                    index,
+                    NodeRef::from(node),
+                    output,
+                    dvi,
+                    emission,
+                    suppress_deferred_streams,
+                    depth,
+                ) {
+                    Ok(()) => core::ops::ControlFlow::Continue(()),
+                    Err(error) => core::ops::ControlFlow::Break(error),
+                },
+            );
+        return match completed {
+            core::ops::ControlFlow::Continue(()) => Ok(()),
+            core::ops::ControlFlow::Break(error) => Err(error),
+        };
+    }
+
     let node_count = shipout_list_len(stores, *list);
     let unmodified = overlay.math.is_empty()
         && overlay.directions.is_empty()
@@ -814,13 +844,29 @@ fn emit_char_run<G>(
     emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     let font = run.font();
-    let construction = stores.font_artifact_recipe(font).construction;
+    for (code, origin) in run.codes().zip(run.origins()) {
+        emit_direct_character(stores, font, code, origin, output, dvi, emission)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_direct_character<G>(
+    stores: &CommandContext<'_, G>,
+    font: FontId,
+    code: u8,
+    origin: OriginId,
+    output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
+    emission: &mut EmissionState<'_>,
+) -> Result<(), ExecError> {
     let (font_id, letterspaced) = if let Some((cached_font, font_id, letterspaced)) =
         emission.direct_font
         && cached_font == font
     {
         (font_id, letterspaced)
     } else {
+        let construction = stores.font_artifact_recipe(font).construction;
         let letterspaced = matches!(
             construction,
             FontArtifactConstructionRecipe::Letterspaced { .. }
@@ -829,40 +875,23 @@ fn emit_char_run<G>(
         emission.direct_font = Some((font, font_id, letterspaced));
         (font_id, letterspaced)
     };
-    if !letterspaced {
-        for (code, origin) in run.codes().zip(run.origins()) {
-            let width = if let Some((cached_font, cached_code, width)) = emission.direct_glyph
-                && cached_font == font
-                && cached_code == code
-            {
-                width
-            } else {
-                let width = stores
-                    .font_character_metrics(font, char::from(code))
-                    .map(|metrics| metrics.width)
-                    .ok_or(ExecError::UnsupportedShipoutNode {
-                        node: "missing character metrics",
-                    })?;
-                emission.direct_glyph = Some((font, code, width));
-                width
-            };
-            emission.character_node(origin);
-            output.char(font_id, u32::from(code), width)?;
-            emission.sync_dvi_fonts(dvi)?;
-            dvi.char(font_id, u32::from(code), width)
-                .map_err(invalid_artifact)?;
-        }
-        return Ok(());
-    }
-
-    for (code, origin) in run.codes().zip(run.origins()) {
+    let width = if let Some((cached_font, cached_code, width)) = emission.direct_glyph
+        && cached_font == font
+        && cached_code == code
+    {
+        width
+    } else {
         let width = stores
             .font_character_metrics(font, char::from(code))
             .map(|metrics| metrics.width)
             .ok_or(ExecError::UnsupportedShipoutNode {
                 node: "missing character metrics",
             })?;
-        emit_glyph(
+        emission.direct_glyph = Some((font, code, width));
+        width
+    };
+    if letterspaced {
+        return emit_glyph(
             stores,
             font,
             u32::from(code),
@@ -871,9 +900,13 @@ fn emit_char_run<G>(
             output,
             dvi,
             emission,
-        )?;
+        );
     }
-    Ok(())
+    emission.character_node(origin);
+    output.char(font_id, u32::from(code), width)?;
+    emission.sync_dvi_fonts(dvi)?;
+    dvi.char(font_id, u32::from(code), width)
+        .map_err(invalid_artifact)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -882,6 +915,57 @@ fn emit_index<G>(
     overlay: &PageOverlay,
     list: &ShipoutListId,
     index: usize,
+    output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
+    emission: &mut EmissionState<'_>,
+    suppress_deferred_streams: bool,
+    depth: usize,
+) -> Result<(), ExecError> {
+    match *list {
+        ShipoutListId::Page(list_id) => emit_resolved_index::<G, PagePayload>(
+            stores,
+            overlay,
+            list,
+            index,
+            stores
+                .page_node_list(list_id)
+                .expect("shipout list belongs to the live page arena")
+                .get(index)
+                .expect("emission index belongs to the frozen list"),
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth,
+        ),
+        ShipoutListId::Scratch(list_id) => emit_resolved_index::<G, ScratchPayload>(
+            stores,
+            overlay,
+            list,
+            index,
+            NodeRef::from(
+                stores
+                    .shipout_scratch_nodes(list_id)
+                    .expect("shipout scratch list belongs to the active transaction")
+                    .get(index)
+                    .expect("emission index belongs to the frozen list"),
+            ),
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_resolved_page_index<G>(
+    stores: &CommandContext<'_, G>,
+    overlay: &PageOverlay,
+    list: &ShipoutListId,
+    index: usize,
+    node: NodeRef<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
@@ -903,39 +987,61 @@ fn emit_index<G>(
             depth + 1,
         );
     }
-    match *list {
-        ShipoutListId::Page(list) => emit_node_ref::<G, PagePayload>(
-            stores,
-            overlay,
-            stores
-                .page_node_list(list)
-                .expect("shipout list belongs to the live page arena")
-                .nodes()
-                .get(index)
-                .expect("emission index belongs to the frozen list"),
-            output,
-            dvi,
-            emission,
-            suppress_deferred_streams,
-            depth,
-        ),
-        ShipoutListId::Scratch(list) => emit_node_ref::<G, ScratchPayload>(
-            stores,
-            overlay,
-            NodeRef::from(
-                stores
-                    .shipout_scratch_nodes(list)
-                    .expect("shipout scratch list belongs to the active transaction")
-                    .get(index)
-                    .expect("emission index belongs to the frozen list"),
-            ),
-            output,
-            dvi,
-            emission,
-            suppress_deferred_streams,
-            depth,
-        ),
+    if let NodeRef::Char { font, ch, origin } = node
+        && let Ok(code) = u8::try_from(ch as u32)
+    {
+        return emit_direct_character(stores, font, code, origin, output, dvi, emission);
     }
+    emit_node_ref::<G, PagePayload>(
+        stores,
+        overlay,
+        node,
+        output,
+        dvi,
+        emission,
+        suppress_deferred_streams,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_resolved_index<G, P: ShipoutPayload<G>>(
+    stores: &CommandContext<'_, G>,
+    overlay: &PageOverlay,
+    list: &ShipoutListId,
+    index: usize,
+    node: NodeRef<'_, P::List, P::Glue, P::Tokens>,
+    output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
+    emission: &mut EmissionState<'_>,
+    suppress_deferred_streams: bool,
+    depth: usize,
+) -> Result<(), ExecError> {
+    if omitted_whatsit(overlay, list, index) {
+        return Ok(());
+    }
+    if let Some(replacement) = math_substitution(overlay, list, index) {
+        return emit_node_list(
+            stores,
+            overlay,
+            &replacement,
+            output,
+            dvi,
+            emission,
+            suppress_deferred_streams,
+            depth + 1,
+        );
+    }
+    emit_node_ref::<G, P>(
+        stores,
+        overlay,
+        node,
+        output,
+        dvi,
+        emission,
+        suppress_deferred_streams,
+        depth,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

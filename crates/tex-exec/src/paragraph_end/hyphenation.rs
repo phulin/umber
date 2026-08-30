@@ -338,58 +338,22 @@ fn project_physical_hlist<G>(
     let mut physical_segments = Vec::new();
     let mut override_index = 0usize;
     let mut retained_start = 0usize;
-    for index in 0..semantic.len() {
-        let post_override = (post_overrides.get(override_index).map(|entry| entry.0)
-            == Some(index))
-        .then(|| post_overrides[override_index].1);
-        let pre_pending = physical_pre_break_pending(stores, semantic, index);
-        if (post_override.is_some() || pre_pending.is_some()) && retained_start < index {
-            stores.append_page_active_span_range(&mut physical, semantic, retained_start..index);
-        }
-        let pre_projection = if let Some(pending) = pre_pending {
-            // TeX82 §§914--918 builds a discretionary's child closures before
-            // linking the discretionary into the main list. Close this
-            // output suffix while the child list is published so the page
-            // arena likewise has one active construction owner at a time.
-            let segment = stores.finalize_page_active_list(&mut physical);
-            if !segment.is_empty() {
-                physical_segments.push(segment);
-            }
-            let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
-                stores,
-                diagnostic_effects,
-                &pending,
-                true,
-                false,
-                fuel,
-            )
-            .map_err(ExecError::Command)?;
-            let pre = stores.publish_page_nodes(pre);
-            stores.open_page_active_list(&mut physical);
-            Some(pre)
-        } else {
-            None
-        };
-        if post_override.is_some() || pre_projection.is_some() {
-            let mut replacement = stores
-                .page_node_span(semantic)
-                .expect("hyphenated paragraph belongs to the live page arena")
-                .owned_node(index)
-                .expect("hyphenated paragraph cursor remains in range")
-                .clone();
-            let Node::Disc { pre, post, .. } = &mut replacement else {
-                unreachable!("physical projection targets a discretionary")
-            };
-            if let Some(projected) = post_override {
-                *post = projected;
-                override_index += 1;
-            }
-            if let Some(projected) = pre_projection {
-                *pre = projected;
-            }
-            stores.push_page_active_list(&mut physical, replacement);
-            retained_start = index + 1;
-        }
+    if let Some(tail) = stores
+        .page_node_span_tail_chunk(semantic)
+        .expect("hyphenated paragraph remains admitted")
+    {
+        let _ = project_physical_chunk_prefix(
+            stores,
+            diagnostic_effects,
+            semantic,
+            tail,
+            post_overrides,
+            &mut override_index,
+            &mut physical,
+            &mut physical_segments,
+            &mut retained_start,
+            fuel,
+        )?;
     }
     if retained_start < semantic.len() {
         stores.append_page_active_span_range(
@@ -409,24 +373,119 @@ fn project_physical_hlist<G>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn project_physical_chunk_prefix<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    semantic: tex_state::page_node_arena::PageListSpan,
+    chunk: tex_state::page_node_arena::PageListChunkCursor,
+    post_overrides: &[(usize, tex_state::node_arena::PageListId)],
+    override_index: &mut usize,
+    physical: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    physical_segments: &mut Vec<tex_state::node_arena::PageListId>,
+    retained_start: &mut usize,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<tex_state::page_node_arena::PageListChunkCursor, ExecError> {
+    let previous = stores
+        .page_node_span_previous_chunk(semantic, &chunk)
+        .expect("hyphenated paragraph source chunk remains live");
+    let previous = if let Some(previous) = previous {
+        Some(project_physical_chunk_prefix(
+            stores,
+            diagnostic_effects,
+            semantic,
+            previous,
+            post_overrides,
+            override_index,
+            physical,
+            physical_segments,
+            retained_start,
+            fuel,
+        )?)
+    } else {
+        None
+    };
+    for offset in 0..chunk.len() {
+        let index = chunk.logical_start() + offset;
+        let post_override = (post_overrides.get(*override_index).map(|entry| entry.0)
+            == Some(index))
+        .then(|| post_overrides[*override_index].1);
+        let pre_pending =
+            physical_pre_break_pending(stores, semantic, previous.as_ref(), &chunk, offset);
+        if (post_override.is_some() || pre_pending.is_some()) && *retained_start < index {
+            stores.append_page_active_span_range(physical, semantic, *retained_start..index);
+        }
+        let pre_projection = if let Some(pending) = pre_pending {
+            // TeX82 §§914--918 builds a discretionary's child closures before
+            // linking the discretionary into the main list. Close this
+            // output suffix while the child list is published so the page
+            // arena likewise has one active construction owner at a time.
+            let segment = stores.finalize_page_active_list(physical);
+            if !segment.is_empty() {
+                physical_segments.push(segment);
+            }
+            let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+                stores,
+                diagnostic_effects,
+                &pending,
+                true,
+                false,
+                fuel,
+            )
+            .map_err(ExecError::Command)?;
+            let pre = stores.publish_page_nodes(pre);
+            stores.open_page_active_list(physical);
+            Some(pre)
+        } else {
+            None
+        };
+        if post_override.is_some() || pre_projection.is_some() {
+            let mut replacement = {
+                let (resolved, node) = stores
+                    .page_node_span_chunk_node(semantic, &chunk, offset)
+                    .expect("hyphenated paragraph source chunk remains live");
+                debug_assert_eq!(resolved, index);
+                node.clone()
+            };
+            let Node::Disc { pre, post, .. } = &mut replacement else {
+                unreachable!("physical projection targets a discretionary")
+            };
+            if let Some(projected) = post_override {
+                *post = projected;
+                *override_index += 1;
+            }
+            if let Some(projected) = pre_projection {
+                *pre = projected;
+            }
+            stores.push_page_active_list(physical, replacement);
+            *retained_start = index + 1;
+        }
+    }
+    Ok(chunk)
+}
+
 fn physical_pre_break_pending<G>(
     stores: &CommandContext<'_, G>,
     semantic: tex_state::page_node_arena::PageListSpan,
-    index: usize,
+    previous_chunk: Option<&tex_state::page_node_arena::PageListChunkCursor>,
+    chunk: &tex_state::page_node_arena::PageListChunkCursor,
+    offset: usize,
 ) -> Option<Vec<PendingHChar>> {
+    let index = chunk.logical_start() + offset;
     if index == 0 {
         return None;
     }
     let qualifies = {
-        let nodes = stores
-            .page_node_span(semantic)
-            .expect("hyphenated paragraph belongs to the live page arena");
-        let Some(Node::Disc {
+        let (resolved, node) = stores
+            .page_node_span_chunk_node(semantic, chunk, offset)
+            .ok()?;
+        debug_assert_eq!(resolved, index);
+        let Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             replace,
             physical_replace_count: 2,
             ..
-        }) = nodes.owned_node(index)
+        } = node
         else {
             return None;
         };
@@ -446,11 +505,18 @@ fn physical_pre_break_pending<G>(
         return None;
     }
     let (font, mut pending) = {
-        let nodes = stores
-            .page_node_span(semantic)
-            .expect("hyphenated paragraph belongs to the live page arena");
-        match nodes.owned_node(index - 1) {
-            Some(Node::Char { font, ch, origin }) => (
+        let (previous, previous_offset) = if offset == 0 {
+            let previous = previous_chunk?;
+            (previous, previous.len().checked_sub(1)?)
+        } else {
+            (chunk, offset - 1)
+        };
+        let (resolved, node) = stores
+            .page_node_span_chunk_node(semantic, previous, previous_offset)
+            .ok()?;
+        debug_assert_eq!(resolved, index - 1);
+        match node {
+            Node::Char { font, ch, origin } => (
                 *font,
                 vec![PendingHChar {
                     font: *font,
@@ -458,12 +524,12 @@ fn physical_pre_break_pending<G>(
                     origin: *origin,
                 }],
             ),
-            Some(Node::Lig {
+            Node::Lig {
                 font,
                 orig,
                 origins,
                 ..
-            }) => (
+            } => (
                 *font,
                 orig.iter()
                     .copied()

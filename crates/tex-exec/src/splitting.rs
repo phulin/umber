@@ -23,7 +23,7 @@ pub(crate) fn prune_page_top_list<G>(
     let mut run_start = None;
     let mut first_box = None;
     let mut adjusted_top_skip = None;
-    for (index, node) in nodes.iter().enumerate() {
+    let stopped = nodes.try_for_each_range(0..nodes.len(), |index, node| {
         if matches!(node, Node::HList(_) | Node::VList(_) | Node::Rule { .. }) {
             if let Some(start) = run_start.take() {
                 retained.push(start..index);
@@ -41,7 +41,7 @@ pub(crate) fn prune_page_top_list<G>(
             };
             adjusted_top_skip = Some(adjusted);
             first_box = Some(index);
-            break;
+            return core::ops::ControlFlow::Break(());
         }
         if is_page_top_discardable(node) {
             if let Some(start) = run_start.take() {
@@ -50,7 +50,9 @@ pub(crate) fn prune_page_top_list<G>(
         } else {
             run_start.get_or_insert(index);
         }
-    }
+        core::ops::ControlFlow::Continue(())
+    });
+    debug_assert_eq!(stopped.is_break(), first_box.is_some());
     if first_box.is_none()
         && let Some(start) = run_start
     {

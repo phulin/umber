@@ -96,9 +96,9 @@ fn recover_frozen_texxet_directions<G>(
         .nodes();
     let mut expected = Vec::new();
     let mut extra_indices = Vec::new();
-    for (index, node) in nodes.iter().enumerate() {
+    nodes.for_each_range(0..nodes.len(), |index, node| {
         let Node::Direction(direction) = node else {
-            continue;
+            return;
         };
         let closes = match direction {
             Direction::BeginM => Some(Direction::EndM),
@@ -113,7 +113,7 @@ fn recover_frozen_texxet_directions<G>(
         } else {
             extra_indices.push(index);
         }
-    }
+    });
     let source_len = nodes.len();
     let missing = expected.len();
     let extra = extra_indices.len();

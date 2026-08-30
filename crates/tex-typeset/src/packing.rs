@@ -1,14 +1,13 @@
 use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
-#[cfg(test)]
 use tex_state::node_arena::NodeRef;
 use tex_state::node_arena::{NodeCursor, PackedNode, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
 use crate::INF_BAD;
-use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow, MetricsCursor};
+use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow};
 use crate::{OVERFULL_BADNESS, TypesetState, badness};
 
 fn add(left: Scaled, right: Scaled) -> Scaled {
@@ -355,38 +354,23 @@ fn common_diagnostics(
 
 fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    let mut index = 0;
-    while index < nodes.len() {
-        if let Some(run) = nodes.char_codes(index) {
-            let font = run.font();
-            let mut run_len = 0;
-            for code in run {
-                // Keep TeX's saturating additions in source order. The compact
-                // run removes tag/font dispatch without changing overflow.
-                let metrics = if state.font_uses_tfm_metrics(font) {
-                    state.font_characters(font)[usize::from(code)]
-                } else {
-                    state.font_character_metrics(font, char::from(code))
+    nodes.for_each(|node| {
+        match NodeRef::from(node).packed() {
+            PackedNode::Glyph { font, ch } => {
+                let metrics = match node {
+                    Node::Char { .. } => u8::try_from(ch as u32)
+                        .ok()
+                        .and_then(|code| {
+                            if state.font_uses_tfm_metrics(font) {
+                                state.font_characters(font)[usize::from(code)]
+                            } else {
+                                state.font_character_metrics(font, ch)
+                            }
+                        })
+                        .or_else(|| state.font_character_metrics(font, ch)),
+                    _ => state.font_character_metrics(font, ch),
                 };
                 if let Some(metrics) = metrics {
-                    meas.observe_horizontal(
-                        MetricEvent::Glyph {
-                            width: metrics.width,
-                            height: metrics.height,
-                            depth: metrics.depth,
-                        },
-                        MetricOverflow::PACKING,
-                    );
-                }
-                run_len += 1;
-            }
-            index += run_len;
-            continue;
-        }
-        let node = nodes.get(index).expect("index is within node list");
-        match node.packed() {
-            PackedNode::Glyph { font, ch } => {
-                if let Some(metrics) = state.font_character_metrics(font, ch) {
                     meas.observe_horizontal(
                         MetricEvent::Glyph {
                             width: metrics.width,
@@ -467,8 +451,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
             }
             PackedNode::Ignored => {}
         }
-        index += 1;
-    }
+    });
     meas
 }
 
@@ -478,75 +461,71 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
 
 fn measure_vlist(_state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    let indexes = MetricsCursor::new(0..nodes.len());
-    for index in indexes {
-        let node = nodes.get(index).expect("index belongs to node source");
-        match node.packed() {
-            PackedNode::Box(box_node) => {
-                meas.observe_vertical(
-                    MetricEvent::Box {
-                        width: box_node.width,
-                        height: box_node.height,
-                        depth: box_node.depth,
-                        shift: box_node.shift,
-                    },
-                    MetricOverflow::PACKING,
-                );
-            }
-            PackedNode::Unset(unset) => {
-                meas.observe_vertical(
-                    MetricEvent::Box {
-                        width: unset.width,
-                        height: unset.height,
-                        depth: unset.depth,
-                        shift: Scaled::from_raw(0),
-                    },
-                    MetricOverflow::PACKING,
-                );
-            }
-            PackedNode::Rule {
-                width,
-                height,
-                depth,
-            } => {
-                meas.observe_vertical(
-                    MetricEvent::Rule {
-                        width: width.unwrap_or(Scaled::from_raw(0)),
-                        height: height.unwrap_or(Scaled::from_raw(0)),
-                        depth: depth.unwrap_or(Scaled::from_raw(0)),
-                    },
-                    MetricOverflow::PACKING,
-                );
-            }
-            PackedNode::Kern { amount, .. } => {
-                meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
-            }
-            PackedNode::Glue { spec, leader } => {
-                meas.observe_vertical(MetricEvent::Glue(spec), MetricOverflow::PACKING);
-                if let Some(leader) = leader {
-                    add_vleader_perpendicular_dimensions(&mut meas, leader);
-                }
-            }
-            PackedNode::Image {
-                width,
-                height,
-                depth,
-            } => {
-                meas.observe_vertical(
-                    MetricEvent::Image {
-                        width,
-                        height,
-                        depth,
-                    },
-                    MetricOverflow::PACKING,
-                );
-            }
-            PackedNode::Glyph { .. }
-            | PackedNode::Disc(_)
-            | PackedNode::Math(_)
-            | PackedNode::Ignored => {}
+    nodes.for_each(|node| match NodeRef::from(node).packed() {
+        PackedNode::Box(box_node) => {
+            meas.observe_vertical(
+                MetricEvent::Box {
+                    width: box_node.width,
+                    height: box_node.height,
+                    depth: box_node.depth,
+                    shift: box_node.shift,
+                },
+                MetricOverflow::PACKING,
+            );
         }
-    }
+        PackedNode::Unset(unset) => {
+            meas.observe_vertical(
+                MetricEvent::Box {
+                    width: unset.width,
+                    height: unset.height,
+                    depth: unset.depth,
+                    shift: Scaled::from_raw(0),
+                },
+                MetricOverflow::PACKING,
+            );
+        }
+        PackedNode::Rule {
+            width,
+            height,
+            depth,
+        } => {
+            meas.observe_vertical(
+                MetricEvent::Rule {
+                    width: width.unwrap_or(Scaled::from_raw(0)),
+                    height: height.unwrap_or(Scaled::from_raw(0)),
+                    depth: depth.unwrap_or(Scaled::from_raw(0)),
+                },
+                MetricOverflow::PACKING,
+            );
+        }
+        PackedNode::Kern { amount, .. } => {
+            meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
+        }
+        PackedNode::Glue { spec, leader } => {
+            meas.observe_vertical(MetricEvent::Glue(spec), MetricOverflow::PACKING);
+            if let Some(leader) = leader {
+                add_vleader_perpendicular_dimensions(&mut meas, leader);
+            }
+        }
+        PackedNode::Image {
+            width,
+            height,
+            depth,
+        } => {
+            meas.observe_vertical(
+                MetricEvent::Image {
+                    width,
+                    height,
+                    depth,
+                },
+                MetricOverflow::PACKING,
+            );
+        }
+        PackedNode::Glyph { .. }
+        | PackedNode::Disc(_)
+        | PackedNode::Math(_)
+        | PackedNode::Ignored => {}
+    });
     meas
 }
 

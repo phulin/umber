@@ -296,6 +296,21 @@ impl NativeNodeTransaction {
     pub(crate) fn hlist(&mut self, nodes: impl IntoIterator<Item = MathNode>) -> FrozenHList {
         let start = self.nodes.len();
         self.nodes.extend(nodes);
+        self.finish_hlist(start)
+    }
+
+    /// Opens a direct source-list append into the transaction's sole node lane.
+    pub(crate) fn begin_direct_list(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Appends one source node while its canonical packed-range walk is live.
+    pub(crate) fn push_direct_node(&mut self, node: MathNode) {
+        self.nodes.push(node);
+    }
+
+    /// Seals a directly appended horizontal source list.
+    pub(crate) fn finish_hlist(&mut self, start: usize) -> FrozenHList {
         let end = self.nodes.len();
         self.validate_new_span(start, end);
         let mut meas = Measurement::ZERO;
@@ -328,13 +343,11 @@ impl NativeNodeTransaction {
         self.pack_observations.len()
     }
 
-    /// Stores the already-boxed child payload of a source box.
+    /// Seals the directly appended payload of a source box.
     ///
     /// The owning source box carries authoritative width, height, and depth,
     /// so Appendix G must not repack or remeasure this payload.
-    pub(crate) fn box_payload(&mut self, nodes: impl IntoIterator<Item = MathNode>) -> FrozenHList {
-        let start = self.nodes.len();
-        self.nodes.extend(nodes);
+    pub(crate) fn finish_box_payload(&mut self, start: usize) -> FrozenHList {
         let end = self.nodes.len();
         self.validate_new_span(start, end);
         let node_count = u32::try_from(end - start).expect("math list exceeds u32 nodes");

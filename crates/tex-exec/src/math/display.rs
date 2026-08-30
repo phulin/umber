@@ -505,12 +505,12 @@ struct ShrinkTotals {
 
 fn hlist_shrink(nodes: tex_state::node_arena::NodeCursor<'_>) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
-    for node in nodes.iter() {
+    nodes.for_each(|node| {
         if let Node::Glue { spec, .. } = node {
             let glue = spec;
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
         }
-    }
+    });
     ShrinkTotals {
         normal: totals[Order::Normal as usize],
         fil: totals[Order::Fil as usize],

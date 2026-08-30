@@ -4870,6 +4870,13 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         self.get_cursor(cursor)
     }
 
+    /// Builds a compatibility iterator for mixed or reverse traversal.
+    ///
+    /// Long forward consumers must use [`Self::for_each`] or
+    /// [`Self::try_for_each_range`], which retain the predecessor walk on the
+    /// Rust stack and cross each packed block once. The iterator cannot retain
+    /// that continuation between `next` calls without a second topology, so
+    /// each forward block boundary performs logical-index resolution.
     pub fn iter(&self) -> ArenaListIter<'a, T, Lane> {
         self.iter_from(0)
     }

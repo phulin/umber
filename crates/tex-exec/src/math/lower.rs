@@ -786,38 +786,21 @@ pub(crate) fn finish_math_lists_owned<G>(
         .expect("owned math-list source belongs to the page arena");
     let mut result = tex_state::page_node_arena::PageListSpan::empty();
     let mut copied_through = 0;
-    for index in 0..source_len {
-        let list = match stores
-            .page_node_list(nodes)
-            .expect("math-list source remains live")
-            .nodes()
-            .owned_node(index)
-        {
-            Some(Node::MathList(list)) => Some(*list),
-            _ => None,
-        };
-        let Some(list) = list else {
-            continue;
-        };
-        if result.is_empty() && copied_through == 0 && index != 0 {
-            // The first retained prefix remains the immutable left root. Its
-            // tail is never reopened; the generated math chain donates its
-            // write-once head predecessor below.
-            result = stores.slice_page_node_span(source, 0..index);
-        } else if copied_through != index {
-            // A second source fragment shares its original block topology
-            // with the already-retained left fragment. It cannot donate a
-            // second predecessor, so copy precisely this partial edge.
-            let mut fragment = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
-            stores.open_page_active_list(&mut fragment);
-            stores.append_page_active_list_range(&mut fragment, nodes, copied_through..index);
-            let fragment = stores.finalize_unique_page_active_list(&mut fragment);
-            result = stores.append_unique_page_nodes(result, fragment);
-        }
-        let lowered =
-            finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties);
-        result = stores.append_unique_page_nodes(result, lowered);
-        copied_through = index + 1;
+    if let Some(tail) = stores
+        .page_node_span_tail_chunk(source)
+        .expect("owned math-list source remains admitted")
+    {
+        finish_math_chunk_prefix(
+            stores,
+            diagnostic_effects,
+            geometry,
+            nodes,
+            source,
+            tail,
+            insert_penalties,
+            &mut result,
+            &mut copied_through,
+        );
     }
     if copied_through == 0 {
         return nodes;
@@ -833,6 +816,71 @@ pub(crate) fn finish_math_lists_owned<G>(
         result = stores.append_unique_page_nodes(result, suffix);
     }
     result.list()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_math_chunk_prefix<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
+    nodes: PageListId,
+    source: tex_state::page_node_arena::PageListSpan,
+    chunk: tex_state::page_node_arena::PageListChunkCursor,
+    insert_penalties: bool,
+    result: &mut tex_state::page_node_arena::PageListSpan,
+    copied_through: &mut usize,
+) {
+    if let Some(previous) = stores
+        .page_node_span_previous_chunk(source, &chunk)
+        .expect("owned math-list source chunk remains live")
+    {
+        finish_math_chunk_prefix(
+            stores,
+            diagnostic_effects,
+            geometry,
+            nodes,
+            source,
+            previous,
+            insert_penalties,
+            result,
+            copied_through,
+        );
+    }
+    for offset in 0..chunk.len() {
+        let index = chunk.logical_start() + offset;
+        let list = {
+            let (resolved, node) = stores
+                .page_node_span_chunk_node(source, &chunk, offset)
+                .expect("owned math-list source chunk remains live");
+            debug_assert_eq!(resolved, index);
+            match node {
+                Node::MathList(list) => Some(*list),
+                _ => None,
+            }
+        };
+        let Some(list) = list else {
+            continue;
+        };
+        if result.is_empty() && *copied_through == 0 && index != 0 {
+            // The first retained prefix remains the immutable left root. Its
+            // tail is never reopened; the generated math chain donates its
+            // write-once head predecessor below.
+            *result = stores.slice_page_node_span(source, 0..index);
+        } else if *copied_through != index {
+            // A second source fragment shares its original block topology
+            // with the already-retained left fragment. It cannot donate a
+            // second predecessor, so copy precisely this partial edge.
+            let mut fragment = tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();
+            stores.open_page_active_list(&mut fragment);
+            stores.append_page_active_list_range(&mut fragment, nodes, *copied_through..index);
+            let fragment = stores.finalize_unique_page_active_list(&mut fragment);
+            *result = stores.append_unique_page_nodes(*result, fragment);
+        }
+        let lowered =
+            finish_math_list_node(stores, diagnostic_effects, geometry, list, insert_penalties);
+        *result = stores.append_unique_page_nodes(*result, lowered);
+        *copied_through = index + 1;
+    }
 }
 
 fn lower_math_box<List>(boxed: &MathBox, children: List) -> BoxNode<List> {

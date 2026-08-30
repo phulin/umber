@@ -236,23 +236,34 @@ fn normalization_work_cursor(
     nodes: tex_state::node_arena::NodeCursor<'_>,
     box_lr: tex_state::node::BoxLr,
 ) -> (SmallVec<[usize; 32]>, Option<Vec<usize>>) {
-    let permutation = direction_permutation_for_cursor(nodes, box_lr);
+    let mut permutation = (box_lr != tex_state::node::BoxLr::Reversed)
+        .then(|| DirectionPermutationBuilder::new(nodes.len()));
     let mut active_indices = SmallVec::<[usize; 32]>::new();
+    nodes.for_each_range(0..nodes.len(), |index, node| {
+        if node_requires_normalization(node) {
+            active_indices.push(index);
+        }
+        if let Some(permutation) = &mut permutation {
+            permutation.push(
+                index,
+                match node {
+                    Node::Direction(direction) => Some(*direction),
+                    _ => None,
+                },
+            );
+        }
+    });
+    let permutation = permutation.and_then(DirectionPermutationBuilder::finish);
     if let Some(order) = permutation.as_deref() {
-        active_indices.extend(order.iter().copied().filter(|&index| {
-            node_requires_normalization(
-                nodes
-                    .owned_node(index)
-                    .expect("direction permutation index is in bounds"),
-            )
-        }));
-    } else {
-        active_indices.extend(
-            nodes
+        // The forward walk already identified the active subset. Reorder that
+        // small subset by its semantic direction position without resolving
+        // any arena coordinate a second time.
+        active_indices.sort_unstable_by_key(|index| {
+            order
                 .iter()
-                .enumerate()
-                .filter_map(|(index, node)| node_requires_normalization(node).then_some(index)),
-        );
+                .position(|candidate| candidate == index)
+                .expect("active index is present in the direction permutation")
+        });
     }
     (active_indices, permutation)
 }
@@ -1342,27 +1353,6 @@ pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens>(
     direction_permutation(nodes)
 }
 
-fn direction_permutation_for_cursor(
-    nodes: tex_state::node_arena::NodeCursor<'_>,
-    box_lr: tex_state::node::BoxLr,
-) -> Option<Vec<usize>> {
-    if box_lr == tex_state::node::BoxLr::Reversed {
-        return None;
-    }
-    direction_permutation_from(
-        nodes.len(),
-        nodes.iter().enumerate().map(|(index, node)| {
-            (
-                index,
-                match node {
-                    Node::Direction(direction) => Some(*direction),
-                    _ => None,
-                },
-            )
-        }),
-    )
-}
-
 fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
     nodes: &[Node<List, Glue, Tokens>],
 ) -> Option<Vec<usize>> {
@@ -1384,18 +1374,42 @@ fn direction_permutation_from(
     len: usize,
     nodes: impl IntoIterator<Item = (usize, Option<Direction>)>,
 ) -> Option<Vec<usize>> {
-    struct Segment {
-        begin: Direction,
-        chunks: Vec<Vec<usize>>,
+    let mut permutation = DirectionPermutationBuilder::new(len);
+    for (index, direction) in nodes {
+        permutation.push(index, direction);
     }
-    fn append(target: &mut Vec<usize>, stack: &mut [Segment], index: usize) {
+    permutation.finish()
+}
+
+struct DirectionSegment {
+    begin: Direction,
+    chunks: Vec<Vec<usize>>,
+}
+
+struct DirectionPermutationBuilder {
+    saw_direction: bool,
+    reordered: Vec<usize>,
+    stack: Vec<DirectionSegment>,
+}
+
+impl DirectionPermutationBuilder {
+    fn new(len: usize) -> Self {
+        Self {
+            saw_direction: false,
+            reordered: Vec::with_capacity(len),
+            stack: Vec::new(),
+        }
+    }
+
+    fn append(target: &mut Vec<usize>, stack: &mut [DirectionSegment], index: usize) {
         if let Some(segment) = stack.last_mut() {
             segment.chunks.push(vec![index]);
         } else {
             target.push(index);
         }
     }
-    fn finish(target: &mut Vec<usize>, stack: &mut Vec<Segment>) {
+
+    fn finish_segment(target: &mut Vec<usize>, stack: &mut Vec<DirectionSegment>) {
         let Some(mut segment) = stack.pop() else {
             return;
         };
@@ -1410,53 +1424,56 @@ fn direction_permutation_from(
         }
     }
 
-    let mut saw_direction = false;
-    let mut reordered = Vec::with_capacity(len);
-    let mut stack = Vec::<Segment>::new();
-    for (index, direction) in nodes {
+    fn push(&mut self, index: usize, direction: Option<Direction>) {
         let Some(direction) = direction else {
-            append(&mut reordered, &mut stack, index);
-            continue;
+            Self::append(&mut self.reordered, &mut self.stack, index);
+            return;
         };
-        saw_direction = true;
+        self.saw_direction = true;
         match direction {
             begin @ (Direction::BeginM | Direction::BeginL | Direction::BeginR) => {
-                stack.push(Segment {
+                self.stack.push(DirectionSegment {
                     begin,
                     chunks: Vec::new(),
                 })
             }
             Direction::EndL
-                if stack
+                if self
+                    .stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginL) =>
             {
-                finish(&mut reordered, &mut stack);
+                Self::finish_segment(&mut self.reordered, &mut self.stack);
             }
             Direction::EndR
-                if stack
+                if self
+                    .stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginR) =>
             {
-                finish(&mut reordered, &mut stack);
+                Self::finish_segment(&mut self.reordered, &mut self.stack);
             }
             Direction::EndM
-                if stack
+                if self
+                    .stack
                     .last()
                     .is_some_and(|segment| segment.begin == Direction::BeginM) =>
             {
-                finish(&mut reordered, &mut stack);
+                Self::finish_segment(&mut self.reordered, &mut self.stack);
             }
             _ => {}
         }
     }
-    if !saw_direction {
-        return None;
+
+    fn finish(mut self) -> Option<Vec<usize>> {
+        if !self.saw_direction {
+            return None;
+        }
+        while !self.stack.is_empty() {
+            Self::finish_segment(&mut self.reordered, &mut self.stack);
+        }
+        Some(self.reordered)
     }
-    while !stack.is_empty() {
-        finish(&mut reordered, &mut stack);
-    }
-    Some(reordered)
 }
 
 /// TeX82 §62's `print_nl` test, applied to a `\write`'s own sink.

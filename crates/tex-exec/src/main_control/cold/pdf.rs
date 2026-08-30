@@ -1440,9 +1440,7 @@ impl DetachedArtifactSourceResolver {
             }
             node.visit_semantic_node_lists(|child| {
                 if let Ok(list) = stores.page_node_list(*child) {
-                    for node in list.nodes() {
-                        visit(node, stores, recipes);
-                    }
+                    list.nodes().for_each(|node| visit(node, stores, recipes));
                 }
             });
         }
@@ -1458,9 +1456,9 @@ impl DetachedArtifactSourceResolver {
     ) -> Self {
         let mut recipes = std::collections::HashMap::new();
         if let Ok(list) = stores.page_node_list(list) {
-            for node in list.nodes() {
+            list.nodes().for_each(|node| {
                 recipes.extend(Self::capture(node, stores).recipes);
-            }
+            });
         }
         Self { recipes }
     }

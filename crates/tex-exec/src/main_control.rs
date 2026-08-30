@@ -2696,8 +2696,10 @@ impl<G> MainControl<G> {
         // entire suffix beginning at the offending node.
         let (nodes, deleted, prefix_end) = {
             let mut stores = stores.command_context().expect("live generation");
-            let first_forbidden = level.list().nodes(&stores).iter().position(|node| {
-                !matches!(
+            let part_nodes = level.list().nodes(&stores);
+            let part_len = part_nodes.len();
+            let first_forbidden = match part_nodes.try_for_each_range(0..part_len, |index, node| {
+                if matches!(
                     node,
                     Node::Char { .. }
                         | Node::Lig { .. }
@@ -2705,9 +2707,15 @@ impl<G> MainControl<G> {
                         | Node::Rule { .. }
                         | Node::HList(_)
                         | Node::VList(_)
-                )
-            });
-            let part_len = level.list().nodes(&stores).len();
+                ) {
+                    core::ops::ControlFlow::Continue(())
+                } else {
+                    core::ops::ControlFlow::Break(index)
+                }
+            }) {
+                core::ops::ControlFlow::Break(index) => Some(index),
+                core::ops::ControlFlow::Continue(()) => None,
+            };
             let prefix_end = first_forbidden.unwrap_or(part_len);
             let part = level.list_mutation().take_span();
             let nodes = stores.slice_page_node_span(part, 0..prefix_end);

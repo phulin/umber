@@ -658,90 +658,127 @@ fn plan_open_type_adjustments<'scratch, G>(
 
 /// Replaces provisional OpenType adjustments while retaining every unchanged
 /// page-material span by coordinate.
-pub(crate) fn reshape_open_type_runs_list<G>(
-    stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
-    chars: &mut Vec<crate::mode::PendingHChar>,
-    shaping: &mut OpenTypeShapingScratch,
-) -> tex_state::node_arena::PageListId {
-    let has_shaping_run = stores
-        .page_nodes(source)
-        .expect("OpenType source belongs to the live page arena")
-        .iter()
-        .any(|node| {
-            matches!(
-                node,
-                Node::Char { font, ch, .. }
-                    if is_ltr_shaping_font(stores, *font)
-                        && is_supported_script(tex_fonts::character_script(*ch))
-            )
-        });
-    if !has_shaping_run {
-        return source;
-    }
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut output);
-    let mut index = 0;
-    while index < source.len() {
-        let first = stores
-            .page_nodes(source)
-            .expect("OpenType source belongs to the live page arena")
-            .owned_node(index)
-            .and_then(|node| match node {
-                Node::Char { font, ch, origin } => Some((*font, *ch, *origin)),
-                _ => None,
-            });
-        let Some((font, ch, origin)) = first else {
-            stores.append_page_active_list_range(&mut output, source, index..index + 1);
-            index += 1;
-            continue;
-        };
-        if !is_ltr_shaping_font(stores, font)
-            || !is_supported_script(tex_fonts::character_script(ch))
-        {
-            stores.append_page_active_list_range(&mut output, source, index..index + 1);
-            index += 1;
-            continue;
+#[derive(Clone, Copy)]
+enum OpenTypeSourceNode {
+    Character {
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+    },
+    FontKern,
+    Other,
+}
+
+impl OpenTypeSourceNode {
+    fn from_node(node: &Node) -> Self {
+        match node {
+            Node::Char { font, ch, origin } => Self::Character {
+                font: *font,
+                ch: *ch,
+                origin: *origin,
+            },
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            } => Self::FontKern,
+            _ => Self::Other,
         }
-        chars.clear();
-        chars.push(crate::mode::PendingHChar { font, ch, origin });
-        let mut script = tex_fonts::character_script(ch);
-        index += 1;
-        while index < source.len() {
-            let next = stores
-                .page_nodes(source)
-                .expect("OpenType source belongs to the live page arena")
-                .owned_node(index);
-            match next {
-                Some(Node::Kern {
-                    kind: KernKind::Font,
-                    ..
-                }) => index += 1,
-                Some(Node::Char {
+    }
+}
+
+struct OpenTypeSourceWalk<'a> {
+    output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    chars: &'a mut Vec<crate::mode::PendingHChar>,
+    shaping: &'a mut OpenTypeShapingScratch,
+    saw_run: bool,
+    retained_start: usize,
+    run_font: Option<FontId>,
+    run_script: tex_fonts::Script,
+}
+
+impl OpenTypeSourceWalk<'_> {
+    fn visit_chunk_prefix<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::page_node_arena::PageListSpan,
+        chunk: tex_state::page_node_arena::PageListChunkCursor,
+    ) {
+        if let Some(previous) = stores
+            .page_node_span_previous_chunk(source, &chunk)
+            .expect("OpenType source chunk remains live")
+        {
+            self.visit_chunk_prefix(stores, source, previous);
+        }
+        for offset in 0..chunk.len() {
+            let index = chunk.logical_start() + offset;
+            let observed = {
+                let (resolved, node) = stores
+                    .page_node_span_chunk_node(source, &chunk, offset)
+                    .expect("OpenType source chunk remains live");
+                debug_assert_eq!(resolved, index);
+                OpenTypeSourceNode::from_node(node)
+            };
+            self.visit_node(stores, source, index, observed);
+        }
+    }
+
+    fn visit_node<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::page_node_arena::PageListSpan,
+        index: usize,
+        observed: OpenTypeSourceNode,
+    ) {
+        if let Some(font) = self.run_font {
+            match observed {
+                OpenTypeSourceNode::FontKern => return,
+                OpenTypeSourceNode::Character {
                     font: next_font,
-                    ch: next_ch,
-                    origin: next_origin,
-                }) if *next_font == font
-                    && scripts_compatible(script, tex_fonts::character_script(*next_ch)) =>
+                    ch,
+                    origin,
+                } if next_font == font
+                    && scripts_compatible(self.run_script, tex_fonts::character_script(ch)) =>
                 {
-                    let next_script = tex_fonts::character_script(*next_ch);
+                    let next_script = tex_fonts::character_script(ch);
                     if is_strong_script(next_script) {
-                        script = next_script;
+                        self.run_script = next_script;
                     }
-                    chars.push(crate::mode::PendingHChar {
-                        font,
-                        ch: *next_ch,
-                        origin: *next_origin,
-                    });
-                    index += 1;
+                    self.chars
+                        .push(crate::mode::PendingHChar { font, ch, origin });
+                    return;
                 }
-                _ => break,
+                _ => self.flush_run(stores, index),
             }
         }
-        let adjustments = plan_open_type_adjustments(stores, chars, &[], shaping);
-        for (entry, adjustment) in chars.iter().zip(adjustments.iter().copied()) {
+
+        if let OpenTypeSourceNode::Character { font, ch, origin } = observed
+            && is_ltr_shaping_font(stores, font)
+            && is_supported_script(tex_fonts::character_script(ch))
+        {
+            if !self.saw_run {
+                stores.open_page_active_list(self.output);
+                self.saw_run = true;
+            }
+            if self.retained_start < index {
+                stores.append_page_active_span_range(
+                    self.output,
+                    source,
+                    self.retained_start..index,
+                );
+            }
+            self.chars.clear();
+            self.chars
+                .push(crate::mode::PendingHChar { font, ch, origin });
+            self.run_font = Some(font);
+            self.run_script = tex_fonts::character_script(ch);
+        }
+    }
+
+    fn flush_run<G>(&mut self, stores: &mut CommandContext<'_, G>, end: usize) {
+        let adjustments = plan_open_type_adjustments(stores, self.chars, &[], self.shaping);
+        for (entry, adjustment) in self.chars.iter().zip(adjustments.iter().copied()) {
             stores.push_page_active_list(
-                &mut output,
+                self.output,
                 Node::Char {
                     font: entry.font,
                     ch: entry.ch,
@@ -750,7 +787,7 @@ pub(crate) fn reshape_open_type_runs_list<G>(
             );
             if adjustment.raw() != 0 {
                 stores.push_page_active_list(
-                    &mut output,
+                    self.output,
                     Node::Kern {
                         amount: adjustment,
                         kind: KernKind::Font,
@@ -758,8 +795,51 @@ pub(crate) fn reshape_open_type_runs_list<G>(
                 );
             }
         }
+        self.run_font = None;
+        self.retained_start = end;
     }
-    stores.finalize_page_active_list(&mut output)
+}
+
+pub(crate) fn reshape_open_type_runs_list<G>(
+    stores: &mut CommandContext<'_, G>,
+    source: tex_state::node_arena::PageListId,
+    chars: &mut Vec<crate::mode::PendingHChar>,
+    shaping: &mut OpenTypeShapingScratch,
+) -> tex_state::node_arena::PageListId {
+    let source = stores
+        .admit_page_node_span(source)
+        .expect("OpenType source crosses one live page-region boundary");
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    let mut walk = OpenTypeSourceWalk {
+        output: &mut output,
+        chars,
+        shaping,
+        saw_run: false,
+        retained_start: 0,
+        run_font: None,
+        run_script: tex_fonts::Script::Common,
+    };
+    if let Some(tail) = stores
+        .page_node_span_tail_chunk(source)
+        .expect("OpenType source remains admitted")
+    {
+        walk.visit_chunk_prefix(stores, source, tail);
+    }
+    if walk.run_font.is_some() {
+        walk.flush_run(stores, source.len());
+    } else if walk.saw_run && walk.retained_start < source.len() {
+        stores.append_page_active_span_range(
+            walk.output,
+            source,
+            walk.retained_start..source.len(),
+        );
+    }
+    let saw_run = walk.saw_run;
+    if saw_run {
+        stores.finalize_page_active_list(&mut output)
+    } else {
+        source.list()
+    }
 }
 
 pub(crate) fn reconstitute_with_fuel<G>(

@@ -200,20 +200,19 @@ fn update_split_marks<G>(
 ) {
     clear_split_marks(stores);
     let mut classes = BTreeMap::new();
-    for node in stores
+    stores
         .page_node_list(nodes)
         .expect("vsplit prefix remains live")
         .nodes()
-        .iter()
-    {
-        if let Node::Mark { class, tokens } = node {
-            let (first, bot) = classes.entry(*class).or_insert((None, None));
-            if first.is_none() {
-                *first = Some(tokens.clone());
+        .for_each(|node| {
+            if let Node::Mark { class, tokens } = node {
+                let (first, bot) = classes.entry(*class).or_insert((None, None));
+                if first.is_none() {
+                    *first = Some(tokens.clone());
+                }
+                *bot = Some(tokens.clone());
             }
-            *bot = Some(tokens.clone());
-        }
-    }
+        });
     for (class, (first, bot)) in classes {
         stores.set_page_mark_class(PageMark::SplitFirst, class, first.unwrap_or_default());
         stores.set_page_mark_class(PageMark::SplitBot, class, bot.unwrap_or_default());

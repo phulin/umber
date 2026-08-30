@@ -4090,11 +4090,13 @@ impl PageBuilderState {
         let current = arena
             .span_list(self.current_page)
             .expect("current page belongs to the live arena");
-        let words = dynamic_words(current.iter());
-        let roots = current
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
+        let mut words = (0_usize, 0_usize);
+        let mut roots = 0_usize;
+        current.for_each(|node| {
+            words.0 = words.0.saturating_add(node.tex_memory_words(false).1);
+            words.1 = words.1.saturating_add(node.tex_memory_words(true).1);
+            roots += usize::from(node_retains_page_handle(node));
+        });
         let _ = current;
         self.current_page = PageListSpan::empty();
         self.release_dynamic_word_totals(words);

@@ -553,6 +553,60 @@ fn admitted_forward_callback_crosses_each_packed_block_once_at_required_sizes() 
 }
 
 #[test]
+fn canonical_forward_range_beats_compatibility_iteration_at_required_chunk_counts() {
+    for chunks in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..chunks {
+                builder.push(value).expect("one-node packed block");
+            }
+            builder.seal().expect("direct root")
+        };
+        let view = arena.list(&pool, root).expect("admitted view");
+
+        let resolutions_before = pool.payload.admitted_index_resolutions();
+        let steps_before = pool.payload.admitted_index_predecessor_steps();
+        let compatibility_checksum = view
+            .iter()
+            .fold(0_u64, |sum, value| sum + u64::from(*value));
+        let compatibility_resolutions =
+            pool.payload.admitted_index_resolutions() - resolutions_before;
+        let compatibility_steps = pool.payload.admitted_index_predecessor_steps() - steps_before;
+
+        let resolutions_before = pool.payload.admitted_index_resolutions();
+        let steps_before = pool.payload.admitted_index_predecessor_steps();
+        let crossings_before = pool.payload.admitted_forward_chunk_crossings();
+        let mut direct_checksum = 0_u64;
+        let completed: core::ops::ControlFlow<core::convert::Infallible> =
+            view.try_for_each_range(0..view.len(), |_, value| {
+                direct_checksum += u64::from(*value);
+                core::ops::ControlFlow::Continue(())
+            });
+        let direct_resolutions = pool.payload.admitted_index_resolutions() - resolutions_before;
+        let direct_steps = pool.payload.admitted_index_predecessor_steps() - steps_before;
+        let direct_crossings = pool.payload.admitted_forward_chunk_crossings() - crossings_before;
+
+        let expected_checksum = u64::from(chunks) * u64::from(chunks - 1) / 2;
+        assert!(completed.is_continue());
+        assert_eq!(compatibility_checksum, expected_checksum);
+        assert_eq!(direct_checksum, expected_checksum);
+        assert_eq!(compatibility_resolutions, u64::from(chunks));
+        assert_eq!(
+            compatibility_steps,
+            u64::from(chunks) * u64::from(chunks - 1) / 2
+        );
+        assert_eq!(direct_resolutions, 0);
+        assert_eq!(direct_steps, 0);
+        assert_eq!(direct_crossings, u64::from(chunks - 1));
+        eprintln!(
+            "CANONICAL_FORWARD_RANGE_AB chunks={chunks} compatibility_resolutions={compatibility_resolutions} compatibility_steps={compatibility_steps} direct_resolutions={direct_resolutions} direct_steps={direct_steps} direct_crossings={direct_crossings}"
+        );
+    }
+}
+
+#[test]
 fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation() {
     const ALLOCATION_OWNER: usize = 15;
 

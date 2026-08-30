@@ -55,24 +55,6 @@ pub(crate) enum MetricEvent {
 }
 
 /// A cursor over a domain-specific projection into the common metric IR.
-pub(crate) struct MetricsCursor<I> {
-    events: I,
-}
-
-impl<I> MetricsCursor<I> {
-    pub(crate) const fn new(events: I) -> Self {
-        Self { events }
-    }
-}
-
-impl<I: Iterator> Iterator for MetricsCursor<I> {
-    type Item = I::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.events.next()
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ListMetrics {
     pub(crate) width: Scaled,

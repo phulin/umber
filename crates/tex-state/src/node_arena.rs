@@ -3106,6 +3106,11 @@ impl<'a> NodeCursor<'a> {
     pub fn char_run(&self, index: usize) -> Option<CharRun<'a>> {
         CharRun::new(*self, index)
     }
+    /// Builds the compatibility iterator used by mixed and reverse walks.
+    ///
+    /// Production forward scans should use [`Self::for_each`] or
+    /// [`Self::try_for_each_range`] so arena-backed lists follow their packed
+    /// predecessor chain exactly once.
     pub fn iter(&self) -> NodeCursorIter<'a> {
         self.iter_from(0)
     }
@@ -3125,7 +3130,7 @@ impl<'a> NodeCursor<'a> {
         }
     }
 
-    /// Visits sequential nodes through their authoritative borrowed storage.
+    /// Canonically visits sequential nodes through authoritative storage.
     ///
     /// Arena-backed inputs use the direct chunk traversal rather than
     /// resolving each logical index independently. Slice-backed inputs retain
