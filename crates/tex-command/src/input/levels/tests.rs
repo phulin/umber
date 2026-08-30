@@ -206,3 +206,10 @@ fn long_macro_argument_crosses_fixed_chunks_with_one_scalar_cursor() {
     assert_eq!(receipt.rollbacks, 1);
     assert_ne!(receipt.checksum, 0);
 }
+
+#[test]
+fn long_macro_argument_default_matches_new() {
+    let mut constructed = super::LongMacroArgumentCursorBenchmark::<()>::new();
+    let mut defaulted = super::LongMacroArgumentCursorBenchmark::<()>::default();
+    assert_eq!(defaulted.run(16_390), constructed.run(16_390));
+}

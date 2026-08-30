@@ -1524,6 +1524,13 @@ pub struct LongMacroArgumentCursorReceipt {
 }
 
 #[cfg(any(test, feature = "profiling"))]
+impl<G> Default for LongMacroArgumentCursorBenchmark<G> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(test, feature = "profiling"))]
 impl<G> LongMacroArgumentCursorBenchmark<G> {
     /// Seals one 16,385-word argument, crossing five 4,096-word chunks.
     pub fn new() -> Self {
