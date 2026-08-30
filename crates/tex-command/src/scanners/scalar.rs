@@ -1487,10 +1487,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     provenance = retained;
                 }
                 mut pending => {
-                    if let Some(child) = pending.take_child() {
-                        if let Err(error) = self.abort_continuation(child) {
-                            fail!(error);
-                        }
+                    if let Some(child) = pending.take_child()
+                        && let Err(error) = self.abort_continuation(child)
+                    {
+                        fail!(error);
                     }
                     fail!(CommandError::input_invariant());
                 }
@@ -1659,10 +1659,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     (matched, provenance)
                 }
                 mut pending => {
-                    if let Some(child) = pending.take_child() {
-                        if let Err(error) = self.abort_continuation(child) {
-                            fail!(error);
-                        }
+                    if let Some(child) = pending.take_child()
+                        && let Err(error) = self.abort_continuation(child)
+                    {
+                        fail!(error);
                     }
                     fail!(CommandError::input_invariant());
                 }

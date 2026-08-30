@@ -343,10 +343,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     )
                 }
                 mut pending => {
-                    if let Some(child) = pending.take_child() {
-                        if let Err(error) = self.abort_continuation(child) {
-                            fail!(error);
-                        }
+                    if let Some(child) = pending.take_child()
+                        && let Err(error) = self.abort_continuation(child)
+                    {
+                        fail!(error);
                     }
                     fail!(CommandError::input_invariant());
                 }
@@ -412,10 +412,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         phase = PendingExpressionPhase::FactorLeading;
                         continue;
                     }
-                    if let Some(command) = first {
-                        if let Err(error) = self.back_input(command) {
-                            fail!(error);
-                        }
+                    if let Some(command) = first
+                        && let Err(error) = self.back_input(command)
+                    {
+                        fail!(error);
                     }
                     phase = PendingExpressionPhase::FactorScalar;
                     continue;
