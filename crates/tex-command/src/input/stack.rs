@@ -33,12 +33,12 @@ pub(crate) enum InputTopTransition<'slot, G> {
 
 /// Completed command-state outcome of one resident input transition.
 ///
-/// Ordinary commands have already received their one-delivery suppression and
-/// alignment treatment. Only a forbidden outer command crosses back to the
-/// processor, whose cold recovery path owns diagnostics and input insertion.
+/// Ordinary commands have already committed their exact work facts, received
+/// their one-delivery suppression, and received alignment treatment. Only a
+/// forbidden outer command crosses back to the processor, whose cold recovery
+/// path owns diagnostics and input insertion.
 pub(crate) enum ResidentCommandTransition {
     Delivered {
-        meaning_lookup: bool,
         interception: ResidentCommandInterception,
     },
     ParameterPushed(InputLevelId),
@@ -261,11 +261,15 @@ impl<G> CommandState<G> {
     /// Advances the exact top input row once and writes the caller's final
     /// command value in place. Physical-line acquisition is deliberately a
     /// separate transition: a cursor without a loaded line returns
-    /// [`InputTopTransition::NeedLine`] without loading or journaling one.
+    /// [`InputTopTransition::NeedLine`] without loading or journaling one. A
+    /// successful resolution also commits its scanner and meaning-lookup work
+    /// here, while those facts are resident, rather than carrying them through
+    /// another processor status.
     #[inline(always)]
     pub(crate) fn advance_resident_command_into(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
+        fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
         destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
@@ -298,11 +302,12 @@ impl<G> CommandState<G> {
                 if resolved.as_ref().suppresses_expandable_control_sequence() {
                     resolved.as_mut().suppress_expandable();
                 }
-                let interception = if resolved.as_ref().is_outer()
-                    && !matches!(
-                        self.roots.scanner.status(),
-                        crate::processor::ScannerStatus::Normal
-                    ) {
+                let scanner = !matches!(
+                    self.roots.scanner.status(),
+                    crate::processor::ScannerStatus::Normal
+                );
+                fuel.record_raw_delivery(scanner, resolution.meaning_lookup());
+                let interception = if resolved.as_ref().is_outer() && scanner {
                     ResidentCommandInterception::Outer
                 } else {
                     self.classify_alignment_delivery(
@@ -311,10 +316,7 @@ impl<G> CommandState<G> {
                     );
                     ResidentCommandInterception::Ready
                 };
-                Ok(ResidentCommandTransition::Delivered {
-                    meaning_lookup: resolution.meaning_lookup(),
-                    interception,
-                })
+                Ok(ResidentCommandTransition::Delivered { interception })
             }
             InputTopTransition::OutParameter {
                 slot,

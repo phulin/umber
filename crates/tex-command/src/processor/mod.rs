@@ -607,10 +607,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.fuel.charge()
     }
 
-    pub(crate) fn record_raw_delivery(&mut self, scanner: bool, meaning_lookup: bool) {
-        self.fuel.record_raw_delivery(scanner, meaning_lookup);
-    }
-
     pub(crate) fn record_expanded_delivery(&mut self) {
         self.fuel.record_expanded_delivery();
     }

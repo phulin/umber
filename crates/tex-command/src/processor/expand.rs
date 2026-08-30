@@ -811,6 +811,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .command
                         .advance_resident_command_into(
                             self.state,
+                            self.fuel,
                             self.create_source_control_sequences,
                             destination
                                 .as_mut()
@@ -826,7 +827,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return error.fail(failure);
                         }
                     };
-                    let (meaning_lookup, interception) = match transition {
+                    let interception = match transition {
                         ResidentCommandTransition::Empty => {
                             observe!(
                                 self,
@@ -849,10 +850,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             destination.take();
                             break DeliveryStatus::End;
                         }
-                        ResidentCommandTransition::Delivered {
-                            meaning_lookup,
-                            interception,
-                        } => (meaning_lookup, interception),
+                        ResidentCommandTransition::Delivered { interception } => interception,
                         ResidentCommandTransition::ParameterPushed(parameter_level) => {
                             observe!(
                                 self,
@@ -981,10 +979,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             false,
                                             self.state,
                                         );
-                                    (
+                                    self.fuel.record_raw_delivery(
+                                        !matches!(
+                                            self.command.scanner.status(),
+                                            crate::processor::ScannerStatus::Normal
+                                        ),
                                         resolution.meaning_lookup(),
-                                        ResidentCommandInterception::Ready,
-                                    )
+                                    );
+                                    ResidentCommandInterception::Ready
                                 }
                             }
                         }
@@ -995,11 +997,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .expect("resident delivery initializes the command slot");
                     let delivery_stamp = command.delivery_stamp();
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                    let scanner = !matches!(
-                        self.command.scanner.status(),
-                        crate::processor::ScannerStatus::Normal
-                    );
-                    self.record_raw_delivery(scanner, meaning_lookup);
                     self.last_delivery = Some(delivery_stamp);
                     if matches!(interception, ResidentCommandInterception::Outer)
                         && let Err(failure) = self.check_outer_validity_entry(command)
