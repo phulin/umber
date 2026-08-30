@@ -9,8 +9,9 @@ use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, ArenaListId, ArenaListView, CheckpointMark, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary, UniqueArenaList,
+    ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, CheckpointMark,
+    ForkArenaCounters, ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
+    UniqueArenaList,
 };
 use crate::node::Node;
 use crate::node_region::{
@@ -225,6 +226,33 @@ const _: () = assert!(core::mem::size_of::<PageListId>() <= 40);
 /// cold region-transfer and test ingress seams.
 pub struct PageListSpan {
     list: PageListId,
+}
+
+/// Stack-resident continuation for direct traversal of one admitted page span.
+///
+/// The cursor contains only owner-relative chunk coordinates. It neither
+/// borrows nor copies node payload, so a caller may retain it across appends
+/// to the same generation-owned arena while the source span remains sealed.
+pub struct PageListChunkCursor {
+    span: PageListSpan,
+    inner: AdmittedListChunkCursor<PageMaterialLane>,
+}
+
+impl PageListChunkCursor {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub const fn logical_start(&self) -> usize {
+        self.inner.logical_start()
+    }
 }
 
 impl Clone for PageListSpan {
@@ -1410,6 +1438,50 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
         self.span_list(span)
             .map(crate::node_arena::NodeCursor::fork_arena)
+    }
+
+    /// Starts a mutation-compatible direct chunk walk after one span admission.
+    pub fn span_tail_chunk(
+        &self,
+        span: PageListSpan,
+    ) -> Result<Option<PageListChunkCursor>, ForkArenaError> {
+        self.region
+            .pub_arena
+            .admitted_tail_chunk(&self.pool.chunks, span.list.coordinate())
+            .map(|cursor| cursor.map(|inner| PageListChunkCursor { span, inner }))
+    }
+
+    /// Returns the preceding source chunk through its sole persistent edge.
+    pub fn span_previous_chunk(
+        &self,
+        span: PageListSpan,
+        cursor: &PageListChunkCursor,
+    ) -> Result<Option<PageListChunkCursor>, ForkArenaError> {
+        if cursor.span != span {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        self.region
+            .pub_arena
+            .admitted_previous_chunk(&self.pool.chunks, &cursor.inner)
+            .map(|previous| previous.map(|inner| PageListChunkCursor { span, inner }))
+    }
+
+    /// Borrows one node directly from a retained packed-chunk coordinate.
+    pub fn span_chunk_node<'b>(
+        &'b self,
+        span: PageListSpan,
+        cursor: &PageListChunkCursor,
+        offset: usize,
+    ) -> Result<(usize, &'b PageMaterialNode), ForkArenaError> {
+        if cursor.span != span {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        self.region.pub_arena.admitted_chunk_value(
+            &self.pool.chunks,
+            span.list.coordinate(),
+            &cursor.inner,
+            offset,
+        )
     }
 
     pub fn get_sequence(

@@ -609,6 +609,16 @@ impl<T> ChunkStorage<T> {
     /// lifetime of the view, so ordinary traversal need not repeat those
     /// ownership checks at every block crossing.
     fn admitted_previous_position(&self, key: RawChunkKey, lineage: u32) -> Option<(usize, u32)> {
+        self.admitted_previous_coordinate(key, lineage)
+            .map(|(_, position, end)| (position, end))
+    }
+
+    /// Resolves the predecessor incarnation and its admitted arena position.
+    fn admitted_previous_coordinate(
+        &self,
+        key: RawChunkKey,
+        lineage: u32,
+    ) -> Option<(RawChunkKey, usize, u32)> {
         let meta = self.chunks.get(key.slot as usize)?;
         debug_assert!(meta.live && meta.generation == key.generation);
         let (previous_key, end) = meta.previous_in_list?;
@@ -622,7 +632,7 @@ impl<T> ChunkStorage<T> {
         if position == usize::MAX {
             return None;
         }
-        Some((position, end))
+        Some((previous_key, position, end))
     }
 
     fn admitted_get(&self, key: RawChunkKey, offset: u32) -> Option<&T> {
@@ -4595,6 +4605,36 @@ pub struct ArenaChunkSlice<'a, T> {
     cells: &'a [Option<T>],
 }
 
+/// Coordinate-only continuation for one admitted packed-list chunk.
+///
+/// Unlike [`ArenaListIter`], this cursor retains no arena borrow. A caller may
+/// therefore keep the coordinate on its Rust stack while an operation appends
+/// to the same arena, then reacquire a short immutable borrow for the next
+/// source node. The admitted source root remains authoritative: no successor
+/// table, copied index, or second node representation is retained here.
+pub(crate) struct AdmittedListChunkCursor<Lane> {
+    list: ArenaListId<Lane>,
+    key: RawChunkKey,
+    position: usize,
+    start: u32,
+    end: u32,
+    logical_start: usize,
+    head_position: usize,
+    head_offset: u32,
+}
+
+impl<Lane> AdmittedListChunkCursor<Lane> {
+    #[must_use]
+    pub(crate) const fn len(&self) -> usize {
+        (self.end - self.start) as usize
+    }
+
+    #[must_use]
+    pub(crate) const fn logical_start(&self) -> usize {
+        self.logical_start
+    }
+}
+
 impl<'a, T> ArenaChunkSlice<'a, T> {
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -4892,6 +4932,115 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                 visit(value);
                 core::ops::ControlFlow::Continue(())
             });
+    }
+}
+
+impl<T, Lane> ForkArena<T, Lane> {
+    /// Admits a list once and returns its tail packed-chunk continuation.
+    pub(crate) fn admitted_tail_chunk(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+    ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
+        let root = self.admit_owned_root(pool, list)?;
+        if list.is_empty() {
+            return Ok(None);
+        }
+        let start = if root.tail.position == root.head.position {
+            root.head.offset
+        } else {
+            0
+        };
+        let chunk_len = (root.tail.offset - start) as usize;
+        Ok(Some(AdmittedListChunkCursor {
+            list,
+            key: list.tail.raw,
+            position: root.tail.position,
+            start,
+            end: root.tail.offset,
+            logical_start: list.len() - chunk_len,
+            head_position: root.head.position,
+            head_offset: root.head.offset,
+        }))
+    }
+
+    /// Follows the sole predecessor edge without resolving a logical index.
+    pub(crate) fn admitted_previous_chunk(
+        &self,
+        pool: &ChunkPool<T>,
+        cursor: &AdmittedListChunkCursor<Lane>,
+    ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
+        if cursor.logical_start == 0 {
+            return Ok(None);
+        }
+        if self.live_key_at(false, cursor.position) != Some(cursor.key) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let (key, position, end) = pool
+            .payload
+            .admitted_previous_coordinate(cursor.key, self.lineage)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let start = if position == cursor.head_position {
+            cursor.head_offset
+        } else {
+            0
+        };
+        let len = usize::try_from(end.checked_sub(start).ok_or(ForkArenaError::InvalidRange)?)
+            .map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let logical_start = cursor
+            .logical_start
+            .checked_sub(len)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        #[cfg(any(test, feature = "testing"))]
+        self.pool_forward_chunk_crossing(pool);
+        Ok(Some(AdmittedListChunkCursor {
+            list: cursor.list,
+            key,
+            position,
+            start,
+            end,
+            logical_start,
+            head_position: cursor.head_position,
+            head_offset: cursor.head_offset,
+        }))
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    fn pool_forward_chunk_crossing(&self, pool: &ChunkPool<T>) {
+        pool.payload.admitted_forward_chunk_crossings.set(
+            pool.payload
+                .admitted_forward_chunk_crossings
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    /// Resolves one node inside an already-admitted packed chunk directly.
+    pub(crate) fn admitted_chunk_value<'a>(
+        &'a self,
+        pool: &'a ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        cursor: &AdmittedListChunkCursor<Lane>,
+        offset: usize,
+    ) -> Result<(usize, &'a T), ForkArenaError> {
+        if cursor.list != list || offset >= cursor.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if self.live_key_at(false, cursor.position) != Some(cursor.key) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let offset = cursor
+            .start
+            .checked_add(u32::try_from(offset).map_err(|_| ForkArenaError::CapacityOverflow)?)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        let value = pool
+            .payload
+            .admitted_get(cursor.key, offset)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        Ok((
+            cursor.logical_start + (offset - cursor.start) as usize,
+            value,
+        ))
     }
 }
 

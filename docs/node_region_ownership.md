@@ -213,7 +213,9 @@ Ordinary list processing is packed-block movement plus append-only output:
   lowering, and page breaking borrow short-lived `ArenaListView` or
   `NodeCursor` views; long forward consumers use the callback traversal that
   follows the sole predecessor chain once and retains its continuation on the
-  Rust stack, compatibility iterators retain one admitted owner-relative cursor
+  Rust stack, mutation-interleaved operation consumers retain only a
+  coordinate-valued chunk continuation and end each node borrow before an
+  append, compatibility iterators retain one admitted owner-relative cursor
   within each packed block, and genuinely positional semantic reads remain
   explicit;
 - paragraph breakpoint analysis settles discardable-run successor positions

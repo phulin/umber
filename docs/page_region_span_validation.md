@@ -77,9 +77,13 @@ inspected + actual block crossings), with no heap allocation, successor
 metadata, traversal cache, or second topology. Compatibility iterators retain
 an admitted owner-relative cursor inside a packed block, but consumers that
 need a long forward scan must use the callback boundary rather than repeatedly
-resolving the next block from the tail. Persistent checkpoint forks continue
-to use the sole predecessor topology. Genuinely indexed reads remain the
-explicit `owned_node` path. Paragraph breakpoint analysis derives successor
+resolving the next block from the tail. A scan that must append between source
+reads instead carries a stack-resident `PageListChunkCursor`: the cursor is an
+owner-relative coordinate, each node borrow ends before mutation, and the
+predecessor continuation still follows the sole topology without an index or
+sidecar. Rollback makes its coordinates stale instead of retaining storage.
+Persistent checkpoint forks continue to use the sole predecessor topology.
+Genuinely indexed reads remain the explicit `owned_node` path. Paragraph breakpoint analysis derives successor
 positions and widths from its one forward prefix walk; diagnostic breakpoint
 probes remain indexed but run only under explicit trace demand. Shared and
 sliced transforms increment `source_nodes_copied`

@@ -529,6 +529,165 @@ fn admitted_forward_callback_crosses_each_packed_block_once_at_required_sizes() 
 }
 
 #[test]
+fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation() {
+    const ALLOCATION_OWNER: usize = 15;
+
+    fn visit_prefix(
+        arena: &ForkArena<u32, ActiveLane>,
+        pool: &ChunkPool<u32>,
+        root: super::ArenaListId<ActiveLane>,
+        chunk: super::AdmittedListChunkCursor<ActiveLane>,
+        checksum: &mut u64,
+        visits: &mut usize,
+    ) {
+        if let Some(previous) = arena
+            .admitted_previous_chunk(pool, &chunk)
+            .expect("admitted predecessor")
+        {
+            visit_prefix(arena, pool, root, previous, checksum, visits);
+        }
+        for offset in 0..chunk.len() {
+            let (index, value) = arena
+                .admitted_chunk_value(pool, root, &chunk, offset)
+                .expect("admitted packed value");
+            assert_eq!(index, *visits);
+            *checksum += u64::from(*value);
+            *visits += 1;
+        }
+    }
+
+    for values in [1_u32, 64, 4_096] {
+        let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = {
+            let mut builder = arena.begin_builder(&mut pool).expect("builder");
+            for value in 0..values {
+                builder.push(value).expect("packed direct node");
+            }
+            builder.seal().expect("direct root")
+        };
+        let expected_blocks = usize::try_from(values)
+            .expect("test size fits usize")
+            .div_ceil(pool.payload.chunk_capacity());
+        let resolutions_before = pool.payload.admitted_index_resolutions();
+        let index_steps_before = pool.payload.admitted_index_predecessor_steps();
+        let crossings_before = pool.payload.admitted_forward_chunk_crossings();
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let (checksum, visits) = {
+            let _scope = scope(ALLOCATION_OWNER);
+            let tail = arena
+                .admitted_tail_chunk(&pool, root)
+                .expect("admitted root")
+                .expect("nonempty root");
+            let mut checksum = 0_u64;
+            let mut visits = 0;
+            visit_prefix(&arena, &pool, root, tail, &mut checksum, &mut visits);
+            (checksum, visits)
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
+        let allocation = AllocationMeasurement {
+            calls: allocation_after
+                .calls
+                .saturating_sub(allocation_before.calls),
+            requested_bytes: allocation_after
+                .requested_bytes
+                .saturating_sub(allocation_before.requested_bytes),
+        };
+        let resolutions = pool.payload.admitted_index_resolutions() - resolutions_before;
+        let index_steps = pool.payload.admitted_index_predecessor_steps() - index_steps_before;
+        let crossings = pool.payload.admitted_forward_chunk_crossings() - crossings_before;
+
+        assert_eq!(visits, values as usize);
+        assert_eq!(checksum, u64::from(values) * u64::from(values - 1) / 2);
+        assert_eq!(resolutions, 0);
+        assert_eq!(index_steps, 0);
+        assert_eq!(crossings, expected_blocks.saturating_sub(1) as u64);
+        assert_eq!(allocation, AllocationMeasurement::default());
+        eprintln!(
+            "RESUMABLE_CHUNK_CURSOR_SCALE values={values} packed_blocks={expected_blocks} index_resolutions={resolutions} index_predecessor_steps={index_steps} forward_block_crossings={crossings} allocation_calls={} allocation_bytes={}",
+            allocation.calls, allocation.requested_bytes
+        );
+    }
+}
+
+#[test]
+fn resumable_chunk_cursor_rejects_rolled_back_source_coordinates() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let operation = arena.operation_mark(&pool);
+    let root = list(&mut arena, &mut pool, [0; 32]);
+    let tail = arena
+        .admitted_tail_chunk(&pool, root)
+        .expect("admitted root")
+        .expect("nonempty root");
+
+    arena
+        .restore_operation(&mut pool, operation)
+        .expect("source suffix rollback");
+    let replacement = list(&mut arena, &mut pool, [1; 32]);
+    assert_eq!(replacement.len(), root.len());
+
+    assert_eq!(
+        arena
+            .admitted_chunk_value(&pool, root, &tail, 0)
+            .map(|_| ()),
+        Err(ForkArenaError::InvalidRange)
+    );
+}
+
+#[test]
+fn resumable_chunk_cursor_preserves_shared_prefix_across_append() {
+    fn visit_prefix(
+        arena: &ForkArena<u32, ActiveLane>,
+        pool: &ChunkPool<u32>,
+        root: super::ArenaListId<ActiveLane>,
+        chunk: super::AdmittedListChunkCursor<ActiveLane>,
+        checksum: &mut u64,
+        visits: &mut usize,
+    ) {
+        if let Some(previous) = arena
+            .admitted_previous_chunk(pool, &chunk)
+            .expect("shared-prefix predecessor")
+        {
+            visit_prefix(arena, pool, root, previous, checksum, visits);
+        }
+        for offset in 0..chunk.len() {
+            let (index, value) = arena
+                .admitted_chunk_value(pool, root, &chunk, offset)
+                .expect("shared-prefix packed value");
+            assert_eq!(index, *visits);
+            *checksum += u64::from(*value);
+            *visits += 1;
+        }
+    }
+
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let original: [u32; 64] = core::array::from_fn(|index| index as u32);
+    let root = list(&mut arena, &mut pool, original);
+    let prefix = arena
+        .slice_list(&mut pool, root, 0..37, &mut Vec::new())
+        .expect("shared sealed prefix");
+    let tail = arena
+        .admitted_tail_chunk(&pool, prefix)
+        .expect("admitted prefix")
+        .expect("nonempty prefix");
+
+    let suffix: [u32; 32] = core::array::from_fn(|index| index as u32 + 100);
+    let appended = list(&mut arena, &mut pool, suffix);
+    assert_eq!(appended.len(), 32);
+
+    let mut checksum = 0;
+    let mut visits = 0;
+    visit_prefix(&arena, &pool, prefix, tail, &mut checksum, &mut visits);
+    assert_eq!(visits, 37);
+    assert_eq!(checksum, 37 * 36 / 2);
+    arena
+        .admit_owned_list(&pool, root)
+        .expect("original shared root remains admitted");
+}
+
+#[test]
 fn admitted_forward_callback_preserves_subrange_and_early_stop_semantics() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(8);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

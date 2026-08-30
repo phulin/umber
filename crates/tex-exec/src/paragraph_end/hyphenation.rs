@@ -24,6 +24,143 @@ struct HyphenationContext {
     right: usize,
 }
 
+#[derive(Clone, Copy)]
+enum HyphenationScanNode {
+    Language {
+        language: u8,
+        left: usize,
+        right: usize,
+    },
+    MathOn,
+    MathOff,
+    Glue,
+    Other,
+}
+
+impl HyphenationScanNode {
+    fn from_node(node: &Node) -> Self {
+        match node {
+            Node::Whatsit(tex_state::node::Whatsit::Language {
+                language,
+                left_hyphen_min,
+                right_hyphen_min,
+            }) => Self::Language {
+                language: *language,
+                left: usize::from((*left_hyphen_min).max(1)),
+                right: usize::from((*right_hyphen_min).max(1)),
+            },
+            Node::MathOn(_) => Self::MathOn,
+            Node::MathOff(_) => Self::MathOff,
+            Node::Glue { .. } => Self::Glue,
+            _ => Self::Other,
+        }
+    }
+}
+
+struct HyphenationWalk<'walk, 'projection> {
+    out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    out_segments: &'walk mut Vec<tex_state::node_arena::PageListId>,
+    generated_word: &'walk mut Vec<Node>,
+    fuel: &'walk mut tex_command::CommandFuel,
+    projection: &'walk mut HyphenationProjection<'projection>,
+    output_len: usize,
+    retained_start: usize,
+    skip_until: usize,
+    auto_breaking: bool,
+    language: u8,
+    left: usize,
+    right: usize,
+}
+
+impl HyphenationWalk<'_, '_> {
+    #[inline(never)]
+    fn visit_chunk_prefix<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::page_node_arena::PageListSpan,
+        chunk: tex_state::page_node_arena::PageListChunkCursor,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    ) -> Result<(), ExecError> {
+        if let Some(previous) = stores
+            .page_node_span_previous_chunk(source, &chunk)
+            .expect("hyphenation source chunk remains live")
+        {
+            self.visit_chunk_prefix(stores, source, previous, diagnostic_effects)?;
+        }
+        self.visit_chunk(stores, source, &chunk, diagnostic_effects)
+    }
+
+    #[inline(never)]
+    fn visit_chunk<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::page_node_arena::PageListSpan,
+        chunk: &tex_state::page_node_arena::PageListChunkCursor,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    ) -> Result<(), ExecError> {
+        for offset in 0..chunk.len() {
+            let index = chunk.logical_start() + offset;
+            if index < self.skip_until {
+                continue;
+            }
+            let observed = {
+                let (resolved, node) = stores
+                    .page_node_span_chunk_node(source, chunk, offset)
+                    .expect("hyphenation source chunk remains live");
+                debug_assert_eq!(resolved, index);
+                HyphenationScanNode::from_node(node)
+            };
+            match observed {
+                HyphenationScanNode::Language {
+                    language,
+                    left,
+                    right,
+                } => {
+                    self.language = language;
+                    self.left = left;
+                    self.right = right;
+                }
+                HyphenationScanNode::MathOn => self.auto_breaking = false,
+                HyphenationScanNode::MathOff => self.auto_breaking = true,
+                HyphenationScanNode::Glue if self.auto_breaking => {
+                    let start = index + 1;
+                    stores.append_page_active_span_range(
+                        self.out,
+                        source,
+                        self.retained_start..start,
+                    );
+                    self.output_len += start - self.retained_start;
+                    self.retained_start = start;
+                    if let Some(candidate) = find_hyphenation_candidate(
+                        stores,
+                        source,
+                        start,
+                        (self.language, self.left, self.right),
+                    ) {
+                        let next = hyphenate_candidate_after_glue(
+                            stores,
+                            diagnostic_effects,
+                            source,
+                            start,
+                            candidate,
+                            self.out,
+                            self.out_segments,
+                            self.generated_word,
+                            &mut self.output_len,
+                            self.fuel,
+                            self.projection,
+                        )?;
+                        self.skip_until = next;
+                        self.retained_start = next;
+                    }
+                }
+                HyphenationScanNode::Glue | HyphenationScanNode::Other => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Installs patterns whose §963 duplicate diagnostics were already reported
 /// by the canonical live scanner.
 pub(crate) fn apply_scanned_patterns<G>(
@@ -91,53 +228,31 @@ fn hyphenated_hlist_with_projections<G>(
     stores.open_page_active_list(&mut out);
     let mut out_segments = Vec::new();
     let mut generated_word = Vec::new();
-    let mut output_len = 0usize;
-    let mut index = 0;
-    let mut retained_start = 0;
-    let mut auto_breaking = true;
-    let mut language = 0;
-    let mut left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
-    let mut right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
-
-    while index < source.len() {
-        let is_glue = {
-            let node = stores
-                .page_node_span(source)
-                .expect("hyphenation source belongs to the live page arena")
-                .owned_node(index)
-                .expect("hyphenation cursor remains in range");
-            update_hyphenation_context(node, &mut language, &mut left, &mut right);
-            match node {
-                Node::MathOn(_) => auto_breaking = false,
-                Node::MathOff(_) => auto_breaking = true,
-                _ => {}
-            }
-            matches!(node, Node::Glue { .. })
+    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
+    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
+    let (retained_start, language, left, right) = {
+        let mut walk = HyphenationWalk {
+            out: &mut out,
+            out_segments: &mut out_segments,
+            generated_word: &mut generated_word,
+            fuel,
+            projection,
+            output_len: 0,
+            retained_start: 0,
+            skip_until: 0,
+            auto_breaking: true,
+            language: 0,
+            left,
+            right,
         };
-        index += 1;
-
-        if auto_breaking && is_glue {
-            stores.append_page_active_span_range(&mut out, source, retained_start..index);
-            output_len += index - retained_start;
-            retained_start = index;
-            if let Some(next) = hyphenate_after_glue(
-                stores,
-                diagnostic_effects,
-                source,
-                index,
-                (language, left, right),
-                &mut out,
-                &mut out_segments,
-                &mut generated_word,
-                &mut output_len,
-                fuel,
-                projection,
-            )? {
-                index = next;
-                retained_start = next;
-            }
+        if let Some(tail) = stores
+            .page_node_span_tail_chunk(source)
+            .expect("hyphenation source remains admitted")
+        {
+            walk.visit_chunk_prefix(stores, source, tail, diagnostic_effects)?;
         }
-    }
+        (walk.retained_start, walk.language, walk.left, walk.right)
+    };
     if retained_start < source.len() {
         stores.append_page_active_span_range(&mut out, source, retained_start..source.len());
     }
@@ -416,22 +531,19 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
 }
 
 #[allow(clippy::too_many_arguments)] // Hyphenation traversal keeps cursor, fuel, and projection state independent.
-fn hyphenate_after_glue<G>(
+fn hyphenate_candidate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::page_node_arena::PageListSpan,
     start: usize,
-    context: (u8, usize, usize),
+    candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &mut Vec<tex_state::node_arena::PageListId>,
     generated_word: &mut Vec<Node>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-) -> Result<Option<usize>, ExecError> {
-    let Some(candidate) = find_hyphenation_candidate(stores, source, start, context) else {
-        return Ok(None);
-    };
+) -> Result<usize, ExecError> {
     let HyphenationCandidate {
         word_start,
         end: index,
@@ -446,7 +558,7 @@ fn hyphenate_after_glue<G>(
     if positions.is_empty() {
         stores.append_page_active_span_range(out, source, start..index);
         *output_len += index - start;
-        return Ok(Some(index));
+        return Ok(index);
     }
 
     stores.append_page_active_span_range(out, source, start..word_start);
@@ -506,7 +618,7 @@ fn hyphenate_after_glue<G>(
         stores.append_page_active_span_range(out, source, index - 1..index);
         *output_len += 1;
     }
-    Ok(Some(index))
+    Ok(index)
 }
 
 struct HyphenationCandidate {
@@ -1666,6 +1778,96 @@ mod tests {
                     candidate.forward_chunk_crossings,
                     positional.index_resolutions,
                     positional.index_predecessor_steps,
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn outer_hyphenation_walk_reduces_indexed_reads_to_output_block_work() {
+        fn delta(
+            after: tex_state::node_arena::NodeTraversalCounters,
+            before: tex_state::node_arena::NodeTraversalCounters,
+        ) -> tex_state::node_arena::NodeTraversalCounters {
+            tex_state::node_arena::NodeTraversalCounters {
+                index_resolutions: after
+                    .index_resolutions
+                    .saturating_sub(before.index_resolutions),
+                index_predecessor_steps: after
+                    .index_predecessor_steps
+                    .saturating_sub(before.index_predecessor_steps),
+                forward_chunk_crossings: after
+                    .forward_chunk_crossings
+                    .saturating_sub(before.forward_chunk_crossings),
+            }
+        }
+
+        for values in [1_usize, 4_096] {
+            crate::test_harness::with_nonstop_plain_universe(|universe| {
+                let mut stores = universe.command_context().expect("test state is admitted");
+                let font = stores.current_font();
+                let source = stores.publish_page_nodes(vec![character(font, 'a'); values]);
+                let span = stores
+                    .admit_page_node_span(source)
+                    .expect("test paragraph source remains live");
+                let nodes = stores
+                    .page_node_span(span)
+                    .expect("test paragraph span remains admitted");
+
+                let reference_before = nodes.testing_traversal_counters();
+                let mut reference_visits = 0;
+                nodes.for_each_range(0..nodes.len(), |_, _| reference_visits += 1);
+                let reference = delta(nodes.testing_traversal_counters(), reference_before);
+                assert_eq!(reference_visits, values);
+
+                let before = nodes.testing_traversal_counters();
+                let _ = nodes;
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut post_overrides = Vec::new();
+                let mut missing_hyphens = Vec::new();
+                let mut projection = HyphenationProjection {
+                    physical_post_overrides: &mut post_overrides,
+                    missing_hyphens: &mut missing_hyphens,
+                };
+                let mut ledger =
+                    tex_command::CommandFuelLedger::new(100_000).expect("bounded fuel");
+                let (output, context) = hyphenated_hlist_with_projections(
+                    &mut stores,
+                    &mut effects,
+                    source,
+                    ledger.fuel_mut(),
+                    &mut projection,
+                )
+                .expect("direct outer hyphenation walk");
+                let direct = delta(
+                    stores
+                        .page_node_span(span)
+                        .expect("source remains live after traversal")
+                        .testing_traversal_counters(),
+                    before,
+                );
+
+                assert_eq!(output.len(), values);
+                assert_eq!(context.language, 0);
+                assert_eq!(
+                    direct.index_resolutions, 1,
+                    "only the existing output-range traversal resolves an index"
+                );
+                assert_eq!(
+                    direct.index_predecessor_steps,
+                    reference.forward_chunk_crossings
+                );
+                assert_eq!(
+                    direct.forward_chunk_crossings,
+                    reference.forward_chunk_crossings
+                );
+                assert!(post_overrides.is_empty());
+                assert!(missing_hyphens.is_empty());
+                eprintln!(
+                    "HYPHENATION_OUTER_CHUNK_SCALE values={values} index_resolutions={} index_predecessor_steps={} forward_block_crossings={}",
+                    direct.index_resolutions,
+                    direct.index_predecessor_steps,
+                    direct.forward_chunk_crossings,
                 );
             });
         }

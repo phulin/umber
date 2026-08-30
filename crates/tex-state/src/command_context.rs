@@ -3634,6 +3634,40 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| NodeArenaError::InvalidList)
     }
 
+    /// Starts a stack-resident direct packed-chunk walk of an admitted span.
+    pub fn page_node_span_tail_chunk(
+        &self,
+        span: crate::page_node_arena::PageListSpan,
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
+        self.page_nodes
+            .span_tail_chunk(span)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    /// Follows one admitted page span's predecessor topology directly.
+    pub fn page_node_span_previous_chunk(
+        &self,
+        span: crate::page_node_arena::PageListSpan,
+        cursor: &crate::page_node_arena::PageListChunkCursor,
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
+        self.page_nodes
+            .span_previous_chunk(span, cursor)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    /// Borrows one node from an already-admitted packed chunk without a
+    /// logical-index lookup or repeated owner admission.
+    pub fn page_node_span_chunk_node<'b>(
+        &'b self,
+        span: crate::page_node_arena::PageListSpan,
+        cursor: &crate::page_node_arena::PageListChunkCursor,
+        offset: usize,
+    ) -> Result<(usize, &'b crate::node::Node), NodeArenaError> {
+        self.page_nodes
+            .span_chunk_node(span, cursor, offset)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
     pub fn page_node_sequence(
         &self,
         sequence: crate::node_arena::PageNodeSequenceId,

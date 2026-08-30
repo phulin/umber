@@ -99,9 +99,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   repeating owner or incarnation validation, allocation-free logical-order
   chunk-slice and ranged callback visitation over the sole predecessor chain,
   linear forward callbacks whose Rust-stack continuation replaces successor
-  metadata, sequential compatibility iterators that retain their owner-relative
-  cursor within each packed block, explicit cold structural audits, and reverse
-  `ChunkCursor` traversal, canonical
+  metadata, mutation-compatible coordinate-only chunk cursors whose short
+  value borrows do not survive an append, sequential compatibility iterators
+  that retain their owner-relative cursor within each packed block, explicit
+  cold structural audits, and reverse `ChunkCursor` traversal, canonical
   nonrecursive range lists, partial operation rollback, whole-chunk retained
   marks, exclusive batch promotion, and exactly accepted-versus-forked
   settlement.
@@ -260,7 +261,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime
   page-material facade pairing the canonical coarse-arena coordinate with its
   checked traversal span and demand-maintained semantic identity scalar,
-  including span-native zero-allocation compose/slice, zero-hash disabled
+  including span-native zero-allocation compose/slice, coordinate-only direct
+  chunk continuation across append-interleaved walks, zero-hash disabled
   execution, identity-preserving split/compose/fork settlement, and exact
   recursive cross-region semantic copy used only by lifetime transitions. Its
   payload is explicitly `Node<PageListId>` so the replacement topology cannot
