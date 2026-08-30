@@ -400,6 +400,22 @@ impl<G> Default for ColdOperationSlot<G> {
     }
 }
 
+impl<G> ColdOperationSlot<G> {
+    /// Moves a completed leaf into the slot at a genuine suspension handoff.
+    ///
+    /// Ordinary scanner helpers construct directly through `write_cold_scan!`;
+    /// this by-value boundary remains only where the operation itself must
+    /// move into the unavailable-resource owner.
+    #[inline(always)]
+    pub(super) fn write(&mut self, operation: ColdOperation<G>) {
+        assert!(
+            self.operation.is_none(),
+            "one operation frame owns one cold leaf"
+        );
+        self.operation = Some(operation);
+    }
+}
+
 pub(super) struct OperationSlots<'operation, G> {
     pub(super) frame: &'operation mut OperationFrame<G>,
     pub(super) cold: &'operation mut ColdOperationSlot<G>,
@@ -750,10 +766,7 @@ impl<G> OperationFrame<G> {
             self.payload.is_none(),
             "one operation frame owns one completed payload"
         );
-        assert!(
-            cold.operation.replace(operation).is_none(),
-            "one operation frame owns one cold leaf"
-        );
+        cold.write(operation);
         self.payload = Some(OperationPayload::Cold);
     }
 

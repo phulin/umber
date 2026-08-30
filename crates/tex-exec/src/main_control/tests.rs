@@ -6359,6 +6359,76 @@ fn operation_frame_phase_evidence(
     )
 }
 
+#[cfg(feature = "profiling")]
+fn resident_cold_scan_evidence(
+    repetitions: usize,
+) -> (
+    tex_state::measurement::HotCoreAllocationMeasurement,
+    usize,
+    usize,
+    usize,
+    u64,
+) {
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let mut scalar_transitions = 0;
+    let mut address_changes = 0;
+    let mut overlapping_leaf_moves = 0;
+    let mut checksum = 0_u64;
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        let mut frame = OperationFrame::<()>::default();
+        let mut cold = ColdOperationSlot::<()>::default();
+        let stationary_frame = std::ptr::addr_of!(frame);
+        let stationary_leaf = std::ptr::addr_of!(cold);
+        for index in 0..repetitions {
+            let index = std::hint::black_box(index + 1);
+            write_cold_scan!(
+                cold,
+                ColdOperation::Count {
+                    index: (index & 0xff) as u16,
+                    value: index as i32,
+                    global: index & 1 != 0,
+                }
+            );
+            frame.mark_resident_cold(&cold);
+            scalar_transitions += 1;
+            address_changes += usize::from(std::ptr::addr_of!(cold) != stationary_leaf);
+            address_changes += usize::from(std::ptr::addr_of!(frame) != stationary_frame);
+            let ColdOperation::Count {
+                index,
+                value,
+                global,
+            } = frame.unavailable(&cold)
+            else {
+                unreachable!("resident cold scan installs its exact typed leaf")
+            };
+            checksum = checksum.wrapping_add(
+                (*index as u64).rotate_left(7)
+                    ^ (*value as u64).rotate_left(19)
+                    ^ u64::from(*global),
+            );
+            frame.clear_cold(&mut cold);
+            scalar_transitions += 1;
+            address_changes += usize::from(std::ptr::addr_of!(cold) != stationary_leaf);
+            address_changes += usize::from(std::ptr::addr_of!(frame) != stationary_frame);
+            overlapping_leaf_moves += 0;
+        }
+        frame.assert_empty();
+    }
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    (
+        tex_state::measurement::HotCoreAllocationMeasurement {
+            calls: after.calls - before.calls,
+            requested_bytes: after.requested_bytes - before.requested_bytes,
+        },
+        scalar_transitions,
+        address_changes,
+        overlapping_leaf_moves,
+        std::hint::black_box(checksum),
+    )
+}
+
 #[test]
 fn operation_frame_hot_and_cold_layouts_have_separate_lifetimes() {
     assert_eq!(std::mem::size_of::<hot_apply::HotOperation<()>>(), 32);
@@ -6389,6 +6459,27 @@ fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar(
     assert_eq!(many_copies, 0);
     assert_eq!(one_overlapping_moves, 0);
     assert_eq!(many_overlapping_moves, 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_cold_scan_cycles_are_allocation_free_and_stationary() {
+    let (one_allocations, one_transitions, one_address_changes, one_moves, one_checksum) =
+        resident_cold_scan_evidence(1);
+    let (many_allocations, many_transitions, many_address_changes, many_moves, many_checksum) =
+        resident_cold_scan_evidence(4_096);
+
+    assert_eq!(one_allocations.calls, 0);
+    assert_eq!(one_allocations.requested_bytes, 0);
+    assert_eq!(many_allocations.calls, 0);
+    assert_eq!(many_allocations.requested_bytes, 0);
+    assert_eq!(one_transitions, 2);
+    assert_eq!(many_transitions, 8_192);
+    assert_eq!(one_address_changes, 0);
+    assert_eq!(many_address_changes, 0);
+    assert_eq!(one_moves, 0);
+    assert_eq!(many_moves, 0);
+    assert_ne!(one_checksum, many_checksum);
 }
 
 #[test]

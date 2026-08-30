@@ -573,6 +573,14 @@ scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.
 This keeps exactly the current generation alive, not one owner per token.
 
+Cold operand helpers use the same destination rule before any suspension:
+scalar, structured, alignment, recovery, arithmetic, and leader scanners
+borrow the adjacent cold slot, construct their terminal leaf there, and return
+only `Result<()>` or a compact boolean. The uncommon enum therefore remains at
+one address from completion through preparation and application; a by-value
+`Result<ColdOperation>` carrier is absent. Only a genuine resource suspension
+moves the occupied slot with its singular operation frame.
+
 The physical executor split follows those same ownership transitions without
 splitting the interpreter. `main_control/operation_frame.rs` owns the resident
 frame, adjacent cold slot, and genuine suspension carriers;

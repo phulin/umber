@@ -585,8 +585,9 @@ pub(super) fn scan_replay_step<G>(
                 ))
             }
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
-                let operation = scan_alignment_peek(processor, alignment, after_noalign)?;
-                Ok(retain_cold_operation(frame, cold, operation))
+                scan_alignment_peek(cold, processor, alignment, after_noalign)?;
+                frame.mark_resident_cold(cold);
+                Ok(ScannedOperation::Cold)
             }
             AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(
                 processor,
@@ -680,10 +681,11 @@ pub(super) fn alignment_preamble<G>(
 /// `init_col`: `\\noalign` consumes its opening brace directly, whereas an
 /// ordinary next-cell command is backed up for template installation.
 pub(super) fn scan_alignment_peek<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     _after_noalign: bool,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     processor
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
@@ -699,11 +701,11 @@ pub(super) fn scan_alignment_peek<G>(
             processor
                 .scan_alignment_noalign_opening()
                 .map_err(command_error)?;
-            Ok(ColdOperation::<G>::BeginNoAlign { alignment })
+            complete_cold_scan!(cold, ColdOperation::<G>::BeginNoAlign { alignment })
         }
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::<G>::AlignPeekRestart { alignment })
+            complete_cold_scan!(cold, ColdOperation::<G>::AlignPeekRestart { alignment })
         }
         ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::EndGroup,
@@ -713,26 +715,35 @@ pub(super) fn scan_alignment_peek<G>(
             let current_line = command
                 .direct_source_line_number()
                 .unwrap_or_else(|| processor.current_file_line_number());
-            Ok(ColdOperation::<G>::AlignmentFinish {
-                alignment,
-                current_line,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::<G>::AlignmentFinish {
+                    alignment,
+                    current_line,
+                }
+            )
         }
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::<G>::AlignmentPeekCell {
-                alignment,
-                omit: true,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::<G>::AlignmentPeekCell {
+                    alignment,
+                    omit: true,
+                }
+            )
         }
         _ => {
             processor
                 .back_alignment_lookahead(lookahead)
                 .map_err(command_error)?;
-            Ok(ColdOperation::<G>::AlignmentPeekCell {
-                alignment,
-                omit: false,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::<G>::AlignmentPeekCell {
+                    alignment,
+                    omit: false,
+                }
+            )
         }
     }
 }
@@ -939,8 +950,9 @@ pub(super) fn scan_alignment_delivery_step<G>(
                 if boxes.recovery_simple_group_open
                     || innermost_group == Some(GroupKind::SemiSimple)
                 {
-                    let operation = scan_off_save(processor, command, innermost_group)?;
-                    return Ok(retain_cold_operation(frame, cold, operation));
+                    scan_off_save(cold, processor, command, innermost_group)?;
+                    frame.mark_resident_cold(cold);
+                    return Ok(ScannedOperation::Cold);
                 }
                 return Ok(retain_cold_operation(
                     frame,
@@ -972,15 +984,17 @@ pub(super) fn scan_alignment_delivery_step<G>(
             let event = tex_command::AlignmentDeliveryEvent::EndTemplate(
                 destination.expect("alignment status initializes destination"),
             );
-            let operation = scan_alignment_delivery_event(processor, alignment, event)?;
-            Ok(retain_cold_operation(frame, cold, operation))
+            scan_alignment_delivery_event(cold, processor, alignment, event)?;
+            frame.mark_resident_cold(cold);
+            Ok(ScannedOperation::Cold)
         }
         tex_command::DeliveryStatus::AlignmentClosingBrace => {
             let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
                 destination.expect("alignment status initializes destination"),
             );
-            let operation = scan_alignment_delivery_event(processor, alignment, event)?;
-            Ok(retain_cold_operation(frame, cold, operation))
+            scan_alignment_delivery_event(cold, processor, alignment, event)?;
+            frame.mark_resident_cold(cold);
+            Ok(ScannedOperation::Cold)
         }
         tex_command::DeliveryStatus::PendingExpanded => {
             unreachable!("alignment delivery commits terminal observations")
@@ -997,10 +1011,11 @@ pub(super) fn scan_alignment_delivery_step<G>(
 /// that nested fetch, so the split executor must receive the same typed event
 /// instead of dispatching the resulting frozen `\endv` as ordinary content.
 pub(super) fn scan_alignment_delivery_event<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     event: tex_command::AlignmentDeliveryEvent<G>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     match event {
         tex_command::AlignmentDeliveryEvent::EndTemplate(delimiter) => {
             processor
@@ -1009,7 +1024,7 @@ pub(super) fn scan_alignment_delivery_event<G>(
                     tex_command::AlignmentDeliveryEvent::EndTemplate(delimiter),
                 )
                 .map_err(command_error)?;
-            Ok(ColdOperation::<G>::AlignmentTemplateEntered)
+            complete_cold_scan!(cold, ColdOperation::<G>::AlignmentTemplateEntered)
         }
         tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
             // TeX82 §1132 selects this executor-owned align_group branch. Raw
@@ -1018,7 +1033,7 @@ pub(super) fn scan_alignment_delivery_event<G>(
             processor
                 .recover_alignment_closing_brace(event)
                 .map_err(command_error)?;
-            Ok(ColdOperation::<G>::MissingAlignmentCr)
+            complete_cold_scan!(cold, ColdOperation::<G>::MissingAlignmentCr)
         }
     }
 }
@@ -1283,7 +1298,9 @@ pub(super) fn scan_preflight_command<G>(
                 },
                 _ => unreachable!("only immediate PDF retries reach this delivery"),
             };
-            Ok(retain_cold_operation(command, cold, operation))
+            write_cold_scan!(cold, operation);
+            command.mark_resident_cold(cold);
+            Ok(ScannedOperation::Cold)
         }
     }
 }
@@ -1396,13 +1413,14 @@ pub(super) fn execution_error_needs_command_retry(error: &ExecError) -> bool {
 }
 
 pub(super) fn scan_count_register_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mut index: Option<u16>,
     global: bool,
     phase: RegisterAssignmentScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     if phase == RegisterAssignmentScanPhase::RegisterIndex {
         let scalar_phase = PendingOperationScanPhase::Count {
             index,
@@ -1434,21 +1452,25 @@ pub(super) fn scan_count_register_assignment<G>(
     };
     let status = processor.scan_integer_into(scalar);
     let value = take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-    Ok(ColdOperation::Count {
-        index: index.expect("count assignment retains its completed register index"),
-        value,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::Count {
+            index: index.expect("count assignment retains its completed register index"),
+            value,
+            global,
+        }
+    )
 }
 
 pub(super) fn scan_dimension_register_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mut index: Option<u16>,
     global: bool,
     phase: RegisterAssignmentScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     if phase == RegisterAssignmentScanPhase::RegisterIndex {
         let scalar_phase = PendingOperationScanPhase::Dimension {
             index,
@@ -1481,14 +1503,19 @@ pub(super) fn scan_dimension_register_assignment<G>(
     let status = processor.scan_dimension_into(scalar);
     let value =
         take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension).value;
-    Ok(ColdOperation::Dimen {
-        index: index.expect("dimension assignment retains its completed register index"),
-        value,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::Dimen {
+            index: index.expect("dimension assignment retains its completed register index"),
+            value,
+            global,
+        }
+    )
 }
 
+#[allow(clippy::too_many_arguments)] // carries resident cold/scalar suspension destinations
 pub(super) fn scan_glue_register_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mut index: Option<u16>,
@@ -1496,7 +1523,7 @@ pub(super) fn scan_glue_register_assignment<G>(
     mu: bool,
     phase: RegisterAssignmentScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     if phase == RegisterAssignmentScanPhase::RegisterIndex {
         let scalar_phase = PendingOperationScanPhase::Glue {
             index,
@@ -1535,29 +1562,37 @@ pub(super) fn scan_glue_register_assignment<G>(
     let source_register = processor.scanned_glue_register();
     let index = index.expect("glue assignment retains its completed register index");
     if mu {
-        Ok(ColdOperation::Muskip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant: false,
-            reassigning: false,
-            global,
-        })
+        complete_cold_scan!(
+            cold,
+            ColdOperation::Muskip {
+                index,
+                value,
+                source_identity,
+                source_register,
+                redundant: false,
+                reassigning: false,
+                global,
+            }
+        )
     } else {
-        Ok(ColdOperation::Skip {
-            index,
-            value,
-            source_identity,
-            source_register,
-            redundant: false,
-            reassigning: false,
-            global,
-        })
+        complete_cold_scan!(
+            cold,
+            ColdOperation::Skip {
+                index,
+                value,
+                source_identity,
+                source_register,
+                redundant: false,
+                reassigning: false,
+                global,
+            }
+        )
     }
 }
 
+#[allow(clippy::too_many_arguments)] // carries resident cold/scalar suspension destinations
 pub(super) fn scan_box_dimension_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mut index: Option<u16>,
@@ -1565,7 +1600,7 @@ pub(super) fn scan_box_dimension_assignment<G>(
     global: bool,
     phase: RegisterAssignmentScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     if phase == RegisterAssignmentScanPhase::RegisterIndex {
         let scalar_phase = PendingOperationScanPhase::BoxDimension {
             index,
@@ -1601,12 +1636,15 @@ pub(super) fn scan_box_dimension_assignment<G>(
     let status = processor.scan_dimension_into(scalar);
     let value =
         take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension).value;
-    Ok(ColdOperation::BoxDimensionAssignment {
-        index: index.expect("box-dimension assignment retains its completed register index"),
-        dimension,
-        value,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::BoxDimensionAssignment {
+            index: index.expect("box-dimension assignment retains its completed register index"),
+            dimension,
+            value,
+            global,
+        }
+    )
 }
 
 /// Retains a non-scalar structured scanner child at its typed operation
@@ -1634,7 +1672,9 @@ pub(super) fn retain_operation_child<G, T>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // carries resident cold/scalar suspension destinations
 pub(super) fn scan_unary_scalar_operation<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     meaning: Meaning,
@@ -1642,7 +1682,7 @@ pub(super) fn scan_unary_scalar_operation<G>(
     origin: tex_state::token::OriginId,
     phase: UnaryOperationScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let has_optional_equals = matches!(
         meaning,
         Meaning::UnexpandablePrimitive(
@@ -1676,130 +1716,146 @@ pub(super) fn scan_unary_scalar_operation<G>(
             let status = processor.scan_glue_into(false, scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_glue).value;
-            Ok(ColdOperation::HorizontalSkip { value })
+            complete_cold_scan!(cold, ColdOperation::HorizontalSkip { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip) => {
             let status = processor.scan_glue_into(false, scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_glue).value;
-            Ok(ColdOperation::VerticalSkip { value })
+            complete_cold_scan!(cold, ColdOperation::VerticalSkip { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
             let status = processor.scan_dimension_into(scalar);
             let amount =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension)
                     .value;
-            Ok(ColdOperation::Kern { amount })
+            complete_cold_scan!(cold, ColdOperation::Kern { amount })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
             let status = processor.scan_dimension_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension)
                     .value;
-            Ok(ColdOperation::PrevDepth { value })
+            complete_cold_scan!(cold, ColdOperation::PrevDepth { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
             let status = processor.scan_integer_into(scalar);
             let amount =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::Penalty { amount })
+            complete_cold_scan!(cold, ColdOperation::Penalty { amount })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRefXImage) => {
             let status = processor.scan_integer_into(scalar);
             let object =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::PdfRefXImage { object })
+            complete_cold_scan!(cold, ColdOperation::PdfRefXImage { object })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
             let status = processor.scan_integer_into(scalar);
             let seed =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::PdfSetRandomSeed {
-                seed: seed.saturating_abs(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfSetRandomSeed {
+                    seed: seed.saturating_abs(),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetLanguage) => {
             let status = processor.scan_integer_into(scalar);
             let language =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::SetLanguage { language })
+            complete_cold_scan!(cold, ColdOperation::SetLanguage { language })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::SetInteractionModeValue {
-                value,
-                context: processor.diagnostic_context_coordinate(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::SetInteractionModeValue {
+                    value,
+                    context: processor.diagnostic_context_coordinate(),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::SpaceFactor { value })
+            complete_cold_scan!(cold, ColdOperation::SpaceFactor { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::PrevGraf { value })
+            complete_cold_scan!(cold, ColdOperation::PrevGraf { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::CharacterCode {
-                value,
-                origin,
-                suppress_left_boundary: false,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::CharacterCode {
+                    value,
+                    origin,
+                    suppress_left_boundary: false,
+                }
+            )
         }
         Meaning::IntParam(index) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::IntParam {
-                index,
-                value,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::IntParam {
+                    index,
+                    value,
+                    global,
+                }
+            )
         }
         Meaning::DimenParam(index) => {
             let status = processor.scan_dimension_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension)
                     .value;
-            Ok(ColdOperation::DimenParam {
-                index,
-                value,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DimenParam {
+                    index,
+                    value,
+                    global,
+                }
+            )
         }
         Meaning::PageDimension(dimension) => {
             let status = processor.scan_dimension_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_dimension)
                     .value;
-            Ok(ColdOperation::PageDimension { dimension, value })
+            complete_cold_scan!(cold, ColdOperation::PageDimension { dimension, value })
         }
         Meaning::PageInteger(integer) => {
             let status = processor.scan_integer_into(scalar);
             let value =
                 take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value;
-            Ok(ColdOperation::PageInteger { integer, value })
+            complete_cold_scan!(cold, ColdOperation::PageInteger { integer, value })
         }
         _ => unreachable!("unary scalar descriptor restricts command meanings"),
     }
 }
 
 pub(super) fn scan_paragraph_shape_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
     phase: ParagraphShapeScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, ParagraphShapeScanPhase::OptionalEquals) {
         let scalar_phase = PendingOperationScanPhase::ParagraphShape {
             global,
@@ -1877,17 +1933,18 @@ pub(super) fn scan_paragraph_shape_assignment<G>(
         lines.push(ParagraphShapeLine { indent, width });
         remaining -= 1;
     }
-    Ok(ColdOperation::ParagraphShape { lines, global })
+    complete_cold_scan!(cold, ColdOperation::ParagraphShape { lines, global })
 }
 
 pub(super) fn scan_penalty_array_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     kind: tex_state::PenaltyArrayKind,
     global: bool,
     phase: PenaltyArrayScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, PenaltyArrayScanPhase::OptionalEquals) {
         let scalar_phase = PendingOperationScanPhase::PenaltyArray {
             kind,
@@ -1945,19 +2002,23 @@ pub(super) fn scan_penalty_array_assignment<G>(
         values.push(value);
         remaining -= 1;
     }
-    Ok(ColdOperation::PenaltyArray {
-        kind,
-        values,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::PenaltyArray {
+            kind,
+            values,
+            global,
+        }
+    )
 }
 
 pub(super) fn scan_font_dimen_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     phase: FontDimenScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, FontDimenScanPhase::Number) {
         let status = processor.scan_integer_into(scalar);
         let number = take_operation_scalar!(
@@ -2038,21 +2099,25 @@ pub(super) fn scan_font_dimen_assignment<G>(
         suspended,
         take_dimension
     );
-    Ok(ColdOperation::FontDimen {
-        font,
-        number,
-        value: value.value,
-        recovery_context,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::FontDimen {
+            font,
+            number,
+            value: value.value,
+            recovery_context,
+        }
+    )
 }
 
 pub(super) fn scan_font_integer_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     phase: FontIntegerScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, FontIntegerScanPhase::Font) {
         let status = processor.scan_font_selector_into(scalar);
         let font = take_operation_scalar!(
@@ -2101,21 +2166,25 @@ pub(super) fn scan_font_integer_assignment<G>(
         take_integer
     )
     .value;
-    Ok(ColdOperation::FontInteger {
-        font,
-        skew: primitive == UnexpandablePrimitive::SkewChar,
-        value,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::FontInteger {
+            font,
+            skew: primitive == UnexpandablePrimitive::SkewChar,
+            value,
+        }
+    )
 }
 
 pub(super) fn scan_code_table_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     global: bool,
     phase: CodeTableScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, CodeTableScanPhase::Character) {
         let status =
             processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
@@ -2171,21 +2240,25 @@ pub(super) fn scan_code_table_assignment<G>(
         take_integer
     )
     .value;
-    Ok(ColdOperation::CodeTable {
-        primitive,
-        character,
-        value,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::CodeTable {
+            primitive,
+            character,
+            value,
+            global,
+        }
+    )
 }
 
 pub(super) fn scan_pdf_font_code_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     phase: PdfFontCodeScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, PdfFontCodeScanPhase::Font) {
         let status = processor.scan_font_selector_into(scalar);
         let font = take_operation_scalar!(
@@ -2257,20 +2330,24 @@ pub(super) fn scan_pdf_font_code_assignment<G>(
         take_integer
     )
     .value;
-    Ok(ColdOperation::PdfFontCode {
-        table: pdf_font_code_table(primitive),
-        font,
-        character,
-        value,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::PdfFontCode {
+            table: pdf_font_code_table(primitive),
+            font,
+            character,
+            value,
+        }
+    )
 }
 
 pub(super) fn scan_pdf_font_expand_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     phase: PdfFontExpandScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, PdfFontExpandScanPhase::Font) {
         let status = processor.scan_font_selector_into(scalar);
         let font = take_operation_scalar!(
@@ -2389,15 +2466,16 @@ pub(super) fn scan_pdf_font_expand_assignment<G>(
     )
     .value;
     let spec = tex_typeset::expansion::FontExpansionSpec::new(stretch, shrink, step, auto_expand)?;
-    Ok(ColdOperation::PdfFontExpand { font, spec })
+    complete_cold_scan!(cold, ColdOperation::PdfFontExpand { font, spec })
 }
 
 pub(super) fn scan_font_only_operation<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     meaning: Meaning,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let status = processor.scan_font_selector_into(scalar);
     let font = take_operation_scalar!(
         scalar,
@@ -2408,18 +2486,19 @@ pub(super) fn scan_font_only_operation<G>(
     );
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
-            Ok(ColdOperation::PdfNoLigatures { font })
+            complete_cold_scan!(cold, ColdOperation::PdfNoLigatures { font })
         }
         _ => unreachable!("font-only descriptor restricts command meanings"),
     }
 }
 
 pub(super) fn scan_open_out_operation<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     phase: OpenOutScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, OpenOutScanPhase::Stream) {
         let status =
             processor.scan_restricted_integer_into(RestrictedIntegerClass::FourBit, scalar);
@@ -2460,18 +2539,22 @@ pub(super) fn scan_open_out_operation<G>(
         suspended,
         take_file_name
     );
-    Ok(ColdOperation::DeferredOpenOut {
-        stream,
-        file_name: file_name.packed(),
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::DeferredOpenOut {
+            stream,
+            file_name: file_name.packed(),
+        }
+    )
 }
 
 pub(super) fn scan_marks_operation<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     phase: MarksScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, MarksScanPhase::Class) {
         let status = processor.scan_extended_register_index_into(scalar);
         let class = take_operation_scalar!(
@@ -2495,20 +2578,24 @@ pub(super) fn scan_marks_operation<G>(
         PendingOperationScanPhase::Marks(MarksScanPhase::Text { class }),
         suspended,
     )?;
-    Ok(ColdOperation::Mark {
-        class,
-        tokens: text.tokens.into(),
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::Mark {
+            class,
+            tokens: text.tokens.into(),
+        }
+    )
 }
 
 pub(super) fn scan_math_family_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     size: tex_command::MathFamilySize,
     global: bool,
     phase: MathFamilyScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let phase = if matches!(phase, MathFamilyScanPhase::Family) {
         let scan = processor.scan_math_family_retained(size);
         let family = retain_operation_child(
@@ -2558,11 +2645,14 @@ pub(super) fn scan_math_family_assignment<G>(
         suspended,
         take_font
     );
-    Ok(ColdOperation::MathFamily {
-        family,
-        font,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::MathFamily {
+            family,
+            font,
+            global,
+        }
+    )
 }
 
 pub(super) fn resume_pending_operation_scan<G>(
@@ -2583,95 +2673,106 @@ pub(super) fn resume_pending_operation_scan<G>(
         return Ok(retain_hot_operation(frame, operation));
     }
     let scalar = &mut frame.scalar;
-    let operation = match pending {
+    match pending {
         PendingOperationScanPhase::Count {
             index,
             global,
             phase,
-        } => scan_count_register_assignment(processor, scalar, index, global, phase, suspended),
+        } => {
+            scan_count_register_assignment(cold, processor, scalar, index, global, phase, suspended)
+        }
         PendingOperationScanPhase::Dimension {
             index,
             global,
             phase,
-        } => scan_dimension_register_assignment(processor, scalar, index, global, phase, suspended),
+        } => scan_dimension_register_assignment(
+            cold, processor, scalar, index, global, phase, suspended,
+        ),
         PendingOperationScanPhase::BoxDimension {
             index,
             dimension,
             global,
             phase,
         } => scan_box_dimension_assignment(
-            processor, scalar, index, dimension, global, phase, suspended,
+            cold, processor, scalar, index, dimension, global, phase, suspended,
         ),
         PendingOperationScanPhase::Glue {
             index,
             global,
             mu,
             phase,
-        } => scan_glue_register_assignment(processor, scalar, index, global, mu, phase, suspended),
+        } => scan_glue_register_assignment(
+            cold, processor, scalar, index, global, mu, phase, suspended,
+        ),
         PendingOperationScanPhase::Unary {
             meaning,
             global,
             origin,
             phase,
         } => scan_unary_scalar_operation(
-            processor, scalar, meaning, global, origin, phase, suspended,
+            cold, processor, scalar, meaning, global, origin, phase, suspended,
         ),
         PendingOperationScanPhase::ParagraphShape { global, phase } => {
-            scan_paragraph_shape_assignment(processor, scalar, global, phase, suspended)
+            scan_paragraph_shape_assignment(cold, processor, scalar, global, phase, suspended)
         }
         PendingOperationScanPhase::PenaltyArray {
             kind,
             global,
             phase,
-        } => scan_penalty_array_assignment(processor, scalar, kind, global, phase, suspended),
+        } => scan_penalty_array_assignment(cold, processor, scalar, kind, global, phase, suspended),
         PendingOperationScanPhase::FontDimen(phase) => {
-            scan_font_dimen_assignment(processor, scalar, phase, suspended)
+            scan_font_dimen_assignment(cold, processor, scalar, phase, suspended)
         }
         PendingOperationScanPhase::FontInteger { primitive, phase } => {
-            scan_font_integer_assignment(processor, scalar, primitive, phase, suspended)
+            scan_font_integer_assignment(cold, processor, scalar, primitive, phase, suspended)
         }
         PendingOperationScanPhase::CodeTable {
             primitive,
             global,
             phase,
-        } => scan_code_table_assignment(processor, scalar, primitive, global, phase, suspended),
+        } => {
+            scan_code_table_assignment(cold, processor, scalar, primitive, global, phase, suspended)
+        }
         PendingOperationScanPhase::PdfFontCode { primitive, phase } => {
-            scan_pdf_font_code_assignment(processor, scalar, primitive, phase, suspended)
+            scan_pdf_font_code_assignment(cold, processor, scalar, primitive, phase, suspended)
         }
         PendingOperationScanPhase::PdfFontExpand(phase) => {
-            scan_pdf_font_expand_assignment(processor, scalar, phase, suspended)
+            scan_pdf_font_expand_assignment(cold, processor, scalar, phase, suspended)
         }
         PendingOperationScanPhase::FontOnly { meaning } => {
-            scan_font_only_operation(processor, scalar, meaning, suspended)
+            scan_font_only_operation(cold, processor, scalar, meaning, suspended)
         }
         PendingOperationScanPhase::OpenOut(phase) => {
-            scan_open_out_operation(processor, scalar, phase, suspended)
+            scan_open_out_operation(cold, processor, scalar, phase, suspended)
         }
         PendingOperationScanPhase::Marks(phase) => {
-            scan_marks_operation(processor, scalar, phase, suspended)
+            scan_marks_operation(cold, processor, scalar, phase, suspended)
         }
         PendingOperationScanPhase::CatCode { .. } => unreachable!(),
         PendingOperationScanPhase::MathFamily {
             size,
             global,
             phase,
-        } => scan_math_family_assignment(processor, scalar, size, global, phase, suspended),
+        } => scan_math_family_assignment(cold, processor, scalar, size, global, phase, suspended),
         PendingOperationScanPhase::Arithmetic {
             primitive,
             global,
             phase,
-        } => scan_arithmetic_assignment(processor, scalar, primitive, global, phase, suspended),
+        } => {
+            scan_arithmetic_assignment(cold, processor, scalar, primitive, global, phase, suspended)
+        }
         PendingOperationScanPhase::LeaderGlue { mode, result } => {
-            scan_retained_leader_glue(processor, scalar, mode, result, suspended)
+            scan_retained_leader_glue(cold, processor, scalar, mode, result, suspended)
         }
         PendingOperationScanPhase::LeaderPayload { primitive, mode } => {
-            scan_leaders_step(processor, scalar, primitive, mode, suspended)
+            scan_leaders_step(cold, processor, scalar, primitive, mode, suspended)
         }
         PendingOperationScanPhase::LeaderCommand { mode, result } => {
-            scan_retained_leader_command(processor, scalar, mode, result, suspended)
+            scan_retained_leader_command(cold, processor, scalar, mode, result, suspended)
         }
     }?;
-    Ok(retain_cold_operation(frame, cold, operation))
+    frame.mark_resident_cold(cold);
+    Ok(ScannedOperation::Cold)
 }
 
 /// Dispatches one already-fetched command through TeX82 §1030's `reswitch:`
@@ -2827,6 +2928,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
         };
         let mut suspended = None;
         let scanned = scan_leader_glue_command(
+            cold,
             processor,
             &mut command.scalar,
             &mut command.command,
@@ -2843,14 +2945,15 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                 .expect("a suspended leader glue scan retains its exact child capability");
             command.retain_operation_scan(processor.delivery_cursor(), phase, child);
         }
-        let Some(operation) = scanned? else {
+        if !scanned? {
             return Ok(retain_cold_operation(
                 command,
                 cold,
                 ColdOperation::<G>::LeadersNotFollowedByGlue,
             ));
-        };
-        return Ok(retain_cold_operation(command, cold, operation));
+        }
+        command.mark_resident_cold(cold);
+        return Ok(ScannedOperation::Cold);
     }
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
@@ -3009,9 +3112,9 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                                     .take()
                                     .expect("alignment status initializes destination"),
                             );
-                            let operation =
-                                scan_alignment_delivery_event(processor, alignment, event)?;
-                            return Ok(retain_cold_operation(command, cold, operation));
+                            scan_alignment_delivery_event(cold, processor, alignment, event)?;
+                            command.mark_resident_cold(cold);
+                            return Ok(ScannedOperation::Cold);
                         }
                         tex_command::DeliveryStatus::AlignmentClosingBrace => {
                             let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
@@ -3019,9 +3122,9 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                                     .take()
                                     .expect("alignment status initializes destination"),
                             );
-                            let operation =
-                                scan_alignment_delivery_event(processor, alignment, event)?;
-                            return Ok(retain_cold_operation(command, cold, operation));
+                            scan_alignment_delivery_event(cold, processor, alignment, event)?;
+                            command.mark_resident_cold(cold);
+                            return Ok(ScannedOperation::Cold);
                         }
                         tex_command::DeliveryStatus::Command
                             if matches!(
@@ -3259,20 +3362,26 @@ pub(super) fn prepare_command_trace<G>(
 }
 
 pub(super) fn scan_leaders_step<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     mode: Mode,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let kind = crate::box_runtime::leader_glue_kind(primitive);
     *suspended = Some(PendingOperationScanPhase::LeaderPayload { primitive, mode });
     let payload = processor.scan_leader_payload().map_err(command_error)?;
     *suspended = None;
     match payload {
-        ScannedLeaderPayload::Missing => Ok(ColdOperation::<G>::MissingLeaderPayload),
+        ScannedLeaderPayload::Missing => {
+            complete_cold_scan!(cold, ColdOperation::<G>::MissingLeaderPayload)
+        }
         ScannedLeaderPayload::Construction(construction) => {
-            Ok(ColdOperation::<G>::BeginLeaderBox { construction, kind })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::<G>::BeginLeaderBox { construction, kind }
+            )
         }
         ScannedLeaderPayload::Rule(rule) => {
             let payload = LeaderPayload::Rule {
@@ -3293,18 +3402,18 @@ pub(super) fn scan_leaders_step<G>(
             }
             let mut glue_command = destination;
             *suspended = None;
-            let Some(operation) = scan_leader_glue_command(
+            if !scan_leader_glue_command(
+                cold,
                 processor,
                 scalar,
                 &mut glue_command,
                 mode,
                 result,
                 suspended,
-            )?
-            else {
-                return Ok(ColdOperation::<G>::LeadersNotFollowedByGlue);
-            };
-            Ok(operation)
+            )? {
+                return complete_cold_scan!(cold, ColdOperation::<G>::LeadersNotFollowedByGlue);
+            }
+            Ok(())
         }
         // Register payloads must retain their destructive/copy ownership at
         // replay time.  Keep the command scanner's completed glue read, then
@@ -3323,29 +3432,30 @@ pub(super) fn scan_leaders_step<G>(
             }
             let mut glue_command = destination;
             *suspended = None;
-            let Some(operation) = scan_leader_glue_command(
+            if !scan_leader_glue_command(
+                cold,
                 processor,
                 scalar,
                 &mut glue_command,
                 mode,
                 result,
                 suspended,
-            )?
-            else {
-                return Ok(ColdOperation::<G>::LeadersNotFollowedByGlue);
-            };
-            Ok(operation)
+            )? {
+                return complete_cold_scan!(cold, ColdOperation::<G>::LeadersNotFollowedByGlue);
+            }
+            Ok(())
         }
     }
 }
 
 pub(super) fn scan_retained_leader_command<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mode: Mode,
     result: LeaderGlueResult,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     *suspended = Some(PendingOperationScanPhase::LeaderCommand { mode, result });
     let mut destination = None;
     if next_non_blank_non_relax_x_token_into(processor, &mut destination).map_err(command_error)?
@@ -3357,27 +3467,31 @@ pub(super) fn scan_retained_leader_command<G>(
     }
     let mut glue_command = destination;
     *suspended = None;
-    scan_leader_glue_command(
+    if !scan_leader_glue_command(
+        cold,
         processor,
         scalar,
         &mut glue_command,
         mode,
         result,
         suspended,
-    )?
-    .ok_or(ExecError::MissingToken {
-        context: "leader glue command",
-    })
+    )? {
+        return Err(ExecError::MissingToken {
+            context: "leader glue command",
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn scan_leader_glue_command<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     command: &mut Option<tex_command::CurrentCommand<G>>,
     mode: Mode,
     result: LeaderGlueResult,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<Option<ColdOperation<G>>, ExecError> {
+) -> Result<bool, ExecError> {
     let horizontal = matches!(
         mode,
         Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
@@ -3396,7 +3510,7 @@ pub(super) fn scan_leader_glue_command<G>(
                         .expect("leader glue scanner owns its current command"),
                 )
                 .map_err(command_error)?;
-            return Ok(None);
+            return Ok(false);
         }
     };
     if (horizontal && primitive == UnexpandablePrimitive::HSkip)
@@ -3411,7 +3525,8 @@ pub(super) fn scan_leader_glue_command<G>(
             take_glue
         )
         .value;
-        return Ok(Some(complete_leader_glue(result, glue)));
+        write_completed_leader_glue(cold, result, glue);
+        return Ok(true);
     }
     let infinite = match (horizontal, primitive) {
         (true, UnexpandablePrimitive::HFil) | (false, UnexpandablePrimitive::VFil) => {
@@ -3436,7 +3551,7 @@ pub(super) fn scan_leader_glue_command<G>(
                     .expect("leader glue scanner owns its current command"),
             )
             .map_err(command_error)?;
-        return Ok(None);
+        return Ok(false);
     };
     let unit = Scaled::from_raw(if negative {
         -Scaled::UNITY
@@ -3461,16 +3576,18 @@ pub(super) fn scan_leader_glue_command<G>(
             shrink_order: Order::Normal,
         }
     };
-    Ok(Some(complete_leader_glue(result, glue)))
+    write_completed_leader_glue(cold, result, glue);
+    Ok(true)
 }
 
 pub(super) fn scan_retained_leader_glue<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     mode: Mode,
     result: LeaderGlueResult,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let status = processor.scan_glue_into(false, scalar);
     let glue = take_operation_scalar!(
         scalar,
@@ -3480,26 +3597,31 @@ pub(super) fn scan_retained_leader_glue<G>(
         take_glue
     )
     .value;
-    Ok(complete_leader_glue(result, glue))
+    write_completed_leader_glue(cold, result, glue);
+    Ok(())
 }
 
-pub(super) fn complete_leader_glue<G>(
+fn write_completed_leader_glue<G>(
+    cold: &mut ColdOperationSlot<G>,
     result: LeaderGlueResult,
     glue: GlueSpec,
-) -> ColdOperation<G> {
-    match result {
-        LeaderGlueResult::Payload { kind, payload } => ColdOperation::Leaders {
-            kind,
-            payload,
-            glue,
-        },
-        LeaderGlueResult::Register { kind, index, copy } => ColdOperation::LeaderRegister {
-            kind,
-            index,
-            copy,
-            glue,
-        },
-    }
+) {
+    write_cold_scan!(
+        cold,
+        match result {
+            LeaderGlueResult::Payload { kind, payload } => ColdOperation::Leaders {
+                kind,
+                payload,
+                glue,
+            },
+            LeaderGlueResult::Register { kind, index, copy } => ColdOperation::LeaderRegister {
+                kind,
+                index,
+                copy,
+                glue,
+            },
+        }
+    );
 }
 
 /// Recognizes membership in TeX82 §1090's shared vertical-mode
@@ -3598,7 +3720,8 @@ pub(super) fn scan_command<G>(
     {
         let size = tex_command::MathFamilySize::of_primitive(primitive)
             .expect("the outer match restricts this to `def_family`");
-        let operation = scan_math_family_assignment(
+        scan_math_family_assignment(
+            cold,
             processor,
             &mut command.scalar,
             size,
@@ -3606,7 +3729,8 @@ pub(super) fn scan_command<G>(
             MathFamilyScanPhase::Family,
             suspended_operation_scan,
         )?;
-        return Ok(retain_cold_operation(command, cold, operation));
+        command.mark_resident_cold(cold);
+        return Ok(ScannedOperation::Cold);
     }
     // Math operands are scanned exclusively by `tex-command`.  The replay
     // driver receives a typed scalar request and schedules any opaque field

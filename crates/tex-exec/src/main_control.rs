@@ -89,6 +89,27 @@ macro_rules! take_operation_scalar {
     }};
 }
 
+/// Writes a completed cold leaf at its final caller-owned destination.
+macro_rules! write_cold_scan {
+    ($cold:expr, $operation:expr $(,)?) => {{
+        assert!(
+            $cold.operation.is_none(),
+            "one operation frame owns one cold leaf"
+        );
+        $cold.operation = Some($operation);
+    }};
+}
+
+/// Completes one cold scan by constructing its semantic leaf directly in the
+/// caller-owned slot. The scanner returns only success/failure control; the
+/// large operation value never crosses a helper return ABI.
+macro_rules! complete_cold_scan {
+    ($cold:expr, $operation:expr $(,)?) => {{
+        write_cold_scan!($cold, $operation);
+        Ok(())
+    }};
+}
+
 mod cold;
 mod delivery;
 mod executor_facts;

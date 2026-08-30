@@ -1,7 +1,9 @@
 //! Operand collection for uncommon and structurally large commands.
 //!
-//! Every scanner borrows the session's canonical command processor and
-//! returns one [`ColdOperation<G>`]; it never creates another input machine.
+//! Every scanner borrows the session's canonical command processor and the
+//! caller-owned cold slot, writes one [`ColdOperation<G>`] at completion, and
+//! returns only compact control status. It never creates another input
+//! machine or a by-value operation carrier.
 
 use super::super::*;
 use super::operation::*;
@@ -36,12 +38,7 @@ pub(in crate::main_control) fn scan<G>(
         unreachable!("expanded macro reached cold stomach dispatch")
     };
     let command_origin = command.origin();
-    macro_rules! fill_resident {
-        ($operation:expr) => {
-            cold.operation = Some($operation?)
-        };
-    }
-    fill_resident!(match meaning {
+    match meaning {
         Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
@@ -53,14 +50,17 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => Ok(ColdOperation::ExtraRightBrace {
-            forgotten: match innermost_group {
-                Some(GroupKind::SemiSimple) => Some(ForgottenGroupOpener::EndGroup),
-                Some(GroupKind::MathShift) => Some(ForgottenGroupOpener::MathShift),
-                Some(GroupKind::MathLeft) => Some(ForgottenGroupOpener::Right),
-                _ => None,
-            },
-        }),
+        } => complete_cold_scan!(
+            cold,
+            ColdOperation::ExtraRightBrace {
+                forgotten: match innermost_group {
+                    Some(GroupKind::SemiSimple) => Some(ForgottenGroupOpener::EndGroup),
+                    Some(GroupKind::MathShift) => Some(ForgottenGroupOpener::MathShift),
+                    Some(GroupKind::MathLeft) => Some(ForgottenGroupOpener::Right),
+                    _ => None,
+                },
+            }
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
             unreachable!("semi-simple group entry is owned by fused hot dispatch")
         }
@@ -75,7 +75,7 @@ pub(in crate::main_control) fn scan<G>(
             // dispatch irrespective of its spelling. Inaccessible alignment
             // sentinels have the distinct `EndV`/`EndTemplate` meanings and
             // remain owned by their dedicated paths.
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // TeX82 §1094's `hmode+stop,...: head_for_vmode`. §1095's
         // unrestricted branch (`mode>0`) backs the stop up, then backs an
@@ -88,7 +88,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         // §1095's restricted-`hmode` branch (`mode<0`, e.g. inside an
         // `\\hbox`): `if cur_cmd<>hrule then off_save`. `\\par` has no
@@ -97,7 +97,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // §1046's "math-only cases in non-math modes, or vice versa" table
         // lists `mmode+stop`, so §1047's `insert_dollar_sign` closes the math
@@ -108,7 +108,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         // §1045's `vmode+stop: if its_all_over then return` -- "this is the
         // only way out" of `main_control`. §1054's `its_all_over` is the one
@@ -126,31 +126,38 @@ pub(in crate::main_control) fn scan<G>(
             // (inside a `\\vbox`, an `\\insert`, or `\\output` itself) reports
             // an illegal case and leaves the job running.
             if mode != Mode::Vertical {
-                cold.operation = Some(ColdOperation::IllegalStop {
-                    token: command.spelling().semantic_token(),
-                });
+                write_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalStop {
+                        token: command.spelling().semantic_token(),
+                    }
+                );
                 return Ok(());
             }
             if job_is_all_over {
                 // §1335's `final_cleanup` unwinds the input stack that
                 // `main_control`'s return has abandoned.
                 let incomplete_conditions = processor.final_cleanup();
-                cold.operation = Some(ColdOperation::End {
-                    dump: matches!(
-                        meaning,
-                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump)
-                    ),
-                    incomplete_conditions,
-                });
+                write_cold_scan!(
+                    cold,
+                    ColdOperation::End {
+                        dump: matches!(
+                            meaning,
+                            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump)
+                        ),
+                        incomplete_conditions,
+                    }
+                );
                 return Ok(());
             }
             processor
                 .back_input(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::EjectResidualPage)
+            complete_cold_scan!(cold, ColdOperation::EjectResidualPage)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             scan_count_register_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 None,
@@ -160,6 +167,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::CountRegister(index) => scan_count_register_assignment(
+            cold,
             processor,
             &mut command.scalar,
             Some(index),
@@ -169,6 +177,7 @@ pub(in crate::main_control) fn scan<G>(
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             scan_dimension_register_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 None,
@@ -189,6 +198,7 @@ pub(in crate::main_control) fn scan<G>(
                 _ => unreachable!(),
             };
             scan_box_dimension_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 None,
@@ -199,6 +209,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::DimenRegister(index) => scan_dimension_register_assignment(
+            cold,
             processor,
             &mut command.scalar,
             Some(index),
@@ -208,6 +219,7 @@ pub(in crate::main_control) fn scan<G>(
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
             scan_glue_register_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 None,
@@ -218,6 +230,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::SkipRegister(index) => scan_glue_register_assignment(
+            cold,
             processor,
             &mut command.scalar,
             Some(index),
@@ -228,6 +241,7 @@ pub(in crate::main_control) fn scan<G>(
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             scan_glue_register_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 None,
@@ -238,6 +252,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::MuskipRegister(index) => scan_glue_register_assignment(
+            cold,
             processor,
             &mut command.scalar,
             Some(index),
@@ -252,6 +267,7 @@ pub(in crate::main_control) fn scan<G>(
         // and replay sequence before this layer appends the glue node.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -261,23 +277,23 @@ pub(in crate::main_control) fn scan<G>(
                 suspended_operation_scan,
             )
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
-            scan_unary_scalar_operation(
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
-        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => scan_unary_scalar_operation(
+            cold,
+            processor,
+            &mut command.scalar,
+            meaning,
+            global,
+            command_origin,
+            UnaryOperationScanPhase::Value,
+            suspended_operation_scan,
+        ),
         // TeX82 §1102's `any_mode(break_penalty): append_penalty` (§1103:
         // `scan_int; tail_append(new_penalty(cur_val))`). `\penalty` never
         // switches mode -- it appends directly to whatever list (main
         // vertical, horizontal, restricted horizontal, or math) is current.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -288,11 +304,12 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ControlSpace) => {
-            Ok(ColdOperation::ControlSpace)
+            complete_cold_scan!(cold, ColdOperation::ControlSpace)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
                 scan_unary_scalar_operation(
+                    cold,
                     processor,
                     &mut command.scalar,
                     meaning,
@@ -302,9 +319,12 @@ pub(in crate::main_control) fn scan<G>(
                     suspended_operation_scan,
                 )
             } else {
-                Ok(ColdOperation::IllegalPrevDepth {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalPrevDepth {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             }
         }
         // TeX82 §1265's `any_mode(set_interaction): prefixed_command` ->
@@ -322,9 +342,10 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::NonstopMode
             | UnexpandablePrimitive::ScrollMode
             | UnexpandablePrimitive::ErrorStopMode),
-        ) => Ok(ColdOperation::SetInteractionMode(primitive)),
+        ) => complete_cold_scan!(cold, ColdOperation::SetInteractionMode(primitive)),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -337,6 +358,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 scan_unary_scalar_operation(
+                    cold,
                     processor,
                     &mut command.scalar,
                     meaning,
@@ -346,13 +368,17 @@ pub(in crate::main_control) fn scan<G>(
                     suspended_operation_scan,
                 )
             } else {
-                Ok(ColdOperation::IllegalSpaceFactor {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalSpaceFactor {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -365,6 +391,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let origin = material_origin(processor, command);
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -374,27 +401,34 @@ pub(in crate::main_control) fn scan<G>(
                 suspended_operation_scan,
             )
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => Ok(ColdOperation::Accent(
-            processor.scan_accent().map_err(command_error)?
-        ),),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => complete_cold_scan!(
+            cold,
+            ColdOperation::Accent(processor.scan_accent().map_err(command_error)?)
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Discretionary) => {
-            Ok(ColdOperation::DiscretionaryOpening(
-                processor
-                    .scan_discretionary_opening()
-                    .map_err(command_error)?,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DiscretionaryOpening(
+                    processor
+                        .scan_discretionary_opening()
+                        .map_err(command_error)?,
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DiscretionaryHyphen) => {
-            Ok(ColdOperation::DiscretionaryHyphen {
-                origin: material_origin(processor, command),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DiscretionaryHyphen {
+                    origin: material_origin(processor, command),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HFil
             | UnexpandablePrimitive::HFill
             | UnexpandablePrimitive::HSs
             | UnexpandablePrimitive::HFilNeg),
-        ) => Ok(ColdOperation::FixedHorizontalGlue { primitive }),
+        ) => complete_cold_scan!(cold, ColdOperation::FixedHorizontalGlue { primitive }),
         // `\vskip`/`\vfil`/`\vfill`/`\vss`/`\vfilneg` are legal only in
         // vertical mode. TeX82 §1046's "math-only cases in non-math modes, or
         // vice versa" table lists `mmode+vskip` (and the fil variants) among
@@ -410,7 +444,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         // §1095's `head_for_vmode` distinguishes unrestricted `hmode`
         // (`mode>=0`) from restricted `hmode` (`mode<0`, e.g. inside an
@@ -427,7 +461,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         // §1095's `head_for_vmode`'s restricted-`hmode` branch
         // (`mode<0`): `if cur_cmd<>hrule then off_save`. Unlike the
@@ -443,7 +477,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::VSs
             | UnexpandablePrimitive::VFilNeg,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // TeX82 §1057's `vmode+vskip: append_glue` (using `abs(mode)`, so both
         // outer `Vertical` and `InternalVertical` match `vmode`).
@@ -451,6 +485,7 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
         {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -466,13 +501,13 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::VSs
             | UnexpandablePrimitive::VFilNeg),
         ) if matches!(mode, Mode::Vertical | Mode::InternalVertical) => {
-            Ok(ColdOperation::FixedVerticalGlue { primitive })
+            complete_cold_scan!(cold, ColdOperation::FixedVerticalGlue { primitive })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Indent) => {
-            Ok(ColdOperation::ParagraphIndent { indent: true })
+            complete_cold_scan!(cold, ColdOperation::ParagraphIndent { indent: true })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoIndent) => {
-            Ok(ColdOperation::ParagraphIndent { indent: false })
+            complete_cold_scan!(cold, ColdOperation::ParagraphIndent { indent: false })
         }
         // pdftex.web §1092 installs `quitvmode` as an ordinary `start_par`
         // command: vertical modes begin an indented paragraph, while
@@ -481,13 +516,14 @@ pub(in crate::main_control) fn scan<G>(
         // box or noad.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::QuitVMode) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                Ok(ColdOperation::ParagraphStart)
+                complete_cold_scan!(cold, ColdOperation::ParagraphStart)
             } else {
-                Ok(ColdOperation::Continue)
+                complete_cold_scan!(cold, ColdOperation::Continue)
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
             scan_paragraph_shape_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 global,
@@ -513,6 +549,7 @@ pub(in crate::main_control) fn scan<G>(
                 _ => unreachable!("outer match restricts primitive to e-TeX penalty arrays"),
             };
             scan_penalty_array_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 kind,
@@ -528,12 +565,15 @@ pub(in crate::main_control) fn scan<G>(
             let assignment = processor
                 .scan_token_register_assignment(owner)
                 .map_err(command_error)?;
-            Ok(ColdOperation::Toks {
-                index: assignment.index,
-                tokens: assignment.tokens.map(Into::into),
-                source: assignment.source,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Toks {
+                    index: assignment.index,
+                    tokens: assignment.tokens.map(Into::into),
+                    source: assignment.source,
+                    global,
+                }
+            )
         }
         Meaning::ToksRegister(index) => {
             let owner = command.control_sequence().ok_or(ExecError::MissingToken {
@@ -542,14 +582,18 @@ pub(in crate::main_control) fn scan<G>(
             let (tokens, source) = processor
                 .scan_token_register_value(owner)
                 .map_err(command_error)?;
-            Ok(ColdOperation::Toks {
-                index,
-                tokens: tokens.map(Into::into),
-                source,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Toks {
+                    index,
+                    tokens: tokens.map(Into::into),
+                    source,
+                    global,
+                }
+            )
         }
         Meaning::IntParam(index) => scan_unary_scalar_operation(
+            cold,
             processor,
             &mut command.scalar,
             Meaning::IntParam(index),
@@ -559,6 +603,7 @@ pub(in crate::main_control) fn scan<G>(
             suspended_operation_scan,
         ),
         Meaning::DimenParam(index) => scan_unary_scalar_operation(
+            cold,
             processor,
             &mut command.scalar,
             Meaning::DimenParam(index),
@@ -577,6 +622,7 @@ pub(in crate::main_control) fn scan<G>(
         // than `eqtb` entries, so neither `\global` nor `\globaldefs` has
         // anything to scope.
         Meaning::PageDimension(dimension) => scan_unary_scalar_operation(
+            cold,
             processor,
             &mut command.scalar,
             Meaning::PageDimension(dimension),
@@ -586,6 +632,7 @@ pub(in crate::main_control) fn scan<G>(
             suspended_operation_scan,
         ),
         Meaning::PageInteger(integer) => scan_unary_scalar_operation(
+            cold,
             processor,
             &mut command.scalar,
             Meaning::PageInteger(integer),
@@ -601,32 +648,41 @@ pub(in crate::main_control) fn scan<G>(
             let tokens = processor
                 .scan_token_parameter_assignment(TokParam::new(index), owner)
                 .map_err(command_error)?;
-            Ok(ColdOperation::TokParam {
-                index,
-                tokens: tokens.tokens.map(Into::into),
-                source: tokens.source,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::TokParam {
+                    index,
+                    tokens: tokens.tokens.map(Into::into),
+                    source: tokens.source,
+                    global,
+                }
+            )
         }
         Meaning::GlueParam(index) => {
             let assignment = processor
                 .scan_glue_parameter_assignment(index, false)
                 .map_err(command_error)?;
-            Ok(ColdOperation::GlueParam {
-                index: assignment.index,
-                value: assignment.value,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::GlueParam {
+                    index: assignment.index,
+                    value: assignment.value,
+                    global,
+                }
+            )
         }
         Meaning::MuGlueParam(index) => {
             let assignment = processor
                 .scan_glue_parameter_assignment(index, true)
                 .map_err(command_error)?;
-            Ok(ColdOperation::GlueParam {
-                index: assignment.index,
-                value: assignment.value,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::GlueParam {
+                    index: assignment.index,
+                    value: assignment.value,
+                    global,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::OpenIn
@@ -636,13 +692,16 @@ pub(in crate::main_control) fn scan<G>(
         ) => {
             // §1214 fixes the effective scope before §1225 calls
             // `read_toks`; carry that scope across the typed apply seam.
-            Ok(ColdOperation::InputStream {
-                request: processor
-                    .scan_input_stream_request(primitive, global)
-                    .map_err(command_error)?
-                    .into(),
-                resource: None,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::InputStream {
+                    request: processor
+                        .scan_input_stream_request(primitive, global)
+                        .map_err(command_error)?
+                        .into(),
+                    resource: None,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
             // TeX82 §1257's `define(u,set_font,null_font)` precedes the file
@@ -652,7 +711,7 @@ pub(in crate::main_control) fn scan<G>(
             let request = processor
                 .scan_font_definition(global)
                 .map_err(command_error)?;
-            Ok(ColdOperation::FontDefinition { request, global })
+            complete_cold_scan!(cold, ColdOperation::FontDefinition { request, global })
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfCopyFont
@@ -663,12 +722,15 @@ pub(in crate::main_control) fn scan<G>(
                 UnexpandablePrimitive::LetterspaceFont => GeneratedFontKind::Letterspace,
                 _ => unreachable!(),
             };
-            Ok(ColdOperation::GeneratedFontDefinition {
-                definition: processor
-                    .scan_generated_font_definition(kind, global)
-                    .map_err(command_error)?,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::GeneratedFontDefinition {
+                    definition: processor
+                        .scan_generated_font_definition(kind, global)
+                        .map_err(command_error)?,
+                    global,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfXImage | UnexpandablePrimitive::PdfRefXImage),
@@ -687,7 +749,8 @@ pub(in crate::main_control) fn scan<G>(
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             if primitive == UnexpandablePrimitive::PdfRefXImage {
-                let operation = scan_unary_scalar_operation(
+                scan_unary_scalar_operation(
+                    cold,
                     processor,
                     &mut command.scalar,
                     meaning,
@@ -696,21 +759,24 @@ pub(in crate::main_control) fn scan<G>(
                     UnaryOperationScanPhase::Value,
                     suspended_operation_scan,
                 )?;
-                cold.operation = Some(operation);
                 return Ok(());
             }
-            Ok(ColdOperation::PdfXImage {
-                request: processor
-                    .scan_pdf_image_request()
-                    .map_err(command_error)?
-                    .into(),
-                // This placeholder is replaced after the processor borrow;
-                // it can never reach application.
-                resource: PdfImageResource::Unavailable,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfXImage {
+                    request: processor
+                        .scan_pdf_image_request()
+                        .map_err(command_error)?
+                        .into(),
+                    // This placeholder is replaced after the processor borrow;
+                    // it can never reach application.
+                    resource: PdfImageResource::Unavailable,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
             scan_unary_scalar_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -721,37 +787,49 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer) => {
-            Ok(ColdOperation::PdfResetTimer)
+            complete_cold_scan!(cold, ColdOperation::PdfResetTimer)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfInterwordSpaceOn) => {
-            Ok(ColdOperation::PdfInterwordSpace(
-                tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfInterwordSpace(
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfInterwordSpaceOff) => {
-            Ok(ColdOperation::PdfInterwordSpace(
-                tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfInterwordSpace(
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFakeSpace) => {
-            Ok(ColdOperation::PdfInterwordSpace(
-                tex_state::node::PdfAccessibilityControl::FakeSpace,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfInterwordSpace(
+                    tex_state::node::PdfAccessibilityControl::FakeSpace,
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRunningLinkOn) => {
-            Ok(ColdOperation::PdfRunningLink(true))
+            complete_cold_scan!(cold, ColdOperation::PdfRunningLink(true))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRunningLinkOff) => {
-            Ok(ColdOperation::PdfRunningLink(false))
+            complete_cold_scan!(cold, ColdOperation::PdfRunningLink(false))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSpaceFont) => {
-            Ok(ColdOperation::PdfSpaceFont(
-                processor
-                    .scan_balanced_text(true)
-                    .map_err(command_error)?
-                    .tokens
-                    .into(),
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfSpaceFont(
+                    processor
+                        .scan_balanced_text(true)
+                        .map_err(command_error)?
+                        .tokens
+                        .into(),
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
             // pdftex.web §§1535 and 1542 call `check_pdfoutput` before
@@ -760,12 +838,15 @@ pub(in crate::main_control) fn scan<G>(
             if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
             }
-            Ok(ColdOperation::PdfObject(
-                processor
-                    .scan_pdf_object_request()
-                    .map_err(command_error)?
-                    .into(),
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfObject(
+                    processor
+                        .scan_pdf_object_request()
+                        .map_err(command_error)?
+                        .into(),
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfReferenceObject) => {
             // pdftex.web §1544 calls `check_pdfoutput` before `scan_int`,
@@ -773,11 +854,14 @@ pub(in crate::main_control) fn scan<G>(
             if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
             }
-            Ok(ColdOperation::PdfReferenceObject(
-                processor
-                    .scan_pdf_reference_object_request()
-                    .map_err(command_error)?,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfReferenceObject(
+                    processor
+                        .scan_pdf_reference_object_request()
+                        .map_err(command_error)?,
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfXForm | UnexpandablePrimitive::PdfRefXForm),
@@ -793,12 +877,15 @@ pub(in crate::main_control) fn scan<G>(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            Ok(ColdOperation::PdfForm(
-                processor
-                    .scan_pdf_form_request(primitive)
-                    .map_err(command_error)?
-                    .into(),
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfForm(
+                    processor
+                        .scan_pdf_form_request(primitive)
+                        .map_err(command_error)?
+                        .into(),
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfInfo
@@ -806,12 +893,15 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PdfNames
             | UnexpandablePrimitive::PdfTrailer
             | UnexpandablePrimitive::PdfTrailerId),
-        ) => Ok(ColdOperation::PdfDocumentFragment(
-            processor
-                .scan_pdf_document_fragment_request(primitive)
-                .map_err(command_error)?
-                .into(),
-        )),
+        ) => complete_cold_scan!(
+            cold,
+            ColdOperation::PdfDocumentFragment(
+                processor
+                    .scan_pdf_document_fragment_request(primitive)
+                    .map_err(command_error)?
+                    .into(),
+            )
+        ),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfLiteral
             | UnexpandablePrimitive::PdfSetMatrix
@@ -843,13 +933,16 @@ pub(in crate::main_control) fn scan<G>(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            Ok(ColdOperation::PdfGraphics(
-                processor
-                    .scan_pdf_graphics_request(primitive)
-                    .map_err(command_error)?
-                    .expect("graphics primitive has a typed request")
-                    .into(),
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfGraphics(
+                    processor
+                        .scan_pdf_graphics_request(primitive)
+                        .map_err(command_error)?
+                        .expect("graphics primitive has a typed request")
+                        .into(),
+                )
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfAnnot
@@ -902,24 +995,31 @@ pub(in crate::main_control) fn scan<G>(
                     _ => unreachable!(),
                 }));
             }
-            Ok(ColdOperation::PdfNavigation(
-                processor
-                    .scan_pdf_navigation_request(primitive)
-                    .map_err(command_error)?
-                    .into(),
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfNavigation(
+                    processor
+                        .scan_pdf_navigation_request(primitive)
+                        .map_err(command_error)?
+                        .into(),
+                )
+            )
         }
-        Meaning::Font(font) => Ok(ColdOperation::FontSelect {
-            font,
-            _selector: command.control_sequence(),
-            global,
-        }),
+        Meaning::Font(font) => complete_cold_scan!(
+            cold,
+            ColdOperation::FontSelect {
+                font,
+                _selector: command.control_sequence(),
+                global,
+            }
+        ),
         // tex.web §578's `find_font_dimen` scans the number *and* the font
         // identifier before it decides the number is unusable, and §1253 then
         // scans `=<dimen>` either way; the whole assignment is consumed even
         // when §579 rejects it.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
             scan_font_dimen_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 FontDimenScanPhase::Number,
@@ -929,30 +1029,34 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
         ) => scan_font_integer_assignment(
+            cold,
             processor,
             &mut command.scalar,
             primitive,
             FontIntegerScanPhase::Font,
             suspended_operation_scan,
         ),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
-            scan_open_out_operation(
-                processor,
-                &mut command.scalar,
-                OpenOutScanPhase::Stream,
-                suspended_operation_scan,
-            )
-        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => scan_open_out_operation(
+            cold,
+            processor,
+            &mut command.scalar,
+            OpenOutScanPhase::Stream,
+            suspended_operation_scan,
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
-            Ok(ColdOperation::DeferredCloseOut {
-                stream: processor.scan_write_stream().map_err(command_error)?,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DeferredCloseOut {
+                    stream: processor.scan_write_stream().map_err(command_error)?,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand) => {
             // pdftex.web §§1680--1682 configures font metrics independently
             // of the selected output backend; generated fonts are valid in
             // both DVI and PDF mode.
             scan_pdf_font_expand_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 PdfFontExpandScanPhase::Font,
@@ -982,12 +1086,15 @@ pub(in crate::main_control) fn scan<G>(
             let scanned = processor
                 .scan_pdf_font_action(primitive)
                 .map_err(command_error)?;
-            Ok(ColdOperation::PdfFontAction {
-                primitive,
-                font: scanned.font,
-                first: scanned.first.map(Into::into),
-                second: scanned.second.map(Into::into),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::PdfFontAction {
+                    primitive,
+                    font: scanned.font,
+                    first: scanned.first.map(Into::into),
+                    second: scanned.second.map(Into::into),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
             // TeX82 §1350's `new_write_whatsit` normalizes the stream number
@@ -998,17 +1105,23 @@ pub(in crate::main_control) fn scan<G>(
                 .scan_balanced_text(false)
                 .map_err(command_error)?
                 .tokens;
-            Ok(ColdOperation::DeferredWrite {
-                stream,
-                tokens: tokens.into(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DeferredWrite {
+                    stream,
+                    tokens: tokens.into(),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Special) => {
             let (deferred, text) = processor.scan_special().map_err(command_error)?;
-            Ok(ColdOperation::DeferredSpecial {
-                deferred,
-                tokens: text.tokens.into(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::DeferredSpecial {
+                    deferred,
+                    tokens: text.tokens.into(),
+                }
+            )
         }
         // TeX82 §1377's `@<Implement \setlanguage@>`, the `set_language_code`
         // limb of §1348's `do_extension`. The mode test comes first and
@@ -1018,6 +1131,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetLanguage) => {
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 scan_unary_scalar_operation(
+                    cold,
                     processor,
                     &mut command.scalar,
                     meaning,
@@ -1027,9 +1141,12 @@ pub(in crate::main_control) fn scan<G>(
                     suspended_operation_scan,
                 )
             } else {
-                Ok(ColdOperation::IllegalSetLanguage {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalSetLanguage {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             }
         }
         Meaning::UnexpandablePrimitive(
@@ -1045,6 +1162,7 @@ pub(in crate::main_control) fn scan<G>(
             // bound below; it is a distinct operand and must not inherit the
             // selector's recovery.
             scan_code_table_assignment(
+                cold,
                 processor,
                 &mut command.scalar,
                 primitive,
@@ -1067,6 +1185,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PdfKnbcCode
             | UnexpandablePrimitive::PdfKnacCode),
         ) => scan_pdf_font_code_assignment(
+            cold,
             processor,
             &mut command.scalar,
             primitive,
@@ -1075,6 +1194,7 @@ pub(in crate::main_control) fn scan<G>(
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
             scan_font_only_operation(
+                cold,
                 processor,
                 &mut command.scalar,
                 meaning,
@@ -1086,6 +1206,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::Multiply
             | UnexpandablePrimitive::Divide),
         ) => scan_arithmetic_assignment(
+            cold,
             processor,
             &mut command.scalar,
             primitive,
@@ -1119,13 +1240,16 @@ pub(in crate::main_control) fn scan<G>(
             let definition = processor
                 .scan_character_definition(class, global)
                 .map_err(command_error)?;
-            Ok(ColdOperation::CharacterDefinition {
-                primitive,
-                target: definition.target,
-                provisional_old: definition.provisional_old,
-                value: definition.value,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::CharacterDefinition {
+                    primitive,
+                    target: definition.target,
+                    provisional_old: definition.provisional_old,
+                    value: definition.value,
+                    global,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CountDef
@@ -1137,13 +1261,16 @@ pub(in crate::main_control) fn scan<G>(
             let definition = processor
                 .scan_register_definition(global)
                 .map_err(command_error)?;
-            Ok(ColdOperation::RegisterDefinition {
-                primitive,
-                target: definition.target,
-                provisional_old: definition.provisional_old,
-                index: definition.index,
-                global,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::RegisterDefinition {
+                    primitive,
+                    target: definition.target,
+                    provisional_old: definition.provisional_old,
+                    index: definition.index,
+                    global,
+                }
+            )
         }
         // TeX82 §1288's `shift_case` is entirely a command-core operation:
         // `scan_toks`, a `\uccode`/`\lccode` rewrite, and `back_list`. It
@@ -1155,7 +1282,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .shift_case(primitive == UnexpandablePrimitive::Uppercase)
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet,
@@ -1168,7 +1295,7 @@ pub(in crate::main_control) fn scan<G>(
             let command = destination.ok_or(ExecError::MissingToken {
                 context: "\\aftergroup",
             })?;
-            Ok(ColdOperation::AfterGroup(command.spelling()))
+            complete_cold_scan!(cold, ColdOperation::AfterGroup(command.spelling()))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
             let mut destination = None;
@@ -1178,46 +1305,57 @@ pub(in crate::main_control) fn scan<G>(
             let command = destination.ok_or(ExecError::MissingToken {
                 context: "\\afterassignment",
             })?;
-            Ok(ColdOperation::AfterAssignment(command.spelling()))
+            complete_cold_scan!(cold, ColdOperation::AfterAssignment(command.spelling()))
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Message | UnexpandablePrimitive::ErrMessage),
         ) => {
             let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
-            Ok(ColdOperation::Message {
-                tokens: tokens.tokens.into(),
-                error: primitive == UnexpandablePrimitive::ErrMessage,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Message {
+                    tokens: tokens.tokens.into(),
+                    error: primitive == UnexpandablePrimitive::ErrMessage,
+                }
+            )
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show) => Ok(
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show) => complete_cold_scan!(
+            cold,
             ColdOperation::DisplayDiagnostic(processor.scan_show().map_err(command_error)?),
         ),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowThe) => Ok(
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowThe) => complete_cold_scan!(
+            cold,
             ColdOperation::DisplayDiagnostic(processor.scan_showthe().map_err(command_error)?),
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowTokens) => {
             let text = processor.scan_showtokens().map_err(command_error)?;
-            Ok(ColdOperation::ShowTokens {
-                tokens: text.tokens.into(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::ShowTokens {
+                    tokens: text.tokens.into(),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowIfs) => {
-            Ok(ColdOperation::ShowIfs {
-                conditions: processor.active_conditions(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::ShowIfs {
+                    conditions: processor.active_conditions(),
+                }
+            )
         }
         // TeX82 §1290's `any_mode(xray): show_whatever` puts every \show
         // family in every mode; §1293's `show_lists_code` case reads no
         // operand at all.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowLists) => {
-            Ok(ColdOperation::ShowLists)
+            complete_cold_scan!(cold, ColdOperation::ShowLists)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowGroups) => {
-            Ok(ColdOperation::ShowGroups { diagnostic: None })
+            complete_cold_scan!(cold, ColdOperation::ShowGroups { diagnostic: None })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowBox) => {
             let (index, _) = processor.scan_showbox().map_err(command_error)?;
-            Ok(ColdOperation::ShowBox { index })
+            complete_cold_scan!(cold, ColdOperation::ShowBox { index })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
             // TeX82 §§299/367/1370: `write_out` temporarily sets `mode:=0`.
@@ -1235,12 +1373,15 @@ pub(in crate::main_control) fn scan<G>(
                 *shown_mode = None;
             }
             if let ImmediateExtension::PdfImage(request) = extension {
-                Ok(ColdOperation::PdfXImage {
-                    request: request.into(),
-                    resource: PdfImageResource::Unavailable,
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::PdfXImage {
+                        request: request.into(),
+                        resource: PdfImageResource::Unavailable,
+                    }
+                )
             } else {
-                Ok(ColdOperation::ImmediateExtension(extension.into()))
+                complete_cold_scan!(cold, ColdOperation::ImmediateExtension(extension.into()))
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
@@ -1254,7 +1395,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
             if mode == Mode::Horizontal =>
@@ -1267,7 +1408,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
             if mode == Mode::RestrictedHorizontal =>
@@ -1276,34 +1417,41 @@ pub(in crate::main_control) fn scan<G>(
             // command immediately. In particular, §463 must not scan a rule
             // specification first: its keyword lookahead would replace the
             // source-line error context with a backed-up token level.
-            Ok(ColdOperation::HRuleHereExceptLeaders)
+            complete_cold_scan!(cold, ColdOperation::HRuleHereExceptLeaders)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
         ) => {
             let spec = processor.scan_rule_spec(primitive).map_err(command_error)?;
-            Ok(ColdOperation::Rule {
-                width: spec.width,
-                height: spec.height,
-                depth: spec.depth,
-                horizontal: primitive == UnexpandablePrimitive::HRule,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Rule {
+                    width: spec.width,
+                    height: spec.height,
+                    depth: spec.depth,
+                    horizontal: primitive == UnexpandablePrimitive::HRule,
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
             let assignment = processor
                 .scan_setbox_assignment(set_box_allowed)
                 .map_err(command_error)?;
-            Ok(ColdOperation::SetBox {
-                target: SetBoxTarget {
-                    index: assignment.index,
-                    global,
-                },
-                path: assignment.path,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::SetBox {
+                    target: SetBoxTarget {
+                        index: assignment.index,
+                        global,
+                    },
+                    path: assignment.path,
+                }
+            )
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ColdOperation::VSplit(
-            processor.scan_vsplit().map_err(command_error)?
-        ),),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => complete_cold_scan!(
+            cold,
+            ColdOperation::VSplit(processor.scan_vsplit().map_err(command_error)?)
+        ),
         // TeX82 §1079's `make_box(box_code)` scans the register through
         // `scan_int` before handing the completed box-list operation to the
         // stomach. In particular, the first digit remains raw command input,
@@ -1312,11 +1460,14 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy),
         ) => {
             let register = processor.scan_box_register().map_err(command_error)?;
-            Ok(ColdOperation::BoxRegister {
-                index: register.index,
-                copy: primitive == UnexpandablePrimitive::Copy,
-                ships_out: boxes.pending_shipout.is_some(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::BoxRegister {
+                    index: register.index,
+                    copy: primitive == UnexpandablePrimitive::Copy,
+                    ships_out: boxes.pending_shipout.is_some(),
+                }
+            )
         }
         // TeX82 §1095's `hmode+un_vbox: head_for_vmode` ends an unrestricted
         // paragraph and retries the command in vertical mode. As with every
@@ -1331,7 +1482,7 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         // The restricted-horizontal branch of §1095 cannot end a paragraph,
         // so it runs §§1064--1066 `off_save`. The recovered command is
@@ -1343,7 +1494,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PageDiscards
             | UnexpandablePrimitive::SplitDiscards,
         ) if mode == Mode::RestrictedHorizontal => {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // e-TeX 2.6 `etex.ch` [15.208, 45.999] assigns both saved-discard
         // enquiries the `un_vbox` command code with modifiers above
@@ -1356,12 +1507,12 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         Meaning::UnexpandablePrimitive(
             primitive
             @ (UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards),
-        ) => Ok(ColdOperation::SavedVerticalDiscards(primitive)),
+        ) => complete_cold_scan!(cold, ColdOperation::SavedVerticalDiscards(primitive)),
         // `\unhbox`/`\unhcopy` in (internal) vertical mode never reach here:
         // `starts_paragraph_in_vertical_mode` routes `vmode+un_hbox` through
         // §1090's shared backup above, before this register operand is ever
@@ -1373,16 +1524,22 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::UnVCopy),
         ) => {
             let register = processor.scan_box_register().map_err(command_error)?;
-            Ok(ColdOperation::Unbox {
-                primitive,
-                index: register.index,
-                error_context: processor.diagnostic_context_coordinate(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Unbox {
+                    primitive,
+                    index: register.index,
+                    error_context: processor.diagnostic_context_coordinate(),
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
-            Ok(ColdOperation::LastBox {
-                error_context: processor.diagnostic_context_coordinate(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::LastBox {
+                    error_context: processor.diagnostic_context_coordinate(),
+                }
+            )
         }
         // TeX82's main-control dispatch on `abs(mode)+cur_cmd` (tex.web
         // §1073): `\raise`/`\lower` (`vmove`) are legal only outside vertical
@@ -1396,26 +1553,38 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower),
         ) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                Ok(ColdOperation::IllegalBoxShift {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalBoxShift {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             } else {
-                Ok(ColdOperation::BoxShift(
-                    processor.scan_box_shift(primitive).map_err(command_error)?,
-                ))
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::BoxShift(
+                        processor.scan_box_shift(primitive).map_err(command_error)?,
+                    )
+                )
             }
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::MoveLeft | UnexpandablePrimitive::MoveRight),
         ) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                Ok(ColdOperation::BoxShift(
-                    processor.scan_box_shift(primitive).map_err(command_error)?,
-                ))
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::BoxShift(
+                        processor.scan_box_shift(primitive).map_err(command_error)?,
+                    )
+                )
             } else {
-                Ok(ColdOperation::IllegalBoxShift {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalBoxShift {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             }
         }
         Meaning::UnexpandablePrimitive(
@@ -1423,6 +1592,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::CLeaders
             | UnexpandablePrimitive::XLeaders),
         ) => scan_leaders_step(
+            cold,
             processor,
             &mut command.scalar,
             primitive,
@@ -1430,17 +1600,20 @@ pub(in crate::main_control) fn scan<G>(
             suspended_operation_scan,
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
-            Ok(ColdOperation::BeginShipout)
+            complete_cold_scan!(cold, ColdOperation::BeginShipout)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HBox
             | UnexpandablePrimitive::VBox
             | UnexpandablePrimitive::VTop),
-        ) => Ok(ColdOperation::BeginBox(
-            processor
-                .scan_box_construction(primitive)
-                .map_err(command_error)?,
-        )),
+        ) => complete_cold_scan!(
+            cold,
+            ColdOperation::BeginBox(
+                processor
+                    .scan_box_construction(primitive)
+                    .map_err(command_error)?,
+            )
+        ),
         // TeX82 §1167's `mmode+vcenter`:
         //
         //     mmode+vcenter: begin scan_spec(vcenter_group,false);
@@ -1466,21 +1639,27 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VCenter)
             if matches!(mode, Mode::Math | Mode::DisplayMath) =>
         {
-            Ok(ColdOperation::BeginBox(
-                processor
-                    .scan_box_construction(primitive)
-                    .map_err(command_error)?,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::BeginBox(
+                    processor
+                        .scan_box_construction(primitive)
+                        .map_err(command_error)?,
+                )
+            )
         }
         // TeX82 §1099's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
         // is legal in every mode with no mode switch of its own, exactly like
         // `\penalty` and `\mark` above.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Insert) => {
-            Ok(ColdOperation::BeginInsert(
-                processor
-                    .scan_insert_construction(false)
-                    .map_err(command_error)?,
-            ))
+            complete_cold_scan!(
+                cold,
+                ColdOperation::BeginInsert(
+                    processor
+                        .scan_insert_construction(false)
+                        .map_err(command_error)?,
+                )
+            )
         }
         // TeX82 §1099's `begin_insert_or_adjust` with `cur_val:=255` fixed
         // (`if cur_cmd=vadjust then cur_val:=255`) rather than scanned --
@@ -1492,15 +1671,21 @@ pub(in crate::main_control) fn scan<G>(
         // `scan_box_group_opening` at all.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAdjust) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                Ok(ColdOperation::IllegalInsertOrAdjust {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalInsertOrAdjust {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             } else {
-                Ok(ColdOperation::BeginInsert(
-                    processor
-                        .scan_insert_construction(true)
-                        .map_err(command_error)?,
-                ))
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::BeginInsert(
+                        processor
+                            .scan_insert_construction(true)
+                            .map_err(command_error)?,
+                    )
+                )
             }
         }
         // TeX82 §1101's `make_mark` -- any_mode(mark). `p:=scan_toks(false,
@@ -1508,19 +1693,23 @@ pub(in crate::main_control) fn scan<G>(
         // `\special`'s and `\message`'s bodies. Plain `\mark` fixes class
         // zero; the e-TeX numbered variant below scans its class first.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mark) => {
-            Ok(ColdOperation::Mark {
-                class: 0,
-                tokens: processor
-                    .scan_balanced_text(true)
-                    .map_err(command_error)?
-                    .tokens
-                    .into(),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Mark {
+                    class: 0,
+                    tokens: processor
+                        .scan_balanced_text(true)
+                        .map_err(command_error)?
+                        .tokens
+                        .into(),
+                }
+            )
         }
         // e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: `\marks` first scans
         // one extended register number (recovering an invalid selector to
         // class zero), then performs TeX82's expanded mark-text scan.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => scan_marks_operation(
+            cold,
             processor,
             &mut command.scalar,
             MarksScanPhase::Class,
@@ -1534,14 +1723,14 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_stop_for_vertical_mode(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::Continue)
+            complete_cold_scan!(cold, ColdOperation::Continue)
         }
         // Restricted horizontal mode cannot end a paragraph, so §§1064--1066
         // close the enclosing group before retrying the same `\halign`.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
             if mode == Mode::RestrictedHorizontal =>
         {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // `\halign` is legal directly in vertical mode (TeX82's
         // `vmode+halign:init_align`).
@@ -1551,27 +1740,36 @@ pub(in crate::main_control) fn scan<G>(
                 // current group. Inline math is negative `mmode`, so §1051
                 // ignores only the already-delivered command and leaves the
                 // following token untouched.
-                Ok(ColdOperation::IllegalHAlign {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalHAlign {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             } else if mode == Mode::DisplayMath {
                 if innermost_group != Some(GroupKind::MathShift) {
-                    scan_off_save(processor, command.take_current(), innermost_group)
+                    scan_off_save(cold, processor, command.take_current(), innermost_group)
                 } else {
                     // TeX82 §774's `init_align` admits a display alignment at
                     // the display's own math-shift save level. The execute
                     // phase below diagnoses and flushes any preceding formula
                     // before it opens the alignment list.
-                    Ok(ColdOperation::BeginAlignment {
-                        vertical: false,
-                        owner: command.control_sequence(),
-                    })
+                    complete_cold_scan!(
+                        cold,
+                        ColdOperation::BeginAlignment {
+                            vertical: false,
+                            owner: command.control_sequence(),
+                        }
+                    )
                 }
             } else {
-                Ok(ColdOperation::BeginAlignment {
-                    vertical: false,
-                    owner: command.control_sequence(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::BeginAlignment {
+                        vertical: false,
+                        owner: command.control_sequence(),
+                    }
+                )
             }
         }
         // Only `hmode+valign` reaches here: §1090 lists `vmode+valign` (unlike
@@ -1583,12 +1781,15 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Math | Mode::DisplayMath)
                 && innermost_group != Some(GroupKind::MathShift)
             {
-                scan_off_save(processor, command.take_current(), innermost_group)
+                scan_off_save(cold, processor, command.take_current(), innermost_group)
             } else {
-                Ok(ColdOperation::BeginAlignment {
-                    vertical: true,
-                    owner: command.control_sequence(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::BeginAlignment {
+                        vertical: true,
+                        owner: command.control_sequence(),
+                    }
+                )
             }
         }
         // TeX82 §1096: `hmode+par_end` first runs `off_save` when
@@ -1599,7 +1800,7 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
                 && processor.paragraph_end_needs_alignment_recovery() =>
         {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         // TeX82 §§1046--1047 classify `mmode+par_end` as a math-mode
         // mismatch: insert `$`, then rescan the same `\par` after the math
@@ -1612,13 +1813,16 @@ pub(in crate::main_control) fn scan<G>(
             processor
                 .recover_missing_math_shift(command.take_current())
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => {
-            Ok(ColdOperation::Paragraph {
-                current_line: i32::try_from(processor.current_file_line_number())
-                    .unwrap_or(i32::MAX),
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::Paragraph {
+                    current_line: i32::try_from(processor.current_file_line_number())
+                        .unwrap_or(i32::MAX),
+                }
+            )
         }
         // TeX82 §1193 closes math only at `math_shift_group`; a `$` inside
         // any nested math group first runs §1064's `off_save`, which inserts
@@ -1629,7 +1833,7 @@ pub(in crate::main_control) fn scan<G>(
         } if matches!(mode, Mode::Math | Mode::DisplayMath)
             && innermost_group != Some(GroupKind::MathShift) =>
         {
-            scan_off_save(processor, command.take_current(), innermost_group)
+            scan_off_save(cold, processor, command.take_current(), innermost_group)
         }
         Meaning::CharToken {
             cat: Catcode::MathShift,
@@ -1648,28 +1852,40 @@ pub(in crate::main_control) fn scan<G>(
                 let paired = processor
                     .scan_init_math_display_pair(mode == Mode::Horizontal)
                     .map_err(command_error)?;
-                Ok(ColdOperation::MathShift {
-                    pairing: if paired {
-                        MathShiftPairing::Paired
-                    } else {
-                        MathShiftPairing::Unpaired
-                    },
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::MathShift {
+                        pairing: if paired {
+                            MathShiftPairing::Paired
+                        } else {
+                            MathShiftPairing::Unpaired
+                        },
+                    }
+                )
             }
             // §1194 `after_math` reaches §1197's `get_x_token` probe twice
             // over: once for a closing display (`m>=0` with `a=null`) and
             // once for a closing equation number (`mode=-m`).
-            Mode::DisplayMath => Ok(ColdOperation::MathShift {
-                pairing: MathShiftPairing::ProbeDisplayEnd,
-            }),
-            Mode::Math if display_eq_no => Ok(ColdOperation::MathShift {
-                pairing: MathShiftPairing::ProbeDisplayEnd,
-            }),
+            Mode::DisplayMath => complete_cold_scan!(
+                cold,
+                ColdOperation::MathShift {
+                    pairing: MathShiftPairing::ProbeDisplayEnd,
+                }
+            ),
+            Mode::Math if display_eq_no => complete_cold_scan!(
+                cold,
+                ColdOperation::MathShift {
+                    pairing: MathShiftPairing::ProbeDisplayEnd,
+                }
+            ),
             // §1194's `m<0` closes inline math through `@<Finish math in
             // text@>`, which probes nothing at all.
-            Mode::Math => Ok(ColdOperation::MathShift {
-                pairing: MathShiftPairing::Unpaired,
-            }),
+            Mode::Math => complete_cold_scan!(
+                cold,
+                ColdOperation::MathShift {
+                    pairing: MathShiftPairing::Unpaired,
+                }
+            ),
         },
         // §1090's shared backup already handled `vmode+letter` and
         // `vmode+other_char`, so a letter or other character reaching here is
@@ -1678,12 +1894,15 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::CharToken {
             ch,
             cat: cat @ (Catcode::Letter | Catcode::Other | Catcode::Space),
-        } => Ok(ColdOperation::Character {
-            ch,
-            cat,
-            origin: material_origin(processor, command),
-            suppress_left_boundary: false,
-        }),
+        } => complete_cold_scan!(
+            cold,
+            ColdOperation::Character {
+                ch,
+                cat,
+                origin: material_origin(processor, command),
+                suppress_left_boundary: false,
+            }
+        ),
         // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
         // its own; `\unpenalty`/`\unkern`/`\unskip` differ only in which node
         // type is a removal target, decided at apply time against the live
@@ -1692,10 +1911,13 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::UnPenalty
             | UnexpandablePrimitive::UnKern
             | UnexpandablePrimitive::UnSkip),
-        ) => Ok(ColdOperation::DeleteLast {
-            primitive,
-            context: processor.diagnostic_context_coordinate(),
-        }),
+        ) => complete_cold_scan!(
+            cold,
+            ColdOperation::DeleteLast {
+                primitive,
+                context: processor.diagnostic_context_coordinate(),
+            }
+        ),
         // TeX82 §1111's "Forbidden cases" (`vmode+ital_corr`) vs. §1112's
         // `hmode+ital_corr`/`mmode+ital_corr`. Mode legality is decided here
         // (only `scan_command` sees `command` to back it up before the
@@ -1703,11 +1925,14 @@ pub(in crate::main_control) fn scan<G>(
         // apply-time work with no scan of its own.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ItalicCorrection) => {
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                Ok(ColdOperation::IllegalItalicCorrection {
-                    token: command.spelling().semantic_token(),
-                })
+                complete_cold_scan!(
+                    cold,
+                    ColdOperation::IllegalItalicCorrection {
+                        token: command.spelling().semantic_token(),
+                    }
+                )
             } else {
-                Ok(ColdOperation::ItalicCorrection)
+                complete_cold_scan!(cold, ColdOperation::ItalicCorrection)
             }
         }
         // §1090's `vmode+no_boundary` was already backed up above, so only
@@ -1715,9 +1940,12 @@ pub(in crate::main_control) fn scan<G>(
         // (`do_nothing`) reach here; both need only the live mode at apply
         // time, with no scan of their own.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary) => {
-            Ok(ColdOperation::NoBoundary {
-                suppress_right: false,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::NoBoundary {
+                    suppress_right: false,
+                }
+            )
         }
         // TeX82 §1171's `mmode+non_script` vs. §1046's `non_math(non_script)`
         // recovery, exactly mirroring the `\vskip`-in-math-mode gate above
@@ -1725,12 +1953,12 @@ pub(in crate::main_control) fn scan<G>(
         // `insert_dollar_sign` generically for any command).
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NonScript) => {
             if matches!(mode, Mode::Math | Mode::DisplayMath) {
-                Ok(ColdOperation::NonScript)
+                complete_cold_scan!(cold, ColdOperation::NonScript)
             } else {
                 processor
                     .recover_missing_math_shift(command.take_current())
                     .map_err(command_error)?;
-                Ok(ColdOperation::MissingMathShift)
+                complete_cold_scan!(cold, ColdOperation::MissingMathShift)
             }
         }
         Meaning::UnexpandablePrimitive(
@@ -1760,13 +1988,16 @@ pub(in crate::main_control) fn scan<G>(
                 // pattern-word loop, §473 therefore enters `absorbing`
                 // before §403 reads the opening brace.
                 let _ = processor.scan_balanced_text(false).map_err(command_error)?;
-                cold.operation = Some(ColdOperation::HyphenationData {
-                    words: Vec::new(),
-                    pattern_specs: Vec::new(),
-                    patterns: true,
-                    rejection_context,
-                    trie_built,
-                });
+                write_cold_scan!(
+                    cold,
+                    ColdOperation::HyphenationData {
+                        words: Vec::new(),
+                        pattern_specs: Vec::new(),
+                        patterns: true,
+                        rejection_context,
+                        trie_built,
+                    }
+                );
                 return Ok(());
             }
             let scanned = processor
@@ -1776,13 +2007,16 @@ pub(in crate::main_control) fn scan<G>(
                     HyphenationDataKind::Exceptions
                 })
                 .map_err(command_error)?;
-            Ok(ColdOperation::HyphenationData {
-                words: scanned.words,
-                pattern_specs: scanned.patterns,
-                patterns,
-                rejection_context,
-                trie_built,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::HyphenationData {
+                    words: scanned.words,
+                    pattern_specs: scanned.patterns,
+                    patterns,
+                    rejection_context,
+                    trie_built,
+                }
+            )
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
         // no named dispatch arm above (or is legal only in a mode this
@@ -1793,7 +2027,7 @@ pub(in crate::main_control) fn scan<G>(
         // `ColdOperation::Continue` -- see umber2-johp.69 and
         // `docs/tex_command_core.md`'s dispatch-completeness invariant.
         Meaning::UnexpandablePrimitive(primitive) => {
-            scan_unclassified_primitive(processor, command.take_current(), primitive, mode)
+            scan_unclassified_primitive(cold, processor, command.take_current(), primitive, mode)
         }
         // Every other `Meaning` variant reaching this point has no named
         // dispatch arm above. `scan_unclassified_meaning` applies the same
@@ -1802,14 +2036,14 @@ pub(in crate::main_control) fn scan<G>(
         // case, over `Catcode` -- so a newly added variant fails to compile
         // there instead of reaching a silent `ColdOperation::Continue` here.
         meaning => scan_unclassified_meaning(
+            cold,
             processor,
             command.take_current(),
             meaning,
             mode,
             innermost_group,
         ),
-    });
-    Ok(())
+    }
 }
 
 /// Web2C/pdfTeX `partoken.ch` replaces selected direct `end_graf` calls with
@@ -1866,14 +2100,15 @@ pub(in crate::main_control) fn report_incomplete_conditions<G>(
 /// execute phase (`apply_cold_operation`) only prints the matching text once
 /// the returned `ColdOperation<G>` is applied.
 pub(in crate::main_control) fn scan_off_save<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     innermost_group: Option<GroupKind>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let Some(kind) = innermost_group else {
         let token = command.spelling().semantic_token();
         processor.report_off_save_bottom_drop(&command);
-        return Ok(ColdOperation::OffSaveBottomDrop { token });
+        return complete_cold_scan!(cold, ColdOperation::OffSaveBottomDrop { token });
     };
     match kind {
         GroupKind::SemiSimple => {
@@ -1883,7 +2118,7 @@ pub(in crate::main_control) fn scan_off_save<G>(
             processor
                 .recover_off_save(command, &[endgroup])
                 .map_err(command_error)?;
-            Ok(ColdOperation::OffSave(OffSaveCloser::EndGroup))
+            complete_cold_scan!(cold, ColdOperation::OffSave(OffSaveCloser::EndGroup))
         }
         GroupKind::MathShift => {
             let dollar = Token::Char {
@@ -1893,7 +2128,7 @@ pub(in crate::main_control) fn scan_off_save<G>(
             processor
                 .recover_off_save(command, &[dollar])
                 .map_err(command_error)?;
-            Ok(ColdOperation::OffSave(OffSaveCloser::MathShift))
+            complete_cold_scan!(cold, ColdOperation::OffSave(OffSaveCloser::MathShift))
         }
         GroupKind::MathLeft => {
             let right = processor
@@ -1906,7 +2141,7 @@ pub(in crate::main_control) fn scan_off_save<G>(
             processor
                 .recover_off_save(command, &[right, dot])
                 .map_err(command_error)?;
-            Ok(ColdOperation::OffSave(OffSaveCloser::NullRight))
+            complete_cold_scan!(cold, ColdOperation::OffSave(OffSaveCloser::NullRight))
         }
         _ => {
             let right_brace = Token::Char {
@@ -1916,7 +2151,7 @@ pub(in crate::main_control) fn scan_off_save<G>(
             processor
                 .recover_off_save(command, &[right_brace])
                 .map_err(command_error)?;
-            Ok(ColdOperation::OffSave(OffSaveCloser::RightBrace))
+            complete_cold_scan!(cold, ColdOperation::OffSave(OffSaveCloser::RightBrace))
         }
     }
 }
@@ -1975,11 +2210,12 @@ pub(in crate::main_control) fn scan_off_save<G>(
 ///   mode") instead, via their own dedicated `ColdOperation::IllegalEqNo` arm
 ///   below (umber2-johp.88).
 fn scan_unclassified_primitive<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     use UnexpandablePrimitive as P;
     match primitive {
         P::Accent
@@ -2221,7 +2457,7 @@ fn scan_unclassified_primitive<G>(
             processor
                 .recover_missing_math_shift(command)
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         // TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)`: unlike the
         // math-noad family immediately above, `\eqno`/`\leqno` outside math
@@ -2234,9 +2470,12 @@ fn scan_unclassified_primitive<G>(
         // `scan_math_request`'s `Request::EquationNumber`);
         // `mmode+eq_no` itself (gated by `privileged`/`cur_group`) is
         // unaffected.
-        P::EqNo | P::LeftEqNo => Ok(ColdOperation::IllegalEqNo {
-            token: command.spelling().semantic_token(),
-        }),
+        P::EqNo | P::LeftEqNo => complete_cold_scan!(
+            cold,
+            ColdOperation::IllegalEqNo {
+                token: command.spelling().semantic_token(),
+            }
+        ),
         // TeX82 §1048's `any_mode(last_item)` Forbidden case: see
         // `ColdOperation::IllegalLastItem`. These internal-only quantities
         // reach this function
@@ -2262,10 +2501,13 @@ fn scan_unclassified_primitive<G>(
         | P::GlueStretchOrder
         | P::GlueShrinkOrder
         | P::GlueToMu
-        | P::MuToGlue => Ok(ColdOperation::IllegalLastItem {
-            token: command.spelling().semantic_token(),
-            context: processor.error_context(),
-        }),
+        | P::MuToGlue => complete_cold_scan!(
+            cold,
+            ColdOperation::IllegalLastItem {
+                token: command.spelling().semantic_token(),
+                context: processor.error_context(),
+            }
+        ),
         // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
         // `\cr` and `\crcr` carry the `car_ret` command code (chr `cr_code`
         // and `cr_cr_code`); `\span` carries `tab_mark` with chr `span_code`.
@@ -2273,14 +2515,17 @@ fn scan_unclassified_primitive<G>(
         // `align_state=0`, so every other occurrence -- inside an alignment
         // cell whose braces are unbalanced, or outside any alignment at all --
         // is main control's to recover through §1127.
-        P::Cr | P::CrCr | P::Span => scan_align_error(processor, command),
+        P::Cr | P::CrCr | P::Span => scan_align_error(cold, processor, command),
         // TeX82 §1126's `any_mode(no_align): no_align_error` and
         // `any_mode(omit): omit_error` (§1129). Both routines are a
         // `print_err`/`help2`/`error` triple and nothing else: report the
         // command-specific legal position, then discard the primitive.
-        P::NoAlign | P::Omit => Ok(ColdOperation::MisplacedAlignmentCommand {
-            omit: primitive == P::Omit,
-        }),
+        P::NoAlign | P::Omit => complete_cold_scan!(
+            cold,
+            ColdOperation::MisplacedAlignmentCommand {
+                omit: primitive == P::Omit,
+            }
+        ),
         // e-TeX 2.6 `etex.ch` [17.3822--3880] adds four nonzero modifiers to
         // TeX82's `valign` command code. In horizontal mode `eTeX_enabled`
         // first checks `TeXXeT_state>0`; only the enabled branch appends the
@@ -2294,10 +2539,13 @@ fn scan_unclassified_primitive<G>(
                 P::EndR => tex_state::node::Direction::EndR,
                 _ => unreachable!("text-direction primitive matched above"),
             };
-            Ok(ColdOperation::TextDirection {
-                direction,
-                enabled: processor.int_param(IntParam::TEX_XET_STATE) > 0,
-            })
+            complete_cold_scan!(
+                cold,
+                ColdOperation::TextDirection {
+                    direction,
+                    enabled: processor.int_param(IntParam::TEX_XET_STATE) > 0,
+                }
+            )
         }
         P::DiscretionaryHyphen
         | P::GlobalDefs
@@ -2331,7 +2579,7 @@ fn scan_unclassified_primitive<G>(
 /// This is `scan_unclassified_primitive`'s sibling one level up the meaning
 /// word (umber2-johp.108). That function made the
 /// `Meaning::UnexpandablePrimitive` payload compile-time exhaustive, but the
-/// outer `Meaning` match kept an ordinary `_ => Ok(ColdOperation::Continue)`
+/// outer `Meaning` match kept an ordinary `_ => complete_cold_scan!(cold, ColdOperation::Continue)`
 /// wildcard, which became the remaining hiding place: an unrouted meaning
 /// left its own operand tokens in the input to be typeset as literal text
 /// arbitrarily far from the real defect (umber2-johp.106's `\pagegoal=100pt`
@@ -2365,18 +2613,19 @@ fn scan_unclassified_primitive<G>(
 ///   none of them; it only makes each one fail loudly, tracked as
 ///   umber2-johp.111.
 fn scan_unclassified_meaning<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     meaning: Meaning,
     mode: Mode,
     innermost_group: Option<GroupKind>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     match meaning {
         // TeX82 §1045's `any_mode(relax): do_nothing`. `\relax` -- and the
         // frozen relax `\noexpand` substitutes for its operand (§358) -- is
         // the one meaning for which "consume nothing and proceed" is the
         // whole specified behavior.
-        Meaning::Relax => Ok(ColdOperation::Relax),
+        Meaning::Relax => complete_cold_scan!(cold, ColdOperation::Relax),
         // TeX82 §1048's Forbidden case `any_mode(last_item)`:
         // `report_illegal_case`. `Meaning::InternalInteger` is tex.web's
         // `last_item` command code with an operand other than
@@ -2386,12 +2635,15 @@ fn scan_unclassified_meaning<G>(
         // `scan_unclassified_primitive` already routes to the same
         // `ColdOperation<G>` -- these are legal only as an internal-value operand
         // inside a scan, never as a delivered main-control command.
-        Meaning::InternalInteger(_) => Ok(ColdOperation::IllegalLastItem {
-            token: command.spelling().semantic_token(),
-            context: processor.error_context(),
-        }),
+        Meaning::InternalInteger(_) => complete_cold_scan!(
+            cold,
+            ColdOperation::IllegalLastItem {
+                token: command.spelling().semantic_token(),
+                context: processor.error_context(),
+            }
+        ),
         Meaning::CharToken { ch, cat } => {
-            scan_unclassified_char_token(processor, command, ch, cat, mode)
+            scan_unclassified_char_token(cold, processor, command, ch, cat, mode)
         }
         // `scan_command`'s outer match ends with an unconditional
         // `Meaning::UnexpandablePrimitive(primitive)` arm delegating to
@@ -2428,11 +2680,14 @@ fn scan_unclassified_meaning<G>(
         // `\char`'s own already-dispatched `ColdOperation<G>`; the only
         // difference is that the character code is already known and needs
         // no `scan_char_num`.
-        Meaning::CharGiven(ch) => Ok(ColdOperation::CharacterCode {
-            value: ch as i32,
-            origin: material_origin(processor, &command),
-            suppress_left_boundary: false,
-        }),
+        Meaning::CharGiven(ch) => complete_cold_scan!(
+            cold,
+            ColdOperation::CharacterCode {
+                value: ch as i32,
+                origin: material_origin(processor, &command),
+                suppress_left_boundary: false,
+            }
+        ),
         // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
         // recovery the whole math-only vocabulary takes outside math mode.
         // Reaching this arm proves `mode` is not `Math`/`DisplayMath`:
@@ -2443,7 +2698,7 @@ fn scan_unclassified_meaning<G>(
             processor
                 .recover_missing_math_shift(command)
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         // TeX82 §§366/370/380 put `undefined_cs` above `max_command`, so the
         // command-owned expanded-delivery loop reports and drops it before
@@ -2456,7 +2711,7 @@ fn scan_unclassified_meaning<G>(
         // deliberately unexpandable `ExpandablePrimitive`; TeX82 §1135's
         // `cs_error` gives it "Extra \endcsname", which is not routed here.
         Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
-            Ok(ColdOperation::ExtraEndCsName)
+            complete_cold_scan!(cold, ColdOperation::ExtraEndCsName)
         }
         Meaning::ExpandablePrimitive(_) => Err(unimplemented_meaning(&command, meaning, mode)),
         // TeX82 §1130's `vmode+endv,hmode+endv: do_endv` (§1131) and §1046's
@@ -2470,9 +2725,9 @@ fn scan_unclassified_meaning<G>(
                 processor
                     .recover_missing_math_shift(command)
                     .map_err(command_error)?;
-                Ok(ColdOperation::MissingMathShift)
+                complete_cold_scan!(cold, ColdOperation::MissingMathShift)
             } else {
-                scan_off_save(processor, command, innermost_group)
+                scan_off_save(cold, processor, command, innermost_group)
             }
         }
         // An opcode `tex-state`'s meaning decoder itself does not recognize.
@@ -2485,12 +2740,13 @@ fn scan_unclassified_meaning<G>(
 ///
 /// See [`scan_unclassified_meaning`] for the bucket definitions.
 fn scan_unclassified_char_token<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     ch: char,
     cat: Catcode,
     mode: Mode,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     match cat {
         // TeX82 §1046's `non_math(sup_mark)`/`non_math(sub_mark)`:
         // §1047's `insert_dollar_sign` backs the command up behind a
@@ -2502,19 +2758,22 @@ fn scan_unclassified_char_token<G>(
             processor
                 .recover_missing_math_shift(command)
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingMathShift)
+            complete_cold_scan!(cold, ColdOperation::MissingMathShift)
         }
         // TeX82 §1045's `any_mode(mac_param): report_illegal_case`. A bare
         // parameter token has no operand of its own; the command is consumed
         // after the diagnostic and main control continues.
-        Catcode::Parameter => Ok(ColdOperation::IllegalMacroParameter {
-            token: command.spelling().semantic_token(),
-        }),
+        Catcode::Parameter => complete_cold_scan!(
+            cold,
+            ColdOperation::IllegalMacroParameter {
+                token: command.spelling().semantic_token(),
+            }
+        ),
         // TeX82 §1126's `any_mode(tab_mark)` (a category-4 character token)
         // and `any_mode(car_ret)` (a category-5 one, which `get_next`'s
         // §344 end-of-line handling normally consumes before delivery).
         // Both command codes take §1127's `align_error`.
-        Catcode::AlignmentTab | Catcode::EndLine => scan_align_error(processor, command),
+        Catcode::AlignmentTab | Catcode::EndLine => scan_align_error(cold, processor, command),
         // Category codes that never become a delivered command: `get_next`
         // (§341-§356) consumes escape characters into control-sequence
         // spellings, resolves active characters to their own meanings, drops
@@ -2552,9 +2811,10 @@ fn scan_unclassified_char_token<G>(
 /// from the command-owned `align_state`; main control only records whether the
 /// inserted brace opens a recovery simple group for §1131's `off_save`.
 fn scan_align_error<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let token = command.spelling().semantic_token();
     match processor
         .recover_align_error(command)
@@ -2564,14 +2824,17 @@ fn scan_align_error<G>(
         // input level is still current. Split scan/apply must therefore carry
         // that exact context rather than reconstructing it after a retained
         // alignment v-template has advanced or retired.
-        None => Ok(ColdOperation::MisplacedAlignmentDelimiter {
-            token,
-            context: processor.diagnostic_context_coordinate(),
-        }),
+        None => complete_cold_scan!(
+            cold,
+            ColdOperation::MisplacedAlignmentDelimiter {
+                token,
+                context: processor.diagnostic_context_coordinate(),
+            }
+        ),
         Some(tex_state::token::Token::Char {
             cat: brace @ (Catcode::BeginGroup | Catcode::EndGroup),
             ..
-        }) => Ok(ColdOperation::AlignmentRecovery { brace }),
+        }) => complete_cold_scan!(cold, ColdOperation::AlignmentRecovery { brace }),
         Some(_) => Err(ExecError::MissingToken {
             context: "align_error balancing brace",
         }),
@@ -2595,13 +2858,14 @@ fn unimplemented_meaning<G>(
 /// application only sees this completed typed description after the processor
 /// borrow ends.
 pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
+    cold: &mut ColdOperationSlot<G>,
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     global: bool,
     phase: ArithmeticScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ColdOperation<G>, ExecError> {
+) -> Result<(), ExecError> {
     let target = match phase {
         ArithmeticScanPhase::TargetCommand => {
             *suspended = Some(PendingOperationScanPhase::Arithmetic {
@@ -2617,10 +2881,13 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
             *suspended = None;
             match target_command.meaning() {
                 tex_state::meaning::ResolvedMeaning::Macro { .. } => {
-                    return Ok(ColdOperation::InvalidArithmeticTarget {
-                        primitive,
-                        target: tex_command::PrintCommand::from_current(&target_command),
-                    });
+                    return complete_cold_scan!(
+                        cold,
+                        ColdOperation::InvalidArithmeticTarget {
+                            primitive,
+                            target: tex_command::PrintCommand::from_current(&target_command),
+                        }
+                    );
                 }
                 tex_state::meaning::ResolvedMeaning::Static(meaning) => match meaning {
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
@@ -2710,10 +2977,13 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                         ArithmeticTarget::GlueParameter { index, mu: true }
                     }
                     _ => {
-                        return Ok(ColdOperation::InvalidArithmeticTarget {
-                            primitive,
-                            target: tex_command::PrintCommand::from_current(&target_command),
-                        });
+                        return complete_cold_scan!(
+                            cold,
+                            ColdOperation::InvalidArithmeticTarget {
+                                primitive,
+                                target: tex_command::PrintCommand::from_current(&target_command),
+                            }
+                        );
                     }
                 },
             }
@@ -2824,10 +3094,13 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
             }
         }
     };
-    Ok(ColdOperation::Arithmetic {
-        primitive,
-        target,
-        operand,
-        global,
-    })
+    complete_cold_scan!(
+        cold,
+        ColdOperation::Arithmetic {
+            primitive,
+            target,
+            operand,
+            global,
+        }
+    )
 }

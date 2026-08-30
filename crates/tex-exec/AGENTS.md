@@ -82,8 +82,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
   values and the small attempt/prepared root fields that change domain in
-  place; `scan.rs` owns uncommon operand collection; `apply.rs` mutably borrows
-  the resident prepared operation and consumes only its semantic leaves;
+  place; `scan.rs` owns uncommon operand collection and writes completed leaves
+  directly into the borrowed caller slot while returning only compact control
+  outcomes; `apply.rs` mutably borrows the resident prepared operation and
+  consumes only its semantic leaves;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
   families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct

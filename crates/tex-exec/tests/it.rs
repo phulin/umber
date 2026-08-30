@@ -471,8 +471,25 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
     assert!(!admitted_episode.contains("stores.command_context()"));
     assert!(preflight.contains("host_preparation.fill_preflight("));
-    assert!(cold_scan.contains("cold.operation = Some("));
-    assert!(cold_scan.contains("(match meaning {"));
+    assert!(cold_scan.contains("match meaning {"));
+    assert!(cold_scan.contains("complete_cold_scan!("));
+    assert!(!cold_scan.contains("fill_resident!"));
+    for scanner_source in [delivery, cold_scan] {
+        assert!(
+            !scanner_source.contains("Result<ColdOperation"),
+            "cold scanner returned the complete operation carrier"
+        );
+        assert!(
+            !scanner_source.contains("Result<Option<ColdOperation"),
+            "cold scanner returned an optional complete operation carrier"
+        );
+        assert!(
+            !scanner_source.contains("Ok(ColdOperation"),
+            "cold scanner rebuilt an operation through Result"
+        );
+    }
+    assert!(control.contains("macro_rules! write_cold_scan"));
+    assert!(control.contains("$cold.operation = Some($operation)"));
     assert!(delivery.contains("command.mark_resident_cold(cold)"));
     assert_eq!(
         preflight.matches("dispatch_main_control_command(").count(),
