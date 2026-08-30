@@ -59,7 +59,7 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     for value in 0..17_u64 {
         let key = pool.payload.allocate(7).expect("chunk allocation");
         pool.payload
-            .append(key, 7, value, None)
+            .append_with(key, 7, || value, None)
             .expect("chunk append");
         keys.push(key);
     }
@@ -81,10 +81,10 @@ fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let key = pool.payload.allocate(7).expect("chunk allocation");
     for value in 1..=3 {
         pool.payload
-            .append(
+            .append_with(
                 key,
                 7,
-                DropTracked {
+                || DropTracked {
                     value,
                     drops: Rc::clone(&drops),
                     panic_on: 2,
@@ -1162,6 +1162,53 @@ fn detached_active_builder_rejects_foreign_lane_owner() {
         .rollback_active_list(&mut pool, &mut builder)
         .expect("owner rolls back its builder");
     assert!(builder.is_vacant());
+}
+
+#[test]
+fn direct_active_constructor_runs_only_after_destination_admission() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut first = ForkArena::<u32, ActiveLane>::new();
+    let mut second = ForkArena::<u32, ActiveLane>::new();
+    let mut builder = ActiveListBuilder::vacant();
+    let constructions = Cell::new(0_u32);
+    first
+        .open_active_list(&pool, &mut builder)
+        .expect("open active list");
+
+    assert_eq!(
+        second.push_active_list_constructed(
+            &mut pool,
+            &mut builder,
+            || {
+                constructions.set(constructions.get() + 1);
+                41
+            },
+            None,
+        ),
+        Err(ForkArenaError::InvalidActiveListBuilder)
+    );
+    assert_eq!(constructions.get(), 0);
+
+    first
+        .push_active_list_constructed(
+            &mut pool,
+            &mut builder,
+            || {
+                constructions.set(constructions.get() + 1);
+                43
+            },
+            None,
+        )
+        .expect("construct directly in admitted destination");
+    first
+        .finalize_active_list(&mut pool, &mut builder)
+        .expect("finalize direct construction");
+    let list = builder.take_sealed().expect("take direct list");
+    assert_eq!(constructions.get(), 1);
+    assert_eq!(
+        first.list(&pool, list).expect("direct list").get(0),
+        Some(&43)
+    );
 }
 
 #[test]

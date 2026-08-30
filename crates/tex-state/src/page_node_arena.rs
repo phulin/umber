@@ -937,11 +937,11 @@ impl<'a> PageMaterialArena<'a> {
         if let Some(identity) = &mut builder.identity {
             let item_identity = semantic_node_identity(&node);
             identity.push_back(item_identity);
-            let result = self.region.pub_arena.push_active_list_summarized(
+            let result = self.region.pub_arena.push_active_list_constructed(
                 &mut self.pool.chunks,
                 &mut builder.inner,
-                node,
-                item_identity,
+                move || node,
+                Some(item_identity),
             );
             if result.is_ok() {
                 builder.identity_work.hashed_values =
@@ -949,9 +949,12 @@ impl<'a> PageMaterialArena<'a> {
             }
             result
         } else {
-            self.region
-                .pub_arena
-                .push_active_list(&mut self.pool.chunks, &mut builder.inner, node)
+            self.region.pub_arena.push_active_list_constructed(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                move || node,
+                None,
+            )
         }
     }
 

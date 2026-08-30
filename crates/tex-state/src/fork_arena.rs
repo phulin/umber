@@ -274,11 +274,12 @@ impl<T> ChunkStorage<T> {
         Ok((page, index))
     }
 
-    fn append(
+    /// Invokes `construct` only after the reusable final slot is admitted.
+    fn append_with(
         &mut self,
         key: RawChunkKey,
         arena: u32,
-        value: T,
+        construct: impl FnOnce() -> T,
         item_identity: Option<u64>,
     ) -> Result<u32, ForkArenaError> {
         let used = {
@@ -293,7 +294,7 @@ impl<T> ChunkStorage<T> {
         };
         let (page, index) = self.slot_index(key, used as usize)?;
         debug_assert!(self.pages[page].slots[index].is_none());
-        self.pages[page].slots[index] = Some(value);
+        self.pages[page].slots[index].get_or_insert_with(construct);
         let meta = self.validate_mut(key, arena)?;
         meta.used += 1;
         if let Some(item_identity) = item_identity {
@@ -1360,6 +1361,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         value: T,
         item_identity: Option<u64>,
     ) -> Result<(), ForkArenaError> {
+        self.append_payload_with(pool, root, || value, item_identity)
+    }
+
+    fn append_payload_with(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &mut ArenaListId<Lane>,
+        construct: impl FnOnce() -> T,
+        item_identity: Option<u64>,
+    ) -> Result<(), ForkArenaError> {
         if !root.is_empty() && root.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
@@ -1392,7 +1403,9 @@ impl<T, Lane> ForkArena<T, Lane> {
                 key
             }
         };
-        let offset = pool.payload.append(key, self.owner, value, item_identity)?;
+        let offset = pool
+            .payload
+            .append_with(key, self.owner, construct, item_identity)?;
         if root.is_empty() {
             *root = ArenaListId::from_root(
                 self.owner,
@@ -1711,28 +1724,19 @@ impl<T, Lane> ForkArena<T, Lane> {
         builder: &mut ActiveListBuilder<T, Lane>,
         value: T,
     ) -> Result<(), ForkArenaError> {
-        self.push_active_list_with_identity(pool, builder, value, None)
+        self.push_active_list_constructed(pool, builder, || value, None)
     }
 
-    pub(crate) fn push_active_list_summarized(
+    /// Constructs one new payload through its admitted reusable chunk slot.
+    pub(crate) fn push_active_list_constructed(
         &mut self,
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
-        value: T,
-        item_identity: u64,
-    ) -> Result<(), ForkArenaError> {
-        self.push_active_list_with_identity(pool, builder, value, Some(item_identity))
-    }
-
-    fn push_active_list_with_identity(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        builder: &mut ActiveListBuilder<T, Lane>,
-        value: T,
+        construct: impl FnOnce() -> T,
         item_identity: Option<u64>,
     ) -> Result<(), ForkArenaError> {
         let mut root = self.active_list_open_mut(builder)?.root;
-        self.append_payload(pool, &mut root, value, item_identity)?;
+        self.append_payload_with(pool, &mut root, construct, item_identity)?;
         self.active_list_open_mut(builder)?.root = root;
         Ok(())
     }
