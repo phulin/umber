@@ -989,66 +989,67 @@ impl<G> SaveJournal<G> {
 
     pub(crate) fn finish_operation_rollback(&mut self, operation: StateOperation<G>) {
         self.validate_operation(&operation);
-        while self.active_groups.len() > operation.group_depth as usize {
-            self.recycle_active_group();
-        }
-        while self.pending_operation_groups.len() > operation.pending_group_position as usize {
-            let segment = self
-                .pending_operation_groups
+        while self.operation_entries.len() > operation.operation_position as usize {
+            match self
+                .operation_entries
                 .pop()
-                .expect("pending operation group suffix");
-            self.push_active_group(segment);
-        }
-        for entry in self.operation_entries[operation.operation_position as usize..]
-            .iter()
-            .rev()
-        {
-            let JournalEntry::Mutation(mutation) = entry else {
-                continue;
-            };
-            let Some(level) = mutation.saved_at() else {
-                continue;
-            };
-            if let Some(group) = self
-                .active_groups
-                .iter_mut()
-                .rev()
-                .find(|group| group.frame.level() == level)
+                .expect("operation suffix remains nonempty")
             {
-                let saved = group
-                    .entries
-                    .pop()
-                    .expect("operation save remains in its group");
-                debug_assert_eq!(saved.cell(), mutation.cell());
+                JournalEntry::Mutation(mutation) => {
+                    if let Some(level) = mutation.saved_at() {
+                        let group = self
+                            .active_groups
+                            .last_mut()
+                            .expect("operation save remains in its group");
+                        debug_assert_eq!(group.frame.level(), level);
+                        let saved = group
+                            .entries
+                            .pop()
+                            .expect("operation save remains in its group");
+                        debug_assert_eq!(saved.cell(), mutation.cell());
+                    }
+                    if self.checkpoint_stamps.get(&mutation.cell()).is_some_and(
+                        |(epoch, position)| {
+                            *epoch == self.checkpoint_epoch
+                                && *position >= operation.checkpoint_entries as usize
+                        },
+                    ) {
+                        self.checkpoint_stamps.remove(&mutation.cell());
+                    }
+                }
+                JournalEntry::GroupEnter(frame) => {
+                    let segment = self
+                        .active_groups
+                        .pop()
+                        .expect("operation-entered group remains active");
+                    debug_assert_eq!(segment.frame, frame);
+                    self.recycle_segment(segment);
+                }
+                JournalEntry::GroupExit(frame) => {
+                    let segment = self
+                        .pending_operation_groups
+                        .pop()
+                        .expect("operation-exited group remains pending");
+                    debug_assert_eq!(segment.frame, frame);
+                    self.push_active_group(segment);
+                }
             }
         }
-        if operation.group_id != 0 {
+        debug_assert_eq!(self.active_groups.len(), operation.group_depth as usize);
+        debug_assert_eq!(
+            self.pending_operation_groups.len(),
+            operation.pending_group_position as usize
+        );
+        if operation.group_id == 0 {
+            debug_assert!(self.active_groups.is_empty());
+        } else {
             let group = self
                 .active_groups
-                .last_mut()
+                .last()
                 .expect("operation started in a live group");
             debug_assert_eq!(group.id, operation.group_id);
-            group
-                .entries
-                .truncate(operation.group_entry_position as usize);
+            debug_assert_eq!(group.entries.len(), operation.group_entry_position as usize);
         }
-        for entry in &self.operation_entries[operation.operation_position as usize..] {
-            let JournalEntry::Mutation(mutation) = entry else {
-                continue;
-            };
-            if self
-                .checkpoint_stamps
-                .get(&mutation.cell())
-                .is_some_and(|(epoch, position)| {
-                    *epoch == self.checkpoint_epoch
-                        && *position >= operation.checkpoint_entries as usize
-                })
-            {
-                self.checkpoint_stamps.remove(&mutation.cell());
-            }
-        }
-        self.operation_entries
-            .truncate(operation.operation_position as usize);
         self.active_operations.pop();
         self.checkpoint_arena
             .restore_operation(&mut self.checkpoint_pool, operation.checkpoint)
@@ -1382,14 +1383,6 @@ impl<G> SaveJournal<G> {
 
     fn refresh_checkpoint_capacity_bytes(&mut self) {
         self.checkpoint_capacity_bytes = self.checkpoint_pool.allocated_heap_bytes();
-    }
-
-    fn recycle_active_group(&mut self) {
-        let segment = self.active_groups.pop().expect("active group segment");
-        self.active_group_entries = self
-            .active_group_entries
-            .saturating_sub(segment.entries.len().saturating_add(1));
-        self.recycle_segment(segment);
     }
 
     fn recycle_segment(&mut self, segment: GroupSegment<G>) {

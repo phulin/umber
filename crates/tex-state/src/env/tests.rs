@@ -161,6 +161,106 @@ fn operation_rollback_is_exact_after_the_cell_was_already_written_in_the_interva
 }
 
 #[test]
+fn operation_rollback_rewinds_cross_kind_sibling_groups_before_named_checkpoint_restore() {
+    let mut names = interner();
+    let local = names.intern("local").expect("intern local");
+    let mut state = state();
+    state.admit_symbol(local.symbol()).expect("admit local");
+    state
+        .assign_dimension(53, Scaled::from_raw(5), AssignmentScope::Global)
+        .expect("install base dimension");
+    let checkpoint = state.journal_cursor();
+
+    let operation = state.begin_state_operation();
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("first group");
+    state
+        .assign_meaning(
+            local.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Local,
+        )
+        .expect("first sibling mutation");
+    state.end_group(GroupKind::Simple).expect("end first group");
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("second group");
+    state
+        .assign_dimension(53, Scaled::from_raw(7), AssignmentScope::Local)
+        .expect("second sibling mutation");
+
+    // TeX82 §§282--283 consumes each group's §275 save records while that
+    // exact group is current. Operation rollback must preserve the same order
+    // even when sibling groups share one numeric level and cell kinds differ.
+    state.rollback_state_operation(operation).expect("rollback");
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(
+        state.meaning(local.symbol()).expect("meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
+    assert_eq!(state.dimension(53).expect("dimension"), Scaled::from_raw(5));
+
+    state
+        .assign_dimension(53, Scaled::from_raw(9), AssignmentScope::Global)
+        .expect("post-operation assignment");
+    state.restore(checkpoint).expect("named checkpoint restore");
+    assert_eq!(
+        state.dimension(53).expect("restored dimension"),
+        Scaled::from_raw(5),
+        "operation rollback restores its private delta without consuming the named checkpoint"
+    );
+}
+
+#[test]
+fn nested_operation_rollback_restores_the_exact_parent_group_segment() {
+    let mut names = interner();
+    let local = names.intern("nested").expect("intern nested");
+    let mut state = state();
+    state.admit_symbol(local.symbol()).expect("admit nested");
+    let outer = state.begin_state_operation();
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("parent group");
+    state
+        .assign_count(7, 11, AssignmentScope::Local)
+        .expect("parent mutation");
+
+    let inner = state.begin_state_operation();
+    state.end_group(GroupKind::Simple).expect("exit parent");
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("sibling group");
+    state
+        .assign_dimension(8, Scaled::from_raw(13), AssignmentScope::Local)
+        .expect("sibling mutation");
+    state
+        .rollback_state_operation(inner)
+        .expect("inner rollback");
+
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(7).expect("parent count"), 11);
+    assert_eq!(state.dimension(8).expect("dimension"), Scaled::from_raw(0));
+    state
+        .assign_meaning(
+            local.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Local,
+        )
+        .expect("outer suffix mutation");
+    state
+        .rollback_state_operation(outer)
+        .expect("outer rollback");
+
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.count(7).expect("restored count"), 0);
+    assert_eq!(
+        state.meaning(local.symbol()).expect("restored meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
+}
+
+#[test]
 fn checkpoint_values_rewind_and_redo_without_consuming_the_accepted_delta() {
     let mut state = state();
     state
