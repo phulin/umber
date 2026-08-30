@@ -71,7 +71,12 @@ collector (see `src/conditionals.rs`).
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: exclusively mutable live aggregate command roots,
   persistent command state, cross-processor executor-owned replay-completion
-  fences, and current-generation execution scratch. A named checkpoint records
+  fences, current-generation execution scratch, and direct semantic mutation.
+  `src/state/attempt_transition.rs` owns direct-operation scope settlement and
+  resource handoff; `src/state/projection.rs` owns allocation-free retained-byte
+  and dependency views; `src/state/executor_publication.rs` owns ordered
+  executor-facing fact transfer. Each is an inherent implementation on the
+  same authoritative `CommandState`; none adds a facade or state owner. A named checkpoint records
   bounded timeline coordinates without cloning the aggregate root; warmed
   command delivery performs no root admission. Resource
   continuations retain the exclusive
@@ -427,10 +432,13 @@ collector (see `src/conditionals.rs`).
   `last_item` layouts, while `primitive_identity.rs` owns profile-dependent
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
-- `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
+- `src/snapshot.rs`, `src/snapshot/boundary.rs`, and `src/snapshot/tests.rs`:
+  generation-generic command
   snapshots and named summaries backed by generation-checked reusable frame
   pages plus packed scalar journals, and containing one coarse generation owner
   plus fixed timeline, arena, stack, source-anchor, and profile coordinates.
+  The private boundary module owns capture, validation, publication,
+  fork/reject/accept, restore, and rollback over the substrate in `snapshot.rs`.
   Capture appends a move-only frame; aggregate release returns that frame row
   and every obsolete journal/logical-stack prefix chunk to their pools because
   JobStart is frozen outside the live owner. Retained-owner clone copies only

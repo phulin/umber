@@ -6,7 +6,6 @@ use tex_state::CommandContext;
 use tex_state::token::TracedTokenWord;
 use tex_state::{GroupFrame, GroupKind, StateError};
 
-use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 #[cfg(test)]
@@ -30,6 +29,10 @@ use crate::profile::{
     CommandProfileMismatch,
 };
 
+mod attempt_transition;
+mod executor_publication;
+mod projection;
+
 #[cfg(test)]
 thread_local! {
     static RETIREMENT_TOP_SOURCE_CHECKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -38,25 +41,6 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn retirement_top_source_checks() -> u64 {
     RETIREMENT_TOP_SOURCE_CHECKS.with(std::cell::Cell::get)
-}
-
-fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
-    match reason {
-        StoredReplayReason::EveryPar => "everypar",
-        StoredReplayReason::EveryMath => "everymath",
-        StoredReplayReason::EveryDisplay => "everydisplay",
-        StoredReplayReason::EveryHBox => "everyhbox",
-        StoredReplayReason::EveryVBox => "everyvbox",
-        StoredReplayReason::EveryJob => "everyjob",
-        StoredReplayReason::EveryCr => "everycr",
-        StoredReplayReason::OutputRoutine
-        | StoredReplayReason::EveryEof
-        | StoredReplayReason::Mark
-        | StoredReplayReason::Write
-        | StoredReplayReason::Discretionary => {
-            unreachable!("only executor-requested named lists are queued here")
-        }
-    }
 }
 
 /// Complete future-relevant state owned by the command machine.
@@ -134,50 +118,6 @@ pub struct CommandStateRoots<G> {
     /// committed observations.
     pub(crate) named_token_list_pushes:
         Vec<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>,
-}
-
-impl<G> CommandStateRoots<G> {
-    pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(self.input.retained_bytes())
-            .saturating_add(self.parameters.activations.retained_bytes())
-            .saturating_add(self.conditions.frames.retained_bytes())
-            .saturating_add(self.alignment.align_stack.retained_bytes())
-            .saturating_add(self.alignment.suspended.retained_bytes())
-            .saturating_add(
-                self.replay_completions
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
-            )
-            .saturating_add(
-                self.pending_replay_completions
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
-            )
-            .saturating_add(
-                self.semantic_diagnostics
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<CommandSemanticDiagnostic>()),
-            )
-            .saturating_add(self.group_payloads.retained_bytes())
-            .saturating_add(self.aftergroup_payloads.retained_bytes())
-            .saturating_add(self.named_token_list_pushes.capacity().saturating_mul(
-                std::mem::size_of::<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>(
-                ),
-            ))
-            .saturating_add(
-                self.transient
-                    .builders
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<LiveTokenBuilder>()),
-            )
-            .saturating_add(
-                self.transient
-                    .rollback_roots
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-    }
 }
 
 /// Complete future-relevant state owned by the command machine.
@@ -819,249 +759,6 @@ impl<G> CommandState<G> {
         id: crate::AttemptDefinitionId,
     ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
         self.attempt.arena().promote_definition(universe, id)
-    }
-
-    /// Captures every attempt-local table and subordinate builder cursor for
-    /// an executor operation.
-    pub fn begin_attempt_operation(&mut self) -> crate::CommandAttemptOperation {
-        assert!(
-            self.active_attempt_operation.is_none(),
-            "direct command operations do not nest"
-        );
-        let mark = self
-            .attempt
-            .begin_operation(self.parameters.activations.len())
-            .expect("command operation scope capacity is bounded");
-        self.active_attempt_operation = Some(mark);
-        crate::CommandAttemptOperation::new(mark)
-    }
-
-    /// Opens one move-only synchronous child of the active direct operation.
-    ///
-    /// The child is attempt scratch only. Callers may consume its values while
-    /// it is live, but must detach their final non-attempt result before
-    /// [`Self::close_attempt_child_scope`] consumes the receipt. Semantic
-    /// command mutations deliberately remain in the parent operation.
-    pub fn begin_attempt_child_scope(
-        &mut self,
-    ) -> Result<crate::CommandAttemptChildScope, crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        let owner = self.attempt.begin_child_scope()?;
-        Ok(crate::CommandAttemptChildScope::new(owner))
-    }
-
-    /// Consumes and closes exactly one synchronous LIFO child scope.
-    pub fn close_attempt_child_scope(
-        &mut self,
-        scope: crate::CommandAttemptChildScope,
-    ) -> Result<(), crate::AttemptError> {
-        self.attempt.close_child_scope(scope.into_owner())
-    }
-
-    pub(crate) fn begin_attempt_scanner_scope(
-        &mut self,
-    ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {
-        self.attempt.begin_child_scope()
-    }
-
-    pub(crate) fn defer_attempt_scope_retirement(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt.validate_child_retirement(&scope)?;
-        if self.attempt.child_scope_is_direct_operation_child(&scope) {
-            self.attempt.defer_child_to_operation(scope)
-        } else {
-            self.attempt.close_child_scope(scope)
-        }
-    }
-
-    pub(crate) fn validate_attempt_scope_retirement(
-        &self,
-        scope: &crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt.validate_child_retirement(scope)
-    }
-
-    pub(crate) fn discard_attempt_scope_suffix(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        self.attempt.close_child_scope(scope)
-    }
-
-    /// Rejects the attempt-local suffix created after `mark`.
-    ///
-    /// Executor aggregate rollback restores semantic roots before invoking
-    /// this method, so no surviving command coordinate can name the suffix.
-    pub fn rollback_attempt_operation(
-        &mut self,
-        operation: crate::CommandAttemptOperation,
-    ) -> Result<(), crate::AttemptError> {
-        let mark = operation.coordinate();
-        if self.active_attempt_operation != Some(mark) {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        }
-        while self.parameters.activations.len() > mark.macro_depth() {
-            let arguments = self
-                .parameters
-                .retire_last_activation()
-                .ok_or(crate::AttemptError::InvalidCoordinate)?;
-            self.scratch
-                .pop_macro_frame(arguments.frame())
-                .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
-        }
-        self.attempt.rollback_operation(mark)?;
-        self.active_attempt_operation = None;
-        Ok(())
-    }
-
-    /// Commits the exact direct-operation/scanner scope. Macro frames live in
-    /// the disjoint generation-owned scratch lanes until input retirement.
-    pub fn commit_attempt_operation(
-        &mut self,
-        operation: crate::CommandAttemptOperation,
-    ) -> Result<(), crate::AttemptError> {
-        let mark = operation.coordinate();
-        if self.active_attempt_operation != Some(mark) {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        }
-        self.attempt.commit_operation(mark)?;
-        self.active_attempt_operation = None;
-        Ok(())
-    }
-
-    /// Moves the complete operation arena into a resource continuation.
-    pub fn suspend_attempt<R>(
-        &mut self,
-        universe: &tex_state::Universe<G>,
-        operation: crate::CommandAttemptOperation,
-        resume: crate::AttemptResumePoint,
-        pending: R,
-    ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendFailure> {
-        let opening = operation.coordinate();
-        if self.active_attempt_operation != Some(opening) {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate),
-            ));
-        }
-        if let Err(error) = self.attempt.arena().validate_mark(opening.attempt_mark()) {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(error),
-            ));
-        }
-        if let Err(error) = self.attempt.validate_operation(opening) {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(error),
-            ));
-        }
-        let generation = match universe.generation_owner() {
-            Ok(generation) => generation,
-            Err(error) => {
-                return Err(crate::AttemptSuspendFailure::new(
-                    operation,
-                    crate::AttemptSuspendError::Generation(error),
-                ));
-            }
-        };
-        let attempt = core::mem::take(&mut self.attempt);
-        Ok(crate::PendingCommandAttempt::new_at_validated_mark(
-            attempt, generation, operation, resume, pending,
-        ))
-    }
-
-    /// Reinstalls a returned arena after validating its coarse generation.
-    #[allow(
-        clippy::result_large_err,
-        reason = "stale admission must return the complete move-only continuation without a lifecycle allocation"
-    )]
-    pub fn resume_attempt<R>(
-        &mut self,
-        universe: &tex_state::Universe<G>,
-        pending: crate::PendingCommandAttempt<G, R>,
-    ) -> Result<
-        (crate::CommandAttemptOperation, crate::AttemptResumePoint, R),
-        crate::PendingCommandAttempt<G, R>,
-    > {
-        if !self.attempt.is_empty()
-            || self.active_attempt_operation != Some(pending.operation_coordinate())
-        {
-            return Err(pending);
-        }
-        let (attempt, operation, resume, pending) = pending.resume(universe)?;
-        self.attempt = attempt;
-        Ok((operation, resume, pending))
-    }
-
-    /// Publishes the command-owned dependency roots read by one processor
-    /// episode. Complex continuations without a complete canonical projection
-    /// poison the outer region before the processor can inspect them.
-    pub(crate) fn observe_tracked_dependencies(&self, state: &mut CommandContext<'_, G>) {
-        if !state.tracked_region_is_active() {
-            return;
-        }
-        let Some((line, mut stack)) = crate::input::tracked_input_projection(&self.input, state)
-        else {
-            state.unsupported_command_state();
-            return;
-        };
-        let supported_continuation = self.parameters.activations.is_empty()
-            && self.scratch.is_quiescent()
-            && self.scanner.is_quiescent()
-            && self.alignment == AlignmentDeliveryState::<G>::default()
-            && self.transient == TransientState::default()
-            && self.replay_completions.is_empty()
-            && self.pending_replay_completions.is_empty()
-            && self.semantic_diagnostics.is_empty()
-            && !self.name_in_progress
-            && self.named_token_list_pushes.is_empty();
-        if !supported_continuation {
-            state.unsupported_command_state();
-            return;
-        }
-        stack ^= self.profile().fingerprint().get();
-        stack = stack.rotate_left(17) ^ self.expansion.cumulative_expansions;
-        state.observe_command_projection(
-            tex_state::DependencyKey::InputLine,
-            tex_state::DependencyValue::Projection {
-                schema: 1,
-                fingerprint: line,
-            },
-        );
-        state.observe_command_projection(
-            tex_state::DependencyKey::InputStack,
-            tex_state::DependencyValue::Projection {
-                schema: 1,
-                fingerprint: stack,
-            },
-        );
-
-        let (level, ty, branch) = self.conditions.current_etex_values();
-        for (field, value) in [
-            (tex_state::DependencyEngineField::ConditionLevel, level),
-            (tex_state::DependencyEngineField::ConditionType, ty),
-            (tex_state::DependencyEngineField::ConditionBranch, branch),
-        ] {
-            state.observe_command_projection(
-                tex_state::DependencyKey::Engine(field),
-                tex_state::DependencyValue::Integer(i64::from(value)),
-            );
-        }
-        state.observe_command_projection(
-            tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::ConditionStack),
-            tex_state::DependencyValue::Projection {
-                schema: 1,
-                fingerprint: self.conditions.tracked_stack_projection(),
-            },
-        );
     }
 
     /// Returns the number of live TeX input levels retained by this command state.
@@ -1721,167 +1418,6 @@ impl<G> CommandState<G> {
         self.named_token_list_pushes.push((level, reason, tokens));
     }
 
-    /// Takes the pushes of executor-requested named token lists, in order.
-    ///
-    /// The executor publishes them with the rest of the operation's committed
-    /// records, which is where tex.web's own trace has them: inside the
-    /// `new_graf`/`box_end`/`init_math` transition that installed the level.
-    #[must_use]
-    pub fn publish_named_token_list_pushes(
-        &mut self,
-        state: &mut tex_state::CommandContext<'_, G>,
-        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    ) -> Vec<crate::InputRecord> {
-        self.named_token_list_pushes
-            .drain(..)
-            .map(|(level, reason, tokens)| {
-                // TeX82 §§323 and 1145 trace a named token list at
-                // `begin_token_list`, while its token_type still identifies
-                // the list.  Publishing at the executor/command-state seam
-                // preserves that context even when the list has one token
-                // and is exhausted by the next main-control delivery.
-                if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
-                    let mut text = String::new();
-                    crate::processor::expand_render::append_print_esc_text(
-                        state,
-                        stored_replay_name(reason),
-                        &mut text,
-                    );
-                    text.push_str("->");
-                    for word in state.token_list(tokens) {
-                        let token = word.token().expect("durable token word is valid");
-                        crate::processor::expand_render::append_token_list_token_text(
-                            state, token, &mut text,
-                        );
-                    }
-                    let mut output = state.begin_diagnostic(diagnostic_effects);
-                    output.print_nl(&text);
-                    output.end(false);
-                }
-                crate::InputRecord {
-                    transition: crate::InputTransition::Push,
-                    reason: crate::processor::stored_input_reason(reason),
-                    source_name: None,
-                    source: None,
-                    level: level.0,
-                    position: 0,
-                }
-            })
-            .collect()
-    }
-
-    /// Transfers semantic diagnostics committed by completed command episodes.
-    ///
-    /// The executor claims the existing ordered vector allocation inside the
-    /// same aggregate operation that ran the episode; command state retains a
-    /// fresh empty queue for later work. If a later action suspends or fails,
-    /// aggregate rollback restores both this queue and the input cursor from
-    /// the pre-step snapshot, so retry reproduces the diagnostic exactly once.
-    #[must_use]
-    pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
-        std::mem::take(&mut self.semantic_diagnostics)
-    }
-    /// Returns the committed observation for an executor-applied alignment
-    /// begin transition.
-    ///
-    /// The executor supplies the structural transition, while command state
-    /// remains the owner of its align-state and stable alignment identity.
-    /// Keeping that projection here prevents replay instrumentation from
-    /// reconstructing either value from raw input.
-    #[must_use]
-    pub fn alignment_begin_observation(&self) -> Option<AlignmentRecord> {
-        self.alignment
-            .active_alignment
-            .map(|alignment| AlignmentRecord {
-                transition: "begin",
-                alignment: Some(alignment.raw()),
-                nesting: self.alignment_observation_nesting(),
-                align_state: self.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            })
-    }
-
-    /// Reports whether TeX82's alignment-aware `get_next` path is active.
-    ///
-    /// Main-control accelerations that bypass scalar raw delivery must use
-    /// this command-owned predicate rather than reconstructing alignment
-    /// activity from the executor's mode nest.
-    #[must_use]
-    pub fn alignment_scanner_is_active(&self) -> bool {
-        self.alignment.active_alignment.is_some()
-    }
-
-    /// One-based portable nesting for the active or just-suspended alignment.
-    #[must_use]
-    pub fn alignment_observation_nesting(&self) -> Option<u32> {
-        u32::try_from(self.alignment.align_stack.len())
-            .ok()
-            .filter(|depth| *depth != 0)
-    }
-
-    /// Returns the committed observation for a command-owned outer alignment
-    /// suspension. The executor chooses the structural boundary, while this
-    /// state remains the sole owner of the saved delivery snapshot.
-    ///
-    /// The reported `align_state` is the outer running brace count that TeX82
-    /// §772's `push_alignment` saved, read back from the top `align_stack`
-    /// entry.  The live `align_state` is already the nested alignment's
-    /// `-1000000` by the time this observation is committed, because §774's
-    /// `init_align` overwrites it immediately after the save.
-    #[must_use]
-    pub fn alignment_suspend_observation(&self) -> Option<AlignmentRecord> {
-        let saved = self.alignment.align_stack.last().copied();
-        self.alignment
-            .suspended
-            .last()
-            .map(|suspended| AlignmentRecord {
-                transition: "suspend",
-                alignment: Some(suspended.alignment.raw()),
-                nesting: u32::try_from(self.alignment.suspended.len())
-                    .ok()
-                    .filter(|depth| *depth != 0),
-                align_state: saved.unwrap_or(self.alignment.align_state),
-                delimiter: None,
-                previous_align_state: None,
-            })
-    }
-
-    /// Returns the committed observation after a saved outer alignment has
-    /// resumed its command-owned delivery state.
-    #[must_use]
-    pub fn alignment_resume_observation(&self) -> Option<AlignmentRecord> {
-        self.alignment
-            .active_alignment
-            .map(|alignment| AlignmentRecord {
-                transition: "resume",
-                alignment: Some(alignment.raw()),
-                nesting: self.alignment_observation_nesting(),
-                align_state: self.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            })
-    }
-
-    /// Returns the committed observation for TeX82 `fin_align` immediately
-    /// before it removes the active delivery context.  `align_peek` has
-    /// already delivered the closing brace at this point; the executor only
-    /// requests the structural finish and never classifies that token.
-    #[must_use]
-    pub fn alignment_finish_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<AlignmentRecord> {
-        (self.alignment.active_alignment == Some(alignment)).then_some(AlignmentRecord {
-            transition: "finish",
-            alignment: Some(alignment.raw()),
-            nesting: self.alignment_observation_nesting(),
-            align_state: self.alignment.align_state,
-            delimiter: None,
-            previous_align_state: None,
-        })
-    }
-
     /// Applies an executor-owned structural alignment request.
     ///
     /// This is the only lifecycle entry point required by `tex-exec`.  It has
@@ -2032,63 +1568,6 @@ impl<G> CommandState<G> {
         Ok(())
     }
 
-    /// Returns the state transition committed by TeX82's omit-cell branch.
-    #[must_use]
-    pub fn alignment_omit_cell_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<AlignmentRecord> {
-        let cell = self.alignment.active_cell.as_ref()?;
-        (cell.alignment == alignment).then_some(AlignmentRecord {
-            transition: "state_change",
-            alignment: Some(alignment.raw()),
-            nesting: self.alignment_observation_nesting(),
-            align_state: self.alignment.align_state,
-            delimiter: None,
-            previous_align_state: cell.omit_previous_align_state,
-        })
-    }
-
-    /// Returns the committed input push for a just-installed u-template.
-    ///
-    /// The level identity is allocated by the state transition itself, so
-    /// instrumentation can report the canonical input lifecycle without
-    /// reconstructing a template push from executor state or token contents.
-    #[must_use]
-    pub fn alignment_u_template_push_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<crate::InputRecord> {
-        let cell = self.alignment.active_cell.as_ref()?;
-        (cell.alignment == alignment).then_some(())?;
-        cell.u_level.map(|level| crate::InputRecord {
-            transition: crate::InputTransition::Push,
-            reason: crate::InputReason::AlignmentUTemplate,
-            source_name: None,
-            source: None,
-            level: level.0,
-            position: 0,
-        })
-    }
-
-    /// Returns the command-owned alignment transition paired with the
-    /// u-template input push.
-    #[must_use]
-    pub fn alignment_u_template_push_alignment_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<crate::AlignmentRecord> {
-        self.alignment_u_template_push_observation(alignment)
-            .map(|_| crate::AlignmentRecord {
-                transition: "u_template_push",
-                alignment: Some(alignment.raw()),
-                nesting: self.alignment_observation_nesting(),
-                align_state: self.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            })
-    }
-
     /// Transfers one completed raw preamble to the executor for structural
     /// column selection. The returned templates remain frozen command-owned
     /// values; no raw preamble token is exposed.
@@ -2097,26 +1576,6 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<crate::AlignmentPreamble, AlignmentLifecycleError> {
         self.alignment.take_completed_preamble(alignment)
-    }
-
-    /// Returns the committed observation for an executor-selected first cell.
-    ///
-    /// The executor requests the transition, while command state remains the
-    /// source of the resulting `align_state`; this avoids deriving an event
-    /// from either template contents or raw input.
-    #[must_use]
-    pub fn alignment_cell_begin_observation(&self) -> Option<AlignmentRecord> {
-        self.alignment
-            .active_cell
-            .as_ref()
-            .map(|cell| AlignmentRecord {
-                transition: "state_change",
-                alignment: Some(cell.alignment.raw()),
-                nesting: self.alignment_observation_nesting(),
-                align_state: self.alignment.align_state,
-                delimiter: None,
-                previous_align_state: None,
-            })
     }
 
     /// Starts the selected cell's v-template after `end_template` main control
@@ -2153,57 +1612,6 @@ impl<G> CommandState<G> {
         self.record_alignment_phase();
         self.alignment
             .begin_v_template(alignment, level, delimiter, delimiter_line)
-    }
-
-    /// Returns the committed v-template push made after a command-owned
-    /// delimiter interception.
-    #[must_use]
-    pub fn alignment_v_template_push_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<crate::InputRecord> {
-        let cell = self.alignment.active_cell.as_ref()?;
-        (cell.alignment == alignment).then_some(())?;
-        cell.v_level.map(|level| crate::InputRecord {
-            transition: crate::InputTransition::Push,
-            reason: crate::InputReason::AlignmentVTemplate,
-            source_name: None,
-            source: None,
-            level: level.0,
-            position: 0,
-        })
-    }
-
-    /// Returns the template lifecycle transition paired with the v-template
-    /// input push, without exposing template tokens to the executor.
-    #[must_use]
-    pub fn alignment_v_template_push_alignment_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<AlignmentRecord> {
-        self.alignment_v_template_push_observation(alignment)
-            .map(|_| AlignmentRecord {
-                transition: if self
-                    .alignment
-                    .active_cell
-                    .as_ref()
-                    .is_some_and(|cell| cell.omit)
-                {
-                    "omit_template_push"
-                } else {
-                    "v_template_push"
-                },
-                alignment: Some(alignment.raw()),
-                nesting: self.alignment_observation_nesting(),
-                // TeX82's v-template insertion (`init_col`) begins the
-                // token list before assigning the post-insertion sentinel.
-                // The command state is already guarded against a second
-                // delimiter, but the committed lifecycle records that
-                // canonical pre-sentinel point.
-                align_state: CELL_ALIGN_STATE,
-                delimiter: None,
-                previous_align_state: None,
-            })
     }
 
     /// Completes one alignment entry at the executor's `do_endv` boundary.
@@ -2278,50 +1686,6 @@ impl<G> CommandState<G> {
         let level = self.alignment.active_v_template_level(alignment)?;
         self.record_alignment_phase();
         self.alignment.finish_cell(alignment, level)
-    }
-
-    /// Returns TeX82 §791 `fin_col`'s `align_state:=1000000`, published after
-    /// `FinishCell` commits.
-    ///
-    /// The retirement of the exhausted v-template is _not_ published here.
-    /// §1131's `do_endv` pops nothing; §357's `end_token_list` retires the
-    /// frame whenever `get_next` next reaches it, and observes it there.
-    #[must_use]
-    pub fn alignment_cell_finish_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<crate::AlignmentRecord> {
-        let cell = self.alignment.active_cell.as_ref()?;
-        if cell.alignment != alignment || cell.v_level.is_none() {
-            return None;
-        }
-        Some(crate::AlignmentRecord {
-            transition: "state_change",
-            alignment: Some(alignment.raw()),
-            nesting: self.alignment_observation_nesting(),
-            // `finish_cell` assigns the v-template sentinel after `do_endv`
-            // has proven the retained input shape. This observation is
-            // captured before that typed request commits.
-            align_state: 1_000_000,
-            delimiter: None,
-            previous_align_state: None,
-        })
-    }
-
-    /// Takes the command-owned observation published when `fin_col` changes
-    /// an exhausted saved tab or span into a row ending.
-    pub fn take_alignment_extra_tab_recovery_observation(
-        &mut self,
-    ) -> Option<crate::AlignmentRecord> {
-        let alignment = self.alignment.extra_tab_recovery.take()?;
-        Some(crate::AlignmentRecord {
-            transition: "extra_tab",
-            alignment: Some(alignment.raw()),
-            nesting: self.alignment_observation_nesting(),
-            align_state: 1_000_000,
-            delimiter: None,
-            previous_align_state: None,
-        })
     }
 
     /// Suspends the complete outer raw-delivery context for a nested alignment.

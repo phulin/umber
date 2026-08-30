@@ -1110,6 +1110,10 @@ crates/tex-command/src/
     lib.rs
     profile.rs
     state.rs
+    state/
+        attempt_transition.rs
+        executor_publication.rs
+        projection.rs
     command.rs
     error.rs
 
@@ -1167,6 +1171,8 @@ crates/tex-command/src/
 
     observation/
     snapshot.rs
+    snapshot/
+        boundary.rs
 
     tests/
 ```
