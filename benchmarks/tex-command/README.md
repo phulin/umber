@@ -125,6 +125,12 @@ An independent source-depth row compares one and 4,096 live source slots. In
 both cases, 4,096 warmed lexical mutations must allocate zero bytes, append one
 inverse of at most 48 bytes, coalesce the other 4,095 mutations, perform no
 source-owner swap, and clone no whole input frame.
+The cursor-structure row independently varies group-stack depth from one to
+4,096 and aftergroup payload from one to 65,536 words. It requires identical
+fixed summary/cursor sizes, a one-word cursor, zero warmed capture/restore
+allocation, zero logical history records, and zero full-payload clones. This
+proves the checkpoint envelope neither duplicates private stack descriptions
+nor traverses the aftergroup payload lane.
 The gate also rejects a candidate mutation, releases one obsolete prefix, and
 forks the surviving accepted mark again to prove exact rollback, lineage
 isolation, and prefix-floor validity. Finally it measures 10,000,000 successive

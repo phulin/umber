@@ -4,8 +4,9 @@ use std::time::{Duration, Instant};
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use tex_command::{CommandProfile, CommandState, RegisteredSourceKind, SourceRegistration};
+use tex_state::GroupKind;
 use tex_state::interner::InternerBudget;
-use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -70,6 +71,18 @@ struct SourceDepthCounts {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CursorStructureCounts {
+    summary_bytes: usize,
+    cursor_bytes: usize,
+    capture: Counts,
+    restore: Counts,
+    capture_records: u64,
+    restore_records: u64,
+    capture_full_payload_clones: u64,
+    restore_full_payload_clones: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SettlementWork {
     selected_rewind_records: u64,
     candidate_reject_records: u64,
@@ -100,6 +113,9 @@ fn main() {
     let source_history = run_source_history_fixture();
     let source_depth_one = run_source_depth_fixture(1);
     let source_depth_many = run_source_depth_fixture(4_096);
+    let cursor_shallow = run_cursor_structure_fixture(1, 1);
+    let cursor_deep = run_cursor_structure_fixture(4_096, 1);
+    let cursor_aftergroups = run_cursor_structure_fixture(1, 65_536);
     assert_eq!(
         shallow, accumulated,
         "command checkpoint costs must be independent of accumulated state"
@@ -139,6 +155,15 @@ fn main() {
     assert_eq!(source_depth_one.coalesced_mutations, 4_095);
     assert_eq!(source_depth_one.owner_swaps, 0);
     assert_eq!(source_depth_one.full_frame_history_clones, 0);
+    assert_eq!(cursor_shallow, cursor_deep);
+    assert_eq!(cursor_shallow, cursor_aftergroups);
+    assert_eq!(cursor_shallow.cursor_bytes, std::mem::size_of::<u32>());
+    assert_eq!(cursor_shallow.capture, Counts::ZERO);
+    assert_eq!(cursor_shallow.restore, Counts::ZERO);
+    assert_eq!(cursor_shallow.capture_records, 0);
+    assert_eq!(cursor_shallow.restore_records, 0);
+    assert_eq!(cursor_shallow.capture_full_payload_clones, 0);
+    assert_eq!(cursor_shallow.restore_full_payload_clones, 0);
     let rejected = run_settlement_work(73, 5, false);
     assert_eq!(rejected.selected_rewind_records, 73);
     assert_eq!(rejected.candidate_reject_records, 5);
@@ -184,7 +209,7 @@ fn main() {
         prefix_plateau.boundaries
     );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} source_depth={:?} rejected_settlement={:?} accepted_settlement={:?} rejected_frame_discard={:?} accepted_frame_discard={:?} prefix_plateau={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} source_depth={:?} cursor_structure={:?} rejected_settlement={:?} accepted_settlement={:?} rejected_frame_discard={:?} accepted_frame_discard={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -198,12 +223,86 @@ fn main() {
         shallow.logical_history,
         source_history,
         source_depth_one,
+        cursor_shallow,
         rejected,
         accepted,
         rejected_one,
         accepted_one,
         prefix_plateau,
     );
+}
+
+fn run_cursor_structure_fixture(
+    group_depth: usize,
+    aftergroup_payloads: usize,
+) -> CursorStructureCounts {
+    tex_state::with_universe(budget(), |universe| {
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        {
+            let mut state = universe.command_context().expect("cursor fixture context");
+            for _ in 0..group_depth {
+                command
+                    .begin_group(&mut state, GroupKind::Simple, 0)
+                    .expect("cursor fixture group opens");
+            }
+            let spelling = TracedTokenWord::pack(
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Other,
+                },
+                OriginId::UNKNOWN,
+            );
+            for _ in 0..aftergroup_payloads {
+                command
+                    .save_aftergroup(&state, spelling)
+                    .expect("cursor fixture aftergroup saves");
+            }
+        }
+        assert_eq!(
+            command.aftergroup_save_stack_projection().0,
+            aftergroup_payloads
+        );
+
+        let warm = command
+            .publish_summary(universe)
+            .expect("cursor fixture warms checkpoint storage");
+        drop(warm);
+        let before_capture = command.profile_timeline_counters();
+        let (summary, capture) = measure(|| {
+            command
+                .publish_summary(universe)
+                .expect("cursor fixture captures")
+        });
+        let after_capture = command.profile_timeline_counters();
+        let summary_bytes = std::mem::size_of_val(&summary);
+        let cursor_bytes = std::mem::size_of_val(&summary.cursor());
+        let (_, restore) = measure(|| {
+            command
+                .restore_summary(&summary, universe)
+                .expect("cursor fixture restores")
+        });
+        let after_restore = command.profile_timeline_counters();
+
+        CursorStructureCounts {
+            summary_bytes,
+            cursor_bytes,
+            capture,
+            restore,
+            capture_records: after_capture
+                .logical_records
+                .saturating_sub(before_capture.logical_records),
+            restore_records: after_restore
+                .logical_records
+                .saturating_sub(after_capture.logical_records),
+            capture_full_payload_clones: after_capture
+                .full_frame_history_clones
+                .saturating_sub(before_capture.full_frame_history_clones),
+            restore_full_payload_clones: after_restore
+                .full_frame_history_clones
+                .saturating_sub(after_capture.full_frame_history_clones),
+        }
+    })
+    .expect("cursor structure gate universe")
 }
 
 fn run_source_depth_fixture(depth: usize) -> SourceDepthCounts {

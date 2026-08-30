@@ -3377,11 +3377,15 @@ second provenance arena or raw provenance watermark.
 
 The command component of such a retained boundary is generation-generic. A
 `CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
-one coarse `CommandGenerationOwner<G>` beside a fixed `CommandSnapshotCursor`
-of command-journal, arena-watermark, stack-length, and ordered-ledger
-positions. Named-boundary publication appends one reusable timeline frame and
-copies only those scalar coordinates; it does not clone `CommandStateRoots` or
-any accumulated command payload. Generation-owned input, parameter, condition,
+one coarse `CommandGenerationOwner<G>` beside a one-word
+`CommandSnapshotCursor` timeline serial. The generation owner retains the
+attempt mark and exact timeline-row identity; that private row owns the input,
+parameter, condition, group, aftergroup, and alignment rollback marks once.
+The copied cursor consequently contains no descriptive stack length, queue
+length, payload count, or duplicate journal position. Named-boundary
+publication appends one reusable timeline frame and records only those private
+rollback coordinates; it does not clone `CommandStateRoots` or any accumulated
+command payload. Generation-owned input, parameter, condition,
 group, aftergroup, and alignment stacks retain physical payload rows behind
 logical tops. Payload admission is once per pushed frame. A rollback-reachable
 replacement move-stores the old row in a reusable fixed slab and records its
@@ -3415,8 +3419,9 @@ externally ordered events remain in their authoritative ledgers or logical
 stacks and never enter scalar coalescing.
 
 The live root remains the sole mutable borrower before and after publication.
-Cloning a retained value copies the fixed mark tuple and coarse generation
-capability; it never aliases the timeline. Candidate handoff moves the sole
+Cloning a retained value copies the coarse generation capability, timeline-row
+identity, attempt mark, and one-word serial; it never aliases the timeline or
+copies the row's private rollback marks. Candidate handoff moves the sole
 `CommandState` out of `MainControl` and parks it in the retained generation.
 Fork selects its sealed frame and journal marks, rewinds later accepted records
 in place, detaches their linked fixed chunks, and moves that same physical owner

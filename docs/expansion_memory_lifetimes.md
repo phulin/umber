@@ -845,6 +845,14 @@ journal/checkpoint value may still name it. `aftergroup` and
 `afterassignment` payloads are command roots until their specified replay
 point, not group-local allocation pools.
 
+Command checkpoint envelopes do not describe those private roots. One retained
+generation owner carries the attempt mark and exact ABA-checked timeline row,
+and its copied cursor is only that row's serial. The timeline row stores each
+logical stack's real `{top, undo}` rollback mark once. In particular, it stores
+the aftergroup lane mark directly instead of counting or traversing group or
+aftergroup payloads during capture or restore; replay, diagnostic, and
+afterassignment occupancy are not duplicated as cursor fields.
+
 The pure memo and render-map caches are operational, handle-free, and
 explicitly byte/entry bounded. They may reuse results across revisions only
 after validating their semantic stamps. Eviction drops payloads and cannot

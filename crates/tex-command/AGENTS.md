@@ -457,8 +457,11 @@ collector (see `src/conditionals.rs`).
 - `src/snapshot.rs`, `src/snapshot/boundary.rs`, and `src/snapshot/tests.rs`:
   generation-generic command
   snapshots and named summaries backed by generation-checked reusable frame
-  pages plus packed scalar journals, and containing one coarse generation owner
-  plus fixed timeline, arena, stack, source-anchor, and profile coordinates.
+  pages plus packed scalar journals. One coarse generation owner retains the
+  attempt mark and exact timeline-row identity; the copied snapshot cursor is
+  only that row's serial, while the private row owns each real logical-stack
+  rollback mark once. It contains no duplicated stack/queue lengths or
+  aftergroup payload census.
   The private boundary module owns capture, validation, publication,
   fork/reject/accept, restore, and rollback over the substrate in `snapshot.rs`.
   Capture appends a move-only frame; aggregate release returns that frame row

@@ -88,13 +88,9 @@ impl<G> CommandState<G> {
         self.active_attempt_operation = None;
     }
 
-    fn checkpoint_arenas(
+    fn checkpoint_rollback_coordinates(
         &mut self,
-        attempt: AttemptMark,
-    ) -> Result<CommandArenaCursors, CommandSummaryError> {
-        let attempt_rows = attempt
-            .checked_row_count()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
+    ) -> Result<CommandRollbackCoordinates, CommandSummaryError> {
         let input = self
             .input
             .levels
@@ -114,16 +110,6 @@ impl<G> CommandState<G> {
             .group_payloads
             .mark()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandArenaCursors::live(
-            input.undo,
-            parameters.undo,
-            conditions.undo,
-            groups.undo,
-            attempt_rows,
-        ))
-    }
-
-    fn checkpoint_stacks(&mut self) -> Result<CommandStackCursors, CommandSummaryError> {
         let aftergroups = self
             .aftergroup_payloads
             .mark()
@@ -138,26 +124,14 @@ impl<G> CommandState<G> {
             .suspended
             .mark()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandStackCursors {
-            input_depth: u32::try_from(self.input.levels.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            parameter_depth: u32::try_from(self.parameters.activations.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            condition_depth: u32::try_from(self.conditions.frames.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            alignment_depth: alignment.top,
-            alignment_undo: alignment.undo,
-            suspended_alignment_depth: suspended.top,
-            suspended_alignment_undo: suspended.undo,
-            replay_depth: u32::try_from(self.replay_completions.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            diagnostic_count: u32::try_from(self.semantic_diagnostics.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            group_payload_depth: u32::try_from(self.group_payloads.len())
-                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            aftergroup_payload_count: aftergroups.top,
-            aftergroup_payload_undo: aftergroups.undo,
-            afterassignment_present: self.afterassignment.is_some(),
+        Ok(CommandRollbackCoordinates {
+            input,
+            parameters,
+            conditions,
+            groups,
+            aftergroups,
+            alignment,
+            suspended_alignment: suspended,
         })
     }
 
@@ -219,9 +193,8 @@ impl<G> CommandState<G> {
         &mut self,
         attempt: AttemptMark,
     ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
-        let arenas = self.checkpoint_arenas(attempt)?;
-        let stacks = self.checkpoint_stacks()?;
-        self.timeline.retain(attempt, arenas, stacks)
+        let rollback = self.checkpoint_rollback_coordinates()?;
+        self.timeline.retain(attempt, rollback)
     }
 
     fn resolve_restore(
@@ -232,56 +205,21 @@ impl<G> CommandState<G> {
         if !owner.addresses_cursor(cursor) || owner.timeline_owner != self.timeline.owner {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        let attempt = self
+        let rollback = self
             .timeline
             .resolve(cursor, owner.timeline)
             .ok_or(CommandRestoreError::InvalidCursor)?;
-        let attempt_rows = attempt
-            .checked_row_count()
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        let arenas = cursor.arenas();
-        let matches = self.input.levels.validates(crate::input::InputStackMark {
-            top: cursor.stacks().input_depth(),
-            undo: arenas.input_rows_mark(),
-        }) && self.parameters.activations.validates(
-            crate::timeline::LogicalStackMark {
-                top: cursor.stacks().parameter_depth(),
-                undo: arenas.input_words_mark(),
-            },
-        ) && self
-            .conditions
-            .frames
-            .validates(crate::timeline::LogicalStackMark {
-                top: cursor.stacks().condition_depth(),
-                undo: arenas.parameter_words_mark(),
-            })
-            && self
-                .group_payloads
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().group_payload_depth(),
-                    undo: arenas.builder_words_mark(),
-                })
-            && self
-                .aftergroup_payloads
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().aftergroup_payload_count(),
-                    undo: cursor.stacks().aftergroup_payload_undo(),
-                })
-            && self
-                .alignment
-                .align_stack
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().alignment_depth(),
-                    undo: cursor.stacks().alignment_undo(),
-                })
+        let attempt = owner.attempt;
+        let matches = self.input.levels.validates(rollback.input)
+            && self.parameters.activations.validates(rollback.parameters)
+            && self.conditions.frames.validates(rollback.conditions)
+            && self.group_payloads.validates(rollback.groups)
+            && self.aftergroup_payloads.validates(rollback.aftergroups)
+            && self.alignment.align_stack.validates(rollback.alignment)
             && self
                 .alignment
                 .suspended
-                .validates(crate::timeline::LogicalStackMark {
-                    top: cursor.stacks().suspended_alignment_depth(),
-                    undo: cursor.stacks().suspended_alignment_undo(),
-                })
-            && arenas.attempt_rows() == attempt_rows;
+                .validates(rollback.suspended_alignment);
         if !matches {
             return Err(CommandRestoreError::InvalidCursor);
         }
@@ -292,106 +230,48 @@ impl<G> CommandState<G> {
         Ok(PreparedCommandRestore {
             timeline_owner: self.timeline.owner,
             timeline: owner.timeline,
-            cursor,
+            rollback,
             attempt,
             brand: PhantomData,
         })
     }
 
-    fn restore_logical_stacks(&mut self, cursor: CommandSnapshotCursor) -> bool {
-        let stacks = cursor.stacks();
-        let arenas = cursor.arenas();
-        self.input.levels.restore(crate::input::InputStackMark {
-            top: stacks.input_depth(),
-            undo: arenas.input_rows_mark(),
-        }) && self
-            .parameters
-            .activations
-            .restore(crate::timeline::LogicalStackMark {
-                top: stacks.parameter_depth(),
-                undo: arenas.input_words_mark(),
-            })
-            && self
-                .conditions
-                .frames
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.condition_depth(),
-                    undo: arenas.parameter_words_mark(),
-                })
-            && self
-                .group_payloads
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.group_payload_depth(),
-                    undo: arenas.builder_words_mark(),
-                })
-            && self
-                .aftergroup_payloads
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.aftergroup_payload_count(),
-                    undo: stacks.aftergroup_payload_undo(),
-                })
-            && self
-                .alignment
-                .align_stack
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.alignment_depth(),
-                    undo: stacks.alignment_undo(),
-                })
+    fn restore_logical_stacks(&mut self, rollback: CommandRollbackCoordinates) -> bool {
+        self.input.levels.restore(rollback.input)
+            && self.parameters.activations.restore(rollback.parameters)
+            && self.conditions.frames.restore(rollback.conditions)
+            && self.group_payloads.restore(rollback.groups)
+            && self.aftergroup_payloads.restore(rollback.aftergroups)
+            && self.alignment.align_stack.restore(rollback.alignment)
             && self
                 .alignment
                 .suspended
-                .restore(crate::timeline::LogicalStackMark {
-                    top: stacks.suspended_alignment_depth(),
-                    undo: stacks.suspended_alignment_undo(),
-                })
+                .restore(rollback.suspended_alignment)
     }
 
     fn begin_prepared_candidate(&mut self, restore: PreparedCommandRestore<G>) {
         debug_assert_eq!(restore.timeline_owner, self.timeline.owner);
-        let stacks = restore.cursor.stacks();
-        let arenas = restore.cursor.arenas();
         self.timeline
             .begin_checkpoint_candidate(restore.timeline, &mut self.roots);
         self.input
             .levels
-            .begin_checkpoint_candidate(crate::input::InputStackMark {
-                top: stacks.input_depth(),
-                undo: arenas.input_rows_mark(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.input);
         self.parameters
             .activations
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.parameter_depth(),
-                undo: arenas.input_words_mark(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.parameters);
         self.conditions
             .frames
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.condition_depth(),
-                undo: arenas.parameter_words_mark(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.conditions);
         self.group_payloads
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.group_payload_depth(),
-                undo: arenas.builder_words_mark(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.groups);
         self.aftergroup_payloads
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.aftergroup_payload_count(),
-                undo: stacks.aftergroup_payload_undo(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.aftergroups);
         self.alignment
             .align_stack
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.alignment_depth(),
-                undo: stacks.alignment_undo(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.alignment);
         self.alignment
             .suspended
-            .begin_checkpoint_candidate(crate::timeline::LogicalStackMark {
-                top: stacks.suspended_alignment_depth(),
-                undo: stacks.suspended_alignment_undo(),
-            });
+            .begin_checkpoint_candidate(restore.rollback.suspended_alignment);
         self.attempt
             .arena_mut()
             .truncate(restore.attempt)
@@ -460,9 +340,8 @@ impl<G> CommandState<G> {
             .generation_owner()
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         let attempt = self.attempt.arena().mark();
-        let arenas = self.checkpoint_arenas(attempt)?;
-        let stacks = self.checkpoint_stacks()?;
-        let (cursor, timeline) = self.timeline.retain_transient(attempt, arenas, stacks)?;
+        let rollback = self.checkpoint_rollback_coordinates()?;
+        let (cursor, timeline) = self.timeline.retain_transient(rollback)?;
         Ok(TransientCommandSnapshot::new(
             CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
             cursor,
@@ -577,7 +456,7 @@ impl<G> CommandState<G> {
         if !restored {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        assert!(self.restore_logical_stacks(restore.cursor));
+        assert!(self.restore_logical_stacks(restore.rollback));
         self.attempt
             .arena_mut()
             .truncate(restore.attempt)
@@ -614,11 +493,13 @@ impl<G> CommandState<G> {
         {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        self.resolve_restore(released.generation(), released.cursor())?;
-        if let Some(oldest) = oldest_retained {
-            self.resolve_restore(oldest.generation(), oldest.cursor())?;
-        }
+        let released_restore = self.resolve_restore(released.generation(), released.cursor())?;
         let floor = oldest_retained.unwrap_or(released);
+        let floor_restore = if let Some(oldest) = oldest_retained {
+            self.resolve_restore(oldest.generation(), oldest.cursor())?
+        } else {
+            released_restore
+        };
         if !self.timeline.release_frame(released.generation().timeline) {
             return Err(CommandRestoreError::InvalidCursor);
         }
@@ -626,18 +507,13 @@ impl<G> CommandState<G> {
             .timeline
             .release_prefix(floor.generation().timeline)
             .ok_or(CommandRestoreError::InvalidCursor)?;
-        let cursor = floor.cursor();
-        let arenas = cursor.arenas();
-        let stacks = cursor.stacks();
+        let rollback = floor_restore.rollback;
         let mut logical_stack_chunks_released = 0usize;
         macro_rules! release_stack_prefix {
-            ($stack:expr, $top:expr, $undo:expr) => {
+            ($stack:expr, $mark:expr) => {
                 logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
                     $stack
-                        .release_prefix(crate::timeline::LogicalStackMark {
-                            top: $top,
-                            undo: $undo,
-                        })
+                        .release_prefix($mark)
                         .ok_or(CommandRestoreError::InvalidCursor)?,
                 );
             };
@@ -645,42 +521,15 @@ impl<G> CommandState<G> {
         logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
             self.input
                 .levels
-                .release_prefix(crate::input::InputStackMark {
-                    top: stacks.input_depth(),
-                    undo: arenas.input_rows_mark(),
-                })
+                .release_prefix(rollback.input)
                 .ok_or(CommandRestoreError::InvalidCursor)?,
         );
-        release_stack_prefix!(
-            self.parameters.activations,
-            stacks.parameter_depth(),
-            arenas.input_words_mark()
-        );
-        release_stack_prefix!(
-            self.conditions.frames,
-            stacks.condition_depth(),
-            arenas.parameter_words_mark()
-        );
-        release_stack_prefix!(
-            self.group_payloads,
-            stacks.group_payload_depth(),
-            arenas.builder_words_mark()
-        );
-        release_stack_prefix!(
-            self.aftergroup_payloads,
-            stacks.aftergroup_payload_count(),
-            stacks.aftergroup_payload_undo()
-        );
-        release_stack_prefix!(
-            self.alignment.align_stack,
-            stacks.alignment_depth(),
-            stacks.alignment_undo()
-        );
-        release_stack_prefix!(
-            self.alignment.suspended,
-            stacks.suspended_alignment_depth(),
-            stacks.suspended_alignment_undo()
-        );
+        release_stack_prefix!(self.parameters.activations, rollback.parameters);
+        release_stack_prefix!(self.conditions.frames, rollback.conditions);
+        release_stack_prefix!(self.group_payloads, rollback.groups);
+        release_stack_prefix!(self.aftergroup_payloads, rollback.aftergroups);
+        release_stack_prefix!(self.alignment.align_stack, rollback.alignment);
+        release_stack_prefix!(self.alignment.suspended, rollback.suspended_alignment);
         Ok(CommandCheckpointReleaseReceipt {
             timeline_frames_live: self.timeline.live_frame_count(),
             timeline_frame_capacity: self.timeline.frame_capacity(),

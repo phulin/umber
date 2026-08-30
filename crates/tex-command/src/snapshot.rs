@@ -118,8 +118,24 @@ struct CommandFramePage {
 #[derive(Clone, Copy, Debug)]
 struct CommandTimelineFrame {
     serial: u32,
-    cursor: CommandSnapshotCursor,
-    attempt: AttemptMark,
+    rollback: CommandRollbackCoordinates,
+}
+
+/// Exact marks into the command owner's reversible logical stacks.
+///
+/// These coordinates live once in the timeline row that owns them. The
+/// snapshot cursor carries only the row serial needed to reject a mismatched
+/// owner/cursor pair; it does not repeat private stack lengths or journal
+/// positions.
+#[derive(Clone, Copy, Debug)]
+struct CommandRollbackCoordinates {
+    input: crate::input::InputStackMark,
+    parameters: crate::timeline::LogicalStackMark,
+    conditions: crate::timeline::LogicalStackMark,
+    groups: crate::timeline::LogicalStackMark,
+    aftergroups: crate::timeline::LogicalStackMark,
+    alignment: crate::timeline::LogicalStackMark,
+    suspended_alignment: crate::timeline::LogicalStackMark,
 }
 
 #[derive(Clone, Copy)]
@@ -556,37 +572,30 @@ impl<G> CommandTimeline<G> {
     fn retain(
         &mut self,
         attempt: AttemptMark,
-        arenas: CommandArenaCursors,
-        stacks: CommandStackCursors,
+        rollback: CommandRollbackCoordinates,
     ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
         if !attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
-        self.retain_transient(attempt, arenas, stacks)
+        self.retain_transient(rollback)
     }
 
     fn retain_transient(
         &mut self,
-        attempt: AttemptMark,
-        arenas: CommandArenaCursors,
-        stacks: CommandStackCursors,
+        rollback: CommandRollbackCoordinates,
     ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
         let serial = self
             .next_serial
             .checked_add(1)
             .ok_or(CommandSummaryError::TimelineCapacity)?;
         self.next_serial = serial;
-        let cursor = CommandSnapshotCursor::new(serial, arenas, stacks);
+        let cursor = CommandSnapshotCursor::new(serial);
         self.scalars.warm_first_page();
         let scalars = self.scalars.mark();
         let pending_input = self.pending_input.mark();
         self.touched_scalars = 0;
         self.pending_input_touched = false;
-        let frame = self.allocate_frame(CommandTimelineFrame {
-            serial,
-            cursor,
-            attempt,
-        })?;
+        let frame = self.allocate_frame(CommandTimelineFrame { serial, rollback })?;
         Ok((
             cursor,
             CommandTimelineMark {
@@ -601,13 +610,12 @@ impl<G> CommandTimeline<G> {
         &self,
         cursor: CommandSnapshotCursor,
         mark: CommandTimelineMark,
-    ) -> Option<AttemptMark> {
+    ) -> Option<CommandRollbackCoordinates> {
         let frame = self.frame(mark.frame)?;
         (self.scalars.validates(mark.scalars)
             && self.pending_input.validates(mark.pending_input)
-            && frame.serial == cursor.command_journal()
-            && frame.cursor == cursor)
-            .then_some(frame.attempt)
+            && frame.serial == cursor.timeline_serial())
+        .then_some(frame.rollback)
     }
 
     fn has_live_frame(&self) -> bool {
@@ -959,220 +967,29 @@ impl<G> CommandGenerationOwner<G> {
     }
 }
 
-/// Watermarks for command-owned append-only storage.
+/// Timeline identity copied beside one exact retained command owner.
 ///
-/// Each coordinate is an exclusive row count. The corresponding arena
-/// validates the coordinate against its own generation before truncation.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct CommandArenaCursors {
-    input_rows: PackedJournalMark,
-    input_words: PackedJournalMark,
-    parameter_words: PackedJournalMark,
-    builder_words: PackedJournalMark,
-    attempt_rows: u32,
-}
-
-impl CommandArenaCursors {
-    #[must_use]
-    pub const fn new(
-        input_rows: u32,
-        input_words: u32,
-        parameter_words: u32,
-        builder_words: u32,
-        attempt_rows: u32,
-    ) -> Self {
-        Self {
-            input_rows: PackedJournalMark::synthetic(input_rows),
-            input_words: PackedJournalMark::synthetic(input_words),
-            parameter_words: PackedJournalMark::synthetic(parameter_words),
-            builder_words: PackedJournalMark::synthetic(builder_words),
-            attempt_rows,
-        }
-    }
-
-    const fn live(
-        input_rows: PackedJournalMark,
-        input_words: PackedJournalMark,
-        parameter_words: PackedJournalMark,
-        builder_words: PackedJournalMark,
-        attempt_rows: u32,
-    ) -> Self {
-        Self {
-            input_rows,
-            input_words,
-            parameter_words,
-            builder_words,
-            attempt_rows,
-        }
-    }
-
-    #[must_use]
-    pub const fn input_rows(self) -> u32 {
-        self.input_rows.record_count()
-    }
-
-    #[must_use]
-    pub const fn input_words(self) -> u32 {
-        self.input_words.record_count()
-    }
-
-    #[must_use]
-    pub const fn parameter_words(self) -> u32 {
-        self.parameter_words.record_count()
-    }
-
-    #[must_use]
-    pub const fn builder_words(self) -> u32 {
-        self.builder_words.record_count()
-    }
-
-    const fn input_rows_mark(self) -> PackedJournalMark {
-        self.input_rows
-    }
-
-    const fn input_words_mark(self) -> PackedJournalMark {
-        self.input_words
-    }
-
-    const fn parameter_words_mark(self) -> PackedJournalMark {
-        self.parameter_words
-    }
-
-    const fn builder_words_mark(self) -> PackedJournalMark {
-        self.builder_words
-    }
-
-    #[must_use]
-    pub const fn attempt_rows(self) -> u32 {
-        self.attempt_rows
-    }
-}
-
-/// Length cursors for command-owned stacks and ordered ledgers.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct CommandStackCursors {
-    input_depth: u32,
-    parameter_depth: u32,
-    condition_depth: u32,
-    alignment_depth: u32,
-    alignment_undo: PackedJournalMark,
-    suspended_alignment_depth: u32,
-    suspended_alignment_undo: PackedJournalMark,
-    replay_depth: u32,
-    diagnostic_count: u32,
-    group_payload_depth: u32,
-    aftergroup_payload_count: u32,
-    aftergroup_payload_undo: PackedJournalMark,
-    afterassignment_present: bool,
-}
-
-impl CommandStackCursors {
-    #[must_use]
-    pub const fn input_depth(self) -> u32 {
-        self.input_depth
-    }
-
-    #[must_use]
-    pub const fn parameter_depth(self) -> u32 {
-        self.parameter_depth
-    }
-
-    #[must_use]
-    pub const fn condition_depth(self) -> u32 {
-        self.condition_depth
-    }
-
-    #[must_use]
-    pub const fn alignment_depth(self) -> u32 {
-        self.alignment_depth
-    }
-
-    #[must_use]
-    const fn alignment_undo(self) -> PackedJournalMark {
-        self.alignment_undo
-    }
-
-    #[must_use]
-    const fn suspended_alignment_depth(self) -> u32 {
-        self.suspended_alignment_depth
-    }
-
-    #[must_use]
-    const fn suspended_alignment_undo(self) -> PackedJournalMark {
-        self.suspended_alignment_undo
-    }
-
-    #[must_use]
-    pub const fn replay_depth(self) -> u32 {
-        self.replay_depth
-    }
-
-    #[must_use]
-    pub const fn diagnostic_count(self) -> u32 {
-        self.diagnostic_count
-    }
-
-    #[must_use]
-    pub const fn group_payload_depth(self) -> u32 {
-        self.group_payload_depth
-    }
-
-    #[must_use]
-    pub const fn aftergroup_payload_count(self) -> u32 {
-        self.aftergroup_payload_count
-    }
-
-    #[must_use]
-    const fn aftergroup_payload_undo(self) -> PackedJournalMark {
-        self.aftergroup_payload_undo
-    }
-
-    #[must_use]
-    pub const fn afterassignment_present(self) -> bool {
-        self.afterassignment_present
-    }
-}
-
-/// Complete fixed-size command coordinate captured at a restorable boundary.
-///
-/// `command_journal` addresses scalar and replacement mutations. Arena and
-/// stack cursors address append-only suffixes. Restoration must acquire the
-/// retained generation before replaying the journal or exposing any restored
-/// coordinate, and may truncate suffixes only after roots have transferred.
+/// The private timeline row owns every rollback mark. This serial exists only
+/// to reject a cursor paired with a different row owner; its value never
+/// describes command roots, stack lengths, or arena positions.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct CommandSnapshotCursor {
-    command_journal: u32,
-    arenas: CommandArenaCursors,
-    stacks: CommandStackCursors,
+    timeline_serial: u32,
 }
 
 impl CommandSnapshotCursor {
     #[must_use]
-    pub const fn new(
-        command_journal: u32,
-        arenas: CommandArenaCursors,
-        stacks: CommandStackCursors,
-    ) -> Self {
-        Self {
-            command_journal,
-            arenas,
-            stacks,
-        }
+    pub const fn new(timeline_serial: u32) -> Self {
+        Self { timeline_serial }
     }
 
     #[must_use]
     pub const fn command_journal(self) -> u32 {
-        self.command_journal
+        self.timeline_serial
     }
 
-    #[must_use]
-    pub const fn arenas(self) -> CommandArenaCursors {
-        self.arenas
-    }
-
-    #[must_use]
-    pub const fn stacks(self) -> CommandStackCursors {
-        self.stacks
+    const fn timeline_serial(self) -> u32 {
+        self.timeline_serial
     }
 }
 
@@ -1476,7 +1293,7 @@ impl std::error::Error for CommandRestoreError {}
 pub struct PreparedCommandRestore<G> {
     timeline_owner: u64,
     timeline: CommandTimelineMark,
-    cursor: CommandSnapshotCursor,
+    rollback: CommandRollbackCoordinates,
     attempt: AttemptMark,
     brand: PhantomData<fn(&G) -> &G>,
 }

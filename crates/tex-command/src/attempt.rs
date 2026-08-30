@@ -340,41 +340,6 @@ impl AttemptMark {
     const fn test_names_are_empty(self) -> bool {
         true
     }
-
-    pub(crate) const fn checked_row_count(self) -> Option<u32> {
-        let mut count = self.traced_words;
-        let values = [
-            self.traced_origins,
-            self.token_scratch,
-            self.origin_scratch,
-            self.token_builders,
-            self.token_lists,
-            self.glue_values,
-            self.definitions,
-            self.token_buffers,
-            self.provenance,
-        ];
-        let mut index = 0;
-        while index < values.len() {
-            let Some(next) = count.checked_add(values[index]) else {
-                return None;
-            };
-            count = next;
-            index += 1;
-        }
-        #[cfg(test)]
-        {
-            let Some(next) = count.checked_add(self.name_bytes) else {
-                return None;
-            };
-            count = next;
-            let Some(next) = count.checked_add(self.names) else {
-                return None;
-            };
-            count = next;
-        }
-        Some(count)
-    }
 }
 
 /// Invalid foreign coordinates or bounded-capacity failure.

@@ -14,20 +14,6 @@ pub(crate) struct PackedJournalMark {
     records: u64,
 }
 
-impl PackedJournalMark {
-    pub(crate) const fn synthetic(records: u32) -> Self {
-        Self {
-            tail: None,
-            chunks: records,
-            records: records as u64,
-        }
-    }
-
-    pub(crate) const fn record_count(self) -> u32 {
-        self.records as u32
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PackedJournalCounters {
     pub(crate) records: u64,
