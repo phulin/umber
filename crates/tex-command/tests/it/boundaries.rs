@@ -129,10 +129,16 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let command = fs::read_to_string(manifest_dir.join("src/command.rs"))
         .expect("read current-command typestate");
 
+    assert!(
+        !next.contains("fn next_command_into("),
+        "raw entry points must not own a second next-command pipeline"
+    );
     assert_eq!(
-        next.matches("fn next_command_into(").count(),
+        expansion
+            .matches("fn delivery_state_machine<const EXPANDED: bool>(")
+            .count(),
         1,
-        "the command core must have exactly one destination-directed next-command pipeline"
+        "raw and expanded requests must share one destination-directed state machine"
     );
     assert_eq!(
         input_stack
@@ -153,8 +159,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(next.contains("Some(CurrentCommand::empty())"));
-    assert!(next.contains(".advance_resident_command_into("));
+    assert!(expansion.contains("Some(CurrentCommand::empty())"));
+    assert!(expansion.contains(".advance_resident_command_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
     assert!(input_stack.contains("self.classify_alignment_delivery("));
     assert!(input_stack.contains("resolution.literal_catcode()"));
@@ -209,11 +215,10 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         !expansion.contains("ControlSequenceCreation"),
         "canonical command delivery must not carry source-name creation policy"
     );
-    assert_eq!(
-        expansion.matches("self.next_command_into(").count(),
-        2,
-        "raw and expanded drivers must share canonical ID delivery"
-    );
+    assert!(!expansion.contains("self.next_command_into("));
+    assert!(expansion.contains("self.delivery_state_machine::<false>("));
+    assert!(expansion.contains("self.delivery_state_machine::<true>("));
+    assert!(expansion.contains("Some(expanded)"));
     assert!(next.contains("create_source_control_sequences"));
     assert!(input_stack.contains("CompactSourceStepQueries for LiveSourceQueries"));
     assert!(
@@ -310,8 +315,8 @@ fn migrated_production_delivery_callers_own_their_command_destinations() {
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
-    let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
-        .expect("read raw delivery implementation");
+    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
+        .expect("read fused delivery implementation");
     let outer = fs::read_to_string(manifest_dir.join("src/processor/outer_recovery.rs"))
         .expect("read outer recovery implementation");
 
@@ -341,7 +346,12 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     );
     assert!(outer.contains("self.back_input(command.copy_for_backup())?;"));
     assert!(outer.contains("self.command.scanner.clear_for_recovery();"));
-    assert_eq!(next.matches("self.check_outer_validity_entry(").count(), 1);
+    assert_eq!(
+        expansion
+            .matches("self.check_outer_validity_entry(")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -350,6 +360,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     let processor = test_support::repository_root().join("crates/tex-command/src/processor");
     let module = fs::read_to_string(processor.join("mod.rs")).expect("read processor module");
     let next = fs::read_to_string(processor.join("next.rs")).expect("read raw delivery");
+    let expansion = fs::read_to_string(processor.join("expand.rs")).expect("read fused delivery");
     let end_input =
         fs::read_to_string(processor.join("end_input.rs")).expect("read end-input handling");
     let alignment = fs::read_to_string(processor.join("alignment_interception.rs"))
@@ -386,8 +397,8 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(backup.contains("fn back_input_unchecked("));
     assert!(outer.contains("fn check_outer_validity_entry("));
     assert!(recovery.contains("fn recover_off_save("));
-    assert!(next.contains("self.retire_input_top(identity)"));
-    assert!(next.contains("self.check_outer_validity_entry(command)"));
+    assert!(expansion.contains("self.retire_input_top(identity)"));
+    assert!(expansion.contains("self.check_outer_validity_entry(command)"));
 }
 
 #[test]
@@ -426,7 +437,7 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
+fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
@@ -440,15 +451,14 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
         .expect("read pdfTeX string expansion primitives");
 
     assert_eq!(
-        expansion.matches("fn raw_delivery_driver(").count(),
+        expansion
+            .matches("fn delivery_state_machine<const EXPANDED: bool>(")
+            .count(),
         1,
-        "raw production delivery must have one policy loop"
+        "resident advancement and raw/expanded inspection must share one policy loop"
     );
-    assert_eq!(
-        expansion.matches("fn expanded_delivery_driver(").count(),
-        1,
-        "expanded production delivery must have one policy loop"
-    );
+    assert!(!expansion.contains("fn raw_delivery_driver("));
+    assert!(!expansion.contains("fn expanded_delivery_driver("));
     for (policy_axis, variants) in [
         ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
         (

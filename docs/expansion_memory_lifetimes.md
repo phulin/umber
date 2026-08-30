@@ -310,9 +310,9 @@ already-decoded literal catcode for required brace handling, applies
 one-delivery suppression, and returns only a copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; no semantic-token
-value or raw-command phase crosses to `next_command_into`. Nested delivery has
-its own slot. One fetch/inspect state loop keeps the initialized
-value in place while synchronous expansion mutates input, then raw delivery
+value or raw-command phase crosses from resident advancement to a second
+delivery driver. Nested delivery has its own slot. One fetch/inspect state loop
+keeps the initialized value in place while synchronous expansion mutates input, then raw delivery
 overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between
 expansions. The driver returns only a compact status, and moves the command
@@ -723,8 +723,10 @@ output-list draining supply their local final or discard slots directly and
 create no returned command envelope.
 
 The physical processor split follows those same transitions without splitting
-ownership: `processor/next.rs` retains the one raw delivery loop;
-`end_input.rs` owns cold acquisition, exhaustion, and retirement;
+ownership: `processor/expand.rs` owns one const-specialized raw/expanded
+fetch-and-inspect state machine, while `processor/next.rs` owns the public raw
+policy entries and resident-command observation; `end_input.rs` owns cold
+acquisition, exhaustion, and retirement;
 `outer_recovery.rs` owns scanner-status interception; `backup.rs` and
 `recovery.rs` own exact replay insertion and executor-facing recovery; and
 `alignment_interception.rs` owns the delimiter/v-template handoff. Every call

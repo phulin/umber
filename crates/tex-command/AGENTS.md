@@ -110,8 +110,11 @@ collector (see `src/conditionals.rs`).
   ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
-- `src/processor/expand.rs`: canonical expanded-delivery driver and static
-  primitive dispatch, including one
+- `src/processor/expand.rs`: canonical destination-directed raw/expanded
+  delivery state machine and static primitive dispatch. Its const-specialized
+  raw and expanded entries advance resident input into the caller's final slot,
+  settle that delivery in place, and, when requested, inspect and expand the
+  same resident command without a second command handoff. It also includes one
   main-control preflight entry that raw-fetches into the caller's destination,
   classifies that resident command once, publishes an ordinary unexpandable
   result directly, and continues through expansion in place only when needed.
@@ -255,12 +258,14 @@ collector (see `src/conditionals.rs`).
   `\errorcontextlines`-budgeted, and bottom levels before pseudoprinting; it
   retains only one deferred bottom coordinate and never materializes omitted
   level strings.
-- `src/processor/`: public borrow-only processor facade with specialized raw
-  and expanded delivery loops, expansion, scanner-status, and alignment
-  orchestration. `next_command_into` is the one Empty-to-Resolved
-  in-place pipeline; its sole delivery settlement applies noexpand, outer
+- `src/processor/`: public borrow-only processor facade with const-specialized
+  raw and expanded entries into one destination-directed state machine,
+  expansion, scanner-status, and alignment orchestration. The fused
+  Empty-to-Resolved pipeline advances resident input and inspects the command
+  in place; its sole delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
-  has ended. The loops share canonical token-to-current-meaning delivery;
+  has ended. The two specializations share canonical
+  token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
   delivery policy. The loops do not test a raw-versus-expanded mode on every
   token. Internal steps return a compact status or zero-sized failure marker;
@@ -273,12 +278,11 @@ collector (see `src/conditionals.rs`).
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
-- `src/processor/next.rs`: the sole raw delivery orchestration over the
-  completed resident `CommandState` transition, including command-work
-  accounting, explicit outer recovery, and demand-only raw observation after
-  all dense borrows end. It delegates cold source retirement, outer recovery, and
-  alignment interception directly to their private semantic modules without
-  introducing another command or input owner.
+- `src/processor/next.rs`: public raw-delivery policy entry points plus
+  demand-only resident-command observation after all dense borrows end. The
+  fused state machine in `expand.rs` delegates cold source retirement, outer
+  recovery, and alignment interception directly to their private semantic
+  modules without introducing another command or input owner.
 - `src/processor/end_input.rs`: physical-line acquisition, source exhaustion,
   `\everyeof`, replay-completion fencing, final cleanup, exact top retirement,
   and stack conservation. It is the only processor-level input-retirement

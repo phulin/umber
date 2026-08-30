@@ -90,6 +90,11 @@ fn main() {
         "destination_directed_warm_delivery",
         destination_directed_warm_delivery,
     );
+    run_row(
+        only,
+        "fused_raw_expanded_delivery",
+        fused_raw_expanded_delivery,
+    );
     if let Some(only) = only {
         assert!(
             BENCHMARK_ROWS.contains(&only),
@@ -116,6 +121,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "macro_argument_matching",
     "warmed_keyword_mismatch",
     "destination_directed_warm_delivery",
+    "fused_raw_expanded_delivery",
 ];
 
 fn run_row(only: Option<&str>, name: &str, row: fn()) {
@@ -569,6 +575,114 @@ fn destination_directed_warm_delivery() {
                 destination = None;
             }
         });
+    });
+}
+
+fn fused_raw_expanded_delivery() {
+    const WARMUPS: usize = 64;
+    const DELIVERIES: usize = 1_000_000;
+    with_universe(|universe| {
+        let words = vec![
+            TokenWord::pack(Token::Char {
+                ch: 'f',
+                cat: Catcode::Letter,
+            });
+            (WARMUPS + DELIVERIES) * 2
+        ];
+        let stored = universe.allocate_token_list(&words).expect("stored tokens");
+        let mut command = CommandState::default();
+        {
+            let context = universe.command_context().expect("command context");
+            command.push_everyjob(&context, stored);
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
+        let mut delivery_processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        for _ in 0..WARMUPS {
+            assert_eq!(
+                delivery_processor.get_next_into(&mut destination).unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("warm raw command"), 'f');
+            destination = None;
+        }
+        for _ in 0..WARMUPS {
+            assert_eq!(
+                delivery_processor
+                    .get_x_token_into(&mut destination)
+                    .unwrap(),
+                DeliveryStatus::Command
+            );
+            assert_char_ref(destination.as_ref().expect("warm expanded command"), 'f');
+            destination = None;
+        }
+
+        drop(delivery_processor);
+        let work_before = fuel.work();
+        let mut delivery_processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut raw_elapsed = Duration::ZERO;
+        let mut expanded_elapsed = Duration::ZERO;
+        measure_zero("fused_raw_expanded_2000000_delivery", || {
+            let start = Instant::now();
+            for _ in 0..DELIVERIES {
+                assert_eq!(
+                    delivery_processor.get_next_into(&mut destination).unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("fused raw command"), 'f');
+                destination = None;
+            }
+            raw_elapsed = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..DELIVERIES {
+                assert_eq!(
+                    delivery_processor
+                        .get_x_token_into(&mut destination)
+                        .unwrap(),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("fused expanded command"), 'f');
+                destination = None;
+            }
+            expanded_elapsed = start.elapsed();
+        });
+        drop(delivery_processor);
+        let work_after = fuel.work();
+        assert_eq!(
+            work_after.fuel_charges - work_before.fuel_charges,
+            (DELIVERIES * 2) as u64
+        );
+        assert_eq!(
+            work_after.token_frame_steps - work_before.token_frame_steps,
+            (DELIVERIES * 2) as u64
+        );
+        assert_eq!(
+            work_after.expanded_deliveries - work_before.expanded_deliveries,
+            DELIVERIES as u64
+        );
+        assert_eq!(work_after.meaning_lookups - work_before.meaning_lookups, 0);
+        println!(
+            "fused_raw_expanded_delivery raw={} expanded={} raw_ns_per_delivery={:.2} expanded_ns_per_delivery={:.2}",
+            DELIVERIES,
+            DELIVERIES,
+            raw_elapsed.as_nanos() as f64 / DELIVERIES as f64,
+            expanded_elapsed.as_nanos() as f64 / DELIVERIES as f64,
+        );
     });
 }
 

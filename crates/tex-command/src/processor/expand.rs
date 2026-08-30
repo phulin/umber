@@ -1,14 +1,18 @@
-//! Ordinary expanded-command delivery.
+//! Fused resident-input advancement and raw/expanded command delivery.
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::DeliveryStamp;
-use crate::input::InputLevelId;
+use crate::input::{
+    InputLevel, InputLevelId, ResidentCommandInterception, ResidentCommandTransition,
+    SourceNameClass,
+};
 use crate::macro_call::MacroArguments;
 use crate::profile::CommandProfile;
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
+use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
 use super::{
     AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryErrorSlot,
@@ -18,7 +22,11 @@ use super::{
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
+    InputReason, InputRecord, InputTransition,
 };
+
+/// TeX82 §345's invalid source-character report.
+const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
 struct SuspendedExpansion<G> {
     resume: crate::state::PendingExpansionResume,
@@ -697,7 +705,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = match policy.mode {
             DeliveryMode::Raw => {
                 debug_assert!(destination.is_none());
-                self.raw_delivery_driver(policy, destination, &mut error)
+                self.delivery_state_machine::<false>(policy, None, false, destination, &mut error)
             }
             DeliveryMode::Expanded(expanded) => {
                 self.expanded_delivery_entry(policy, expanded, destination, &mut error)
@@ -778,8 +786,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return error.fail(CommandError::input_invariant());
         };
         self.command.transient.active_expansion_depth = active_depth;
-        let result =
-            self.expanded_delivery_driver(policy, expanded, resumed_pending, destination, error);
+        let result = self.delivery_state_machine::<true>(
+            policy,
+            Some(expanded),
+            resumed_pending,
+            destination,
+            error,
+        );
         assert_eq!(
             self.command.transient.active_expansion_depth, active_depth,
             "nested delivery must balance expansion depth"
@@ -788,58 +801,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         result
     }
 
-    fn raw_delivery_driver(
+    /// Advances resident input and inspects its resolved command in one
+    /// destination-directed state machine. Cold transitions re-enter only
+    /// after the command typestate borrow has ended.
+    #[inline(always)]
+    fn delivery_state_machine<const EXPANDED: bool>(
         &mut self,
         policy: DeliveryPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-        error: &mut DeliveryErrorSlot,
-    ) -> Result<DeliveryStatus, DeliveryFailed> {
-        loop {
-            if destination.is_none() {
-                self.last_delivery = None;
-                if let Err(failure) = self.charge_command_action() {
-                    return error.fail(failure);
-                }
-                match self.next_command_into(destination, error)? {
-                    DeliveryStatus::End => return Ok(DeliveryStatus::End),
-                    DeliveryStatus::ReplayCompleted(episode) => {
-                        if policy.replay_completion == ReplayCompletionPolicy::Surface {
-                            return Ok(DeliveryStatus::ReplayCompleted(episode));
-                        }
-                        continue;
-                    }
-                    DeliveryStatus::Command => {}
-                    _ => unreachable!("raw fetch returns only raw statuses"),
-                }
-            }
-
-            if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar
-                && matches!(
-                    destination
-                        .as_ref()
-                        .expect("raw destination contains a command")
-                        .alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                )
-            {
-                if let Err(failure) = self.begin_scalar_alignment_v_template(
-                    destination
-                        .as_ref()
-                        .expect("raw destination contains a command"),
-                ) {
-                    return error.fail(failure);
-                }
-                *destination = None;
-                continue;
-            }
-            return Ok(DeliveryStatus::Command);
-        }
-    }
-
-    fn expanded_delivery_driver(
-        &mut self,
-        policy: DeliveryPolicy,
-        expanded: ExpandedDeliveryPolicy,
+        expanded: Option<ExpandedDeliveryPolicy>,
         resumed_pending: bool,
         destination: &mut Option<CurrentCommand<G>>,
         error: &mut DeliveryErrorSlot,
@@ -854,7 +823,220 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Err(failure) = self.charge_command_action() {
                     return error.fail(failure);
                 }
-                match self.next_command_into(destination, error)? {
+                if destination.is_none() {
+                    *destination = Some(CurrentCommand::empty());
+                }
+                let raw_status = loop {
+                    if let Some(episode) = self.take_ready_replay_completion() {
+                        destination.take();
+                        break DeliveryStatus::ReplayCompleted(episode);
+                    }
+                    let transition = self
+                        .command
+                        .advance_resident_command_into(
+                            self.state,
+                            self.create_source_control_sequences,
+                            destination
+                                .as_mut()
+                                .expect("delivery machine owns its reusable command slot")
+                                .empty_for_raw_delivery(),
+                            self.next_delivery_sequence,
+                        )
+                        .map_err(|()| CommandError::input_invariant());
+                    let transition = match transition {
+                        Ok(transition) => transition,
+                        Err(failure) => {
+                            destination.take();
+                            return error.fail(failure);
+                        }
+                    };
+                    let (meaning_lookup, interception) = match transition {
+                        ResidentCommandTransition::Empty => {
+                            observe!(
+                                self,
+                                CommandObservation::Input(InputRecord {
+                                    transition: InputTransition::Stop,
+                                    reason: InputReason::Source,
+                                    source_name: Some(SourceNameClass::Terminal),
+                                    source: None,
+                                    level: 0,
+                                    position: 0,
+                                }),
+                            );
+                            let restarts = match self.raw_end_restarts() {
+                                Ok(restarts) => restarts,
+                                Err(failure) => return error.fail(failure),
+                            };
+                            if restarts {
+                                continue;
+                            }
+                            destination.take();
+                            break DeliveryStatus::End;
+                        }
+                        ResidentCommandTransition::Delivered {
+                            meaning_lookup,
+                            interception,
+                        } => (meaning_lookup, interception),
+                        ResidentCommandTransition::ParameterPushed(parameter_level) => {
+                            observe!(
+                                self,
+                                CommandObservation::Input(InputRecord {
+                                    transition: InputTransition::Push,
+                                    reason: InputReason::Parameter,
+                                    source_name: None,
+                                    source: None,
+                                    level: parameter_level.0,
+                                    position: 0,
+                                }),
+                            );
+                            continue;
+                        }
+                        ResidentCommandTransition::InvalidCharacter => {
+                            self.report_recoverable(
+                                INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
+                                "Text line contains an invalid character".into(),
+                                &[
+                                    "A funny symbol that I can't read has just been input.",
+                                    "Continue, and I'll forget that it ever happened.",
+                                ],
+                            );
+                            continue;
+                        }
+                        ResidentCommandTransition::NeedLine(identity) => {
+                            let line = match self.acquire_source_line(true) {
+                                Ok(line) => line,
+                                Err(failure) => return error.fail(failure),
+                            };
+                            let exhausted = if line.is_none() {
+                                match self.finish_exhausted_source(identity) {
+                                    Ok(status) => {
+                                        matches!(status, SourceExhaustionStatus::End)
+                                    }
+                                    Err(failure) => return error.fail(failure),
+                                }
+                            } else {
+                                false
+                            };
+                            if exhausted {
+                                let restarts = match self.raw_end_restarts() {
+                                    Ok(restarts) => restarts,
+                                    Err(failure) => return error.fail(failure),
+                                };
+                                if restarts {
+                                    continue;
+                                }
+                                destination.take();
+                                break DeliveryStatus::End;
+                            }
+                            continue;
+                        }
+                        ResidentCommandTransition::SourceExhausted(identity) => {
+                            let exhausted = match self.finish_exhausted_source(identity) {
+                                Ok(status) => matches!(status, SourceExhaustionStatus::End),
+                                Err(failure) => return error.fail(failure),
+                            };
+                            if exhausted {
+                                let restarts = match self.raw_end_restarts() {
+                                    Ok(restarts) => restarts,
+                                    Err(failure) => return error.fail(failure),
+                                };
+                                if restarts {
+                                    continue;
+                                }
+                                destination.take();
+                                break DeliveryStatus::End;
+                            }
+                            continue;
+                        }
+                        ResidentCommandTransition::TokenExhausted(identity) => {
+                            let Some((index, active_source)) = self
+                                .command
+                                .input
+                                .levels
+                                .last()
+                                .and_then(|level| match level {
+                                    InputLevel::Tokens(cursor) if cursor.identity() == identity => {
+                                        Some((cursor.frame.position(), cursor.frame.source_id()))
+                                    }
+                                    InputLevel::MacroArgument(cursor)
+                                        if cursor.identity() == identity =>
+                                    {
+                                        Some((cursor.frame.position(), cursor.frame.source_id()))
+                                    }
+                                    _ => None,
+                                })
+                            else {
+                                return error.fail(CommandError::input_invariant());
+                            };
+                            let handoff = match self.retire_input_top(identity) {
+                                Ok(handoff) => handoff,
+                                Err(failure) => return error.fail(failure),
+                            };
+                            match handoff {
+                                RetirementHandoff::Stop => {
+                                    let restarts = match self.raw_end_restarts() {
+                                        Ok(restarts) => restarts,
+                                        Err(failure) => return error.fail(failure),
+                                    };
+                                    if restarts {
+                                        continue;
+                                    }
+                                    destination.take();
+                                    break DeliveryStatus::End;
+                                }
+                                RetirementHandoff::Completed | RetirementHandoff::Continue => {
+                                    continue;
+                                }
+                                RetirementHandoff::EndV(level) => {
+                                    let (_, resolution) = destination
+                                        .as_mut()
+                                        .expect("delivery machine owns its reusable command slot")
+                                        .empty_for_raw_delivery()
+                                        .write_resolved_delivery(
+                                            TokenWord::pack(self.state.frozen_end_template_token()),
+                                            OriginId::UNKNOWN,
+                                            level.0,
+                                            u64::from(index),
+                                            self.next_delivery_sequence,
+                                            None,
+                                            active_source,
+                                            false,
+                                            None,
+                                            false,
+                                            self.state,
+                                        );
+                                    (
+                                        resolution.meaning_lookup(),
+                                        ResidentCommandInterception::Ready,
+                                    )
+                                }
+                            }
+                        }
+                    };
+
+                    let command = destination
+                        .as_mut()
+                        .expect("resident delivery initializes the command slot");
+                    let delivery_stamp = command.delivery_stamp();
+                    self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+                    let scanner = !matches!(
+                        self.command.scanner.status(),
+                        crate::processor::ScannerStatus::Normal
+                    );
+                    self.record_raw_delivery(scanner, meaning_lookup);
+                    self.last_delivery = Some(delivery_stamp);
+                    if matches!(interception, ResidentCommandInterception::Outer)
+                        && let Err(failure) = self.check_outer_validity_entry(command)
+                    {
+                        destination.take();
+                        return error.fail(failure);
+                    }
+                    if self.is_observed() {
+                        self.observe_resident_command(command);
+                    }
+                    break DeliveryStatus::Command;
+                };
+                match raw_status {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::ReplayCompleted(episode) => {
                         if policy.replay_completion == ReplayCompletionPolicy::Surface {
@@ -866,6 +1048,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                     _ => unreachable!("raw fetch returns only raw statuses"),
                 }
             }
+            if !EXPANDED {
+                if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar
+                    && matches!(
+                        destination
+                            .as_ref()
+                            .expect("raw destination contains a command")
+                            .alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    )
+                {
+                    if let Err(failure) = self.begin_scalar_alignment_v_template(
+                        destination
+                            .as_ref()
+                            .expect("raw destination contains a command"),
+                    ) {
+                        return error.fail(failure);
+                    }
+                    destination.take();
+                    fetch = true;
+                    continue;
+                }
+                return Ok(DeliveryStatus::Command);
+            }
+            let expanded = expanded.expect("expanded specialization owns its policy");
             let command = destination
                 .as_ref()
                 .expect("expanded destination contains a command");

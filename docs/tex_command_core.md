@@ -2287,10 +2287,11 @@ the token was created or restored. Active character spellings remain character
 tokens and resolve through their distinct active-character namespace before
 the same compact meaning lookup.
 
-The implemented scalar loop owns source and token-cursor selection, exact
-retirement/restart, stored token/origin reconstruction, `OutParameter` replay,
-one-delivery backed-up suppression, current-meaning resolution, and literal
-brace `align_state` accounting. `get_token` is routed through that same loop.
+The implemented destination-directed state machine owns source and
+token-cursor selection, exact retirement/restart, stored token/origin
+reconstruction, `OutParameter` replay, one-delivery backed-up suppression,
+current-meaning resolution, and literal brace `align_state` accounting.
+`get_token` is routed through that same loop.
 Scanner-status outer recovery and alignment-template interception have their
 sole entry points in this loop. `check_outer_validity` captures the live typed
 status and warning identity, records a forbidden-control-sequence diagnostic
@@ -2473,8 +2474,11 @@ fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
 }
 ```
 
-The promoted scalar implementation routes macro calls through the canonical
-`macro_call` activation path and implements `\noexpand` and `\expandafter`
+The promoted scalar implementation uses a const-specialized entry into the same
+destination-directed fetch-and-inspect state machine, so resident advancement
+settles and expanded classification borrows the one caller-owned command slot
+without a second raw-command handoff. It routes macro calls through the
+canonical `macro_call` activation path and implements `\noexpand` and `\expandafter`
 by mutating backed-up input levels directly. `\noexpand` stores its treatment
 only on the one replay level, while `\expandafter` explicitly replays its
 first token after expanding or backing up its second token. Remaining
