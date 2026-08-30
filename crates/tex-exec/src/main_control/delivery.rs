@@ -118,13 +118,16 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &OperationHostPreparation<'_>,
+        host_preparation: &mut OperationHostPreparation<'_>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
         cold: &mut ColdOperationSlot<G>,
     ) -> Result<Option<PreflightDelivery<G>>, ExecError> {
         frame.assert_empty();
-        let mode = host_preparation.mode;
+        self.ensure_primitive_handles(stores);
+        let mut context = stores.command_context().expect("live generation");
+        self.prepare_host_capabilities(&context, host_preparation);
+        let mode = host_preparation.mode();
         if self.active_alignment.is_some()
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
         {
@@ -138,8 +141,6 @@ impl<G> MainControl<G> {
             }));
         }
 
-        self.ensure_primitive_handles(stores);
-        let mut context = stores.command_context().expect("live generation");
         if self.enter_main_control(&mut context) {
             let entry_records: Vec<CommandObservation> = self
                 .command
@@ -323,9 +324,16 @@ impl<G> MainControl<G> {
             (delivery_status, trace_reported, fused_delivery, fused_error)
         };
         drop(context);
+        let refresh_transaction_facts = !diagnostics.is_empty();
         self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
+        if refresh_transaction_facts {
+            let context = stores
+                .command_context()
+                .expect("diagnostic retry admission");
+            host_preparation.refresh_transaction_facts(&context);
+        }
         if let Some(error) = fused_error {
             return Err(error);
         }

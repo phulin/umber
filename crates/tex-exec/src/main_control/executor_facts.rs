@@ -11,9 +11,70 @@ pub(super) struct OperationPreparationScope;
 
 /// Copy-free executor facts sampled once for one topology-stable operation.
 pub(super) struct OperationHostPreparation<'operation> {
-    pub(super) mode: Mode,
-    pub(super) last_node_type: i32,
+    mode: Option<Mode>,
+    last_node_type: i32,
+    pdf_output: i32,
+    innermost_group: Option<GroupKind>,
+    checked_save_stack_words: Option<usize>,
     pub(super) _scope: PhantomData<&'operation mut OperationPreparationScope>,
+}
+
+impl<'operation> OperationHostPreparation<'operation> {
+    pub(super) fn new(_scope: &'operation mut OperationPreparationScope) -> Self {
+        Self {
+            mode: None,
+            last_node_type: -1,
+            pdf_output: 0,
+            innermost_group: None,
+            checked_save_stack_words: None,
+            _scope: PhantomData,
+        }
+    }
+
+    pub(super) fn mode(&self) -> Mode {
+        self.mode.expect("operation host facts are prepared once")
+    }
+
+    pub(super) fn last_node_type(&self) -> i32 {
+        assert!(
+            self.mode.is_some(),
+            "operation host facts are prepared once"
+        );
+        self.last_node_type
+    }
+
+    pub(super) fn pdf_output(&self) -> i32 {
+        assert!(
+            self.mode.is_some(),
+            "operation host facts are prepared once"
+        );
+        self.pdf_output
+    }
+
+    pub(super) fn innermost_group(&self) -> Option<GroupKind> {
+        assert!(
+            self.mode.is_some(),
+            "operation host facts are prepared once"
+        );
+        self.innermost_group
+    }
+
+    pub(super) fn record_checked_save_stack_words(&mut self, words: usize) {
+        self.checked_save_stack_words = Some(words);
+    }
+
+    pub(super) fn take_checked_save_stack_words(&mut self) -> Option<usize> {
+        self.checked_save_stack_words.take()
+    }
+
+    pub(super) fn refresh_transaction_facts<G>(&mut self, stores: &CommandContext<'_, G>) {
+        assert!(
+            self.mode.is_some(),
+            "operation host facts are prepared once"
+        );
+        self.pdf_output = stores.int_param(IntParam::PDF_OUTPUT);
+        self.innermost_group = stores.innermost_group_kind();
+    }
 }
 
 pub(super) struct EffectiveTailFacts {
@@ -24,11 +85,11 @@ pub(super) struct EffectiveTailFacts {
 }
 
 impl<G> MainControl<G> {
-    pub(super) fn prepare_host_capabilities<'operation>(
+    pub(super) fn prepare_host_capabilities(
         &mut self,
         stores: &CommandContext<'_, G>,
-        _scope: &'operation mut OperationPreparationScope,
-    ) -> OperationHostPreparation<'operation> {
+        preparation: &mut OperationHostPreparation<'_>,
+    ) {
         let mode = self.modes.current_mode();
         let tail = self.effective_tail_facts(stores);
         self.capabilities
@@ -57,11 +118,11 @@ impl<G> MainControl<G> {
         self.capabilities.set_last_node_type(tail.last_node_type);
         self.episode_telemetry
             .record_host_preparation(tail.traversed, tail.descriptor_visits);
-        OperationHostPreparation {
-            mode,
-            last_node_type: tail.last_node_type,
-            _scope: PhantomData,
-        }
+        preparation.mode = Some(mode);
+        preparation.last_node_type = tail.last_node_type;
+        preparation.pdf_output = stores.int_param(IntParam::PDF_OUTPUT);
+        preparation.innermost_group = stores.innermost_group_kind();
+        preparation.checked_save_stack_words = None;
     }
 
     /// Samples TeX82 §424 and e-TeX [26.424] from one effective-tail walk.

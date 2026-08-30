@@ -697,13 +697,15 @@ fn operation_host_preparation_has_one_effective_tail_authority() {
         .0;
     assert_eq!(
         direct_episode
-            .matches("self.prepare_host_capabilities(")
+            .matches("OperationHostPreparation::new(&mut preparation_scope)")
             .count(),
         1,
-        "one call-local host preparation owns each direct operation"
+        "one stationary host-facts owner serves each direct operation"
     );
+    assert!(direct_episode.contains("&mut host_preparation,"));
+    assert!(!direct_episode.contains("let host_preparation = {"));
     let preparation = executor_facts
-        .split_once("fn prepare_host_capabilities<'operation>(")
+        .split_once("fn prepare_host_capabilities(")
         .expect("host preparation authority")
         .1
         .split_once("fn classify_last_node(")
@@ -716,6 +718,20 @@ fn operation_host_preparation_has_one_effective_tail_authority() {
         1,
         "last-item and last-node-type projections share one tail result"
     );
+    assert!(preparation.contains("preparation.pdf_output ="));
+    assert!(preparation.contains("preparation.innermost_group ="));
+    let transaction = control
+        .split_once("fn command_requires_transaction(")
+        .expect("transaction classification")
+        .1
+        .split_once("fn execute_direct_episode(")
+        .expect("transaction boundary")
+        .0;
+    assert!(transaction.contains("host_preparation.pdf_output()"));
+    assert!(transaction.contains("host_preparation.innermost_group()"));
+    assert!(!transaction.contains("command_context()"));
+    assert!(control.contains("preparation.record_checked_save_stack_words(checked)"));
+    assert!(control.contains("preparation.take_checked_save_stack_words()"));
     let operation = control
         .split_once("fn prepare_operation(")
         .expect("operation preparation authority")

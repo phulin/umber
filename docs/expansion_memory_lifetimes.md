@@ -179,19 +179,20 @@ expansion and suspension classification. Recoverable reports live once in the
 canonical semantic-diagnostic queue and transfer to the executor as one owner;
 resource resolution, dependency observation, and semantic barriers have no
 parallel expansion ledger.
-One call-local admitted `CommandContext` remains stable while the executor
-refreshes those capabilities and the command processor borrows it in place;
-processor retirement ends that borrow without an owned context handoff.
-Ordinary main-control execution uses that same stack-local admission for
-operation preparation, semantic application, page-output selection, and
-save-stack accounting. Each phase accepts only a shared or mutable reborrow;
-none owns, stores, or reconstructs the facade. The context is sufficient
-because it already contains the admitted generation plus the live World,
-dependency, font, page, PDF, source, hyphenation, interaction, and accounting
-borrows. Resource resolution, suspension packaging, rollback, and outer
-executor publication occur only after the call-local value is dropped, so the
-single-admission path adds no owner, cache, heap indirection, or lifetime
-mechanism.
+One stack-branded `OperationHostPreparation` remains stationary from host
+preparation through delivery preflight, transaction classification, semantic
+application, and save-stack settlement. The one preflight `CommandContext`
+fills its mode, effective-tail, PDF-mode, and group fields in place; the
+transaction boundary borrows those exact scalars instead of reconstructing
+the 240-byte admitted facade. Hot and ordinary cold application use their
+already-resident semantic context to write the post-apply checked save depth
+back into the same preparation, and settlement drains only that scalar.
+Diagnostic or host boundaries which can change the sampled state refresh only
+their affected fields after the live dialogue. No layer returns, takes, or
+stores a whole admitted context or duplicate facts aggregate. Resource
+resolution, suspension packaging, rollback, and outer executor publication
+still occur only after the applicable call-local context is dropped, so this
+adds no owner, cache, heap indirection, or lifetime mechanism.
 
 `ReachabilityStore::new` creates the session's interning epoch and one coarse
 allocation containing its inline two-slot store. Its `Interner` holds an
@@ -551,8 +552,9 @@ splitting the interpreter. `main_control/operation_frame.rs` owns the resident
 frame, adjacent cold slot, and genuine suspension carriers;
 `main_control/delivery.rs` mutates those destinations through delivery,
 preflight, and retry; `main_control/settlement.rs` owns commit, rollback, and
-publication settlement; and `main_control/executor_facts.rs` lends only
-borrow-scoped live executor facts. `main_control.rs` retains the one
+publication settlement; and `main_control/executor_facts.rs` owns the one
+stack-branded scalar preparation whose fields are filled and drained through
+borrow-scoped live executor views. `main_control.rs` retains the one
 `MainControl` loop and explicit owner-loan/return orchestration. The sibling
 modules use direct static calls and introduce no transport value, heap owner,
 or alternate command representation.

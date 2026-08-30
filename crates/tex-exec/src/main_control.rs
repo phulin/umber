@@ -1256,7 +1256,8 @@ impl<G> MainControl<G> {
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut command_context = stores.command_context().expect("live generation");
         let mut preparation_scope = OperationPreparationScope;
-        let _preparation = self.prepare_host_capabilities(&command_context, &mut preparation_scope);
+        let mut preparation = OperationHostPreparation::new(&mut preparation_scope);
+        self.prepare_host_capabilities(&command_context, &mut preparation);
         let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
@@ -2917,45 +2918,75 @@ impl<G> MainControl<G> {
         Ok(ReplayStep::Continue)
     }
 
-    /// Records TeX's checked save-stack high-water projection after one
-    /// direct main-control operation.
-    fn record_save_stack_usage(&mut self, stores: &CommandContext<'_, G>) {
+    /// Captures TeX's checked save-stack projection into the resident
+    /// operation facts while semantic admission is still live.
+    fn capture_save_stack_usage(
+        preparation: &mut OperationHostPreparation<'_>,
+        stores: &CommandContext<'_, G>,
+        boxes: &ReplayBoxes<G>,
+        command: &tex_command::CommandState<G>,
+        profile: CommandProfile,
+    ) {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
         // projections (§§1167/1099), so derive the words from each live kind.
-        let box_spec_words = self
-            .boxes
+        let box_spec_words = boxes
             .active_boxes
             .iter()
             .map(|active| active.kind.save_stack_spec_words())
             .fold(0_usize, usize::saturating_add);
         let (aftergroup_words, latest_aftergroup_position) =
-            self.command.aftergroup_save_stack_projection();
+            command.aftergroup_save_stack_projection();
         let checked = stores
             .checked_save_stack_words(
                 aftergroup_words,
                 latest_aftergroup_position,
-                self.command_profile().capabilities().supports_etex(),
+                profile.capabilities().supports_etex(),
             )
             .saturating_add(box_spec_words);
+        preparation.record_checked_save_stack_words(checked);
+    }
+
+    /// Drains the field-level save projection after application. Exceptional
+    /// host-owned paths which had to release command admission reacquire only
+    /// for this missing scalar rather than moving a second facts aggregate.
+    fn settle_save_stack_usage(
+        &mut self,
+        stores: &mut Universe<G>,
+        preparation: &mut OperationHostPreparation<'_>,
+    ) {
+        let checked = if let Some(checked) = preparation.take_checked_save_stack_words() {
+            checked
+        } else {
+            let context = stores.command_context().expect("save-stack admission");
+            Self::capture_save_stack_usage(
+                preparation,
+                &context,
+                &self.boxes,
+                self.command.state(),
+                self.command_profile(),
+            );
+            preparation
+                .take_checked_save_stack_words()
+                .expect("exceptional settlement captures its save projection")
+        };
         self.max_save_stack = self.max_save_stack.max(checked);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn command_requires_transaction(
         &self,
-        stores: &mut Universe<G>,
+        host_preparation: &OperationHostPreparation<'_>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
         frame: &OperationFrame<G>,
     ) -> bool {
-        let context = stores.command_context().expect("live generation");
         command_requires_transaction_from_facts(
-            self.modes.current_mode(),
+            host_preparation.mode(),
             &self.boxes,
             capabilities,
             frame,
-            context.int_param(IntParam::PDF_OUTPUT),
-            context.innermost_group_kind(),
+            host_preparation.pdf_output(),
+            host_preparation.innermost_group(),
         )
     }
 
@@ -3146,11 +3177,10 @@ impl<G> MainControl<G> {
                 return Ok(StepResult::Progress(step));
             }
             let mut preparation_scope = OperationPreparationScope;
-            let host_preparation = {
-                let context = stores.command_context().expect("live generation");
-                self.prepare_host_capabilities(&context, &mut preparation_scope)
-            };
+            let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
             let preflight = if let Some(capabilities) = resumed_resource {
+                let context = stores.command_context().expect("live generation");
+                self.prepare_host_capabilities(&context, &mut host_preparation);
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::Prepared,
                     capabilities,
@@ -3158,6 +3188,8 @@ impl<G> MainControl<G> {
                     expansion: None,
                 }
             } else if let Some(delivery) = initial_delivery.take() {
+                let context = stores.command_context().expect("live generation");
+                self.prepare_host_capabilities(&context, &mut host_preparation);
                 PreflightDelivery::<G> {
                     delivery,
                     capabilities:
@@ -3168,11 +3200,13 @@ impl<G> MainControl<G> {
                     expansion: None,
                 }
             } else if let Some(preflight) = pending_preflight {
+                let context = stores.command_context().expect("live generation");
+                self.prepare_host_capabilities(&context, &mut host_preparation);
                 preflight
             } else {
                 let preflight = match self.preflight_replay_delivery(
                     stores,
-                    &host_preparation,
+                    &mut host_preparation,
                     &mut diagnostic_effects,
                     &mut operation_frame,
                     &mut cold_operation,
@@ -3264,7 +3298,7 @@ impl<G> MainControl<G> {
                 let tracked_mark = episode_tracked_mark.take();
                 let prepared = self.prepare_operation(
                     stores,
-                    host_preparation,
+                    &mut host_preparation,
                     preflight.delivery,
                     (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
@@ -3322,14 +3356,13 @@ impl<G> MainControl<G> {
                 }
                 let applied = self.apply_ready_operation(
                     stores,
+                    &mut host_preparation,
                     prepared,
                     &mut diagnostic_effects,
                     &mut operation_frame,
                     &mut cold_operation,
                 );
-                self.record_save_stack_usage(
-                    &stores.command_context().expect("save-stack admission"),
-                );
+                self.settle_save_stack_usage(stores, &mut host_preparation);
                 let boundary = self.episode_commit_boundary(
                     stores,
                     &applied,
@@ -3395,7 +3428,7 @@ impl<G> MainControl<G> {
                 preflight.capabilities.preflight(),
                 crate::transaction_protocol::CommandPreflight::Transaction(_)
             ) || self.command_requires_transaction(
-                stores,
+                &host_preparation,
                 preflight.capabilities,
                 &operation_frame,
             ) {
@@ -3420,7 +3453,7 @@ impl<G> MainControl<G> {
                 }
                 let prepared = self.prepare_operation(
                     stores,
-                    host_preparation,
+                    &mut host_preparation,
                     preflight.delivery,
                     (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
@@ -3501,14 +3534,13 @@ impl<G> MainControl<G> {
                 self.advance_telemetry.attempts += 1;
                 let applied = self.apply_ready_operation(
                     stores,
+                    &mut host_preparation,
                     prepared,
                     &mut diagnostic_effects,
                     &mut operation_frame,
                     &mut cold_operation,
                 );
-                self.record_save_stack_usage(
-                    &stores.command_context().expect("save-stack admission"),
-                );
+                self.settle_save_stack_usage(stores, &mut host_preparation);
                 let boundary = self.episode_commit_boundary(
                     stores,
                     &applied,
@@ -3638,7 +3670,7 @@ impl<G> MainControl<G> {
             }
             let prepared = self.prepare_operation(
                 stores,
-                host_preparation,
+                &mut host_preparation,
                 preflight.delivery,
                 (preflight.scanner, preflight.expansion),
                 &mut diagnostic_effects,
@@ -3698,6 +3730,7 @@ impl<G> MainControl<G> {
             }
             let applied = self.apply_ready_operation(
                 stores,
+                &mut host_preparation,
                 prepared,
                 &mut diagnostic_effects,
                 &mut operation_frame,
@@ -3707,7 +3740,7 @@ impl<G> MainControl<G> {
                 stores.set_interaction_mode(interaction);
             }
             operations += 1;
-            self.record_save_stack_usage(&stores.command_context().expect("save-stack admission"));
+            self.settle_save_stack_usage(stores, &mut host_preparation);
             let boundary = self.episode_commit_boundary(
                 stores,
                 &applied,
@@ -3945,10 +3978,11 @@ impl<G> MainControl<G> {
         let operation_mark = self.begin_direct_operation(stores, retained_attempt);
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut preparation_scope = OperationPreparationScope;
-        let host_preparation = {
+        let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
+        {
             let context = stores.command_context().expect("live generation");
-            self.prepare_host_capabilities(&context, &mut preparation_scope)
-        };
+            self.prepare_host_capabilities(&context, &mut host_preparation);
+        }
         let assignment = match continuation {
             Some(continuation) => Some(continuation),
             None => {
@@ -4027,7 +4061,7 @@ impl<G> MainControl<G> {
         let mode_mark = self.modes.begin_journal();
         let prepared = self.prepare_operation(
             stores,
-            host_preparation,
+            &mut host_preparation,
             delivery,
             (scanner, None),
             &mut diagnostic_effects,
@@ -4074,6 +4108,7 @@ impl<G> MainControl<G> {
         }
         match self.apply_ready_operation(
             stores,
+            &mut host_preparation,
             prepared,
             &mut diagnostic_effects,
             &mut operation_frame,
@@ -4145,7 +4180,6 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let result = self.apply_operation(stores, settled, diagnostic_effects);
-        self.record_save_stack_usage(&stores.command_context().expect("save-stack admission"));
         if result.is_ok()
             && let Some(error) = self.operation_evidence_limit_error()
         {
@@ -5153,7 +5187,8 @@ impl<G> MainControl<G> {
             .command_context()
             .expect("display-end scan requires a live generation");
         let mut preparation_scope = OperationPreparationScope;
-        let _preparation = self.prepare_host_capabilities(&context, &mut preparation_scope);
+        let mut preparation = OperationHostPreparation::new(&mut preparation_scope);
+        self.prepare_host_capabilities(&context, &mut preparation);
         let mut machine = self.command_machine(diagnostic_effects);
         let mut processor = machine.processor(&mut context);
         prepare_command_trace(&mut processor, mode, shown_mode);
@@ -6109,13 +6144,14 @@ impl<G> MainControl<G> {
             OperationDelivery::Replay
         };
         let mut preparation_scope = OperationPreparationScope;
-        let host_preparation = {
+        let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
+        {
             let context = stores.command_context().expect("live generation");
-            self.prepare_host_capabilities(&context, &mut preparation_scope)
-        };
+            self.prepare_host_capabilities(&context, &mut host_preparation);
+        }
         let readiness = self.prepare_operation(
             stores,
-            host_preparation,
+            &mut host_preparation,
             delivery,
             (None, None),
             diagnostic_effects,
@@ -6127,12 +6163,22 @@ impl<G> MainControl<G> {
         if readiness == OperationReadiness::Failed {
             return Err(frame.take_error());
         }
-        self.apply_ready_operation(stores, readiness, diagnostic_effects, &mut frame, &mut cold)
+        let result = self.apply_ready_operation(
+            stores,
+            &mut host_preparation,
+            readiness,
+            diagnostic_effects,
+            &mut frame,
+            &mut cold,
+        );
+        self.settle_save_stack_usage(stores, &mut host_preparation);
+        result
     }
 
     fn apply_ready_operation(
         &mut self,
         stores: &mut Universe<G>,
+        host_preparation: &mut OperationHostPreparation<'_>,
         readiness: OperationReadiness,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
@@ -6143,9 +6189,13 @@ impl<G> MainControl<G> {
                 .applied
                 .take()
                 .expect("applied preparation writes its result into the frame"),
-            OperationReadiness::Prepared => {
-                self.apply_prepared_operation(stores, frame, cold, diagnostic_effects)
-            }
+            OperationReadiness::Prepared => self.apply_prepared_operation(
+                stores,
+                host_preparation,
+                frame,
+                cold,
+                diagnostic_effects,
+            ),
             OperationReadiness::Failed => {
                 unreachable!("failed preparation is handled before application")
             }
@@ -6190,7 +6240,7 @@ impl<G> MainControl<G> {
     fn prepare_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: OperationHostPreparation<'_>,
+        host_preparation: &mut OperationHostPreparation<'_>,
         delivery: OperationDelivery,
         resume: (
             Option<tex_command::ScannerFrameKey<G>>,
@@ -6221,16 +6271,14 @@ impl<G> MainControl<G> {
         } else {
             frame.assert_empty();
         }
-        let OperationHostPreparation {
-            mode,
-            last_node_type,
-            _scope: _,
-        } = host_preparation;
+        let mode = host_preparation.mode();
+        let last_node_type = host_preparation.last_node_type();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = frame.is_root_main_file_operation(self.root_main_source);
         if matches!(delivery, OperationDelivery::Hot) {
             let applied = self.apply_hot_operation(
                 stores,
+                host_preparation,
                 diagnostic_effects,
                 frame.hot_mut(),
                 OperationOutputStart {
@@ -6566,6 +6614,7 @@ impl<G> MainControl<G> {
             ScannedOperation::Hot => {
                 let applied = self.apply_hot_operation(
                     stores,
+                    host_preparation,
                     diagnostic_effects,
                     frame.hot_mut(),
                     OperationOutputStart {
@@ -6692,6 +6741,7 @@ impl<G> MainControl<G> {
     fn apply_hot_operation(
         &mut self,
         stores: &mut Universe<G>,
+        host_preparation: &mut OperationHostPreparation<'_>,
         diagnostic_effects: &mut DiagnosticEffects,
         operation: &mut hot_apply::HotOperation<G>,
         output_start: OperationOutputStart,
@@ -6738,6 +6788,13 @@ impl<G> MainControl<G> {
                 pending_outer_page_build_context: None,
                 output_routine_active: self.boxes.output_routine_active,
             },
+        );
+        Self::capture_save_stack_usage(
+            host_preparation,
+            &context,
+            &self.boxes,
+            self.command.state(),
+            self.command_profile(),
         );
         drop(context);
         if result.is_ok() {
@@ -6818,6 +6875,7 @@ impl<G> MainControl<G> {
     fn apply_prepared_operation(
         &mut self,
         stores: &mut Universe<G>,
+        host_preparation: &mut OperationHostPreparation<'_>,
         frame: &mut OperationFrame<G>,
         cold: &mut ColdOperationSlot<G>,
         diagnostic_effects: &mut DiagnosticEffects,
@@ -7147,6 +7205,13 @@ impl<G> MainControl<G> {
             } else {
                 Vec::new()
             };
+            Self::capture_save_stack_usage(
+                host_preparation,
+                &context,
+                &self.boxes,
+                command.state,
+                command.state.profile(),
+            );
             drop(context);
             (result, named_token_list_pushes)
         };

@@ -44,9 +44,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/rollback, resource and diagnostic retry settlement, and ordered
   semantic/effect/artifact/boundary publication.
-- `src/main_control/executor_facts.rs`: borrow-scoped mode, effective-tail,
-  and page fact projection from authoritative live executor owners; no fact
-  projection survives the operation loan.
+- `src/main_control/executor_facts.rs`: the one stack-branded stationary mode,
+  effective-tail, transaction, and checked-save preparation. Live executor
+  owners fill or drain individual scalar fields through borrow-scoped views;
+  no admitted context or preparation survives the operation loan.
 - The `OperationFrame` owns the admitted current command, parked expansion,
   scalar phase, delivery cursor, scanner child, partial direct scan, and one
   mutually exclusive compact operation payload in its own fields. The payload
