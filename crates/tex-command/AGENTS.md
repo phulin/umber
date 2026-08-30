@@ -252,6 +252,23 @@ collector (see `src/conditionals.rs`).
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
+- `src/processor/next.rs`: the sole raw Empty-to-Raw-to-Resolved delivery
+  orchestration, including policy settlement and raw observation after all
+  dense borrows end. It delegates cold source retirement, outer recovery, and
+  alignment interception directly to their private semantic modules without
+  introducing another command or input owner.
+- `src/processor/end_input.rs`: physical-line acquisition, source exhaustion,
+  `\everyeof`, replay-completion fencing, final cleanup, exact top retirement,
+  and stack conservation. It is the only processor-level input-retirement
+  choke point and returns only compact transition facts to `next.rs`.
+- `src/processor/backup.rs`, `src/processor/recovery.rs`, and
+  `src/processor/outer_recovery.rs`: exact command backup/replay insertion,
+  executor-facing recovery operations, and scanner-status outer/runaway
+  interception respectively. They share the live processor directly and add
+  no recovery queue, command slot, or runtime dispatch layer.
+- `src/processor/alignment_interception.rs`: alignment-aware delivery policy,
+  typed delimiter/v-template handoff, and active-cell input proofs over the
+  canonical alignment state; it never reclassifies input in the executor.
 - `src/processor/tests.rs`: tracked command-root publication and fail-closed
   unsupported-continuation coverage.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
@@ -344,7 +361,7 @@ collector (see `src/conditionals.rs`).
   `file_warning` -- "Warning: end of file when ... is incomplete" for every
   group and conditional still open at a source level's natural EOF, compared
   against the depth `state.rs`'s `record_source_open_depths` recorded when
-  that level opened. Called from `processor/next.rs`'s `retire_input_top`,
+  that level opened. Called from `processor/end_input.rs`'s `retire_input_top`,
   the one choke point every input-level retirement passes through. The
   source-only boundary probe checks the validated top row directly; ordinary
   token and macro retirement never searches the enclosing input stack. Prints

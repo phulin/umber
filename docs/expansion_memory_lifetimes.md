@@ -677,6 +677,15 @@ backup. Internal recovery, ErrorStop deletion, math-shift lookahead, and
 output-list draining supply their local final or discard slots directly and
 create no returned command envelope.
 
+The physical processor split follows those same transitions without splitting
+ownership: `processor/next.rs` retains the one raw delivery loop;
+`end_input.rs` owns cold acquisition, exhaustion, and retirement;
+`outer_recovery.rs` owns scanner-status interception; `backup.rs` and
+`recovery.rs` own exact replay insertion and executor-facing recovery; and
+`alignment_interception.rs` owns the delimiter/v-template handoff. Every call
+still borrows the same `CommandProcessor` and writes through the same caller
+destination; the modules add no queue, facade, or second command value.
+
 ErrorStop interaction is also an explicit ownership transition rather than a
 property polled by raw delivery. A command-side report applies its typed
 `Insert` or `Delete` outcome immediately through the live processor. An

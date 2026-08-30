@@ -1,6 +1,9 @@
 //! Ephemeral command-processor orchestration.
 
 pub(crate) mod alignment;
+mod alignment_interception;
+mod backup;
+mod end_input;
 pub(crate) mod expand;
 mod expand_convert;
 mod expand_input;
@@ -11,8 +14,11 @@ pub(crate) mod expand_render;
 mod expand_replay;
 pub(crate) mod expand_structural;
 mod next;
-pub(crate) use next::RUNAWAY_SCAN_DIAGNOSTIC;
+pub(crate) use end_input::stored_input_reason;
 mod observe;
+mod outer_recovery;
+mod recovery;
+pub(crate) use outer_recovery::RUNAWAY_SCAN_DIAGNOSTIC;
 pub(crate) mod status;
 #[cfg(test)]
 mod tests;
@@ -42,7 +48,6 @@ pub use expand_render::{
 pub(crate) use expand_render::{
     meaning_text, print_cs_text, render_the_value, selector_meaning_text, string_text,
 };
-pub(crate) use next::stored_input_reason;
 
 /// One profile-aware alignment lookahead command and the ownership of its
 /// terminal expanded-delivery observation.

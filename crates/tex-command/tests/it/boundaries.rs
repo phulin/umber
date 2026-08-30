@@ -292,32 +292,82 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
+    let outer = fs::read_to_string(manifest_dir.join("src/processor/outer_recovery.rs"))
+        .expect("read outer recovery implementation");
 
     assert_eq!(
-        next.matches("fn check_outer_validity_entry(").count(),
+        outer.matches("fn check_outer_validity_entry(").count(),
         1,
         "outer-command detection must have one raw-delivery entry point"
     );
     assert_eq!(
-        next.matches("fn recover_runaway_eof(").count(),
+        outer.matches("fn recover_runaway_eof(").count(),
         1,
         "EOF legality must have one raw-delivery entry point"
     );
     assert_eq!(
-        next.matches("fn install_outer_recovery(").count(),
+        outer.matches("fn install_outer_recovery(").count(),
         1,
         "outer commands and runaway EOF must share one recovery table"
     );
     // The boolean argument is §336's `cur_cs<>0` test, which selects the
     // first help line; both entry points still share the one recovery table.
     assert_eq!(
-        next.matches("self.install_outer_recovery(recovery, ")
+        outer
+            .matches("self.install_outer_recovery(recovery, ")
             .count(),
         2,
         "only outer-command and runaway-EOF entry points may install recovery"
     );
-    assert!(next.contains("self.back_input(command.copy_for_backup())?;"));
-    assert!(next.contains("self.command.scanner.clear_for_recovery();"));
+    assert!(outer.contains("self.back_input(command.copy_for_backup())?;"));
+    assert!(outer.contains("self.command.scanner.clear_for_recovery();"));
+    assert_eq!(next.matches("self.check_outer_validity_entry(").count(), 1);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn raw_delivery_handlers_are_private_direct_call_siblings() {
+    let processor = test_support::repository_root().join("crates/tex-command/src/processor");
+    let module = fs::read_to_string(processor.join("mod.rs")).expect("read processor module");
+    let next = fs::read_to_string(processor.join("next.rs")).expect("read raw delivery");
+    let end_input =
+        fs::read_to_string(processor.join("end_input.rs")).expect("read end-input handling");
+    let alignment = fs::read_to_string(processor.join("alignment_interception.rs"))
+        .expect("read alignment interception");
+    let backup = fs::read_to_string(processor.join("backup.rs")).expect("read input backup");
+    let recovery =
+        fs::read_to_string(processor.join("recovery.rs")).expect("read command recovery");
+    let outer =
+        fs::read_to_string(processor.join("outer_recovery.rs")).expect("read outer recovery");
+
+    for sibling in [
+        "alignment_interception",
+        "backup",
+        "end_input",
+        "outer_recovery",
+        "recovery",
+    ] {
+        assert!(module.contains(&format!("mod {sibling};")));
+        assert!(!module.contains(&format!("pub mod {sibling};")));
+    }
+    for handler in [
+        "fn retire_input_top(",
+        "fn check_outer_validity_entry(",
+        "fn begin_alignment_v_template(",
+        "fn back_input_unchecked(",
+    ] {
+        assert!(
+            !next.contains(handler),
+            "next.rs must only orchestrate {handler}"
+        );
+    }
+    assert!(end_input.contains("fn retire_input_top("));
+    assert!(alignment.contains("fn begin_alignment_v_template("));
+    assert!(backup.contains("fn back_input_unchecked("));
+    assert!(outer.contains("fn check_outer_validity_entry("));
+    assert!(recovery.contains("fn recover_off_save("));
+    assert!(next.contains("self.retire_input_top(identity)"));
+    assert!(next.contains("self.check_outer_validity_entry(resolved.as_mut())?"));
 }
 
 #[test]
@@ -656,6 +706,9 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     let state = fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read command state");
     let alignment = fs::read_to_string(manifest_dir.join("src/processor/alignment.rs"))
         .expect("read alignment delivery implementation");
+    let interception =
+        fs::read_to_string(manifest_dir.join("src/processor/alignment_interception.rs"))
+            .expect("read alignment interception implementation");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
 
@@ -714,8 +767,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     );
     assert!(state.contains("pub fn apply_alignment_request("));
     assert!(state.contains("Starting a v-template is intentionally absent"));
-    assert!(next.contains("pub fn begin_alignment_v_template("));
-    assert!(next.contains("AlignmentDeliveryEvent::EndTemplate"));
+    assert!(interception.contains("pub fn begin_alignment_v_template("));
+    assert!(interception.contains("AlignmentDeliveryEvent::EndTemplate"));
 }
 
 #[test]

@@ -1124,6 +1124,10 @@ crates/tex-command/src/
     processor/
         mod.rs
         next.rs
+        end_input.rs
+        backup.rs
+        recovery.rs
+        outer_recovery.rs
         expand.rs
         expand_structural.rs
         expand_input.rs
@@ -1135,6 +1139,7 @@ crates/tex-command/src/
         expand_render.rs
         status.rs
         alignment.rs
+        alignment_interception.rs
 
     macro_call.rs
     conditionals.rs
