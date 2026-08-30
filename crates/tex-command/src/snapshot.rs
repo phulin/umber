@@ -49,7 +49,6 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     feed(u64::from(roots.alignment.active_cell.is_some()));
     feed(u64::from(roots.alignment.completed_preamble.is_some()));
     feed(roots.replay_completions.len() as u64);
-    feed(roots.pending_replay_completions.len() as u64);
     feed(roots.semantic_diagnostics.len() as u64);
     feed(roots.group_payloads.len() as u64);
     feed(roots.aftergroup_payloads.len() as u64);

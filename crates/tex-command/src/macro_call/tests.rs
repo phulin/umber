@@ -246,6 +246,78 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
 }
 
 #[test]
+fn replay_completion_follows_nested_final_token_macro_descendants_once() {
+    crate::test_harness::with_universe(|universe| {
+        let inner = install_replacement_macro(universe, "replayinner", &[letter('i')]);
+        let outer = install_replacement_macro(universe, "replayouter", &[inner]);
+        let replay = universe
+            .allocate_token_list(&[TokenWord::pack(outer)])
+            .expect("stored replay");
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [letter('z')]);
+        let episode = {
+            let context = universe.command_context().expect("command context");
+            command.push_discretionary_episode(&context, replay)
+        };
+        command.profile_reset_raw_delivery_path_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("nested replay result"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("nested expansion command")
+                .spelling()
+                .semantic_token(),
+            letter('i')
+        );
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("nested replay completion"),
+            DeliveryStatus::ReplayCompleted(episode)
+        );
+        assert!(destination.is_none());
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("enclosing command"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("enclosing command value")
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+        assert_eq!(
+            processor.command.profile_replay_completion_counters(),
+            (3, 3, 2)
+        );
+        assert!(processor.command.replay_completions.is_empty());
+    });
+}
+
+#[test]
 fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe

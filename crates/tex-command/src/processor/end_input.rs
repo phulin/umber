@@ -71,7 +71,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
         let stamp = self.last_delivery.ok_or(CommandError::input_invariant())?;
         match self.retire_input_top(InputLevelId(stamp.input_level()))? {
-            RetirementHandoff::Continue | RetirementHandoff::Completed => Ok(()),
+            RetirementHandoff::Continue | RetirementHandoff::Completed(_) => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                 Err(CommandError::input_invariant())
             }
@@ -89,7 +89,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.retire_input_top(level)? {
             RetirementHandoff::Stop if std::mem::take(&mut self.read_line_ended) => Ok(()),
             RetirementHandoff::Continue
-            | RetirementHandoff::Completed
+            | RetirementHandoff::Completed(_)
             | RetirementHandoff::Stop
             | RetirementHandoff::EndV(_) => Err(CommandError::input_invariant()),
         }
@@ -108,7 +108,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             let reached = top == level;
             match self.retire_input_top(top)? {
-                RetirementHandoff::Continue | RetirementHandoff::Completed => {}
+                RetirementHandoff::Continue | RetirementHandoff::Completed(_) => {}
                 RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
@@ -154,7 +154,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(retired);
             };
             match self.retire_input_top(identity)? {
-                RetirementHandoff::Continue | RetirementHandoff::Completed => {
+                RetirementHandoff::Continue | RetirementHandoff::Completed(_) => {
                     retired = retired.saturating_add(1);
                 }
                 RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
@@ -333,9 +333,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         match self.retire_input_top(cursor.identity())? {
             RetirementHandoff::Continue => Ok(()),
-            RetirementHandoff::Stop | RetirementHandoff::EndV(_) | RetirementHandoff::Completed => {
-                Err(CommandError::input_invariant())
-            }
+            RetirementHandoff::Stop
+            | RetirementHandoff::EndV(_)
+            | RetirementHandoff::Completed(_) => Err(CommandError::input_invariant()),
         }
     }
     /// Settles an input-end transition after every raw typestate borrow has
@@ -385,7 +385,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         match self.retire_input_top(identity)? {
             RetirementHandoff::Stop => Ok(SourceExhaustionStatus::End),
-            RetirementHandoff::Completed => Ok(SourceExhaustionStatus::Continue),
+            RetirementHandoff::Completed(_) => Ok(SourceExhaustionStatus::Continue),
             RetirementHandoff::Continue => {
                 let _ = self.recover_runaway_eof()?;
                 Ok(SourceExhaustionStatus::Continue)
@@ -471,8 +471,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::VTemplatePopped => {
-                if completed {
-                    Ok(RetirementHandoff::Completed)
+                if let Some(episode) = completed {
+                    Ok(RetirementHandoff::Completed(episode))
                 } else {
                     Ok(RetirementHandoff::Continue)
                 }
@@ -503,6 +503,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// delivery: a run of levels can be depleted at once, and the whole run
     /// retires before the push.
     pub(crate) fn conserve_input_stack(&mut self) -> Result<(), CommandError> {
+        self.conserve_input_stack_with_owner(None)
+    }
+
+    /// Runs §325/§390 stack conservation for a transition that will
+    /// immediately install one newer input level. Every completion retired by
+    /// the drained run transfers directly to that exact future owner.
+    pub(crate) fn conserve_input_stack_for_descendant(&mut self) -> Result<(), CommandError> {
+        let owner = InputLevelId(self.command.input.next_level_identity);
+        self.conserve_input_stack_with_owner(Some(owner))
+    }
+
+    fn conserve_input_stack_with_owner(
+        &mut self,
+        descendant: Option<InputLevelId>,
+    ) -> Result<(), CommandError> {
         loop {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
@@ -543,7 +558,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // command state. Draining continues so the whole depleted run
                 // is cleaned off; delivery surfaces each ready ownership
                 // boundary before any enclosing source.
-                RetirementHandoff::Continue | RetirementHandoff::Completed => {}
+                RetirementHandoff::Continue => {}
+                RetirementHandoff::Completed(episode) => {
+                    if let Some(owner) = descendant {
+                        self.command.defer_replay_completion(Some(episode), owner);
+                    }
+                }
                 RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
@@ -582,7 +602,7 @@ pub(super) enum RetirementHandoff {
     Stop,
     Continue,
     EndV(InputLevelId),
-    Completed,
+    Completed(crate::CommandReplayEpisode),
 }
 
 /// Exhaustive over [`TokenBehavior`]: TeX82 §§325 and 390's stack-conservation

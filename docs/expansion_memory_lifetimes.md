@@ -764,7 +764,14 @@ that 4,096 warmed lexer mutations perform zero allocations and one inverse at
 both one and 4,096 live source rows.
 When that resident selection finds an exhausted ordinary token or macro-
 argument row, it projects and pops the same coordinate, settles macro scratch,
-replay completion, alignment, and observation, then loops on the new top. The
+replay completion, alignment, and observation, then loops on the new top. A
+direct replay retirement returns its typed episode from that transition.
+TeX82 §§325/390 stack conservation instead transfers the episode's single
+completion fence to the exact future backup or macro-body identity before that
+descendant is admitted; further final-token macro calls repeat the same
+ownership transfer. The last descendant retirement consequently publishes the
+episode once. No ordinary resident advance polls a completion flag or scans a
+pending-completion mailbox. The
 same TeX82 §357 restart pops an exhausted v-template after §1131's `do_endv`
 has inspected and released its retained boundary. Nothing returns an
 exhaustion status through the processor, and no second top lookup or owner

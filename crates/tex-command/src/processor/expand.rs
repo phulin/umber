@@ -975,8 +975,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     destination.take();
                                     break DeliveryStatus::End;
                                 }
-                                RetirementHandoff::Completed | RetirementHandoff::Continue => {
-                                    continue;
+                                RetirementHandoff::Continue => continue,
+                                RetirementHandoff::Completed(episode) => {
+                                    destination.take();
+                                    break DeliveryStatus::ReplayCompleted(episode);
                                 }
                                 RetirementHandoff::EndV(level) => {
                                     let (_, resolution) = destination

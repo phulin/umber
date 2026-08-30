@@ -350,7 +350,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push. The pending
         // frame stays canonical if an older active frame retires beneath it.
-        self.conserve_input_stack()?;
+        self.conserve_input_stack_for_descendant()?;
         let frame = self
             .command
             .scratch

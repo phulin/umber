@@ -459,6 +459,10 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         .expect("read structural expansion primitives");
     let pdf_string = fs::read_to_string(manifest_dir.join("src/processor/expand_pdf_string.rs"))
         .expect("read pdfTeX string expansion primitives");
+    let input_history = fs::read_to_string(manifest_dir.join("src/input/history.rs"))
+        .expect("read resident input transition");
+    let command_state = fs::read_to_string(manifest_dir.join("src/state.rs"))
+        .expect("read command-state ownership");
 
     assert_eq!(
         expansion
@@ -469,6 +473,9 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     );
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
+    assert!(!input_history.contains("take_ready_replay_completion"));
+    assert!(!command_state.contains("pending_replay_completions"));
+    assert!(!command_state.contains("replay_completions.iter()"));
     for (policy_axis, variants) in [
         ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
         (

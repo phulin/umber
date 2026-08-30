@@ -17,12 +17,7 @@ impl<G> CommandStateRoots<G> {
             .saturating_add(
                 self.replay_completions
                     .capacity()
-                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
-            )
-            .saturating_add(
-                self.pending_replay_completions
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<InputLevelId>()),
+                    .saturating_mul(std::mem::size_of::<super::ReplayCompletionFence>()),
             )
             .saturating_add(
                 self.semantic_diagnostics
@@ -69,7 +64,6 @@ impl<G> CommandState<G> {
             && self.alignment == AlignmentDeliveryState::<G>::default()
             && self.transient == super::TransientState::default()
             && self.replay_completions.is_empty()
-            && self.pending_replay_completions.is_empty()
             && self.semantic_diagnostics.is_empty()
             && !self.name_in_progress
             && self.named_token_list_pushes.is_empty();

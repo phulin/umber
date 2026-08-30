@@ -150,7 +150,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
-        self.conserve_input_stack()?;
+        self.conserve_input_stack_for_descendant()?;
         self.command
             .alignment
             .undo_delivery(AlignmentDeliveryState::<G>::back_input_adjustment(
@@ -292,7 +292,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §325 runs the stack-conservation loop before it touches
         // `align_state` and before it pushes the `backed_up` list, so every
         // depleted level retires ahead of the backup.
-        self.conserve_input_stack()?;
+        self.conserve_input_stack_for_descendant()?;
         let previous_align_state = self.command.alignment.align_state;
         let adjustment = command.alignment_adjustment();
         self.undo_alignment_delivery(&command);

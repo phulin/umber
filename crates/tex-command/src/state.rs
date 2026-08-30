@@ -67,14 +67,11 @@ pub struct CommandStateRoots<G> {
     pub(crate) alignment: AlignmentDeliveryState<G>,
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
-    /// Executor-owned stored levels that remain live in the input stack.
-    pub(crate) replay_completions: Vec<InputLevelId>,
-    /// Retired stored levels whose descendants still own input above the
-    /// enclosing source.  TeX82 §§390 can retire such a level immediately
-    /// before installing a macro replacement, and main control may end the
-    /// processor borrow on an unexpandable replacement command.  The pending
-    /// completion fence is therefore future-relevant command state.
-    pub(crate) pending_replay_completions: Vec<InputLevelId>,
+    /// Executor-owned replay completion fences, each named by the exact input
+    /// level whose retirement must publish it. TeX82 §§325/390 transfer the
+    /// fence from a depleted stored level to the newer backup or macro body
+    /// they install, so unrelated resident commands never poll readiness.
+    pub(crate) replay_completions: Vec<ReplayCompletionFence>,
     /// Semantic diagnostics committed by command processing but rendered by
     /// the executor's World-facing diagnostic boundary.
     ///
@@ -181,6 +178,9 @@ pub(crate) struct RawDeliveryPathCounters {
     pub(crate) retirement_whole_token_copies: u64,
     pub(crate) cold_source_retirements: u64,
     pub(crate) conservation_retirements: u64,
+    pub(crate) replay_completion_retirement_checks: u64,
+    pub(crate) replay_completion_claims: u64,
+    pub(crate) replay_completion_transfers: u64,
 }
 
 #[cfg(test)]
@@ -352,7 +352,6 @@ impl<G> Default for CommandStateRoots<G> {
             expansion: ExpansionState::default(),
             transient: TransientState::default(),
             replay_completions: Vec::new(),
-            pending_replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
             last_diagnostic_location: None,
             group_payloads: crate::timeline::LogicalStack::default(),
@@ -606,6 +605,14 @@ impl std::error::Error for CommandGroupError {}
 /// drive a completed list without observing raw input-stack structure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommandReplayEpisode(InputLevelId);
+
+/// Ownership edge from an executor replay episode to the exact input level
+/// whose retirement makes that episode complete.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ReplayCompletionFence {
+    episode: InputLevelId,
+    owner: InputLevelId,
+}
 
 /// One expanded delivery from the episode-aware command boundary.
 ///
@@ -1213,6 +1220,20 @@ impl<G> CommandState<G> {
         )
     }
 
+    /// Returns `(retirement checks, ownership claims, descendant transfers)` for
+    /// the ownership-directed replay-completion boundary.
+    #[doc(hidden)]
+    #[cfg(test)]
+    #[must_use]
+    pub fn profile_replay_completion_counters(&self) -> (u64, u64, u64) {
+        let counters = self.raw_delivery_path_counters;
+        (
+            counters.replay_completion_retirement_checks,
+            counters.replay_completion_claims,
+            counters.replay_completion_transfers,
+        )
+    }
+
     /// Resets focused resident token-list collector counters.
     #[doc(hidden)]
     #[cfg(test)]
@@ -1393,7 +1414,10 @@ impl<G> CommandState<G> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
         );
-        self.replay_completions.push(identity);
+        self.replay_completions.push(ReplayCompletionFence {
+            episode: identity,
+            owner: identity,
+        });
         CommandReplayEpisode(identity)
     }
 
@@ -1414,41 +1438,47 @@ impl<G> CommandState<G> {
         &mut self,
         identity: InputLevelId,
     ) -> Option<CommandReplayEpisode> {
-        let index = self
-            .replay_completions
-            .iter()
-            .position(|candidate| *candidate == identity)?;
-        self.replay_completions.remove(index);
-        self.pending_replay_completions.push(identity);
-        Some(CommandReplayEpisode(identity))
+        #[cfg(test)]
+        {
+            self.raw_delivery_path_counters
+                .replay_completion_retirement_checks = self
+                .raw_delivery_path_counters
+                .replay_completion_retirement_checks
+                .saturating_add(1);
+        }
+        let completion = self.replay_completions.last().copied()?;
+        if completion.owner != identity {
+            return None;
+        }
+        #[cfg(test)]
+        {
+            self.raw_delivery_path_counters.replay_completion_claims = self
+                .raw_delivery_path_counters
+                .replay_completion_claims
+                .saturating_add(1);
+        }
+        self.replay_completions.pop();
+        Some(CommandReplayEpisode(completion.episode))
     }
 
-    /// Whether an episode completion may surface without cutting off input
-    /// levels created while expanding its final token.
-    ///
-    /// TeX82 §390 retires a depleted token list before pushing a macro's
-    /// replacement text. Input identities are allocated monotonically, so a
-    /// level newer than the retired episode is one of those descendants. The
-    /// completion boundary must remain pending until every such level retires;
-    /// an older enclosing level must never be fetched first.
-    pub(crate) fn replay_completion_is_ready(&self, episode: CommandReplayEpisode) -> bool {
-        self.input
-            .levels
-            .last()
-            .is_none_or(|level| crate::input::input_level_identity(level) < episode.0)
-    }
-
-    /// Claims the first retired ownership boundary whose descendants are gone.
-    pub(crate) fn take_ready_replay_completion(&mut self) -> Option<CommandReplayEpisode> {
-        let index = self
-            .pending_replay_completions
-            .iter()
-            .position(|&identity| {
-                self.replay_completion_is_ready(CommandReplayEpisode(identity))
-            })?;
-        Some(CommandReplayEpisode(
-            self.pending_replay_completions.remove(index),
-        ))
+    /// Transfers a completion produced by §325/§390 stack conservation to the
+    /// exact newer level installed by that same transition.
+    pub(crate) fn defer_replay_completion(
+        &mut self,
+        episode: Option<CommandReplayEpisode>,
+        owner: InputLevelId,
+    ) {
+        if let Some(CommandReplayEpisode(episode)) = episode {
+            #[cfg(test)]
+            {
+                self.raw_delivery_path_counters.replay_completion_transfers = self
+                    .raw_delivery_path_counters
+                    .replay_completion_transfers
+                    .saturating_add(1);
+            }
+            self.replay_completions
+                .push(ReplayCompletionFence { episode, owner });
+        }
     }
 
     /// Schedules a frozen `\everypar` list after canonical main control has

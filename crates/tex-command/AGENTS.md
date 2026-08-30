@@ -76,8 +76,9 @@ collector (see `src/conditionals.rs`).
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: exclusively mutable live aggregate command roots,
-  persistent command state, cross-processor executor-owned replay-completion
-  fences, current-generation execution scratch, and direct semantic mutation.
+  persistent command state, retirement-owned executor replay-completion
+  fences transferred directly to §325/§390 descendants, current-generation
+  execution scratch, and direct semantic mutation.
   `src/state/attempt_transition.rs` owns direct-operation scope settlement and
   resource handoff, including the single state-owned ordinary attempt mark;
   `src/state/projection.rs` owns allocation-free retained-byte

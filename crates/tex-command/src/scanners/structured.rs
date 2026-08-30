@@ -8089,7 +8089,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // was still open. Once the follow-up `}` restores the preamble
             // sentinel, replay the owned delimiter/brace tail before the
             // backed-up forbidden command can open a second runaway episode.
-            self.conserve_input_stack()?;
+            self.conserve_input_stack_for_descendant()?;
             self.command.push_token_level(
                 PackedTokenSpanHandle::transient([
                     cr,

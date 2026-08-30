@@ -1,5 +1,5 @@
 use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 #[cfg(feature = "profiling")]
 use crate::input::{InputLevel, MacroArgumentCursor, packed_token_frame};
@@ -129,6 +129,118 @@ fn one_and_4096_resident_retirements_skip_source_checks_and_reuse_one_command_sl
         assert_eq!(evidence.expansion_moves_in, 0);
         assert_eq!(evidence.expansion_moves_out, 0);
     }
+}
+
+#[test]
+fn replay_completion_is_published_by_its_direct_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let tokens = universe
+            .allocate_token_list(&[TokenWord::pack(token)])
+            .expect("replay token list");
+        let mut command = CommandState::default();
+        let episode = {
+            let context = universe.command_context().expect("command context");
+            command.push_discretionary_episode(&context, tokens)
+        };
+        command.profile_reset_raw_delivery_path_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("replay token"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("replay command")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("replay completion"),
+            DeliveryStatus::ReplayCompleted(episode)
+        );
+        assert!(destination.is_none());
+        assert_eq!(
+            processor.command.profile_replay_completion_counters(),
+            (1, 1, 0)
+        );
+    });
+}
+
+#[test]
+#[cfg(feature = "profiling")]
+fn ordinary_4096_resident_deliveries_perform_zero_replay_completion_checks() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, std::iter::repeat_n(token, 4_096));
+        command.profile_reset_raw_delivery_path_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 0..4_096 {
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("ordinary resident delivery"),
+                    DeliveryStatus::Command
+                );
+                assert_eq!(
+                    destination
+                        .take()
+                        .expect("ordinary command")
+                        .spelling()
+                        .semantic_token(),
+                    token
+                );
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert_eq!(
+            processor.command.profile_replay_completion_counters(),
+            (0, 0, 0)
+        );
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    });
 }
 
 #[test]

@@ -212,8 +212,10 @@ slot, mailbox, destination inference, nested-request reuse, or second raw
 representation.
 
 The input side writes into that same final command value. The top input level
-keeps its packed frame position, backing handle, source cursor,
-replay-completion frontier, and rollback authority. Its storage-lifetime tag
+keeps its packed frame position, backing handle, source cursor, and rollback
+authority. A replay completion fence separately names the exact input level
+whose retirement owns publication; ordinary resident delivery never polls it.
+Its storage-lifetime tag
 was selected when the level was created; delivery borrows that domain, writes
 the spelling, raw delivery coordinate, only-present provenance, and input
 flags directly into `CurrentCommand`, and advances the fixed frame in place.
@@ -2457,12 +2459,14 @@ or to the delivering level reorders the resulting `input retire` transitions
 after the new level's push, which is observable. `v_template` is the sole
 exception in both sections: an exhausted v-part stays live until `do_endv`
 retires it (§13's alignment cell completion). A retirement that completes an
-executor-owned stored replay episode records that completion in persistent
-command state for the next `get_next` and keeps draining. TeX82 §390 can then
-push the replacement text of the episode's final macro token above that retired
-level; the completion fence survives processor borrows and waits for input
-levels newer than the episode before it permits delivery to resume from an
-older enclosing level.
+executor-owned stored replay episode returns that exact typed completion from
+the retirement transition. When §325 or §390 immediately pushes a backup or
+replacement text, stack conservation transfers the fence to the exact future
+input identity before admitting that descendant. The last descendant
+retirement therefore publishes the episode once, before delivery can resume
+from an older enclosing level. Direct retirement publishes it immediately.
+Ordinary resident commands perform no completion lookup, and there is no
+pending-completion mailbox or readiness scan.
 
 ## 16. Scanner status and outer validity
 

@@ -568,9 +568,6 @@ impl<G> crate::CommandState<G> {
     ) -> Result<super::ResidentCommandTransition, ()> {
         let (observer, immediate_write_retirement) = retirement_publication;
         loop {
-            if let Some(episode) = self.take_ready_replay_completion() {
-                return Ok(super::ResidentCommandTransition::ReplayCompleted(episode));
-            }
             let transition = self.advance_resident_top_into(
                 state,
                 fuel,
@@ -598,11 +595,13 @@ impl<G> crate::CommandState<G> {
                     resident_index,
                 });
             };
-            self.settle_resident_ordinary_retirement(
+            if let Some(episode) = self.settle_resident_ordinary_retirement(
                 retirement,
                 observer,
                 immediate_write_retirement,
-            );
+            ) {
+                return Ok(super::ResidentCommandTransition::ReplayCompleted(episode));
+            }
         }
     }
 
@@ -612,9 +611,9 @@ impl<G> crate::CommandState<G> {
         retirement: super::InputRetirement,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) {
+    ) -> Option<crate::CommandReplayEpisode> {
         debug_assert!(retirement.is_resident_restart());
-        self.settle_input_retirement(retirement, observer, immediate_write_retirement);
+        self.settle_input_retirement(retirement, observer, immediate_write_retirement)
     }
 
     fn advance_resident_top_into(
@@ -904,7 +903,7 @@ impl<G> crate::CommandState<G> {
         retirement: super::InputRetirement,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> bool {
+    ) -> Option<crate::CommandReplayEpisode> {
         let identity = retirement.identity;
         let reason = if *immediate_write_retirement == Some(identity) {
             *immediate_write_retirement = None;
@@ -986,7 +985,7 @@ impl<G> crate::CommandState<G> {
                 }));
             }
         }
-        popped && self.complete_replay(identity).is_some()
+        popped.then(|| self.complete_replay(identity)).flatten()
     }
 }
 
