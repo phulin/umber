@@ -4939,6 +4939,45 @@ fn attempt_and_hard_limits_are_enforced() {
 }
 
 #[test]
+fn command_fuel_configuration_uses_the_canonical_hard_maximum() {
+    assert_eq!(
+        SessionLimits::HARD_MAX.engine_fuel,
+        tex_command::MAX_COMMAND_FUEL_LIMIT
+    );
+    assert_eq!(tex_command::MAX_COMMAND_FUEL_LIMIT, 100_000_000_000);
+
+    VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            engine_fuel: tex_command::MAX_COMMAND_FUEL_LIMIT,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("canonical hard maximum is valid");
+
+    for invalid in [0, tex_command::MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
+        let result = VirtualCompileSession::new(SessionOptions {
+            limits: SessionLimits {
+                engine_fuel: invalid,
+                ..SessionLimits::default()
+            },
+            ..SessionOptions::default()
+        });
+        let Err(CompileError::InvalidCommandFuelLimit(error)) = result else {
+            panic!("expected typed command-fuel error for {invalid}");
+        };
+        assert_eq!(error.requested(), invalid);
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "canonical command fuel limit {invalid} is outside 1..={}",
+                tex_command::MAX_COMMAND_FUEL_LIMIT
+            )
+        );
+    }
+}
+
+#[test]
 fn cache_clear_keeps_user_files_and_drops_bindings() {
     let mut session = session("\\input remote \\end");
     let key = FileRequestKey::new(FileKind::TexInput, "remote").expect("key");

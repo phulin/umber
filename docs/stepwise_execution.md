@@ -449,7 +449,7 @@ revision and immutable resource bindings.
 Production sessions default to 10,000,000 committed steps, 100,000 live input
 frames, 256 MiB of environment journal, 1,000,000 pending effects, and
 100,000,000 command-fuel units. Engine sessions accept only
-`1..=1,000,000,000`; zero and larger values are typed configuration errors.
+`1..=100,000,000,000`; zero and larger values are typed configuration errors.
 `SessionLimits` configures the legacy ceilings uniformly for native and WASM
 sessions. Native CLI runs expose the expansion and committed-step guards as
 the independent `--expansion-fuel` and `--execution-steps` flags, with

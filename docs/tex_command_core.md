@@ -3406,7 +3406,7 @@ deferred write. A failed semantic step may restore `CommandState`, but that
 operation does not restore the fuel or work vector. These counters are host
 telemetry and never enter snapshot, checkpoint, format, or semantic identity.
 Canonical sessions default to 100,000,000 actions and accept only
-`1..=1,000,000,000`; zero, larger values, and `u64::MAX` are typed
+`1..=100,000,000,000`; zero, larger values, and `u64::MAX` are typed
 configuration errors rather than unlimited sentinels.
 
 Summary restoration likewise validates the summary's profile fingerprint

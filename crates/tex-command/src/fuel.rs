@@ -251,10 +251,15 @@ mod tests {
 
     #[test]
     fn invalid_limits_are_rejected_instead_of_becoming_unlimited() {
+        assert_eq!(MAX_COMMAND_FUEL_LIMIT, 100_000_000_000);
         for requested in [0, MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
+            let error = CommandFuel::new(requested).expect_err("invalid limit");
+            assert_eq!(error, CommandFuelLimitError { requested });
             assert_eq!(
-                CommandFuel::new(requested),
-                Err(CommandFuelLimitError { requested })
+                error.to_string(),
+                format!(
+                    "canonical command fuel limit {requested} is outside 1..={MAX_COMMAND_FUEL_LIMIT}"
+                )
             );
         }
         assert_eq!(CommandFuel::new(1).expect("minimum").limit(), 1);

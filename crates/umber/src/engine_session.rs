@@ -2728,6 +2728,7 @@ mod tests {
     fn engine_session_has_finite_configurable_command_fuel() {
         with_fresh_stores(|stores| {
             let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            assert_eq!(tex_command::MAX_COMMAND_FUEL_LIMIT, 100_000_000_000);
             assert_eq!(
                 session.fuel_limit(),
                 tex_command::DEFAULT_COMMAND_FUEL_LIMIT
@@ -2736,9 +2737,23 @@ mod tests {
             session.set_fuel_limit(17).expect("valid finite limit");
             assert_eq!(session.fuel_limit(), 17);
             assert_eq!(session.fuel_burned(), 0);
+            session
+                .set_fuel_limit(tex_command::MAX_COMMAND_FUEL_LIMIT)
+                .expect("hard maximum is valid");
+            assert_eq!(session.fuel_limit(), tex_command::MAX_COMMAND_FUEL_LIMIT);
             for invalid in [0, tex_command::MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
-                assert!(session.set_fuel_limit(invalid).is_err());
-                assert_eq!(session.fuel_limit(), 17);
+                let error = session
+                    .set_fuel_limit(invalid)
+                    .expect_err("invalid limit is rejected");
+                assert_eq!(error.requested(), invalid);
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "canonical command fuel limit {invalid} is outside 1..={}",
+                        tex_command::MAX_COMMAND_FUEL_LIMIT
+                    )
+                );
+                assert_eq!(session.fuel_limit(), tex_command::MAX_COMMAND_FUEL_LIMIT);
             }
         });
     }

@@ -121,6 +121,8 @@ impl SessionLimits {
 
     fn validate(self) -> Result<Self, CompileError> {
         self.vfs_limits().validate().map_err(map_vfs_limit)?;
+        tex_command::CommandFuelLedger::new(self.engine_fuel)
+            .map_err(CompileError::InvalidCommandFuelLimit)?;
         for (resource, attempted, hard) in [
             (
                 "compile attempts",
@@ -142,7 +144,6 @@ impl SessionLimits {
             }
         }
         for (resource, attempted, hard) in [
-            ("engine fuel", self.engine_fuel, Self::HARD_MAX.engine_fuel),
             (
                 "engine steps",
                 self.engine_steps,
@@ -633,6 +634,7 @@ pub enum CompileError {
     },
     UnavailableAbsoluteUserFile(String),
     MissingMainFile(String),
+    InvalidCommandFuelLimit(tex_command::CommandFuelLimitError),
     HardLimitExceeded {
         resource: &'static str,
         hard: usize,
@@ -684,6 +686,7 @@ impl fmt::Display for CompileError {
                 write!(f, "absolute user file {path} is unavailable")
             }
             Self::MissingMainFile(path) => write!(f, "main file {path} was not provided"),
+            Self::InvalidCommandFuelLimit(error) => error.fmt(f),
             Self::HardLimitExceeded {
                 resource,
                 hard,

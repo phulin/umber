@@ -532,9 +532,9 @@ pub(crate) fn compile_error_code(error: &CompileError) -> &'static str {
 
 fn compile_error_code_dto(error: &CompileError) -> wire::DiagnosticCodeDto {
     match error {
-        CompileError::HardLimitExceeded { .. } | CompileError::LimitExceeded { .. } => {
-            wire::DiagnosticCodeDto::Limit
-        }
+        CompileError::InvalidCommandFuelLimit(_)
+        | CompileError::HardLimitExceeded { .. }
+        | CompileError::LimitExceeded { .. } => wire::DiagnosticCodeDto::Limit,
         CompileError::AttemptLimit { .. } => wire::DiagnosticCodeDto::AttemptLimit,
         CompileError::NoProgress => wire::DiagnosticCodeDto::NoProgress,
         CompileError::ConflictingResolvedBinding(_)
