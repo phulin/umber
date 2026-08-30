@@ -211,9 +211,11 @@ Ordinary list processing is packed-block movement plus append-only output:
   post-line path consume move-only whole roots at their semantic handoffs;
 - packing, line breaking, paragraph post-processing, alignment setting, math
   lowering, and page breaking borrow short-lived `ArenaListView` or
-  `NodeCursor` views; sequential consumers retain one admitted owner-relative
-  cursor within each packed block, while genuinely positional semantic reads
-  remain explicit; and
+  `NodeCursor` views; long forward consumers use the callback traversal that
+  follows the sole predecessor chain once and retains its continuation on the
+  Rust stack, compatibility iterators retain one admitted owner-relative cursor
+  within each packed block, and genuinely positional semantic reads remain
+  explicit; and
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 
@@ -242,6 +244,11 @@ transition:
 The copy should be fused with the traversal already required by TeX copy,
 page-break held-over extraction, packaging, or cold materialization. A
 separate promotion scan is forbidden.
+
+Paragraph transforms that must copy a shared source coalesce adjacent
+unchanged nodes into one semantic range before entering the counted-copy
+boundary. They do not resolve and copy a separate one-node slice for every
+ordinary source node.
 
 ## Exact edit fork
 

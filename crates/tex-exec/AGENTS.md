@@ -67,7 +67,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   pre/post images across global replacement and local undo-backed writes.
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion,
-  borrowed-range post-line materialization, hyphenation, packing, migration,
+  linear borrowed-range post-line inspection, coalesced unchanged-source
+  materialization, hyphenation, packing, migration,
   contribution, diagnostics, pretolerance memoization, and focused
   pointer/copy-accounting tests.
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly

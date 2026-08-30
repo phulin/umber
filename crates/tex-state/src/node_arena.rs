@@ -2989,9 +2989,11 @@ impl NodeRef<'_> {
 /// Unified borrowed view for operation buffers and direct page sequences.
 ///
 /// The arena variant retains only a borrow and a compact direct root.
-/// Genuinely positional consumers use [`Self::owned_node`]. Sequential
-/// consumers use [`Self::iter`] or [`Self::iter_from`], which retain the
-/// admitted owner-relative cursor within each packed block.
+/// Genuinely positional consumers use [`Self::owned_node`]. Long sequential
+/// consumers use [`Self::for_each`] or [`Self::try_for_each_range`], which
+/// follow the sole predecessor chain once without successor metadata.
+/// Iterator adapters remain for algorithms that genuinely need pull-based
+/// traversal and retain the admitted cursor within each packed block.
 #[derive(Clone, Copy)]
 pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
@@ -3108,6 +3110,50 @@ impl<'a> NodeCursor<'a> {
             NodeCursorSource::Slice(nodes) => nodes.iter().for_each(visit),
             NodeCursorSource::Fork(view) => view.for_each(&mut visit),
         }
+    }
+
+    /// Visits one logical range in forward order without materializing an
+    /// iterator-side successor structure.
+    ///
+    /// Arena-backed inputs walk their sole predecessor topology once and use
+    /// the Rust call stack as the temporary continuation. This is the natural
+    /// zero-allocation boundary for long sequential scans.
+    pub fn try_for_each_range<B>(
+        &self,
+        selected: core::ops::Range<usize>,
+        mut visit: impl FnMut(usize, &'a Node) -> core::ops::ControlFlow<B>,
+    ) -> core::ops::ControlFlow<B> {
+        assert!(
+            selected.start <= selected.end && selected.end <= self.len(),
+            "node traversal range must be in bounds"
+        );
+        match self.source {
+            NodeCursorSource::Slice(nodes) => {
+                for (offset, node) in nodes[selected.clone()].iter().enumerate() {
+                    if let core::ops::ControlFlow::Break(value) =
+                        visit(selected.start + offset, node)
+                    {
+                        return core::ops::ControlFlow::Break(value);
+                    }
+                }
+                core::ops::ControlFlow::Continue(())
+            }
+            NodeCursorSource::Fork(view) => view.try_for_each_range(selected, visit),
+        }
+    }
+
+    /// Visits every node in one logical range through the linear callback
+    /// traversal boundary.
+    pub fn for_each_range(
+        &self,
+        selected: core::ops::Range<usize>,
+        mut visit: impl FnMut(usize, &'a Node),
+    ) {
+        let _: core::ops::ControlFlow<core::convert::Infallible> =
+            self.try_for_each_range(selected, |index, node| {
+                visit(index, node);
+                core::ops::ControlFlow::Continue(())
+            });
     }
 }
 

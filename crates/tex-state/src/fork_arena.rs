@@ -72,6 +72,10 @@ struct ChunkStorage<T> {
     previous_link_reads: core::cell::Cell<u64>,
     #[cfg(test)]
     admitted_index_resolutions: core::cell::Cell<u64>,
+    #[cfg(test)]
+    admitted_index_predecessor_steps: core::cell::Cell<u64>,
+    #[cfg(test)]
+    admitted_forward_chunk_crossings: core::cell::Cell<u64>,
 }
 
 impl<T> ChunkStorage<T> {
@@ -94,6 +98,10 @@ impl<T> ChunkStorage<T> {
             previous_link_reads: core::cell::Cell::new(0),
             #[cfg(test)]
             admitted_index_resolutions: core::cell::Cell::new(0),
+            #[cfg(test)]
+            admitted_index_predecessor_steps: core::cell::Cell::new(0),
+            #[cfg(test)]
+            admitted_forward_chunk_crossings: core::cell::Cell::new(0),
         }
     }
 
@@ -110,6 +118,16 @@ impl<T> ChunkStorage<T> {
     #[cfg(test)]
     fn admitted_index_resolutions(&self) -> u64 {
         self.admitted_index_resolutions.get()
+    }
+
+    #[cfg(test)]
+    fn admitted_index_predecessor_steps(&self) -> u64 {
+        self.admitted_index_predecessor_steps.get()
+    }
+
+    #[cfg(test)]
+    fn admitted_forward_chunk_crossings(&self) -> u64 {
+        self.admitted_forward_chunk_crossings.get()
     }
 
     #[must_use]
@@ -4153,6 +4171,14 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                 return Some((cursor, block_end));
             }
             remaining -= available;
+            #[cfg(test)]
+            self.pool.payload.admitted_index_predecessor_steps.set(
+                self.pool
+                    .payload
+                    .admitted_index_predecessor_steps
+                    .get()
+                    .saturating_add(1),
+            );
             cursor = self.previous_cursor(cursor)?;
         }
     }
@@ -4169,6 +4195,97 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         }
         self.visit_chunk_prefix(self.root.tail, &mut visit)
             .expect("an admitted direct list remains valid during its immutable borrow");
+    }
+
+    /// Visits one logical range in forward order by walking the sole
+    /// predecessor chain once.
+    ///
+    /// This is the zero-allocation boundary for long forward walks. The Rust
+    /// call stack retains the predecessor path until callbacks run in logical
+    /// order, so no successor metadata, traversal cache, or second topology is
+    /// required. The callback may stop the walk early with [`ControlFlow`].
+    pub fn try_for_each_range<B>(
+        &self,
+        selected: Range<usize>,
+        mut visit: impl FnMut(usize, &'a T) -> core::ops::ControlFlow<B>,
+    ) -> core::ops::ControlFlow<B> {
+        assert!(
+            selected.start <= selected.end && selected.end <= self.len(),
+            "arena-list traversal range must be in bounds"
+        );
+        if selected.is_empty() {
+            return core::ops::ControlFlow::Continue(());
+        }
+        self.visit_range_chunk_prefix(self.root.tail, self.len(), &selected, &mut visit)
+            .expect("an admitted direct list remains valid during its immutable borrow")
+    }
+
+    fn visit_range_chunk_prefix<B>(
+        &self,
+        cursor: AdmittedChunkCursor<Lane>,
+        logical_end: usize,
+        selected: &Range<usize>,
+        visit: &mut impl FnMut(usize, &'a T) -> core::ops::ControlFlow<B>,
+    ) -> Result<core::ops::ControlFlow<B>, ForkArenaError> {
+        let start_offset = if cursor.position == self.root.head.position {
+            self.root.head.offset
+        } else {
+            0
+        };
+        if cursor.offset < start_offset {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let logical_start = logical_end
+            .checked_sub((cursor.offset - start_offset) as usize)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        if selected.start < logical_start {
+            let previous = self
+                .previous_cursor(cursor)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            #[cfg(test)]
+            self.pool.payload.admitted_forward_chunk_crossings.set(
+                self.pool
+                    .payload
+                    .admitted_forward_chunk_crossings
+                    .get()
+                    .saturating_add(1),
+            );
+            if let core::ops::ControlFlow::Break(value) =
+                self.visit_range_chunk_prefix(previous, logical_start, selected, visit)?
+            {
+                return Ok(core::ops::ControlFlow::Break(value));
+            }
+        }
+        let selected_start = selected.start.max(logical_start);
+        let selected_end = selected.end.min(logical_end);
+        if selected_start < selected_end {
+            let key = self.key_at(cursor).ok_or(ForkArenaError::InvalidRange)?;
+            let first = start_offset
+                .checked_add(
+                    u32::try_from(selected_start - logical_start)
+                        .map_err(|_| ForkArenaError::CapacityOverflow)?,
+                )
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+            let last = start_offset
+                .checked_add(
+                    u32::try_from(selected_end - logical_start)
+                        .map_err(|_| ForkArenaError::CapacityOverflow)?,
+                )
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+            let cells = self
+                .pool
+                .payload
+                .admitted_slice(key, first..last)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            for (offset, cell) in cells.iter().enumerate() {
+                let value = cell.as_ref().ok_or(ForkArenaError::InvalidRange)?;
+                if let core::ops::ControlFlow::Break(value) = visit(selected_start + offset, value)
+                {
+                    return Ok(core::ops::ControlFlow::Break(value));
+                }
+            }
+        }
+        Ok(core::ops::ControlFlow::Continue(()))
     }
 
     fn visit_chunk_prefix(
@@ -4197,11 +4314,11 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
 
     /// Visits every value in logical order through direct chunk slices.
     pub fn for_each(&self, mut visit: impl FnMut(&'a T)) {
-        self.visit_chunks(|chunk| {
-            for value in chunk.iter() {
+        let _: core::ops::ControlFlow<core::convert::Infallible> =
+            self.try_for_each_range(0..self.len(), |_, value| {
                 visit(value);
-            }
-        });
+                core::ops::ControlFlow::Continue(())
+            });
     }
 }
 

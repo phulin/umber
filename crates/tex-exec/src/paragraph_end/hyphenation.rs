@@ -93,6 +93,7 @@ fn hyphenated_hlist_with_projections<G>(
     let mut generated_word = Vec::new();
     let mut output_len = 0usize;
     let mut index = 0;
+    let mut retained_start = 0;
     let mut auto_breaking = true;
     let mut language = 0;
     let mut left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
@@ -113,13 +114,13 @@ fn hyphenated_hlist_with_projections<G>(
             }
             matches!(node, Node::Glue { .. })
         };
-        stores.append_page_active_span_range(&mut out, source, index..index + 1);
-        output_len += 1;
         index += 1;
 
-        if auto_breaking
-            && is_glue
-            && let Some(next) = hyphenate_after_glue(
+        if auto_breaking && is_glue {
+            stores.append_page_active_span_range(&mut out, source, retained_start..index);
+            output_len += index - retained_start;
+            retained_start = index;
+            if let Some(next) = hyphenate_after_glue(
                 stores,
                 diagnostic_effects,
                 source,
@@ -131,10 +132,14 @@ fn hyphenated_hlist_with_projections<G>(
                 &mut output_len,
                 fuel,
                 projection,
-            )?
-        {
-            index = next;
+            )? {
+                index = next;
+                retained_start = next;
+            }
         }
+    }
+    if retained_start < source.len() {
+        stores.append_page_active_span_range(&mut out, source, retained_start..source.len());
     }
     let tail = stores.finalize_page_active_list(&mut out);
     if !tail.is_empty() {
@@ -217,35 +222,39 @@ fn project_physical_hlist<G>(
     stores.open_page_active_list(&mut physical);
     let mut physical_segments = Vec::new();
     let mut override_index = 0usize;
+    let mut retained_start = 0usize;
     for index in 0..semantic.len() {
         let post_override = (post_overrides.get(override_index).map(|entry| entry.0)
             == Some(index))
         .then(|| post_overrides[override_index].1);
-        let pre_projection =
-            if let Some(pending) = physical_pre_break_pending(stores, semantic, index) {
-                // TeX82 §§914--918 builds a discretionary's child closures before
-                // linking the discretionary into the main list. Close this
-                // output suffix while the child list is published so the page
-                // arena likewise has one active construction owner at a time.
-                let segment = stores.finalize_page_active_list(&mut physical);
-                if !segment.is_empty() {
-                    physical_segments.push(segment);
-                }
-                let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
-                    stores,
-                    diagnostic_effects,
-                    &pending,
-                    true,
-                    false,
-                    fuel,
-                )
-                .map_err(ExecError::Command)?;
-                let pre = stores.publish_page_nodes(pre);
-                stores.open_page_active_list(&mut physical);
-                Some(pre)
-            } else {
-                None
-            };
+        let pre_pending = physical_pre_break_pending(stores, semantic, index);
+        if (post_override.is_some() || pre_pending.is_some()) && retained_start < index {
+            stores.append_page_active_span_range(&mut physical, semantic, retained_start..index);
+        }
+        let pre_projection = if let Some(pending) = pre_pending {
+            // TeX82 §§914--918 builds a discretionary's child closures before
+            // linking the discretionary into the main list. Close this
+            // output suffix while the child list is published so the page
+            // arena likewise has one active construction owner at a time.
+            let segment = stores.finalize_page_active_list(&mut physical);
+            if !segment.is_empty() {
+                physical_segments.push(segment);
+            }
+            let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+                stores,
+                diagnostic_effects,
+                &pending,
+                true,
+                false,
+                fuel,
+            )
+            .map_err(ExecError::Command)?;
+            let pre = stores.publish_page_nodes(pre);
+            stores.open_page_active_list(&mut physical);
+            Some(pre)
+        } else {
+            None
+        };
         if post_override.is_some() || pre_projection.is_some() {
             let mut replacement = stores
                 .page_node_span(semantic)
@@ -264,9 +273,15 @@ fn project_physical_hlist<G>(
                 *pre = projected;
             }
             stores.push_page_active_list(&mut physical, replacement);
-        } else {
-            stores.append_page_active_span_range(&mut physical, semantic, index..index + 1);
+            retained_start = index + 1;
         }
+    }
+    if retained_start < semantic.len() {
+        stores.append_page_active_span_range(
+            &mut physical,
+            semantic,
+            retained_start..semantic.len(),
+        );
     }
     let tail = stores.finalize_page_active_list(&mut physical);
     if !tail.is_empty() {

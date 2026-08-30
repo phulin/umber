@@ -162,22 +162,27 @@ impl ArenaPostLineChannel {
             && self.active_directions.is_empty()
             && self.pending_post.is_empty()
             && par_fill_override.is_none()
-            && stores
-                .page_node_span(self.source)
-                .expect("paragraph source remains live")
-                .nodes()
-                .iter_from(self.position)
-                .take(end - self.position)
-                .enumerate()
-                .all(|(offset, node)| {
-                    let absolute = self.position + offset;
-                    actions
-                        .and_then(|actions| actions.get(absolute))
-                        .is_none_or(|action| {
-                            *action == tex_typeset::linebreak::MaterializationAction::Copy
-                        })
-                        && matches!(classify_post_line_node_value(node), PostLineNode::Other)
-                });
+            && {
+                let nodes = stores
+                    .page_node_span(self.source)
+                    .expect("paragraph source remains live")
+                    .nodes();
+                nodes
+                    .try_for_each_range(self.position..end, |absolute, node| {
+                        if actions
+                            .and_then(|actions| actions.get(absolute))
+                            .is_none_or(|action| {
+                                *action == tex_typeset::linebreak::MaterializationAction::Copy
+                            })
+                            && matches!(classify_post_line_node_value(node), PostLineNode::Other)
+                        {
+                            core::ops::ControlFlow::Continue(())
+                        } else {
+                            core::ops::ControlFlow::Break(())
+                        }
+                    })
+                    .is_continue()
+            };
         if plain_source_run {
             output_lineages.clear();
             for absolute in self.position..end {
@@ -191,16 +196,7 @@ impl ArenaPostLineChannel {
                 leader: None,
             }]);
             let output = stores.append_unique_page_nodes(retained, suffix).list();
-            while self.position < self.source.len()
-                && stores
-                    .page_node_span(self.source)
-                    .expect("paragraph source remains live")
-                    .nodes()
-                    .owned_node(self.position)
-                    .is_some_and(post_line_discardable)
-            {
-                self.position += 1;
-            }
+            self.position = skip_post_line_discardable(stores, self.source, self.position);
             return output;
         }
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
@@ -230,10 +226,38 @@ impl ArenaPostLineChannel {
         }
 
         while self.position < end {
-            let absolute = self.position;
-            let action = actions.and_then(|actions| actions.get(absolute)).copied();
-            let node_action = classify_post_line_node(stores, self.source, absolute);
-            self.position += 1;
+            let run_start = self.position;
+            let Some((absolute, node_action, action)) = next_post_line_event(
+                stores,
+                self.source,
+                self.position..end,
+                actions,
+                par_fill_override.is_some(),
+            ) else {
+                stores.append_page_active_span_range(&mut output, self.source, run_start..end);
+                for index in run_start..end {
+                    output_lineages.extend(self.lineages[index].iter().cloned());
+                }
+                self.position = end;
+                break;
+            };
+            let retains_event = matches!(
+                node_action,
+                PostLineNode::Discretionary { .. }
+                    if !(decision.hyphenated && absolute + 1 == end)
+            ) || matches!(node_action, PostLineNode::Direction(_));
+            let retained_end = absolute + usize::from(retains_event);
+            if run_start < retained_end {
+                stores.append_page_active_span_range(
+                    &mut output,
+                    self.source,
+                    run_start..retained_end,
+                );
+            }
+            for index in run_start..absolute {
+                output_lineages.extend(self.lineages[index].iter().cloned());
+            }
+            self.position = absolute + 1;
             match node_action {
                 PostLineNode::Discretionary { kind, pre, post, replace, physical_replace_count }
                     if decision.hyphenated && absolute + 1 == end =>
@@ -273,11 +297,6 @@ impl ArenaPostLineChannel {
                     let _ = (replace, physical_replace_count);
                 }
                 PostLineNode::Discretionary { replace, .. } => {
-                    stores.append_page_active_span_range(
-                        &mut output,
-                        self.source,
-                        absolute..absolute + 1,
-                    );
                     let replace_span = stores
                         .admit_page_node_span(replace)
                         .expect("discretionary replacement list remains live");
@@ -320,21 +339,10 @@ impl ArenaPostLineChannel {
                 }
                 PostLineNode::Direction(direction) => {
                     update_direction(direction, &mut self.active_directions);
-                    stores.append_page_active_span_range(
-                        &mut output,
-                        self.source,
-                        absolute..absolute + 1,
-                    );
                     output_lineages.extend(self.lineages[absolute].iter().cloned());
                 }
-                _ => {
-                    stores.append_page_active_span_range(
-                        &mut output,
-                        self.source,
-                        absolute..absolute + 1,
-                    );
-                    output_lineages.extend(self.lineages[absolute].iter().cloned());
-                }
+                PostLineNode::Other => unreachable!("ordinary nodes stay in retained runs"),
+                _ => unreachable!("nonexceptional line-end nodes stay in retained runs"),
             }
         }
         for direction in self.active_directions.iter().rev().copied() {
@@ -351,20 +359,12 @@ impl ArenaPostLineChannel {
                 leader: None,
             },
         );
-        while self.position < self.source.len()
-            && stores
-                .page_node_span(self.source)
-                .expect("paragraph source remains live")
-                .nodes()
-                .owned_node(self.position)
-                .is_some_and(post_line_discardable)
-        {
-            self.position += 1;
-        }
+        self.position = skip_post_line_discardable(stores, self.source, self.position);
         stores.finalize_page_active_list(&mut output)
     }
 }
 
+#[derive(Clone, Copy)]
 enum PostLineNode {
     Discretionary {
         kind: tex_state::node::DiscKind,
@@ -380,19 +380,55 @@ enum PostLineNode {
     Other,
 }
 
-fn classify_post_line_node<G>(
+fn next_post_line_event<G>(
     stores: &CommandContext<'_, G>,
     source: tex_state::page_node_arena::PageListSpan,
-    index: usize,
-) -> PostLineNode {
-    classify_post_line_node_value(
-        stores
-            .page_node_span(source)
-            .expect("paragraph source remains live")
-            .nodes()
-            .owned_node(index)
-            .expect("paragraph cursor remains in bounds"),
-    )
+    selected: core::ops::Range<usize>,
+    actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
+    has_par_fill_override: bool,
+) -> Option<(
+    usize,
+    PostLineNode,
+    Option<tex_typeset::linebreak::MaterializationAction>,
+)> {
+    let end = selected.end;
+    let source_len = source.len();
+    let mut event = None;
+    let _ = stores
+        .page_node_span(source)
+        .expect("paragraph source remains live")
+        .nodes()
+        .try_for_each_range(selected, |absolute, node| {
+            let node_action = classify_post_line_node_value(node);
+            let action = actions.and_then(|actions| actions.get(absolute)).copied();
+            let exceptional = match node_action {
+                PostLineNode::Discretionary { .. } | PostLineNode::Direction(_) => true,
+                PostLineNode::ParFillGlue => has_par_fill_override,
+                PostLineNode::DiscardableGlue => {
+                    absolute + 1 == end
+                        && end < source_len
+                        && action.is_none_or(|action| {
+                            action
+                                == tex_typeset::linebreak::MaterializationAction::BreakDiscardable
+                        })
+                }
+                PostLineNode::MathOff => {
+                    absolute + 1 == end
+                        && end < source_len
+                        && action.is_none_or(|action| {
+                            action == tex_typeset::linebreak::MaterializationAction::BreakMath
+                        })
+                }
+                PostLineNode::Other => false,
+            };
+            if exceptional {
+                event = Some((absolute, node_action, action));
+                core::ops::ControlFlow::Break(())
+            } else {
+                core::ops::ControlFlow::Continue(())
+            }
+        });
+    event
 }
 
 fn classify_post_line_node_value(node: &Node) -> PostLineNode {
@@ -419,6 +455,27 @@ fn classify_post_line_node_value(node: &Node) -> PostLineNode {
         Node::Direction(direction) => PostLineNode::Direction(*direction),
         _ => PostLineNode::Other,
     }
+}
+
+fn skip_post_line_discardable<G>(
+    stores: &CommandContext<'_, G>,
+    source: tex_state::page_node_arena::PageListSpan,
+    start: usize,
+) -> usize {
+    let mut next = start;
+    let _ = stores
+        .page_node_span(source)
+        .expect("paragraph source remains live")
+        .nodes()
+        .try_for_each_range(start..source.len(), |index, node| {
+            if post_line_discardable(node) {
+                next = index + 1;
+                core::ops::ControlFlow::Continue(())
+            } else {
+                core::ops::ControlFlow::Break(())
+            }
+        });
+    next
 }
 
 fn append_direction_evidence<G>(
