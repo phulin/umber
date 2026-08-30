@@ -686,8 +686,11 @@ the proof has ended.
 Resolution consumes the raw proof and returns a resolved borrow of the same
 caller-owned command slot. One settlement applies noexpand, outer validity,
 alignment classification, and optional observation in canonical order;
-classification stores the exact adjustment on the final command for one later
-backup. Internal recovery, ErrorStop deletion, math-shift lookahead, and
+the singular command-state transition first-touches the `align_state` rollback
+scalar only for a literal brace, immediately before its adjustment, and stores
+that exact adjustment on the final command for one later backup. Ordinary and
+delimiter classifications append no delivery-owned scalar undo. Internal
+recovery, ErrorStop deletion, math-shift lookahead, and
 output-list draining supply their local final or discard slots directly and
 create no returned command envelope.
 

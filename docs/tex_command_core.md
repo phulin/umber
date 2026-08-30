@@ -249,8 +249,11 @@ Consuming `RawCommand::resolve_in_place` resolves the spelling already stored
 in the caller destination and returns the only `ResolvedCommand` proof. One
 delivery settlement then applies `\noexpand`, outer-validity recovery,
 alignment classification, and optional observation in canonical order.
-Alignment classification writes its exact `AlignmentDeliveryAdjustment` into
-the same command before raw observation; backup later consumes that recorded
+The singular `CommandState` alignment transition classifies that resident
+command once, journals the prior `align_state` immediately before a literal
+brace mutation only, and writes its exact `AlignmentDeliveryAdjustment` into
+the same command before raw observation. Ordinary commands and delimiters do
+not probe the delivery-owned scalar journal; backup later consumes the recorded
 adjustment rather than reclassifying the spelling. Expanded delivery then
 matches the resolved meaning once to choose return, expansion, or
 `end_template` handling; protected and undefined policies are branches of that

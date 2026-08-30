@@ -406,8 +406,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.last_delivery = Some(delivery_stamp);
         self.check_outer_validity_entry(resolved.as_mut())?;
         let previous_align_state = self.command.alignment.align_state;
-        self.command.record_alignment_phase();
-        self.command.alignment.classify_delivery(resolved.as_mut());
+        self.command.classify_alignment_delivery(resolved.as_mut());
         let command = resolved.as_ref();
         let adjustment = command.alignment_adjustment();
         if self.command.alignment.active_alignment.is_some()

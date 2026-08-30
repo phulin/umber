@@ -759,12 +759,32 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
             .count(),
         1
     );
-    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(
-        next.matches(".classify_delivery(resolved.as_mut())")
+        alignment.matches("fn classify_alignment_delivery(").count(),
+        1
+    );
+    assert_eq!(
+        next.matches(".classify_alignment_delivery(resolved.as_mut())")
             .count(),
         1
     );
+    assert!(!next.contains("record_alignment_phase"));
+    let classifier = alignment
+        .split("fn classify_alignment_delivery(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(crate) const fn back_input_adjustment")
+                .next()
+        })
+        .expect("locate the singular alignment delivery classifier");
+    assert_eq!(classifier.matches("semantic_token()").count(), 1);
+    assert_eq!(
+        classifier.matches("record_delivery_align_state(").count(),
+        2
+    );
+    assert!(!classifier.contains(".clone()"));
+    assert!(!classifier.contains("Vec<"));
+    assert!(!classifier.contains("Box<"));
     assert!(state.contains("pub fn apply_alignment_request("));
     assert!(state.contains("Starting a v-template is intentionally absent"));
     assert!(interception.contains("pub fn begin_alignment_v_template("));

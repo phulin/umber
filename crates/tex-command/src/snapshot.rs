@@ -82,6 +82,8 @@ pub(crate) struct CommandTimeline<G> {
     pending_input_touched: bool,
     coalesced_writes: u64,
     ordered_events: u64,
+    #[cfg(feature = "profiling")]
+    alignment_delivery_journal_attempts: u64,
     fork: Option<CommandTimelineFork>,
     frames_released: u64,
     frames_reused: u64,
@@ -212,6 +214,8 @@ impl<G> Default for CommandTimeline<G> {
             pending_input_touched: false,
             coalesced_writes: 0,
             ordered_events: 0,
+            #[cfg(feature = "profiling")]
+            alignment_delivery_journal_attempts: 0,
             fork: None,
             frames_released: 0,
             frames_reused: 0,
@@ -543,6 +547,8 @@ impl<G> CommandTimeline<G> {
             frame_reuse_link_visits: self.frame_reuse_link_visits,
             frame_reuse_visits: self.frame_reuse_visits,
             frame_reuse_incarnations: self.frame_reuse_incarnations,
+            #[cfg(feature = "profiling")]
+            alignment_delivery_journal_attempts: self.alignment_delivery_journal_attempts,
             ..CommandTimelineCounters::default()
         }
     }
@@ -647,6 +653,15 @@ impl<G> CommandTimeline<G> {
             CommandScalarSlot::AlignState,
             CommandRootUndo::AlignState(old),
         );
+    }
+
+    pub(crate) fn record_delivery_align_state(&mut self, old: i32) {
+        #[cfg(feature = "profiling")]
+        {
+            self.alignment_delivery_journal_attempts =
+                self.alignment_delivery_journal_attempts.saturating_add(1);
+        }
+        self.record_align_state(old);
     }
 
     pub(crate) fn record_next_input_level_identity(&mut self, old: u64) {
@@ -818,6 +833,8 @@ pub struct CommandTimelineCounters {
     pub descriptor_publications: u64,
     pub coalesced_writes: u64,
     pub ordered_events: u64,
+    #[cfg(feature = "profiling")]
+    pub alignment_delivery_journal_attempts: u64,
     pub chunks_acquired: u64,
     pub chunks_reused: u64,
     pub selected_rewind_records: u64,

@@ -23,7 +23,7 @@ use crate::input::InputLevelId;
 /// This deliberately examines `cur_cmd` (the effective [`Meaning`]), not the
 /// token spelling. Control-sequence aliases therefore participate in §§342 and
 /// 760's command-code tests, while the separate spelling match in
-/// [`AlignmentDeliveryState::classify_delivery`] keeps literal-brace
+/// [`CommandState::classify_alignment_delivery`] keeps literal-brace
 /// `align_state` accounting physical.
 pub(crate) fn is_character_command<G>(command: &CurrentCommand<G>, cat: Catcode) -> bool {
     matches!(
@@ -772,31 +772,45 @@ impl<G> AlignmentDeliveryState<G> {
         self.align_state = self.align_stack.pop_copy().unwrap_or(TOP_LEVEL_ALIGN_STATE);
         Ok(())
     }
+}
 
-    pub(crate) fn classify_delivery(&mut self, command: &mut CurrentCommand<G>) {
+impl<G> crate::CommandState<G> {
+    /// Classifies and commits one TeX82 §§341--342 alignment delivery.
+    ///
+    /// Literal braces are the only ordinary deliveries which mutate
+    /// `align_state`, so they alone first-touch its rollback scalar. Delimiter
+    /// interception remains owned by [`AlignmentDeliveryState`] and records no
+    /// delivery-owned scalar undo.
+    pub(crate) fn classify_alignment_delivery(&mut self, command: &mut CurrentCommand<G>) {
         let adjustment = match command.spelling().semantic_token() {
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
             } => {
-                self.align_state += 1;
+                self.timeline
+                    .record_delivery_align_state(self.roots.alignment.align_state);
+                self.roots.alignment.align_state += 1;
                 AlignmentDeliveryAdjustment::BeginGroup
             }
             Token::Char {
                 cat: Catcode::EndGroup,
                 ..
             } => {
-                self.align_state -= 1;
+                self.timeline
+                    .record_delivery_align_state(self.roots.alignment.align_state);
+                self.roots.alignment.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
-            _ if self.active_cell.is_some()
-                && self.align_state == CELL_ALIGN_STATE
+            _ if self.roots.alignment.active_cell.is_some()
+                && self.roots.alignment.align_state == CELL_ALIGN_STATE
                 && is_character_command(command, Catcode::AlignmentTab) =>
             {
-                self.intercept_delimiter(command, AlignmentDelimiter::Tab)
+                self.roots
+                    .alignment
+                    .intercept_delimiter(command, AlignmentDelimiter::Tab)
             }
-            _ if self.active_cell.is_some()
-                && self.align_state == CELL_ALIGN_STATE
+            _ if self.roots.alignment.active_cell.is_some()
+                && self.roots.alignment.align_state == CELL_ALIGN_STATE
                 && matches!(
                     command.meaning(),
                     tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -818,13 +832,15 @@ impl<G> AlignmentDeliveryState<G> {
                     )) => AlignmentDelimiter::CrCr,
                     _ => unreachable!("alignment delimiter was classified above"),
                 };
-                self.intercept_delimiter(command, delimiter)
+                self.roots.alignment.intercept_delimiter(command, delimiter)
             }
             _ => AlignmentDeliveryAdjustment::None,
         };
         command.set_alignment_adjustment(adjustment);
     }
+}
 
+impl<G> AlignmentDeliveryState<G> {
     /// TeX82 §325's own brace rule, stated over `cur_tok` alone:
     /// `if cur_tok<right_brace_limit then if cur_tok<left_brace_limit then
     /// decr(align_state) else incr(align_state)`.
@@ -875,7 +891,10 @@ impl<G> AlignmentDeliveryState<G> {
         command: &mut CurrentCommand<G>,
         delimiter: AlignmentDelimiter,
     ) -> AlignmentDeliveryAdjustment {
-        self.align_state = TEMPLATE_ALIGN_STATE;
+        // The typed v-template start owns the matching `align_state :=
+        // 1000000` lifecycle and its rollback journal. Classification only
+        // converts the resident command and preserves the cell-body scalar
+        // until that transition commits.
         command.convert_to_end_template();
         AlignmentDeliveryAdjustment::Delimiter(delimiter)
     }
