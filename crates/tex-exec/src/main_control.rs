@@ -1075,6 +1075,7 @@ enum PendingOperationScanPhase {
 fn own_alignment_retry_child<G>(
     alignment: Option<Option<AlignmentIdentity>>,
     mut frame: OperationFrame<G>,
+    cold: ColdOperationSlot<G>,
     alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
 ) -> Option<PendingDirectDestination<G>> {
     let Some((alignment, cursor)) = alignment.zip(frame.cursor) else {
@@ -1084,7 +1085,10 @@ fn own_alignment_retry_child<G>(
         );
         return frame
             .has_preflight()
-            .then_some(PendingDirectDestination::Frame(frame));
+            .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
+                frame,
+                cold,
+            }));
     };
     match frame.phase {
         // Alignment remains the caller of its suspended expanded delivery,
@@ -1119,7 +1123,10 @@ fn own_alignment_retry_child<G>(
                 "a command retry and alignment retry cannot share one scanner capability"
             );
             let _ = retry;
-            Some(PendingDirectDestination::Frame(frame))
+            Some(PendingDirectDestination::Frame(PendingFrameDestination {
+                frame,
+                cold,
+            }))
         }
         // Alignment itself suspended without a command-owned continuation.
         None => Some(PendingDirectDestination::Alignment(
@@ -1282,8 +1289,30 @@ struct PreparedAlignmentPreamble<G> {
 /// phases. Keeping their values in one field makes that exclusivity physical
 /// and prevents the caller frame from reserving three separate large slots.
 enum OperationPayload<G> {
-    Cold(PreparedColdCommand<G>),
+    Cold,
     Hot(hot_apply::HotOperation<G>),
+}
+
+/// Caller-owned storage for the uncommon operation leaf.
+///
+/// The resident frame carries only the mutually exclusive payload tag and the
+/// measured hot operand. Cold scanning installs its completed value once in
+/// this adjacent typed slot; preparation and application borrow that same
+/// value in place. The slot moves with the frame only at a genuine typed
+/// suspension boundary.
+struct ColdOperationSlot<G> {
+    operation: Option<PreparedColdCommand<G>>,
+}
+
+impl<G> Default for ColdOperationSlot<G> {
+    fn default() -> Self {
+        Self { operation: None }
+    }
+}
+
+struct OperationSlots<'operation, G> {
+    frame: &'operation mut OperationFrame<G>,
+    cold: &'operation mut ColdOperationSlot<G>,
 }
 
 /// Compact result coordinate for the unified dispatch seam.
@@ -1610,36 +1639,43 @@ impl<G> OperationFrame<G> {
     }
 
     fn has_unavailable(&self) -> bool {
-        matches!(self.payload, Some(OperationPayload::Cold(_)))
+        matches!(self.payload, Some(OperationPayload::Cold))
     }
 
-    fn write_unavailable(&mut self, operation: ColdOperation<G>) {
+    fn write_unavailable(&mut self, cold: &mut ColdOperationSlot<G>, operation: ColdOperation<G>) {
         assert!(
             self.payload.is_none(),
             "one operation frame owns one completed payload"
         );
-        self.payload = Some(OperationPayload::Cold(operation));
+        assert!(
+            cold.operation.replace(operation).is_none(),
+            "one operation frame owns one cold leaf"
+        );
+        self.payload = Some(OperationPayload::Cold);
     }
 
-    fn unavailable(&self) -> &ColdOperation<G> {
-        match self.payload.as_ref() {
-            Some(OperationPayload::Cold(operation)) => operation,
-            _ => panic!("operation frame does not own an unavailable operation"),
-        }
+    fn unavailable<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a ColdOperation<G> {
+        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        cold.operation
+            .as_ref()
+            .expect("operation frame owns its unavailable cold leaf")
     }
 
-    fn unavailable_mut(&mut self) -> &mut ColdOperation<G> {
-        match self.payload.as_mut() {
-            Some(OperationPayload::Cold(operation)) => operation,
-            _ => panic!("operation frame does not own an unavailable operation"),
-        }
+    fn unavailable_mut<'a>(&self, cold: &'a mut ColdOperationSlot<G>) -> &'a mut ColdOperation<G> {
+        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        cold.operation
+            .as_mut()
+            .expect("operation frame owns its unavailable cold leaf")
     }
 
-    fn prepared(&self) -> &PreparedColdCommand<G> {
-        match self.payload.as_ref() {
-            Some(OperationPayload::Cold(operation)) => operation,
-            _ => panic!("operation frame does not own a prepared operation"),
-        }
+    fn prepared<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a PreparedColdCommand<G> {
+        self.unavailable(cold)
+    }
+
+    fn clear_cold(&mut self, cold: &mut ColdOperationSlot<G>) {
+        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        cold.operation = None;
+        self.payload = None;
     }
 
     fn write_hot(&mut self, operation: hot_apply::HotOperation<G>) {
@@ -1676,18 +1712,12 @@ enum ScannedOperation {
     Cold,
 }
 
-/// The sole by-value carrier, used only while rebuilding a genuinely
-/// suspended typed scanner before it is returned to its caller-owned frame.
-enum SuspendedScannedOperation<G> {
-    Hot(hot_apply::HotOperation<G>),
-    Cold(ColdOperation<G>),
-}
-
 fn retain_cold_operation<G>(
     frame: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     operation: ColdOperation<G>,
 ) -> ScannedOperation {
-    frame.write_unavailable(operation);
+    frame.write_unavailable(cold, operation);
     ScannedOperation::Cold
 }
 
@@ -1705,6 +1735,7 @@ struct PendingResourceOperation<G> {
 
 struct PreparedResourceResume<G> {
     frame: OperationFrame<G>,
+    cold: ColdOperationSlot<G>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
@@ -1728,26 +1759,39 @@ struct PendingAlignmentDelivery<G> {
 #[allow(clippy::large_enum_variant)]
 enum PendingDirectDestination<G> {
     Alignment(PendingAlignmentDelivery<G>),
-    Frame(OperationFrame<G>),
+    Frame(PendingFrameDestination<G>),
 }
 
-enum PendingDirectOperation<G> {
+struct PendingFrameDestination<G> {
+    frame: OperationFrame<G>,
+    cold: ColdOperationSlot<G>,
+}
+
+enum PendingDirectState {
     /// A retry whose prior attempt was rolled back and therefore owns no
     /// attempt-local coordinate. Its next operation starts fresh.
-    Fresh(OperationFrame<G>),
+    Fresh,
     /// A live attempt moved together with the exact caller phase that owns its
     /// scanner child and delivery cursor.
-    Retained {
-        operation: tex_command::CommandAttemptOperation,
-        destination: PendingDirectDestination<G>,
-    },
+    Retained(tex_command::CommandAttemptOperation),
+}
+
+struct PendingDirectOperation<G> {
+    state: PendingDirectState,
+    destination: PendingDirectDestination<G>,
 }
 
 impl<G> std::fmt::Debug for PendingDirectOperation<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Fresh(_) => "PendingDirectOperation::<G>::Fresh",
-            Self::Retained { destination, .. } => match destination {
+            Self {
+                state: PendingDirectState::Fresh,
+                ..
+            } => "PendingDirectOperation::<G>::Fresh",
+            Self {
+                state: PendingDirectState::Retained(_),
+                destination,
+            } => match destination {
                 PendingDirectDestination::Alignment(_) => {
                     "PendingDirectOperation::<G>::RetainedAlignment"
                 }
@@ -1764,6 +1808,7 @@ struct PendingDiagnosticOperation<G> {
 
 struct PendingDiagnosticDestination<G> {
     frame: OperationFrame<G>,
+    cold: ColdOperationSlot<G>,
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {
@@ -2389,12 +2434,9 @@ impl<G> MainControl<G> {
             debug_assert_eq!(resume, PREPARED_RESOURCE_RESUME);
             Some(operation)
         } else if let Some(pending) = self.pending_direct_operation.take() {
-            match pending {
-                PendingDirectOperation::Fresh(_) => None,
-                PendingDirectOperation::Retained {
-                    operation,
-                    destination: _,
-                } => Some(operation),
+            match pending.state {
+                PendingDirectState::Fresh => None,
+                PendingDirectState::Retained(operation) => Some(operation),
             }
         } else {
             self.pending_diagnostic_operation
@@ -4897,8 +4939,8 @@ impl<G> MainControl<G> {
         let operation = self.retain_direct_operation_for_retry(stores, mark);
         assert!(
             self.pending_direct_operation
-                .replace(PendingDirectOperation::Retained {
-                    operation,
+                .replace(PendingDirectOperation {
+                    state: PendingDirectState::Retained(operation),
                     destination,
                 })
                 .is_none(),
@@ -4911,10 +4953,12 @@ impl<G> MainControl<G> {
         stores: &Universe<G>,
         operation: tex_command::CommandAttemptOperation,
         frame: OperationFrame<G>,
+        cold: ColdOperationSlot<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) {
         let pending = PreparedResourceResume::<G> {
             frame,
+            cold,
             capabilities,
         };
         let attempt = self
@@ -4937,6 +4981,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
         mut frame: OperationFrame<G>,
+        cold: ColdOperationSlot<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) -> Result<StepResult, ExecError> {
         assert!(
@@ -4947,7 +4992,7 @@ impl<G> MainControl<G> {
         let result = self.finish_resource_preflight_failure(stores, error);
         if matches!(result, Ok(StepResult::Suspended(_))) {
             let operation = self.retain_direct_operation_for_retry(stores, mark);
-            self.suspend_prepared_resource_operation(stores, operation, frame, capabilities);
+            self.suspend_prepared_resource_operation(stores, operation, frame, cold, capabilities);
         } else {
             self.commit_direct_operation(stores, mark);
         }
@@ -5059,6 +5104,7 @@ impl<G> MainControl<G> {
         let mut last_step = ReplayStep::Continue;
         let mut direct_attempt_recorded = false;
         let mut operation_frame = OperationFrame::default();
+        let mut cold_operation = ColdOperationSlot::default();
         let mut episode_tracked_mark = if tracked_region.is_some() {
             match stores.begin_dependency_region() {
                 Ok(mark) => Some(mark),
@@ -5112,11 +5158,12 @@ impl<G> MainControl<G> {
                 None
             };
             let (retained_operation, pending_destination) = match pending_direct {
-                Some(PendingDirectOperation::Fresh(frame)) => {
-                    (None, Some(PendingDirectDestination::Frame(frame)))
-                }
-                Some(PendingDirectOperation::Retained {
-                    operation,
+                Some(PendingDirectOperation {
+                    state: PendingDirectState::Fresh,
+                    destination,
+                }) => (None, Some(destination)),
+                Some(PendingDirectOperation {
+                    state: PendingDirectState::Retained(operation),
                     destination,
                 }) => (Some(operation), Some(destination)),
                 None => (None, None),
@@ -5125,6 +5172,7 @@ impl<G> MainControl<G> {
                 Some((operation, mut pending)) => {
                     let _ = pending.frame.error.take();
                     operation_frame = pending.frame;
+                    cold_operation = pending.cold;
                     (Some(operation), Some(pending.capabilities))
                 }
                 None => (retained_operation, None),
@@ -5231,8 +5279,9 @@ impl<G> MainControl<G> {
                         scanner: pending.scanner,
                         expansion: pending.expansion,
                     },
-                    PendingDirectDestination::Frame(frame) => {
-                        operation_frame = frame;
+                    PendingDirectDestination::Frame(pending) => {
+                        operation_frame = pending.frame;
+                        cold_operation = pending.cold;
                         preflight_delivery_from_frame(&operation_frame)
                     }
                 }
@@ -5242,6 +5291,7 @@ impl<G> MainControl<G> {
                     &host_preparation,
                     &mut diagnostic_effects,
                     &mut operation_frame,
+                    &mut cold_operation,
                 ) {
                     Ok(preflight) => preflight,
                     Err(error) => {
@@ -5270,14 +5320,17 @@ impl<G> MainControl<G> {
                                 operation_frame.has_preflight(),
                                 "resource delivery retains its exact retry frame"
                             );
-                            let destination = PendingDirectDestination::Frame(operation_frame);
+                            let destination =
+                                PendingDirectDestination::Frame(PendingFrameDestination {
+                                    frame: operation_frame,
+                                    cold: cold_operation,
+                                });
                             let operation =
                                 self.retain_direct_operation_for_retry(stores, operation_mark);
-                            self.pending_direct_operation =
-                                Some(PendingDirectOperation::Retained {
-                                    operation,
-                                    destination,
-                                });
+                            self.pending_direct_operation = Some(PendingDirectOperation {
+                                state: PendingDirectState::Retained(operation),
+                                destination,
+                            });
                         } else {
                             self.commit_direct_operation(stores, operation_mark);
                         }
@@ -5331,7 +5384,10 @@ impl<G> MainControl<G> {
                     preflight.delivery,
                     (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
-                    &mut operation_frame,
+                    OperationSlots {
+                        frame: &mut operation_frame,
+                        cold: &mut cold_operation,
+                    },
                 );
                 if prepared == OperationReadiness::Failed {
                     if let Some(mark) = tracked_mark {
@@ -5342,6 +5398,7 @@ impl<G> MainControl<G> {
                             stores,
                             operation_mark,
                             operation_frame,
+                            cold_operation,
                             preflight.capabilities,
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
@@ -5362,6 +5419,7 @@ impl<G> MainControl<G> {
                         let destination = own_alignment_retry_child(
                             alignment_delivery,
                             operation_frame,
+                            cold_operation,
                             alignment_scanner,
                         )
                         .expect("resource suspension retains one direct caller destination");
@@ -5383,6 +5441,7 @@ impl<G> MainControl<G> {
                     prepared,
                     &mut diagnostic_effects,
                     &mut operation_frame,
+                    &mut cold_operation,
                 );
                 self.record_save_stack_usage(
                     &stores.command_context().expect("save-stack admission"),
@@ -5481,7 +5540,10 @@ impl<G> MainControl<G> {
                     preflight.delivery,
                     (preflight.scanner, preflight.expansion),
                     &mut diagnostic_effects,
-                    &mut operation_frame,
+                    OperationSlots {
+                        frame: &mut operation_frame,
+                        cold: &mut cold_operation,
+                    },
                 );
                 if prepared == OperationReadiness::Failed {
                     if let Some(mark) = tracked_mark {
@@ -5492,6 +5554,7 @@ impl<G> MainControl<G> {
                             stores,
                             operation_mark,
                             operation_frame,
+                            cold_operation,
                             preflight.capabilities,
                         );
                         return result;
@@ -5504,6 +5567,7 @@ impl<G> MainControl<G> {
                             let destination = own_alignment_retry_child(
                                 alignment_delivery,
                                 operation_frame,
+                                cold_operation,
                                 alignment_scanner,
                             )
                             .expect("resource suspension retains one direct caller destination");
@@ -5523,6 +5587,7 @@ impl<G> MainControl<G> {
                             let destination = own_alignment_retry_child(
                                 alignment_delivery,
                                 operation_frame,
+                                cold_operation,
                                 alignment_scanner,
                             )
                             .expect("retained failure owns one direct caller destination");
@@ -5537,7 +5602,7 @@ impl<G> MainControl<G> {
                     }
                 }
                 let immediate_pdf_retry = (prepared == OperationReadiness::Prepared)
-                    .then(|| match operation_frame.prepared() {
+                    .then(|| match operation_frame.prepared(&cold_operation) {
                         ColdOperation::ImmediateExtension(
                             RootedImmediateExtension::PdfExtensionInDviMode(primitive),
                         ) => Some(*primitive),
@@ -5555,6 +5620,7 @@ impl<G> MainControl<G> {
                     prepared,
                     &mut diagnostic_effects,
                     &mut operation_frame,
+                    &mut cold_operation,
                 );
                 self.record_save_stack_usage(
                     &stores.command_context().expect("save-stack admission"),
@@ -5591,9 +5657,18 @@ impl<G> MainControl<G> {
                             }
                         }
                         if error.as_fatal().is_none() {
-                            self.pending_direct_operation = operation_frame
-                                .has_preflight()
-                                .then_some(PendingDirectOperation::Fresh(operation_frame));
+                            self.pending_direct_operation =
+                                operation_frame
+                                    .has_preflight()
+                                    .then(|| PendingDirectOperation {
+                                        state: PendingDirectState::Fresh,
+                                        destination: PendingDirectDestination::Frame(
+                                            PendingFrameDestination {
+                                                frame: operation_frame,
+                                                cold: ColdOperationSlot::default(),
+                                            },
+                                        ),
+                                    });
                             self.discard_direct_operation(stores, operation_mark);
                             self.advance_telemetry.commits += 1;
                             let error = {
@@ -5683,7 +5758,10 @@ impl<G> MainControl<G> {
                 preflight.delivery,
                 (preflight.scanner, preflight.expansion),
                 &mut diagnostic_effects,
-                &mut operation_frame,
+                OperationSlots {
+                    frame: &mut operation_frame,
+                    cold: &mut cold_operation,
+                },
             );
             if prepared == OperationReadiness::Failed {
                 if let Some(interaction) = saved_interaction {
@@ -5697,6 +5775,7 @@ impl<G> MainControl<G> {
                         stores,
                         operation_mark,
                         operation_frame,
+                        cold_operation,
                         preflight.capabilities,
                     )
                 } else {
@@ -5707,6 +5786,7 @@ impl<G> MainControl<G> {
                         let destination = own_alignment_retry_child(
                             alignment_delivery,
                             operation_frame,
+                            cold_operation,
                             alignment_scanner,
                         )
                         .expect("resource suspension retains one direct caller destination");
@@ -5737,6 +5817,7 @@ impl<G> MainControl<G> {
                 prepared,
                 &mut diagnostic_effects,
                 &mut operation_frame,
+                &mut cold_operation,
             );
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
@@ -6021,21 +6102,24 @@ impl<G> MainControl<G> {
     ) -> Result<DiagnosticStepResult, ExecError> {
         let continuation = self.pending_diagnostic_operation.take();
         let mut operation_frame = OperationFrame::default();
+        let mut cold_operation = ColdOperationSlot::default();
         let (retained_attempt, continuation) = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
-                destination: PendingDiagnosticDestination::<G> { mut frame },
+                destination: PendingDiagnosticDestination::<G> { mut frame, cold },
             }) if frame.has_unavailable() => {
                 let _ = frame.error.take();
                 operation_frame = frame;
+                cold_operation = cold;
                 (Some(operation), Some((OperationDelivery::Prepared, None)))
             }
             Some(PendingDiagnosticOperation {
                 operation,
-                destination: PendingDiagnosticDestination::<G> { mut frame },
+                destination: PendingDiagnosticDestination::<G> { mut frame, cold },
             }) => {
                 let _ = frame.error.take();
                 operation_frame = frame;
+                cold_operation = cold;
                 let preflight = preflight_delivery_from_frame(&operation_frame);
                 (
                     Some(operation),
@@ -6088,7 +6172,10 @@ impl<G> MainControl<G> {
                             frame.admit_expanding(expansion, false, cursor);
                             self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
                                 operation,
-                                destination: PendingDiagnosticDestination { frame },
+                                destination: PendingDiagnosticDestination {
+                                    frame,
+                                    cold: ColdOperationSlot::default(),
+                                },
                             });
                         } else {
                             self.commit_direct_operation(stores, operation_mark);
@@ -6130,7 +6217,10 @@ impl<G> MainControl<G> {
             delivery,
             (scanner, None),
             &mut diagnostic_effects,
-            &mut operation_frame,
+            OperationSlots {
+                frame: &mut operation_frame,
+                cold: &mut cold_operation,
+            },
         );
         if prepared == OperationReadiness::Failed {
             assert!(
@@ -6150,6 +6240,7 @@ impl<G> MainControl<G> {
                 );
                 let destination = PendingDiagnosticDestination {
                     frame: operation_frame,
+                    cold: cold_operation,
                 };
                 let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
                 self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
@@ -6172,6 +6263,7 @@ impl<G> MainControl<G> {
             prepared,
             &mut diagnostic_effects,
             &mut operation_frame,
+            &mut cold_operation,
         ) {
             Ok(_) => {
                 self.modes
@@ -8197,6 +8289,7 @@ impl<G> MainControl<G> {
         host_preparation: &OperationHostPreparation<'_>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
+        cold: &mut ColdOperationSlot<G>,
     ) -> Result<Option<PreflightDelivery<G>>, ExecError> {
         frame.assert_empty();
         let mode = host_preparation.mode;
@@ -8337,6 +8430,7 @@ impl<G> MainControl<G> {
                     let scanned = dispatch_main_control_command(
                         &mut processor,
                         frame,
+                        cold,
                         mode,
                         &self.boxes,
                         innermost_group,
@@ -8417,7 +8511,7 @@ impl<G> MainControl<G> {
         match delivery_status {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
-                frame.write_unavailable(ColdOperation::<G>::EndOfInput);
+                frame.write_unavailable(cold, ColdOperation::<G>::EndOfInput);
                 return Ok(Some(PreflightDelivery::<G> {
                     delivery: OperationDelivery::Prepared,
                     capabilities: passive(),
@@ -8427,7 +8521,7 @@ impl<G> MainControl<G> {
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                 debug_assert!(frame.command.is_none());
-                frame.write_unavailable(ColdOperation::<G>::ReplayCompleted(episode));
+                frame.write_unavailable(cold, ColdOperation::<G>::ReplayCompleted(episode));
                 return Ok(Some(PreflightDelivery::<G> {
                     delivery: OperationDelivery::Prepared,
                     capabilities: passive(),
@@ -8480,9 +8574,12 @@ impl<G> MainControl<G> {
             )
             && self.operation_observations.is_none()
         {
-            frame.write_unavailable(ColdOperation::<G>::NoBoundary {
-                suppress_right: true,
-            });
+            frame.write_unavailable(
+                cold,
+                ColdOperation::<G>::NoBoundary {
+                    suppress_right: true,
+                },
+            );
             let capabilities = crate::transaction_protocol::canonical_command_capabilities(
                 frame.current().meaning(),
             );
@@ -8523,6 +8620,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let mut frame = OperationFrame::default();
+        let mut cold = ColdOperationSlot::default();
         let delivery = if let Some(command) = command {
             frame.admit_settled(command, None);
             OperationDelivery::Command
@@ -8540,12 +8638,15 @@ impl<G> MainControl<G> {
             delivery,
             (None, None),
             diagnostic_effects,
-            &mut frame,
+            OperationSlots {
+                frame: &mut frame,
+                cold: &mut cold,
+            },
         );
         if readiness == OperationReadiness::Failed {
             return Err(frame.take_error());
         }
-        self.apply_ready_operation(stores, readiness, diagnostic_effects, &mut frame)
+        self.apply_ready_operation(stores, readiness, diagnostic_effects, &mut frame, &mut cold)
     }
 
     fn apply_ready_operation(
@@ -8554,6 +8655,7 @@ impl<G> MainControl<G> {
         readiness: OperationReadiness,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
+        cold: &mut ColdOperationSlot<G>,
     ) -> Result<ReplayStep, ExecError> {
         let result = match readiness {
             OperationReadiness::Applied => frame
@@ -8561,7 +8663,7 @@ impl<G> MainControl<G> {
                 .take()
                 .expect("applied preparation writes its result into the frame"),
             OperationReadiness::Prepared => {
-                self.apply_prepared_operation(stores, frame, diagnostic_effects)
+                self.apply_prepared_operation(stores, frame, cold, diagnostic_effects)
             }
             OperationReadiness::Failed => {
                 unreachable!("failed preparation is handled before application")
@@ -8614,8 +8716,9 @@ impl<G> MainControl<G> {
             Option<tex_command::ExpansionWorkKey<G>>,
         ),
         diagnostic_effects: &mut DiagnosticEffects,
-        frame: &mut OperationFrame<G>,
+        slots: OperationSlots<'_, G>,
     ) -> OperationReadiness {
+        let OperationSlots { frame, cold } = slots;
         let (scanner_resume, expansion_resume) = resume;
         if matches!(
             &delivery,
@@ -8668,6 +8771,7 @@ impl<G> MainControl<G> {
             return self.prepare_scanned_cold_operation(
                 stores,
                 frame,
+                cold,
                 outer_paragraph_was_active,
                 root_main_file_origin,
             );
@@ -8776,6 +8880,7 @@ impl<G> MainControl<G> {
                     OperationDelivery::Command => scan_preflight_command(
                         &mut processor,
                         frame,
+                        cold,
                         mode,
                         &self.boxes,
                         innermost_group,
@@ -8805,6 +8910,7 @@ impl<G> MainControl<G> {
                                     dispatch_main_control_command(
                                         &mut processor,
                                         frame,
+                                        cold,
                                         mode,
                                         &self.boxes,
                                         innermost_group,
@@ -8820,11 +8926,14 @@ impl<G> MainControl<G> {
                                     processor.back_input(command).map_err(command_error)?;
                                     retain_cold_operation(
                                         frame,
+                                        cold,
                                         ColdOperation::<G>::DisplayAlignmentRecovery,
                                     )
                                 }
                             },
-                            None => retain_cold_operation(frame, ColdOperation::<G>::EndOfInput),
+                            None => {
+                                retain_cold_operation(frame, cold, ColdOperation::<G>::EndOfInput)
+                            }
                         }
                     }
                     OperationDelivery::Replay => scan_replay_step(
@@ -8839,6 +8948,7 @@ impl<G> MainControl<G> {
                         &mut self.shown_mode,
                         &mut diagnostics,
                         frame,
+                        cold,
                     )?,
                     OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
                         &mut processor,
@@ -8851,6 +8961,7 @@ impl<G> MainControl<G> {
                         &mut self.shown_mode,
                         &mut diagnostics,
                         frame,
+                        cold,
                     )?,
                     OperationDelivery::AlignmentRetry { alignment, cursor } => {
                         processor.resume_delivery_cursor(cursor);
@@ -8866,6 +8977,7 @@ impl<G> MainControl<G> {
                                 &mut self.shown_mode,
                                 &mut diagnostics,
                                 frame,
+                                cold,
                             )?,
                             None => scan_replay_step(
                                 &mut processor,
@@ -8879,6 +8991,7 @@ impl<G> MainControl<G> {
                                 &mut self.shown_mode,
                                 &mut diagnostics,
                                 frame,
+                                cold,
                             )?,
                         }
                     }
@@ -8965,6 +9078,7 @@ impl<G> MainControl<G> {
             ScannedOperation::Cold => self.prepare_scanned_cold_operation(
                 stores,
                 frame,
+                cold,
                 outer_paragraph_was_active,
                 root_main_file_origin,
             ),
@@ -8995,11 +9109,12 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         frame: &mut OperationFrame<G>,
+        cold: &mut ColdOperationSlot<G>,
         outer_paragraph_was_active: bool,
         root_main_file_origin: bool,
     ) -> OperationReadiness {
         let resource_result = {
-            let scanned = frame.unavailable_mut();
+            let scanned = frame.unavailable_mut(cold);
             self.resolve_font_resource(scanned, stores)
                 .and_then(|()| self.resolve_input_stream_resource(scanned, stores))
                 .and_then(|()| self.resolve_pdf_image_resource(scanned, stores))
@@ -9008,7 +9123,7 @@ impl<G> MainControl<G> {
             frame.error = Some(error);
             return OperationReadiness::Failed;
         }
-        let completed_preamble = match frame.unavailable() {
+        let completed_preamble = match frame.unavailable(cold) {
             ColdOperation::AlignmentPreambleStart { alignment } => {
                 let alignment = *alignment;
                 let preamble = match self
@@ -9040,7 +9155,7 @@ impl<G> MainControl<G> {
             })
             .unwrap_or_default();
         let promoted_alignment_roots = match prepare_cold_operation(
-            frame.unavailable_mut(),
+            frame.unavailable_mut(cold),
             self.command.state_mut(),
             stores,
             &alignment_roots,
@@ -9222,9 +9337,10 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         frame: &mut OperationFrame<G>,
+        cold: &mut ColdOperationSlot<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
-        let parking = self.suspend_main_control_parking(frame.prepared());
+        let parking = self.suspend_main_control_parking(frame.prepared(cold));
         let alignment_preamble = frame.alignment_preamble.take();
         let output_start = frame
             .output_start
@@ -9239,9 +9355,9 @@ impl<G> MainControl<G> {
             tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
         );
         if let Some(applied) =
-            self.apply_host_owned_step(frame.unavailable_mut(), stores, diagnostic_effects)
+            self.apply_host_owned_step(frame.unavailable_mut(cold), stores, diagnostic_effects)
         {
-            frame.payload = None;
+            frame.clear_cold(cold);
             return self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
         }
         if let Some(preamble) = alignment_preamble {
@@ -9266,7 +9382,7 @@ impl<G> MainControl<G> {
             active.align_peek_pending = true;
         }
         let context = stores.command_context().expect("cold operation admission");
-        if let ColdOperation::ShowGroups { diagnostic } = frame.unavailable_mut()
+        if let ColdOperation::ShowGroups { diagnostic } = frame.unavailable_mut(cold)
             && diagnostic.is_none()
         {
             *diagnostic = Some(detached_showgroups(
@@ -9279,10 +9395,11 @@ impl<G> MainControl<G> {
                 &self.active_math_shifts,
             ));
         }
-        let reassigning_glue = self.local_glue_pointer_reassigned(&context, frame.prepared());
-        let redundant_glue = self.etex_redundant_local_glue_assignment(&context, frame.prepared());
+        let reassigning_glue = self.local_glue_pointer_reassigned(&context, frame.prepared(cold));
+        let redundant_glue =
+            self.etex_redundant_local_glue_assignment(&context, frame.prepared(cold));
         drop(context);
-        match frame.unavailable_mut() {
+        match frame.unavailable_mut(cold) {
             ColdOperation::Skip {
                 redundant,
                 reassigning,
@@ -9298,7 +9415,7 @@ impl<G> MainControl<G> {
             }
             _ => {}
         }
-        let scanned = frame.prepared();
+        let scanned = frame.prepared(cold);
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let begins_alignment = matches!(&scanned, ColdOperation::BeginAlignment { .. });
@@ -9454,7 +9571,7 @@ impl<G> MainControl<G> {
         }
         let effect = {
             let context = stores.command_context().expect("live generation");
-            applied_effect_observation(&scanned, &context)
+            applied_effect_observation(scanned, &context)
         };
         let output_routine_was_active = self.boxes.output_routine_active;
         let mut command = CommandMachine {
@@ -9473,7 +9590,7 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let mut result = match frame.unavailable_mut() {
+        let mut result = match frame.unavailable_mut(cold) {
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
                 let provenance_demand = stores.provenance_demand();
                 let provenance_budget_bytes =
@@ -9541,7 +9658,7 @@ impl<G> MainControl<G> {
                 )
             }
         };
-        frame.payload = None;
+        frame.clear_cold(cold);
         if result.is_ok()
             && let Some(completion) = command.pending_show_completion.take()
         {
@@ -10746,6 +10863,7 @@ fn scan_replay_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -10766,6 +10884,7 @@ fn scan_replay_step<G>(
                 }
                 Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::AlignmentPreambleOpening { alignment, packing },
                 ))
             }
@@ -10784,6 +10903,7 @@ fn scan_replay_step<G>(
                 }
                 Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::AlignmentPreambleStart { alignment },
                 ))
             }
@@ -10793,6 +10913,7 @@ fn scan_replay_step<G>(
                     .map_err(command_error)?;
                 Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::AlignmentCellOpening { alignment, opening },
                 ))
             }
@@ -10802,12 +10923,13 @@ fn scan_replay_step<G>(
                     .map_err(command_error)?;
                 Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::AlignmentCellOpening { alignment, opening },
                 ))
             }
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
                 let operation = scan_alignment_peek(processor, alignment, after_noalign)?;
-                Ok(retain_cold_operation(frame, operation))
+                Ok(retain_cold_operation(frame, cold, operation))
             }
             AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(
                 processor,
@@ -10819,6 +10941,7 @@ fn scan_replay_step<G>(
                 shown_mode,
                 diagnostics,
                 frame,
+                cold,
             ),
             AlignmentPreamblePhase::CellDelivery => scan_alignment_delivery_step(
                 processor,
@@ -10831,6 +10954,7 @@ fn scan_replay_step<G>(
                 shown_mode,
                 diagnostics,
                 frame,
+                cold,
             ),
         };
     }
@@ -10845,6 +10969,7 @@ fn scan_replay_step<G>(
         shown_mode,
         diagnostics,
         frame,
+        cold,
     )
 }
 
@@ -10966,6 +11091,7 @@ fn scan_noalign_body<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let mut destination = None;
@@ -10974,7 +11100,11 @@ fn scan_noalign_body<G>(
         .map_err(command_error)?
         != tex_command::DeliveryStatus::Command
     {
-        return Ok(retain_cold_operation(frame, ColdOperation::<G>::EndOfInput));
+        return Ok(retain_cold_operation(
+            frame,
+            cold,
+            ColdOperation::<G>::EndOfInput,
+        ));
     }
     let command = destination
         .take()
@@ -10989,10 +11119,15 @@ fn scan_noalign_body<G>(
                 processor
                     .insert_partoken_before(command)
                     .map_err(command_error)?;
-                return Ok(retain_cold_operation(frame, ColdOperation::<G>::Continue));
+                return Ok(retain_cold_operation(
+                    frame,
+                    cold,
+                    ColdOperation::<G>::Continue,
+                ));
             }
             Ok(retain_cold_operation(
                 frame,
+                cold,
                 ColdOperation::<G>::NoAlignEndGroup { alignment },
             ))
         }
@@ -11004,6 +11139,7 @@ fn scan_noalign_body<G>(
             dispatch_main_control_command(
                 processor,
                 frame,
+                cold,
                 mode,
                 boxes,
                 innermost_group,
@@ -11034,6 +11170,7 @@ fn scan_alignment_delivery_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let mut destination = None;
@@ -11041,9 +11178,11 @@ fn scan_alignment_delivery_step<G>(
         .get_x_alignment_delivery_into(main_loop_active, &mut destination)
         .map_err(command_error)?;
     match delivery {
-        tex_command::DeliveryStatus::End => {
-            Ok(retain_cold_operation(frame, ColdOperation::<G>::EndOfInput))
-        }
+        tex_command::DeliveryStatus::End => Ok(retain_cold_operation(
+            frame,
+            cold,
+            ColdOperation::<G>::EndOfInput,
+        )),
         // An executor-owned replay episode (a math field/group/choice branch
         // or discretionary part) retired mid-cell. This must be reported
         // exactly like ordinary `scan_step`'s `ReplayCompleted` case, rather
@@ -11052,6 +11191,7 @@ fn scan_alignment_delivery_step<G>(
         // *enclosing* cell/field context, not the just-retired episode.
         tex_command::DeliveryStatus::ReplayCompleted(episode) => Ok(retain_cold_operation(
             frame,
+            cold,
             ColdOperation::<G>::ReplayCompleted(episode),
         )),
         tex_command::DeliveryStatus::Command => {
@@ -11099,6 +11239,7 @@ fn scan_alignment_delivery_step<G>(
                     .map_err(command_error)?;
                 return Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::MissingAlignmentCr,
                 ));
             }
@@ -11115,6 +11256,7 @@ fn scan_alignment_delivery_step<G>(
                         .map_err(command_error)?;
                     return Ok(retain_cold_operation(
                         frame,
+                        cold,
                         ColdOperation::<G>::MissingMathShift,
                     ));
                 }
@@ -11122,7 +11264,11 @@ fn scan_alignment_delivery_step<G>(
                     processor
                         .insert_partoken_before(command)
                         .map_err(command_error)?;
-                    return Ok(retain_cold_operation(frame, ColdOperation::<G>::Continue));
+                    return Ok(retain_cold_operation(
+                        frame,
+                        cold,
+                        ColdOperation::<G>::Continue,
+                    ));
                 }
                 // TeX82 §1131 accepts end-v only when `cur_group=align_group`.
                 // The replay driver tracks align-error's inserted `{`
@@ -11137,10 +11283,11 @@ fn scan_alignment_delivery_step<G>(
                     || innermost_group == Some(GroupKind::SemiSimple)
                 {
                     let operation = scan_off_save(processor, command, innermost_group)?;
-                    return Ok(retain_cold_operation(frame, operation));
+                    return Ok(retain_cold_operation(frame, cold, operation));
                 }
                 return Ok(retain_cold_operation(
                     frame,
+                    cold,
                     ColdOperation::<G>::AlignmentCellFinish { alignment },
                 ));
             }
@@ -11152,6 +11299,7 @@ fn scan_alignment_delivery_step<G>(
             dispatch_main_control_command(
                 processor,
                 frame,
+                cold,
                 mode,
                 boxes,
                 innermost_group,
@@ -11168,14 +11316,14 @@ fn scan_alignment_delivery_step<G>(
                 destination.expect("alignment status initializes destination"),
             );
             let operation = scan_alignment_delivery_event(processor, alignment, event)?;
-            Ok(retain_cold_operation(frame, operation))
+            Ok(retain_cold_operation(frame, cold, operation))
         }
         tex_command::DeliveryStatus::AlignmentClosingBrace => {
             let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
                 destination.expect("alignment status initializes destination"),
             );
             let operation = scan_alignment_delivery_event(processor, alignment, event)?;
-            Ok(retain_cold_operation(frame, operation))
+            Ok(retain_cold_operation(frame, cold, operation))
         }
         tex_command::DeliveryStatus::PendingExpanded => {
             unreachable!("alignment delivery commits terminal observations")
@@ -11222,6 +11370,7 @@ fn scan_alignment_delivery_event<G>(
 fn settle_preflight_step<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     main_loop: bool,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -11239,12 +11388,14 @@ fn settle_preflight_step<G>(
         tex_command::DeliveryStatus::End => {
             return Ok(retain_cold_operation(
                 command,
+                cold,
                 ColdOperation::<G>::EndOfInput,
             ));
         }
         tex_command::DeliveryStatus::ReplayCompleted(episode) => {
             return Ok(retain_cold_operation(
                 command,
+                cold,
                 ColdOperation::<G>::ReplayCompleted(episode),
             ));
         }
@@ -11281,6 +11432,7 @@ fn settle_preflight_step<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::NoBoundary {
                 suppress_right: true,
             },
@@ -11289,6 +11441,7 @@ fn settle_preflight_step<G>(
     dispatch_main_control_command(
         processor,
         command,
+        cold,
         mode,
         boxes,
         innermost_group,
@@ -11305,6 +11458,7 @@ fn settle_preflight_step<G>(
 fn scan_preflight_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -11325,6 +11479,7 @@ fn scan_preflight_command<G>(
             dispatch_main_control_command(
                 processor,
                 command,
+                cold,
                 mode,
                 boxes,
                 innermost_group,
@@ -11341,6 +11496,7 @@ fn scan_preflight_command<G>(
             settle_preflight_step(
                 processor,
                 command,
+                cold,
                 main_loop,
                 mode,
                 boxes,
@@ -11358,20 +11514,8 @@ fn scan_preflight_command<G>(
                 .take()
                 .expect("operation-scan phase owns its exact scalar state");
             let mut suspended = None;
-            let result = resume_pending_operation_scan(
-                processor,
-                &mut command.scalar,
-                phase,
-                &mut suspended,
-            )
-            .map(|operation| match operation {
-                SuspendedScannedOperation::Hot(operation) => {
-                    retain_hot_operation(command, operation)
-                }
-                SuspendedScannedOperation::Cold(operation) => {
-                    retain_cold_operation(command, operation)
-                }
-            });
+            let result =
+                resume_pending_operation_scan(processor, command, cold, phase, &mut suspended);
             if let Err(error) = &result
                 && execution_error_needs_command_retry(error)
                 && let Some(phase) = suspended
@@ -11398,6 +11542,7 @@ fn scan_preflight_command<G>(
             dispatch_main_control_command_inner(
                 processor,
                 command,
+                cold,
                 mode,
                 boxes,
                 innermost_group,
@@ -11421,6 +11566,7 @@ fn scan_preflight_command<G>(
             let result = scan_command(
                 processor,
                 command,
+                cold,
                 global,
                 flags,
                 mode,
@@ -11480,7 +11626,7 @@ fn scan_preflight_command<G>(
                 },
                 _ => unreachable!("only immediate PDF retries reach this delivery"),
             };
-            Ok(retain_cold_operation(command, operation))
+            Ok(retain_cold_operation(command, cold, operation))
         }
     }
 }
@@ -11497,6 +11643,7 @@ fn scan_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     command_owner: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
@@ -11513,12 +11660,14 @@ fn scan_step<G>(
         tex_command::DeliveryStatus::End => {
             return Ok(retain_cold_operation(
                 command_owner,
+                cold,
                 ColdOperation::<G>::EndOfInput,
             ));
         }
         tex_command::DeliveryStatus::ReplayCompleted(episode) => {
             return Ok(retain_cold_operation(
                 command_owner,
+                cold,
                 ColdOperation::<G>::ReplayCompleted(episode),
             ));
         }
@@ -11555,6 +11704,7 @@ fn scan_step<G>(
     {
         return Ok(retain_cold_operation(
             command_owner,
+            cold,
             ColdOperation::<G>::NoBoundary {
                 suppress_right: true,
             },
@@ -11564,6 +11714,7 @@ fn scan_step<G>(
     dispatch_main_control_command(
         processor,
         command_owner,
+        cold,
         mode,
         boxes,
         innermost_group,
@@ -12759,11 +12910,23 @@ fn scan_math_family_assignment<G>(
 
 fn resume_pending_operation_scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    scalar: &mut tex_command::ScalarScanFrame,
+    frame: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     pending: PendingOperationScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<SuspendedScannedOperation<G>, ExecError> {
-    let cold = match pending {
+) -> Result<ScannedOperation, ExecError> {
+    if let PendingOperationScanPhase::CatCode { global, phase } = pending {
+        let operation = hot_apply::scan_catcode_assignment(
+            processor,
+            &mut frame.scalar,
+            global,
+            phase,
+            suspended,
+        )?;
+        return Ok(retain_hot_operation(frame, operation));
+    }
+    let scalar = &mut frame.scalar;
+    let operation = match pending {
         PendingOperationScanPhase::Count {
             index,
             global,
@@ -12830,10 +12993,7 @@ fn resume_pending_operation_scan<G>(
         PendingOperationScanPhase::Marks(phase) => {
             scan_marks_operation(processor, scalar, phase, suspended)
         }
-        PendingOperationScanPhase::CatCode { global, phase } => {
-            return hot_apply::scan_catcode_assignment(processor, scalar, global, phase, suspended)
-                .map(SuspendedScannedOperation::Hot);
-        }
+        PendingOperationScanPhase::CatCode { .. } => unreachable!(),
         PendingOperationScanPhase::MathFamily {
             size,
             global,
@@ -12845,18 +13005,16 @@ fn resume_pending_operation_scan<G>(
             phase,
         } => scan_arithmetic_assignment(processor, scalar, primitive, global, phase, suspended),
         PendingOperationScanPhase::LeaderGlue { mode, result } => {
-            return scan_retained_leader_glue(processor, scalar, mode, result, suspended)
-                .map(SuspendedScannedOperation::Cold);
+            scan_retained_leader_glue(processor, scalar, mode, result, suspended)
         }
         PendingOperationScanPhase::LeaderPayload { primitive, mode } => {
             scan_leaders_step(processor, scalar, primitive, mode, suspended)
         }
         PendingOperationScanPhase::LeaderCommand { mode, result } => {
-            return scan_retained_leader_command(processor, scalar, mode, result, suspended)
-                .map(SuspendedScannedOperation::Cold);
+            scan_retained_leader_command(processor, scalar, mode, result, suspended)
         }
     }?;
-    Ok(SuspendedScannedOperation::Cold(cold))
+    Ok(retain_cold_operation(frame, cold, operation))
 }
 
 /// Dispatches one already-fetched command through TeX82 §1030's `reswitch:`
@@ -12886,6 +13044,7 @@ fn resume_pending_operation_scan<G>(
 fn dispatch_main_control_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -12930,6 +13089,7 @@ fn dispatch_main_control_command<G>(
     dispatch_main_control_command_inner(
         processor,
         command,
+        cold,
         mode,
         boxes,
         innermost_group,
@@ -12984,6 +13144,7 @@ fn hot_core_command_family<G>(
 fn dispatch_main_control_command_inner<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -13028,10 +13189,11 @@ fn dispatch_main_control_command_inner<G>(
         let Some(operation) = scanned? else {
             return Ok(retain_cold_operation(
                 command,
+                cold,
                 ColdOperation::<G>::LeadersNotFollowedByGlue,
             ));
         };
-        return Ok(retain_cold_operation(command, operation));
+        return Ok(retain_cold_operation(command, cold, operation));
     }
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
@@ -13122,7 +13284,11 @@ fn dispatch_main_control_command_inner<G>(
                     processor.error_context(),
                     etex,
                 ));
-                return Ok(retain_cold_operation(command, ColdOperation::<G>::Continue));
+                return Ok(retain_cold_operation(
+                    command,
+                    cold,
+                    ColdOperation::<G>::Continue,
+                ));
             }
         }
         // §1213's `<Discard the prefixes \long and \outer if they are
@@ -13169,12 +13335,14 @@ fn dispatch_main_control_command_inner<G>(
                         tex_command::DeliveryStatus::End => {
                             return Ok(retain_cold_operation(
                                 command,
+                                cold,
                                 ColdOperation::<G>::EndOfInput,
                             ));
                         }
                         tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                             return Ok(retain_cold_operation(
                                 command,
+                                cold,
                                 ColdOperation::<G>::ReplayCompleted(episode),
                             ));
                         }
@@ -13186,7 +13354,7 @@ fn dispatch_main_control_command_inner<G>(
                             );
                             let operation =
                                 scan_alignment_delivery_event(processor, alignment, event)?;
-                            return Ok(retain_cold_operation(command, operation));
+                            return Ok(retain_cold_operation(command, cold, operation));
                         }
                         tex_command::DeliveryStatus::AlignmentClosingBrace => {
                             let event = tex_command::AlignmentDeliveryEvent::ClosingBrace(
@@ -13196,7 +13364,7 @@ fn dispatch_main_control_command_inner<G>(
                             );
                             let operation =
                                 scan_alignment_delivery_event(processor, alignment, event)?;
-                            return Ok(retain_cold_operation(command, operation));
+                            return Ok(retain_cold_operation(command, cold, operation));
                         }
                         tex_command::DeliveryStatus::Command
                             if matches!(
@@ -13230,6 +13398,7 @@ fn dispatch_main_control_command_inner<G>(
                 {
                     return Ok(retain_cold_operation(
                         command,
+                        cold,
                         ColdOperation::<G>::EndOfInput,
                     ));
                 }
@@ -13255,7 +13424,11 @@ fn dispatch_main_control_command_inner<G>(
                 .map_err(command_error)?
                 != tex_command::DeliveryStatus::Command
             {
-                return Ok(retain_cold_operation(command, ColdOperation::<G>::Continue));
+                return Ok(retain_cold_operation(
+                    command,
+                    cold,
+                    ColdOperation::<G>::Continue,
+                ));
             }
             let next = destination
                 .take()
@@ -13295,6 +13468,7 @@ fn dispatch_main_control_command_inner<G>(
         let scanned_result = scan_command(
             processor,
             command,
+            cold,
             global,
             flags,
             mode,
@@ -13333,7 +13507,7 @@ fn dispatch_main_control_command_inner<G>(
             | ColdOperation::<G>::CharacterCode {
                 suppress_left_boundary,
                 ..
-            } = command.unavailable_mut()
+            } = command.unavailable_mut(cold)
         {
             *suppress_left_boundary = true;
         }
@@ -13744,6 +13918,7 @@ fn starts_paragraph_in_vertical_mode<G>(meaning: ResolvedMeaning<G>) -> bool {
 fn scan_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut OperationFrame<G>,
+    cold: &mut ColdOperationSlot<G>,
     global: bool,
     flags: MeaningFlags,
     mode: Mode,
@@ -13771,7 +13946,7 @@ fn scan_command<G>(
             MathFamilyScanPhase::Family,
             suspended_operation_scan,
         )?;
-        return Ok(retain_cold_operation(command, operation));
+        return Ok(retain_cold_operation(command, cold, operation));
     }
     // Math operands are scanned exclusively by `tex-command`.  The replay
     // driver receives a typed scalar request and schedules any opaque field
@@ -13791,6 +13966,7 @@ fn scan_command<G>(
         };
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::MathDelimiter(
                 processor
                     .scan_math_delimiter_boundary(kind)
@@ -13805,6 +13981,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::Math(request),
         ));
     }
@@ -13816,6 +13993,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Superscript,
                 provenance: tex_command::StructuredProvenance {
@@ -13832,6 +14010,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Subscript,
                 provenance: tex_command::StructuredProvenance {
@@ -13852,6 +14031,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::OutputRoutineOpeningBrace,
         ));
     }
@@ -13869,6 +14049,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::BeginSimpleGroup,
         ));
     }
@@ -13883,6 +14064,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::EndSimpleGroup,
         ));
     }
@@ -13920,6 +14102,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::EndMathGroup(kind),
         ));
     }
@@ -13934,6 +14117,7 @@ fn scan_command<G>(
     {
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::DiscretionaryPartEnd,
         ));
     }
@@ -13967,6 +14151,7 @@ fn scan_command<G>(
             .map_err(command_error)?;
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::Math(MathRequest::TextField(MathTextFieldKind::Ord)),
         ));
     }
@@ -13999,10 +14184,15 @@ fn scan_command<G>(
             processor
                 .insert_partoken_before(command.take_current())
                 .map_err(command_error)?;
-            return Ok(retain_cold_operation(command, ColdOperation::<G>::Continue));
+            return Ok(retain_cold_operation(
+                command,
+                cold,
+                ColdOperation::<G>::Continue,
+            ));
         }
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::BoxEndGroup {
                 ships_out: box_state.shipout_region.is_some(),
                 current_line: i32::try_from(processor.current_file_line_number())
@@ -14027,10 +14217,15 @@ fn scan_command<G>(
             processor
                 .insert_partoken_before(command.take_current())
                 .map_err(command_error)?;
-            return Ok(retain_cold_operation(command, ColdOperation::<G>::Continue));
+            return Ok(retain_cold_operation(
+                command,
+                cold,
+                ColdOperation::<G>::Continue,
+            ));
         }
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::EndOutputRoutine,
         ));
     }
@@ -14063,6 +14258,7 @@ fn scan_command<G>(
             .map_err(command_error)?;
         return Ok(retain_cold_operation(
             command,
+            cold,
             ColdOperation::<G>::ParagraphStart,
         ));
     }
@@ -14089,7 +14285,7 @@ fn scan_command<G>(
         shown_mode,
         suspended_operation_scan,
     )?;
-    Ok(retain_cold_operation(command, operation))
+    Ok(retain_cold_operation(command, cold, operation))
 }
 
 #[allow(clippy::too_many_arguments)]

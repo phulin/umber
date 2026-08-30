@@ -4049,16 +4049,18 @@ leave no command-bearing return envelope.
 
 The executor's caller-loop `OperationFrame` owns those command, parked
 expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase
-fields directly beside its prepared/application payloads. There is no nested
-preflight-command projection. A completed hot or cold scan is installed once
-in the frame's mutually exclusive payload slot and represented between phases
-only by a compact tag. Preparation borrows the resident payload, replaces its
-small attempt-root fields with prepared-root owners, and leaves the enclosing
-operation at the same address. Application consumes semantic leaves through a
-mutable borrow and then clears the slot. A separate by-value scanned carrier
-exists only while restoring a genuinely suspended typed scanner; a real
-suspension moves the same frame intact into the typed retry owner, and
-resumption restores it without reconstructing an equivalent command carrier.
+fields directly beside its singular compact payload. There is no nested
+preflight-command projection. A completed hot scan is installed once in that
+payload; a completed cold scan installs its uncommon leaf once in an adjacent
+caller-owned typed slot while the payload records only cold occupancy. Both are
+represented between phases only by a compact tag. Preparation borrows the
+resident cold leaf, replaces its small attempt-root fields with prepared-root
+owners, and leaves both owners at the same addresses. Application consumes
+semantic leaves through mutable borrows and then clears the occupied slot. A
+genuinely suspended typed scanner writes its rebuilt leaf directly into those
+same destinations; a real suspension moves the frame and occupied cold slot
+into the typed retry owner, and resumption restores them without reconstructing
+an equivalent command carrier.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core

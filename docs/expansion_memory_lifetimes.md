@@ -505,12 +505,15 @@ resume is moved into a typed pending state. For the resource path,
 `CommandAttemptOperation` capability, a fixed resume point, the typed requested
 operation frame, and one coarse generation owner. Preparation writes
 diagnostic fields into one caller-loop `OperationFrame` and returns only a
-compact readiness coordinate. A successful ordinary scan installs one hot or
-cold payload into that frame and returns only a compact tag. Preparation
-changes the payload's small attempt-root fields to prepared-root fields in
-place; application consumes semantic leaves through a mutable borrow, then
-clears and immediately reuses the slot. Resource suspension moves that exact
-frame into the attempt instead of boxing a prepared operation or retaining
+compact readiness coordinate. A successful ordinary scan installs one compact
+hot payload into that frame or one uncommon cold leaf into its adjacent
+caller-owned typed slot and returns only a compact tag. The frame's singular
+payload field owns the hot value or a cold-occupancy tag, so the 264-byte cold
+leaf does not inflate every resident hot record. Preparation changes the cold
+leaf's small attempt-root fields to prepared-root fields in place; application
+consumes semantic leaves through a mutable borrow, then clears and immediately
+reuses both slots. Resource suspension moves that exact frame and occupied cold
+slot into the attempt instead of boxing a prepared operation or retaining
 completed operations in a generation-long lane. `MainControl` owns one
 singular direct-retry slot: the same operation capability moves together with
 exactly one in-place operation frame or alignment destination. The operation
@@ -518,8 +521,8 @@ frame owns its admitted `CurrentCommand`, parked expansion, scalar phase,
 delivery cursor, scanner child, partial direct-scan phase, and mutually
 exclusive operation payload directly; no nested preflight or scanned-operation
 projection is constructed or extracted at preparation, suspension, or
-resumption. The sole by-value scanned-operation carrier exists only while
-rebuilding a genuinely suspended typed scanner. A settled command discovered by
+resumption. A genuinely suspended typed scanner writes its rebuilt hot or cold
+leaf directly into the same destinations and returns only the compact tag. A settled command discovered by
 alignment dispatch installs its command/cursor destination before operand
 scanning, so a resource failure cannot resume alignment past that command and
 strand its scanner child. Resume consumes the owner; cancellation drops it.

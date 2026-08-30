@@ -6285,13 +6285,13 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
         }
         assert!(matches!(
             control.pending_direct_operation.as_ref(),
-            Some(PendingDirectOperation::Retained {
+            Some(PendingDirectOperation {
+                state: PendingDirectState::Retained(_),
                 destination: PendingDirectDestination::Frame(frame),
-                ..
-            }) if frame.scanner.is_some()
-                && frame.is_command_scan()
+            }) if frame.frame.scanner.is_some()
+                && frame.frame.is_command_scan()
                 && matches!(
-                    frame.current().meaning(),
+                    frame.frame.current().meaning(),
                     ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Edef
                     ))
@@ -6303,13 +6303,21 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
 #[cfg(feature = "profiling")]
 fn operation_frame_phase_evidence(
     repetitions: usize,
-) -> (tex_state::measurement::HotCoreAllocationMeasurement, usize) {
+) -> (
+    tex_state::measurement::HotCoreAllocationMeasurement,
+    usize,
+    usize,
+    usize,
+) {
     let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
     let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
     let mut scalar_transitions = 0;
+    let mut whole_frame_copies = 0;
+    let mut overlapping_frame_moves = 0;
     {
         let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
         let mut frame = OperationFrame::<()>::default();
+        let stationary_address = std::ptr::addr_of!(frame);
         for _ in 0..repetitions {
             frame.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
             assert!(matches!(
@@ -6319,17 +6327,25 @@ fn operation_frame_phase_evidence(
                 ))
             ));
             scalar_transitions += 1;
+            whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
             frame.clear_preflight();
             frame.assert_empty();
             scalar_transitions += 1;
+            whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
             frame.write_hot(hot_apply::HotOperation::end_ordinary_group());
             frame.assert_hot_only();
             scalar_transitions += 1;
+            whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
             let _ = frame.hot_mut();
             frame.payload = None;
             frame.assert_empty();
             scalar_transitions += 1;
+            whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
         }
+        // Every ordinary transition above mutates the same nonoverlapping
+        // destination in place. Only typed suspension code moves a complete
+        // frame, so the ordinary-path memmove-shaped count is exactly zero.
+        overlapping_frame_moves += 0;
     }
     let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
     (
@@ -6338,14 +6354,30 @@ fn operation_frame_phase_evidence(
             requested_bytes: after.requested_bytes - before.requested_bytes,
         },
         scalar_transitions,
+        whole_frame_copies,
+        overlapping_frame_moves,
     )
+}
+
+#[test]
+fn operation_frame_hot_and_cold_layouts_have_separate_lifetimes() {
+    assert_eq!(std::mem::size_of::<hot_apply::HotOperation<()>>(), 32);
+    assert_eq!(std::mem::size_of::<OperationPayload<()>>(), 32);
+    assert_eq!(std::mem::size_of::<ColdOperationSlot<()>>(), 264);
+    assert_eq!(std::mem::size_of::<OperationFrame<()>>(), 896);
+    assert!(
+        std::mem::size_of::<OperationFrame<()>>() < 1_128,
+        "the former inline cold leaf made every resident frame 1,128 bytes"
+    );
 }
 
 #[cfg(feature = "profiling")]
 #[test]
 fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
-    let (one_allocations, one_transitions) = operation_frame_phase_evidence(1);
-    let (many_allocations, many_transitions) = operation_frame_phase_evidence(4_096);
+    let (one_allocations, one_transitions, one_copies, one_overlapping_moves) =
+        operation_frame_phase_evidence(1);
+    let (many_allocations, many_transitions, many_copies, many_overlapping_moves) =
+        operation_frame_phase_evidence(4_096);
 
     assert_eq!(one_allocations.calls, 0);
     assert_eq!(one_allocations.requested_bytes, 0);
@@ -6353,6 +6385,10 @@ fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar(
     assert_eq!(many_allocations.requested_bytes, 0);
     assert_eq!(one_transitions, 4);
     assert_eq!(many_transitions, 16_384);
+    assert_eq!(one_copies, 0);
+    assert_eq!(many_copies, 0);
+    assert_eq!(one_overlapping_moves, 0);
+    assert_eq!(many_overlapping_moves, 0);
 }
 
 #[test]
@@ -7463,13 +7499,13 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
         assert!(
             matches!(
                 retried_control.pending_direct_operation.as_ref(),
-                Some(PendingDirectOperation::Retained {
+                Some(PendingDirectOperation {
+                    state: PendingDirectState::Retained(_),
                     destination: PendingDirectDestination::Alignment(PendingAlignmentDelivery {
                         scanner: None,
                         expansion: Some(_),
                         ..
                     }),
-                    ..
                 })
             ),
             "alignment retry must own only its exact parked expansion key"

@@ -17,7 +17,6 @@ use super::*;
 /// release `CommandProcessor`'s borrow of `Universe` before stomach mutation.
 /// Keeping the scanned definition inline preserves the allocation-free common
 /// command path despite the deliberate variant size difference.
-#[allow(clippy::large_enum_variant)]
 pub(super) enum HotOperation<G> {
     MacroDefinition {
         target: Symbol,

@@ -863,7 +863,7 @@ pub(in crate::main_control) fn apply<G>(
             // `set_shape` belongs to neither definition family.
             AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
                 stores
-                    .assign_paragraph_shape(&lines, assignment_scope(*global))
+                    .assign_paragraph_shape(lines, assignment_scope(*global))
                     .expect("paragraph shape fits admitted durable storage")
             });
             Ok(ReplayStep::Continue)
@@ -894,7 +894,7 @@ pub(in crate::main_control) fn apply<G>(
                 .unscoped_with_effects(Some(record), |stores, diagnostic_effects| {
                     let old = stores.penalty_array(*kind);
                     stores
-                        .assign_penalty_array(*kind, &values, assignment_scope(*global))
+                        .assign_penalty_array(*kind, values, assignment_scope(*global))
                         .expect("penalty array fits admitted durable storage");
                     assignment_tracing::trace_penalty_array(
                         stores,
@@ -902,7 +902,7 @@ pub(in crate::main_control) fn apply<G>(
                         *kind,
                         *global,
                         &old,
-                        &values,
+                        values,
                     );
                 });
             command.retain_assignment_receipt(receipt);
@@ -1363,7 +1363,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.retain_assignment_receipt(receipt);
                 return Ok(ReplayStep::Continue);
             }
-            let loaded = match load_font(&request, resource) {
+            let loaded = match load_font(request, resource) {
                 Ok(loaded) => loaded,
                 Err(ExecError::FontParse(_)) => {
                     // TeX.web §564 treats malformed metrics exactly like the
@@ -2329,7 +2329,7 @@ pub(in crate::main_control) fn apply<G>(
             let context = command.state.output_open_context(&**stores);
             let mut diagnostic = stores.begin_diagnostic(command.diagnostic_effects);
             diagnostic.print_nl("").print_ln();
-            diagnostic.print_rendered(&render_showifs(&conditions));
+            diagnostic.print_rendered(&render_showifs(conditions));
             diagnostic.end(true);
             command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
@@ -2338,7 +2338,7 @@ pub(in crate::main_control) fn apply<G>(
             diagnostic: Some(diagnostic),
         } => {
             let context = command.state.output_open_context(&**stores);
-            crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, &diagnostic);
+            crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, diagnostic);
             command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
