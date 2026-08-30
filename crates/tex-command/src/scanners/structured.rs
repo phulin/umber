@@ -8031,10 +8031,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 return Err(error);
             }
-            if self.scanner_resume.is_some() {
-                return Err(CommandError::input_invariant());
-            }
-            self.get_token_into(destination)?
+            self.continue_preamble_after_span_expansion(destination)?
         } else {
             self.get_token_into(destination)?
         };
@@ -8071,10 +8068,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     return Err(error);
                 }
-                if self.scanner_resume.is_some() {
-                    return Err(CommandError::input_invariant());
-                }
-                match self.get_token_into(destination)? {
+                match self.continue_preamble_after_span_expansion(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::Command => {}
                     _ => return Err(CommandError::input_invariant()),
@@ -8113,6 +8107,24 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         }
         Ok(DeliveryStatus::Command)
+    }
+
+    /// Completes TeX82 §759's `expand; get_token` preamble transition.
+    ///
+    /// Successful expansion has consumed the current command semantically but
+    /// leaves its physical owner in the caller slot for the fused expanded
+    /// driver to reuse. Section 759 instead crosses into a fresh raw
+    /// `get_token`, so retire that settled owner before raw delivery fills the
+    /// same destination with the following token.
+    fn continue_preamble_after_span_expansion(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        if self.scanner_resume.is_some() {
+            return Err(CommandError::input_invariant());
+        }
+        drop(destination.take().ok_or(CommandError::input_invariant())?);
+        self.get_token_into(destination)
     }
 
     /// Scans TeX's balanced general text through the canonical `scan_toks`

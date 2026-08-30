@@ -1,7 +1,7 @@
 use tex_state::token::{Catcode, Token};
 
 use super::{FileNameComponents, WriteStreamSelector};
-use crate::{CommandHostCapabilities, CommandState};
+use crate::{AlignmentIdentity, CommandHostCapabilities, CommandState};
 
 fn other(ch: char) -> Token {
     Token::Char {
@@ -112,5 +112,84 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         drop(processor);
         drop(context);
         assert_eq!(universe.resolve(target), Some("~"));
+    });
+}
+
+#[test]
+fn preamble_span_expansion_retires_its_command_before_raw_refill() {
+    // TeX82 §759 implements the preamble `\span` transition as
+    // `expand; get_token`: expansion consumes `\noexpand`, then the fresh raw
+    // fetch delivers its suppressed operand. The two commands must never own
+    // the destination simultaneously.
+    crate::test_harness::with_universe(|universe| {
+        crate::install_tex82_unexpandable_primitives(universe);
+        crate::install_tex82_expandable_primitives(universe);
+        let span = universe.primitive_token("span").expect("span primitive");
+        let noexpand = universe
+            .primitive_token("noexpand")
+            .expect("noexpand primitive");
+        let cr = universe.primitive_token("cr").expect("cr primitive");
+        let x = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        let alignment = AlignmentIdentity::new(1);
+        command.begin_alignment(alignment);
+        crate::test_harness::push(
+            &mut command,
+            [
+                span,
+                noexpand,
+                x,
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                cr,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        processor
+            .begin_alignment_preamble_scan(None)
+            .expect("span expansion continues through raw preamble delivery");
+        drop(processor);
+        drop(context);
+
+        let preamble = command
+            .take_completed_alignment_preamble(alignment)
+            .expect("completed preamble");
+        assert_eq!(preamble.columns.len(), 1);
+        let u_template = preamble.columns[0]
+            .u_template
+            .expect("ordinary column has a u-template");
+        let words = command
+            .attempt
+            .arena()
+            .token_words(u_template)
+            .expect("live attempt template");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words.first().expect("one token").semantic_token(), x);
+        assert!(
+            command
+                .attempt
+                .arena()
+                .token_words(preamble.columns[0].v_template)
+                .expect("live attempt template")
+                .is_empty()
+        );
     });
 }
