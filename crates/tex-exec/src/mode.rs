@@ -2332,9 +2332,7 @@ impl ModeNest {
 
     pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
         assert!(
-            self.storage.levels.len() == 1
-                && self.storage.levels[0].mode == Mode::Vertical
-                && self.storage.levels[0].list.is_checkpoint_rootless(),
+            self.restart_checkpoint_is_quiescent(),
             "restart checkpoint requires one quiescent empty outer vertical mode"
         );
         let reachable_state_identity_root = self
@@ -2348,6 +2346,18 @@ impl ModeNest {
             outer: self.storage.levels[0].clone_rootless(),
             reachable_state_identity_root,
         }
+    }
+
+    /// Reports whether the complete mode owner can cross a named restart
+    /// boundary. TeX82 §1096 may finish an outer paragraph while command
+    /// input still owns a macro argument; if consuming that argument starts a
+    /// new paragraph, the delayed command boundary must wait for outer
+    /// vertical mode again instead of capturing the intervening horizontal
+    /// list.
+    pub(crate) fn restart_checkpoint_is_quiescent(&self) -> bool {
+        self.storage.levels.len() == 1
+            && self.storage.levels[0].mode == Mode::Vertical
+            && self.storage.levels[0].list.is_checkpoint_rootless()
     }
 
     /// Reports whether any live mode payload retains page-arena coordinates.

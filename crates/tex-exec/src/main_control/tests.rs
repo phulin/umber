@@ -7268,6 +7268,41 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
 }
 
 #[test]
+fn named_boundary_queue_waits_for_outer_mode_after_a_macro_argument_starts_a_paragraph() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\def\finish#1{A\par#1}\finish{B}\par\count0=2\end",
+        );
+        let mut ledger = crate::OutputLedger::new();
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+
+        for expected in 1..=2 {
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation);
+            assert!(
+                matches!(result, crate::CanonicalStepResult::Committed(_)),
+                "delayed paragraph {expected} result: {result:?}"
+            );
+            assert_eq!(control.current_mode(), Mode::Vertical);
+            assert_eq!(stores.count(0).expect("count register"), 0);
+            assert_eq!(
+                checkpoints
+                    .iter()
+                    .filter(|checkpoint| {
+                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                    })
+                    .count(),
+                expected,
+            );
+        }
+    });
+}
+
+#[test]
 fn named_boundary_queue_does_not_cross_a_resource_suspension() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

@@ -568,6 +568,11 @@ impl<G> MainControl<G> {
             if self.has_external_attempt_owner() {
                 return Ok(None);
             }
+            if pending.boundary == crate::EngineBoundary::OuterParagraphEnd
+                && !self.modes.restart_checkpoint_is_quiescent()
+            {
+                return Ok(None);
+            }
             if pending.boundary == crate::EngineBoundary::ShipoutComplete
                 && (self.boxes.output_routine_active
                     || self.modes.depth() != 1
