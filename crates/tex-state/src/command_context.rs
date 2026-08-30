@@ -3361,6 +3361,17 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list builder belongs to its live owner");
     }
 
+    /// Initializes one generated node in the reserved final page slot.
+    pub fn construct_page_active_list(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+        initialize: impl FnOnce(&mut Option<crate::node::Node>),
+    ) {
+        self.page_nodes
+            .construct_active_list(builder, initialize)
+            .expect("page active-list builder belongs to its live owner");
+    }
+
     pub fn append_page_active_list(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,

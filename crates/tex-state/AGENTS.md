@@ -108,7 +108,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   lifecycle boundaries, and reverse `ChunkCursor` traversal, canonical
   nonrecursive range lists, partial operation rollback, whole-chunk retained
   marks, exclusive batch promotion, and exactly accepted-versus-forked
-  settlement.
+  settlement. Generated region values initialize their final resident slot
+  before identity and direct-child dependency completion; rejection truncates
+  that exact unpublished reservation.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, decoded-row draining into final owners, and infallible atomic
   publication after complete validation.
@@ -219,6 +221,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   final packed chunks without whole-node staging, address-stable
   detach/rollback/rebranding, and reason-counted structural-copy fallback;
   production durable carrier cutover remains a separate migration stage.
+- `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
+  identity facade, checked destination construction, and focused warmed
+  1/4,096-node allocation/copy/chunk-work proof over the generic arena.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

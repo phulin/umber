@@ -358,7 +358,22 @@ impl ModeList {
 
     pub fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
         assert!(self.admit_page_region(stores));
-        let suffix = stores.publish_unique_page_nodes(vec![node]);
+        stores.open_page_active_list(&mut self.active);
+        stores.push_page_active_list(&mut self.active, node);
+        let suffix = stores.finalize_unique_page_active_list(&mut self.active);
+        self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
+        assert!(self.admit_page_region(stores));
+    }
+
+    pub fn construct<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        initialize: impl FnOnce(&mut Option<Node>),
+    ) {
+        assert!(self.admit_page_region(stores));
+        stores.open_page_active_list(&mut self.active);
+        stores.construct_page_active_list(&mut self.active, initialize);
+        let suffix = stores.finalize_unique_page_active_list(&mut self.active);
         self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
         assert!(self.admit_page_region(stores));
     }
@@ -787,6 +802,15 @@ impl ModeListMutation<'_> {
     pub(crate) fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
         self.record_nodes();
         self.list.push(stores, node);
+    }
+
+    pub(crate) fn construct<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        initialize: impl FnOnce(&mut Option<Node>),
+    ) {
+        self.record_nodes();
+        self.list.construct(stores, initialize);
     }
 
     pub(crate) fn nodes<'b, G>(&self, stores: &'b CommandContext<'_, G>) -> NodeCursor<'b> {

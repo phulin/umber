@@ -48,10 +48,12 @@ be sealed.
 
 New page material crosses that boundary through one resident-slot reservation.
 The generic arena admits the current reusable chunk slot and publishes its used
-cursor and identity summary, then the page-material facade writes the node once
-into that final `Option<Node>` place. No constructor callback or whole-node
-return value crosses the generic arena layers. A rejected foreign builder never
-reserves a destination. This removes the intermediate whole-node carriers
+cursor, then the page-material facade lends the final `Option<Node>` place to
+one inlined initializer. The generic arena derives child dependency metadata
+and completes the optional identity summary from the resident value. No
+whole-node return value crosses the generic arena layers. A rejected foreign
+builder never reserves a destination, and a rejected child truncates only that
+unpublished reservation. This removes the intermediate whole-node carriers
 without adding a payload owner, alternate node representation, allocation, or
 rollback state; explicit TeX/source-copy paths remain separately named
 value-copy boundaries.

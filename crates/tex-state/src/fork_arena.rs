@@ -103,6 +103,12 @@ struct ReservedChunkSlot<'a, T> {
     became_full: bool,
 }
 
+struct ReservationCompletion {
+    placeholder_identity: Option<u64>,
+    item_identity: Option<u64>,
+    dependency_floor: Option<usize>,
+}
+
 impl<T> ChunkStorage<T> {
     /// Creates a pool whose logical chunk capacity is derived from a byte
     /// budget. At least one value fits even when `T` exceeds that budget.
@@ -464,6 +470,39 @@ impl<T> ChunkStorage<T> {
         }
         let (page, index) = self.slot_index(key, offset as usize).ok()?;
         self.pages[page].slots[index].as_mut()
+    }
+
+    fn complete_reservation(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        lineage: u32,
+        offset: u32,
+        completion: ReservationCompletion,
+    ) -> Result<(), ForkArenaError> {
+        let ReservationCompletion {
+            placeholder_identity,
+            item_identity,
+            dependency_floor,
+        } = completion;
+        let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
+        if offset.checked_add(1) != Some(meta.used)
+            || placeholder_identity.is_some() != item_identity.is_some()
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if let (Some(placeholder), Some(identity), Some(summary)) = (
+            placeholder_identity,
+            item_identity,
+            meta.sequence_summary.as_mut(),
+        ) {
+            summary.replace(summary.len() - 1, placeholder, identity);
+        }
+        if let Some(dependency_floor) = dependency_floor {
+            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+        }
+        meta.dependency_metadata_complete = true;
+        Ok(())
     }
 
     fn used(&self, key: RawChunkKey, arena: u32) -> Result<u32, ForkArenaError> {
@@ -1167,6 +1206,12 @@ impl<Lane> Copy for BatchMark<Lane> {}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ForkArenaCounters {
     pub new_semantic_nodes: u64,
+    /// Complete payload values handed across the ordinary append boundary.
+    pub whole_payload_moves: u64,
+    /// Complete payload values handed across an explicit copy boundary.
+    pub whole_payload_copies: u64,
+    /// Values initialized through a borrow of their final resident slot.
+    pub destination_values_constructed: u64,
     pub source_nodes_copied: u64,
     pub partial_edge_nodes_copied: u64,
     pub overlapping_nodes_copied: u64,
@@ -1859,6 +1904,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: RegionValue<Lane>,
     {
+        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
         let dependency_floor = self.region_value_dependency_floor(pool, &value)?;
         let slot = self.reserve_payload_slot_with_dependency(
             pool,
@@ -2169,10 +2215,91 @@ impl<T, Lane> ForkArena<T, Lane> {
         builder: &mut ActiveListBuilder<T, Lane>,
         value: T,
     ) -> Result<(), ForkArenaError> {
+        self.counters.whole_payload_moves = self.counters.whole_payload_moves.saturating_add(1);
         let slot = self.reserve_active_list_slot(pool, builder, None)?;
         assert!(slot.is_none(), "reserved active-list destination is vacant");
         *slot = Some(value);
         Ok(())
+    }
+
+    /// Reserves and initializes one generated region value in its final slot.
+    ///
+    /// The initializer receives the resident `Option<T>` directly. Identity
+    /// and child-region metadata are derived only after that slot contains the
+    /// final value. A rejected child coordinate truncates the one unpublished
+    /// reservation and restores the active root exactly.
+    pub(crate) fn construct_region_value_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        identity_enabled: bool,
+        initialize: impl FnOnce(&mut Option<T>),
+        identity: impl FnOnce(&T) -> u64,
+    ) -> Result<Option<u64>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        let operation = self.operation_mark(pool);
+        let previous_root = self.active_list_open_mut(builder)?.root;
+        let placeholder_identity = identity_enabled.then_some(0);
+        let mut root = previous_root;
+        {
+            let slot = self.reserve_payload_slot_with_dependency(
+                pool,
+                &mut root,
+                placeholder_identity,
+                None,
+                false,
+            )?;
+            assert!(
+                slot.is_none(),
+                "reserved construction destination is vacant"
+            );
+            initialize(slot);
+            assert!(
+                slot.is_some(),
+                "node initializer fills its reserved destination"
+            );
+        }
+        self.active_list_open_mut(builder)?.root = root;
+
+        let key = root.tail.raw;
+        let offset = root.tail.offset - 1;
+        let completed = (|| {
+            let value = pool
+                .payload
+                .get(key, self.owner, offset)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            let dependency_floor = self.region_value_dependency_floor(pool, value)?;
+            let item_identity = identity_enabled.then(|| identity(value));
+            pool.payload.complete_reservation(
+                key,
+                self.owner,
+                self.lineage,
+                offset,
+                ReservationCompletion {
+                    placeholder_identity,
+                    item_identity,
+                    dependency_floor,
+                },
+            )?;
+            Ok(item_identity)
+        })();
+        if completed.is_err() {
+            self.active_list_open_mut(builder)?.root = previous_root;
+            self.active_builder = false;
+            let restored = self.restore_operation(pool, operation);
+            self.active_builder = true;
+            restored.expect("failed destination construction restores its exact suffix");
+            self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
+        }
+        if completed.is_ok() {
+            self.counters.destination_values_constructed = self
+                .counters
+                .destination_values_constructed
+                .saturating_add(1);
+        }
+        completed
     }
 
     /// Returns the admitted final place for one newly created payload.

@@ -225,6 +225,23 @@ Ordinary list processing is packed-block movement plus append-only output:
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 
+Generated nodes use destination construction. The active-list owner first
+reserves one checked vacant slot in its current packed chunk, then lends that
+final `Option<Node>` place to the producer for initialization. The resident
+node supplies its semantic identity and direct child coordinates before the
+reservation becomes complete. A foreign child rejects the publication and
+truncates that exact unpublished reservation; an allocation or chunk-boundary
+failure leaves the initializer untouched. Thus the ordinary path carries no
+complete temporary node across the semantic facade or generic arena, while
+the separately named TeX/source-copy paths continue to move an already-owned
+node value deliberately.
+
+Reservation, root extension, identity-summary completion, and dependency-floor
+completion form one transaction. Rollback restores the prior active root and
+payload suffix, including a newly allocated boundary chunk. Construction adds
+no heap owner or alternate node representation: the only complete node is the
+one resident in the exclusive generation region.
+
 TeX82 §§914--918 constructs an automatic discretionary's pre-break,
 post-break, and replacement closures before linking the discretionary into the
 reconstituted main list. Post-line hyphenation therefore seals the preceding
@@ -525,6 +542,11 @@ The existing arena counters remain authoritative:
 - `candidate_chunks_truncated`;
 - `accepted_chunks_reattached`; and
 - `obsolete_chunks_pruned`.
+
+Destination-construction attribution additionally distinguishes
+`whole_payload_moves`, `whole_payload_copies`, and
+`destination_values_constructed`. These are work observations only. They do
+not authorize reclamation or replace the public `memcpy`/`memmove` census.
 
 Add region-transition counters at the semantic facade:
 

@@ -603,6 +603,13 @@ impl<'a> PageMaterialArena<'a> {
         self.pool.chunks.allocated_heap_bytes()
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub fn payload_chunk_capacity(&self) -> usize {
+        self.region
+            .pub_arena
+            .payload_chunk_capacity(&self.pool.chunks)
+    }
+
     pub fn publish_owned(
         &mut self,
         nodes: impl IntoIterator<Item = PageMaterialNode>,
@@ -1036,6 +1043,31 @@ impl<'a> PageMaterialArena<'a> {
             if let Some(identity) = &mut builder.identity {
                 identity.push_back(item_identity);
             }
+            builder.identity_work.hashed_values =
+                builder.identity_work.hashed_values.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    /// Constructs one generated node directly in its final checked arena slot.
+    pub fn construct_active_list(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+        initialize: impl FnOnce(&mut Option<PageMaterialNode>),
+    ) -> Result<(), ForkArenaError> {
+        let item_identity = self.region.pub_arena.construct_region_value_active_list(
+            &mut self.pool.chunks,
+            &mut builder.inner,
+            *self.semantic_identity_enabled,
+            initialize,
+            semantic_node_identity,
+        )?;
+        if let Some(item_identity) = item_identity {
+            builder
+                .identity
+                .as_mut()
+                .expect("identity-enabled builder has a sequence")
+                .push_back(item_identity);
             builder.identity_work.hashed_values =
                 builder.identity_work.hashed_values.saturating_add(1);
         }

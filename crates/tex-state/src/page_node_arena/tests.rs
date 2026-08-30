@@ -267,8 +267,8 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
         .append_to_active_list(&mut builder, source)
         .expect("append source coordinates");
     arena
-        .push_active_list(&mut builder, Node::Penalty(30))
-        .expect("append new semantic node");
+        .construct_active_list(&mut builder, |slot| *slot = Some(Node::Penalty(30)))
+        .expect("construct new semantic node");
     let composed = arena
         .finalize_active_list(&mut builder)
         .expect("finalize builder");
@@ -301,7 +301,7 @@ fn demand_enabled_shared_append_keeps_copied_tail_summary_open_for_generated_suf
         .append_to_active_list(&mut builder, source)
         .expect("copy summarized source");
     arena
-        .push_active_list(&mut builder, Node::Penalty(30))
+        .construct_active_list(&mut builder, |slot| *slot = Some(Node::Penalty(30)))
         .expect("generated suffix extends a summarized copied block");
     let composed = arena
         .finalize_active_list(&mut builder)
@@ -356,6 +356,53 @@ fn source_copy_counter_has_a_real_negative_control() {
     assert_eq!(resolved(&arena, copied), penalties(&[4, 5]));
     assert_eq!(arena.counters().source_nodes_copied, 2);
     assert_eq!(arena.counters().new_semantic_nodes, 4);
+}
+
+#[test]
+fn destination_construction_is_warmed_and_linear_across_chunks() {
+    page_arena!(arena, pool, state, 512);
+    assert_eq!(core::mem::size_of::<Node>(), 168);
+
+    fn construct(arena: &mut PageMaterialArena<'_>, count: usize) {
+        let mut builder = PageMaterialActiveListBuilder::vacant();
+        arena.open_active_list(&mut builder).expect("open builder");
+        for penalty in 0..count {
+            arena
+                .construct_active_list(&mut builder, |slot| {
+                    *slot = Some(Node::Penalty(penalty as i32));
+                })
+                .expect("construct resident node");
+        }
+        let list = arena
+            .finalize_active_list(&mut builder)
+            .expect("finalize constructed list");
+        assert_eq!(list.len(), count);
+    }
+
+    let empty = arena.operation_mark();
+    construct(&mut arena, 4_096);
+    arena.restore_operation(empty).expect("restore warmup");
+    let warmed_bytes = arena.allocated_heap_bytes();
+
+    for count in [1, 4_096] {
+        let mark = arena.operation_mark();
+        let before = arena.counters();
+        construct(&mut arena, count);
+        let after = arena.counters();
+        assert_eq!(arena.allocated_heap_bytes(), warmed_bytes);
+        assert_eq!(after.whole_payload_moves - before.whole_payload_moves, 0);
+        assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 0);
+        assert_eq!(
+            after.destination_values_constructed - before.destination_values_constructed,
+            count as u64
+        );
+        let blocks = after.direct_blocks_allocated - before.direct_blocks_allocated;
+        assert_eq!(
+            blocks,
+            count.div_ceil(arena.payload_chunk_capacity()) as u64
+        );
+        arena.restore_operation(mark).expect("restore measured row");
+    }
 }
 
 #[test]

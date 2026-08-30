@@ -203,17 +203,18 @@ impl ArenaPostLineChannel {
         stores.open_page_active_list(&mut output);
         output_lineages.clear();
         if params.left_skip != GlueSpec::ZERO {
-            stores.push_page_active_list(
-                &mut output,
-                Node::Glue {
+            stores.construct_page_active_list(&mut output, |slot| {
+                *slot = Some(Node::Glue {
                     spec: params.left_skip,
                     kind: GlueKind::LeftSkip,
                     leader: None,
-                },
-            );
+                });
+            });
         }
         for direction in self.active_directions.iter().copied() {
-            stores.push_page_active_list(&mut output, Node::Direction(direction));
+            stores.construct_page_active_list(&mut output, |slot| {
+                *slot = Some(Node::Direction(direction));
+            });
         }
         if !self.pending_post.is_empty() {
             let pending_post = stores
@@ -262,16 +263,15 @@ impl ArenaPostLineChannel {
                 PostLineNode::Discretionary { kind, pre, post, replace, physical_replace_count }
                     if decision.hyphenated && absolute + 1 == end =>
                 {
-                    stores.push_page_active_list(
-                        &mut output,
-                        Node::Disc {
+                    stores.construct_page_active_list(&mut output, |slot| {
+                        *slot = Some(Node::Disc {
                             kind,
                             pre: params.empty_list,
                             post: params.empty_list,
                             replace: params.empty_list,
                             physical_replace_count: 0,
-                        },
-                    );
+                        });
+                    });
                     let pre_span = stores
                         .admit_page_node_span(pre)
                         .expect("discretionary pre list remains live");
@@ -310,14 +310,13 @@ impl ArenaPostLineChannel {
                     );
                 }
                 PostLineNode::ParFillGlue if par_fill_override.is_some() => {
-                    stores.push_page_active_list(
-                        &mut output,
-                        Node::Glue {
+                    stores.construct_page_active_list(&mut output, |slot| {
+                        *slot = Some(Node::Glue {
                             spec: par_fill_override.expect("matched override"),
                             kind: GlueKind::ParFillSkip,
                             leader: None,
-                        },
-                    );
+                        });
+                    });
                 }
                 PostLineNode::DiscardableGlue
                     if absolute + 1 == end
@@ -332,10 +331,9 @@ impl ArenaPostLineChannel {
                             action == tex_typeset::linebreak::MaterializationAction::BreakMath
                         }) =>
                 {
-                    stores.push_page_active_list(
-                        &mut output,
-                        Node::MathOff(Scaled::from_raw(0)),
-                    );
+                    stores.construct_page_active_list(&mut output, |slot| {
+                        *slot = Some(Node::MathOff(Scaled::from_raw(0)));
+                    });
                 }
                 PostLineNode::Direction(direction) => {
                     update_direction(direction, &mut self.active_directions);
@@ -346,19 +344,17 @@ impl ArenaPostLineChannel {
             }
         }
         for direction in self.active_directions.iter().rev().copied() {
-            stores.push_page_active_list(
-                &mut output,
-                Node::Direction(matching_direction_end(direction)),
-            );
+            stores.construct_page_active_list(&mut output, |slot| {
+                *slot = Some(Node::Direction(matching_direction_end(direction)));
+            });
         }
-        stores.push_page_active_list(
-            &mut output,
-            Node::Glue {
+        stores.construct_page_active_list(&mut output, |slot| {
+            *slot = Some(Node::Glue {
                 spec: params.right_skip,
                 kind: GlueKind::RightSkip,
                 leader: None,
-            },
-        );
+            });
+        });
         self.position = skip_post_line_discardable(stores, self.source, self.position);
         stores.finalize_page_active_list(&mut output)
     }
@@ -616,8 +612,9 @@ pub(crate) fn break_current_paragraph<G>(
             let _ = list.pop_last_node(stores);
         }
     }
-    nest.current_list_mutation()
-        .push(stores, Node::Penalty(10_000));
+    nest.current_list_mutation().construct(stores, |slot| {
+        *slot = Some(Node::Penalty(10_000));
+    });
     nest.current_list_mutation().push(
         stores,
         Node::Glue {
