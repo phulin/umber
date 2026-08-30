@@ -1,0 +1,8 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>
+entering extended mode
+**incomplete-source-nesting-warning.tex
+(./incomplete-source-nesting-warning.tex (./warning-child.tex
+Warning: end of file when \iftrue entered on line 1 is incomplete
+) )
+(\end occurred when \iftrue on line 1 was incomplete)
+No pages of output.

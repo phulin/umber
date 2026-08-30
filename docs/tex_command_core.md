@@ -3628,6 +3628,16 @@ at the committed call rather than by the expansion layer.
 - the host formatter resolves paths, lines, columns, excerpts, and macro
   traces lazily.
 
+Canonical observation schema v4 publishes the lifecycle subset needed for
+cross-engine comparison without parsing any of that rendered presentation.
+The command core records recoverable-error, warning, and fatal reports with a
+stable diagnostic name, typed canonical arguments, and the source location of
+the direct command that selected the report. The session owner appends one
+terminal outcome carrying TeX82 §76 history and completed/aborted state.
+`tex-observe` admits those records only for schema v4, so v1-v3 event streams
+and their identity preimages cannot acquire an extra event. Terminal and log
+comparisons continue to own exact context, help, and message rendering.
+
 Nested command episodes retain the same boundary. In particular, TeX82
 §1370 expands deferred writes during shipout: scanner recovery is recorded in
 command state with its live §82 context, then rendered into the artifact

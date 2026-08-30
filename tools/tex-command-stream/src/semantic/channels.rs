@@ -14,9 +14,14 @@
 //! reason `default-members` naming 21 of 34 crates was a defect rather than a
 //! configuration: an omission that reads as coverage is worse than a red gate.
 
+use std::sync::Arc;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tex_oracle::{EffectEvent, EffectKind};
+use tex_oracle::{
+    EffectEvent, EffectKind, Event, EventObserver, JsonLinesObserver, ManifestIdentity,
+    SchemaVersion,
+};
 use tex_state::{EffectRecord, PrintSink};
 
 use super::{SemanticRun, valid_bug_id};
@@ -25,11 +30,12 @@ use super::{SemanticRun, valid_bug_id};
 ///
 /// `events` and `status` are scalars rather than streams and are declared
 /// inline in the manifest, so they are not part of this list.
-pub const STREAM_CHANNELS: [StreamChannel; 4] = [
+pub const STREAM_CHANNELS: [StreamChannel; 5] = [
     StreamChannel::Terminal,
     StreamChannel::Log,
     StreamChannel::Dvi,
     StreamChannel::Effects,
+    StreamChannel::Diagnostics,
 ];
 
 /// One channel whose content is a byte stream rather than a scalar.
@@ -49,6 +55,8 @@ pub enum StreamChannel {
     /// Ordinary effects that are not stream writes: specials, deferred
     /// `\write`s, stream opens and closes, and shell escapes.
     Effects,
+    /// Schema-v4 typed diagnostic reports and their final history/outcome.
+    Diagnostics,
 }
 
 impl StreamChannel {
@@ -60,6 +68,7 @@ impl StreamChannel {
             Self::Log => "log",
             Self::Dvi => "dvi",
             Self::Effects => "effects",
+            Self::Diagnostics => "diagnostics",
         }
     }
 }
@@ -77,7 +86,7 @@ pub struct CapturedChannels {
     /// than `String`, because the `dvi` channel is a real serialized DVI
     /// file and lossily reencoding it as UTF-8 would corrupt exactly the
     /// bytes a byte-exact oracle comparison exists to check.
-    pub streams: [Vec<u8>; 4],
+    pub streams: [Vec<u8>; 5],
 }
 
 impl CapturedChannels {
@@ -103,16 +112,24 @@ impl CapturedChannels {
                 .filter_map(tex_observe::portable_effect_observation),
             run.effect_artifacts.iter().cloned(),
         );
+        let diagnostics = portable_diagnostic_channel(run);
         let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
             [
                 terminal.into_bytes(),
                 log.into_bytes(),
                 run.dvi.clone(),
                 effects,
+                diagnostics,
             ]
         });
         Self {
-            events: run.observations.len(),
+            events: run
+                .observations
+                .iter()
+                .filter(|observation| {
+                    !matches!(observation, tex_command::CommandObservation::DiagnosticLifecycle(_))
+                })
+                .count(),
             status: run.fatal.map_or_else(
                 || "clean".to_owned(),
                 |fatal| format!("fatal:{}", fatal.label()),
@@ -130,6 +147,61 @@ impl CapturedChannels {
             .expect("STREAM_CHANNELS covers every StreamChannel");
         &self.streams[index]
     }
+}
+
+/// Encodes the source-located schema-v4 diagnostic lifecycle for one run.
+/// A spotless run has no diagnostic channel; once a report exists the final
+/// outcome is retained as the closing record.
+#[must_use]
+pub fn portable_diagnostic_channel(run: &SemanticRun) -> Vec<u8> {
+    let root_id = run.observations.iter().find_map(|observation| match observation {
+        tex_command::CommandObservation::Command(record) => {
+            record.provenance.source_location.map(tex_command::SourceLocation::source)
+        }
+        tex_command::CommandObservation::DiagnosticLifecycle(
+            tex_command::DiagnosticLifecycleRecord::Report { location, .. },
+        ) => Some(location.source()),
+        _ => None,
+    });
+    let Some(root_id) = root_id else {
+        return Vec::new();
+    };
+    let mut translator = tex_observe::LiveSessionTranslator::for_root(
+        SchemaVersion::V4,
+        "terminal",
+        tex_observe::LiveSource {
+            name: run.diagnostic_root_name.clone(),
+            source: root_id,
+            bytes: Arc::clone(&run.diagnostic_root_bytes),
+        },
+    );
+    translator.translate_captured(run.observations.iter().cloned());
+    let lifecycle: Vec<_> = translator
+        .into_events()
+        .into_iter()
+        .filter_map(|observed| match observed.event {
+            Event::DiagnosticLifecycle(event) => Some(Event::DiagnosticLifecycle(event)),
+            _ => None,
+        })
+        .collect();
+    if !lifecycle.iter().any(|event| {
+        matches!(
+            event,
+            Event::DiagnosticLifecycle(tex_oracle::DiagnosticLifecycleEvent::Report { .. })
+        )
+    }) {
+        return Vec::new();
+    }
+    let mut observer = JsonLinesObserver::new_for_schema(
+        Vec::new(),
+        SchemaVersion::V4,
+        ManifestIdentity::from_bytes([0; 32]),
+    )
+    .expect("in-memory diagnostic stream header");
+    for event in lifecycle {
+        observer.committed(event).expect("in-memory diagnostic event");
+    }
+    observer.finish().expect("in-memory diagnostic stream").0
 }
 
 /// Captures the terminal and transcript projections from their exact TeX82
@@ -371,6 +443,7 @@ pub struct ChannelContract {
     pub log: StreamDisposition,
     pub dvi: StreamDisposition,
     pub effects: StreamDisposition,
+    pub diagnostics: StreamDisposition,
 }
 
 impl ChannelContract {
@@ -382,6 +455,7 @@ impl ChannelContract {
             StreamChannel::Log => &self.log,
             StreamChannel::Dvi => &self.dvi,
             StreamChannel::Effects => &self.effects,
+            StreamChannel::Diagnostics => &self.diagnostics,
         }
     }
 }
@@ -729,7 +803,9 @@ pub fn normalize_channel(channel: StreamChannel, bytes: &[u8]) -> Result<Vec<u8>
         StreamChannel::Dvi if bytes.is_empty() => Ok(Vec::new()),
         StreamChannel::Dvi => test_support::dvi::normalized_dvi_for_comparison(bytes)
             .map_err(|error| format!("{error:#}")),
-        StreamChannel::Terminal | StreamChannel::Effects => Ok(bytes.to_vec()),
+        StreamChannel::Terminal | StreamChannel::Effects | StreamChannel::Diagnostics => {
+            Ok(bytes.to_vec())
+        }
     }
 }
 

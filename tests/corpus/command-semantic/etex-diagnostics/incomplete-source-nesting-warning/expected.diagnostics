@@ -1,0 +1,3 @@
+{"schema":4,"manifest":"0000000000000000000000000000000000000000000000000000000000000000"}
+{"sequence":0,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"warning","severity":"warning","diagnostic":"incomplete-source-nesting","arguments":[{"type":"name","value":"conditional"}],"location":{"source":"warning-child.tex","line":1,"byte":6}}}}
+{"sequence":1,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"outcome","history":"warning_issued","outcome":"completed"}}}

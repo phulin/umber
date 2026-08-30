@@ -145,6 +145,11 @@ revalidates the closed case after execution so no ambient output can appear.
 
 `tests/corpus/command-semantic` contains the generated V2 schema and tiny property-scoped semantic fixtures. Every `<domain>/<fixture>/` directory is a closed unit containing its `manifest.json`, conventional `<fixture>.tex` source, and each applicable `expected.<channel>` file; the directory infers domain, ID, source, ordinary file-or-empty channel dispositions, and clean status. Manifests keep projection expectations explicit and declare only channel, status, expectation, or typed capture-policy exceptions. Domain directories contain no case catalogue or shared expected-output tree. A case has two kinds of evidence, and they are not interchangeable. Its channels -- terminal, log, DVI, effects -- hold the pinned instrumented reference engine's bytes and are the correctness evidence: Umber either reproduces them (`file`), does not and pins exactly where it first diverges (`xfail`), or diverges only inside tex.web §82's error reports and is still compared everywhere else (`xfail-diagnostics`). Its `expected` is a projection in Umber's own vocabulary (`scanner:integer:2:-`, `artifact:<hash>`), which no reference engine emits, so it is derived from Umber's own canonical run and pins that behavior against silent drift rather than attesting to its correctness. Normal regeneration preserves every authored `expected` byte-for-byte and reports fresh projection differences; the correctness gate remains the authority that rejects an unexpected pass drift. Mechanical acceptance is available only for one reviewed selector at a time through `command-semantic-channels --profile PROFILE --accept-projection-change DOMAIN/CASE`; global acceptance is rejected. A case that cannot be reached by canonical execution at all is still a defect in the case rather than a permanent xfail. `alignments/` projects alignment lifecycle and packing boundaries, `conditionals/` projects conditional observations, `input-expansion/` projects filtered input and command observations with hermetic host responses, `math/` projects selected command, mode, final-box, and committed shipout boundaries, and `page-output/` projects setlanguage replay, special whatsit placement, hlist/vlist shipout artifacts, and `\leaders`/`\cleaders`/`\xleaders` placement, and `scanners-internal-quantities/` projects the internal unit probe, register fetches, glue coercion, radix forms, dimension fractions, and scaled division. The generic runner in `tex_command_stream::semantic` discovers every fixture without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, strict xfail fingerprints, closed local inventories, and regular-file locality, then compares concise canonical-main-control projections. It lives in the library rather than the test binary so `scripts/regen-fixtures.sh --area command-semantic` drives the same code the gate does; `tools/tex-command-stream/tests/it/command_semantic.rs` holds only the assertions. Cargo tests invoke no live TeX and never read the long-document trace registry.
 
+The channel set also includes `expected.diagnostics`, a canonical schema-v4
+stream for source-located diagnostic reports and their final §76
+history/outcome. It never replaces terminal/log evidence: exact rendered
+message, context, help, and job-tail bytes remain owned by those channels.
+
 Each command-semantic manifest carries typed capture policy. Regeneration
 selects the requested profile directly from the validated V2 cases, builds one
 genuine format through `-ini`/`\dump`, and captures only the subsequent `-fmt`
@@ -166,12 +171,16 @@ it prints each matching case's source and then the oracle's terminal text
 beside Umber's, line-numbered, with differing rows marked and spaces shown as
 `·` (§314's descriptors end in a load-bearing space). `--diff-log` shows the
 transcript instead, which is where §90 puts an error's help lines, so a
-help-routing difference is invisible in the terminal one. Neither writes
-anything, so both are safe against an uncommitted tree.
+help-routing difference is invisible in the terminal one.
+`--diff-diagnostics` shows the source-located typed lifecycle channel and does
+not derive events by parsing either rendered text channel. None writes
+anything, so all are safe against an uncommitted tree.
 
 The `etex-diagnostics/` domain owns bounded e-TeX-only diagnostic command
 microfixtures. Its sessions explicitly install the e-TeX INITEX profile and
 project detached effects, selected unchanged state, and pinned e-TeX/SyncTeX eqtb register selectors.
+Its incomplete-source-nesting witness also pins schema-v4 warning identity,
+source location, and final warning history independently of terminal/log text.
 
 The `input-expansion/` domain's e-TeX outer-validity EOF case pins the e-TeX
 observer's argument-free §336 diagnostic separately from the TeX82 profile's

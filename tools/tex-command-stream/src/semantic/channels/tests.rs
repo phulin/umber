@@ -8,6 +8,7 @@ fn contract() -> ChannelContract {
         log: StreamDisposition::Empty,
         dvi: StreamDisposition::Empty,
         effects: StreamDisposition::Empty,
+        diagnostics: StreamDisposition::Empty,
     }
 }
 
@@ -15,7 +16,7 @@ fn captured() -> CapturedChannels {
     CapturedChannels {
         events: 3,
         status: "clean".into(),
-        streams: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        streams: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
     }
 }
 
@@ -36,6 +37,8 @@ fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
     ];
     SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_name: "./test.tex".into(),
+        diagnostic_root_bytes: Arc::from(&b""[..]),
         counts: [0; super::super::COUNT_SLOTS],
         box_outlines: std::collections::BTreeMap::new(),
         mode_transitions: Vec::new(),
@@ -452,7 +455,7 @@ fn stream_channels_covers_every_channel_and_names_are_unique() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), count);
-    assert_eq!(names, ["dvi", "effects", "log", "terminal"]);
+    assert_eq!(names, ["diagnostics", "dvi", "effects", "log", "terminal"]);
 }
 
 /// The committed JSON schema is documentation: `load_suite` skips it, and the

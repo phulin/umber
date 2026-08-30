@@ -34,7 +34,8 @@ pub use channels::{
     CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, EffectArtifact,
     STREAM_CHANNELS, StreamChannel, StreamDisposition, first_line_difference,
     first_line_difference_in, normalize_channel, normalize_log_clock, portable_effect_channel,
-    split_channel_lines, strip_diagnostic_reports, validate_xfail_diagnostics_disposition,
+    portable_diagnostic_channel, split_channel_lines, strip_diagnostic_reports,
+    validate_xfail_diagnostics_disposition,
     validate_xfail_disposition,
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
@@ -319,6 +320,8 @@ pub struct ChannelContractV2 {
     pub dvi: Option<StreamDisposition>,
     #[serde(default)]
     pub effects: Option<StreamDisposition>,
+    #[serde(default)]
+    pub diagnostics: Option<StreamDisposition>,
 }
 
 impl CaseManifestV2 {
@@ -345,6 +348,9 @@ impl CaseManifestV2 {
             effects: channels
                 .effects
                 .unwrap_or_else(|| disposition(StreamChannel::Effects)),
+            diagnostics: channels
+                .diagnostics
+                .unwrap_or_else(|| disposition(StreamChannel::Diagnostics)),
         });
         Case {
             source: format!("{id}.tex"),
@@ -401,6 +407,10 @@ impl CommandObserver for Recorder {
 
 pub struct SemanticRun {
     pub observations: Vec<CommandObservation>,
+    /// Root source needed to turn engine byte provenance into the same
+    /// manifest-named line/column used by the reference diagnostic stream.
+    pub diagnostic_root_name: String,
+    pub diagnostic_root_bytes: Arc<[u8]>,
     pub counts: [i32; COUNT_SLOTS],
     pub box_outlines: BTreeMap<u16, Option<Vec<umber::DetachedNodeOutlineEntry>>>,
     pub mode_transitions: Vec<Mode>,
@@ -433,7 +443,7 @@ pub struct SemanticRun {
     /// Complete-job bytes used only by the reference-derived stream-channel
     /// contract. The other fields are the authored-fragment property
     /// projection, which stops at root EOF without inventing `\end`.
-    pub complete_job_channel_streams: Option<[Vec<u8>; 4]>,
+    pub complete_job_channel_streams: Option<[Vec<u8>; 5]>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1445,17 +1455,26 @@ fn execute_fresh_with_completion(
                         byte_len: dvi.len() as u64,
                     });
                     control.finish_job(universe, dvi_output, None);
+                    let fatal = control.fatal_error();
+                    recorder.committed(CommandObservation::DiagnosticLifecycle(
+                        tex_command::DiagnosticLifecycleRecord::terminal(
+                            universe.world().error_channel().history(),
+                            fatal.is_some(),
+                        ),
+                    ));
                     let box_outlines = capture_box_outlines(universe, &case.projection)?;
                     let (terminal, log, pending_effects, effect_artifacts) =
                         capture_runtime_channels(universe);
                     return Ok(SemanticRun {
                         observations: recorder.0,
+                        diagnostic_root_name: case.source.clone(),
+                        diagnostic_root_bytes: Arc::from(source),
                         counts,
                         box_outlines,
                         mode_transitions,
                         artifacts,
                         dvi,
-                        fatal: control.fatal_error(),
+                        fatal,
                         terminal,
                         log,
                         pending_effects,
@@ -1634,6 +1653,9 @@ fn execute_loaded_format(
     }
     .map_err(|error| format!("loaded {format_label} run: {error}"))?;
     let umber::LoadedFormatRun { result, projection } = loaded;
+    recorder.committed(CommandObservation::DiagnosticLifecycle(
+        tex_command::DiagnosticLifecycleRecord::terminal(result.history, result.fatal.is_some()),
+    ));
     let mut counts = [0; COUNT_SLOTS];
     for (register, value) in projection.counts {
         counts[usize::from(register)] = value;
@@ -1683,6 +1705,8 @@ fn execute_loaded_format(
     );
     Ok(SemanticRun {
         observations: recorder.0,
+        diagnostic_root_name: case.source.clone(),
+        diagnostic_root_bytes: Arc::from(source),
         counts,
         box_outlines,
         mode_transitions: result.mode_transitions,

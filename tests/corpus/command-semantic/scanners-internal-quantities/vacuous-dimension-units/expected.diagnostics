@@ -1,0 +1,5 @@
+{"schema":4,"manifest":"0000000000000000000000000000000000000000000000000000000000000000"}
+{"sequence":0,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"missing-number","arguments":[],"location":{"source":"vacuous-dimension-units.tex","line":1,"byte":8}}}}
+{"sequence":1,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"missing-number","arguments":[],"location":{"source":"vacuous-dimension-units.tex","line":2,"byte":8}}}}
+{"sequence":2,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"illegal-unit","arguments":[{"type":"name","value":"pt"}],"location":{"source":"vacuous-dimension-units.tex","line":2,"byte":8}}}}
+{"sequence":3,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"outcome","history":"error_message_issued","outcome":"completed"}}}

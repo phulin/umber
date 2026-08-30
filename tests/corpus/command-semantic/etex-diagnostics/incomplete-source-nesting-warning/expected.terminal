@@ -1,0 +1,9 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=etex-loaded)
+entering extended mode
+(./incomplete-source-nesting-warning.tex (./warning-child.tex
+Warning: end of file when \iftrue entered on line 1 is incomplete
+) )
+(\end occurred when \iftrue on line 1 was incomplete)
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on incomplete-source-nesting-warning.log.

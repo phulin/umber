@@ -248,7 +248,7 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
         .execute(&source, &declared.case)
         .expect("count-write-and-text executes");
 
-    assert_eq!(run.observations.len(), 259);
+    assert_eq!(run.observations.len(), 260);
     assert_eq!(
         geometry_signatures(&run),
         [
@@ -258,8 +258,8 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
         "TeX82's explicit box pack precedes the matching shipout geometry"
     );
     assert!(matches!(
-        run.observations.last(),
-        Some(tex_command::CommandObservation::Effect(effect))
+        run.observations.as_slice(),
+        [.., tex_command::CommandObservation::Effect(effect), tex_command::CommandObservation::DiagnosticLifecycle(tex_command::DiagnosticLifecycleRecord::Outcome { .. })]
             if effect.kind == tex_command::ObservationEffectKind::Terminate
                 && effect.channel == "engine"
     ));
@@ -397,8 +397,8 @@ fn raw_tex82_loaded_uses_pdftex_invalid_unit_help() {
     );
 
     assert!(matches!(
-        run.observations.last(),
-        Some(tex_command::CommandObservation::Effect(effect))
+        run.observations.as_slice(),
+        [.., tex_command::CommandObservation::Effect(effect), tex_command::CommandObservation::DiagnosticLifecycle(tex_command::DiagnosticLifecycleRecord::Outcome { .. })]
             if effect.kind == tex_command::ObservationEffectKind::Terminate
                 && effect.channel == "engine"
     ));
@@ -457,13 +457,13 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 #[test]
 fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    assert_eq!(cases.len(), 208);
+    assert_eq!(cases.len(), 210);
     assert_eq!(
         cases
             .iter()
             .map(|declared| declared.case.expected.len())
             .sum::<usize>(),
-        1_320
+        1_323
     );
 
     let selected_raw: Vec<_> = cases
@@ -546,7 +546,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
 
     // One compact identity replaces the former 467-line census while pinning
     // every resolved field, including routes, projections, xfails, channels,
-    // statuses, host inputs, and interaction policy for all 208 cases.
+    // statuses, host inputs, and interaction policy for all 210 cases.
     let mut digest = Sha256::new();
     for declared in &cases {
         assert_eq!(
@@ -570,7 +570,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "4d40d5ed9c5840c64c25c4b197b02378af01d998472eda9ed23a1bcdc05ddd12"
+        "32927da0621bb6206593179b81c75f1567dc3de19801e129739e6a321c77732b"
     );
 }
 
@@ -732,8 +732,8 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
         "the font-backed hbox commits before its matching shipout"
     );
     assert!(matches!(
-        run.observations.last(),
-        Some(tex_command::CommandObservation::Effect(effect))
+        run.observations.as_slice(),
+        [.., tex_command::CommandObservation::Effect(effect), tex_command::CommandObservation::DiagnosticLifecycle(tex_command::DiagnosticLifecycleRecord::Outcome { .. })]
             if effect.kind == tex_command::ObservationEffectKind::Terminate
                 && effect.channel == "engine"
     ));
@@ -1023,6 +1023,8 @@ fn state_projection_emits_only_requested_final_counts() {
     counts[2] = 7;
     let run = SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_name: "./test.tex".into(),
+        diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
         counts,
         box_outlines: BTreeMap::new(),
         mode_transitions: Vec::new(),
@@ -1059,6 +1061,8 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
     counts[2] = 7;
     let run = SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_name: "./test.tex".into(),
+        diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
         counts,
         box_outlines: BTreeMap::new(),
         mode_transitions: Vec::new(),

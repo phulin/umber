@@ -32,6 +32,17 @@ third observes the remaining state, enquiry, and PDF-facing effect seams.
 Neither edits canonical or generated upstream engine files. The detached
 trace is written to `pdftex14029-events.jsonl`.
 
+The instrumented executable also writes a separate schema-v4
+`pdftex14029-diagnostics.jsonl` stream. Its report events carry the diagnostic
+class, severity, stable identity, canonical arguments, and direct source
+location; its final event carries TeX82 §76 history and completed/aborted job
+outcome. Exact message, `show_context`, help, interaction, and job-tail bytes
+remain solely in the independently compared terminal and log channels. The
+schema-v1 trace and every schema-v1 through v3 identity preimage are unchanged.
+`tests/pdftex14029-oracle/diagnostic-event-matrix.txt` is the exhaustive
+supported-class inventory and names the canonical hook and proving fixture for
+every row.
+
 Both executables are external Web2C reference tools. Neither is Umber, neither
 may resolve to the Umber CLI, and Cargo correctness tests neither acquire nor
 execute them.
@@ -166,13 +177,35 @@ already-built instrumented executable above and captures every channel a
 case's run can produce: terminal text, the raw and host-clock-normalized log,
 the DVI/PDF page artifact, `status.txt` (exit code), any writer-effect file
 the source itself opens (via `\openout`/`\write`, discovered rather than
-assumed at a fixed name), and the schema-v1 `pdftex14029-events.jsonl` trace.
+assumed at a fixed name), the schema-v1 `pdftex14029-events.jsonl` trace, and
+the schema-v4 typed diagnostic lifecycle stream. A lifecycle stream containing
+only its header has no command-semantic channel; a report keeps its required
+final outcome in `expected.diagnostics`.
 It never builds the oracle and performs no network access.
 
 ```bash
 scripts/run-minifixture-oracle.sh --case main-control/eqtb-regions
 scripts/run-minifixture-oracle.sh --all
 ```
+
+The reviewed live regeneration for the lifecycle witnesses is:
+
+```bash
+scripts/run-minifixture-oracle.sh \
+  --case scanners-internal-quantities/vacuous-dimension-units \
+  --case etex-diagnostics/incomplete-source-nesting-warning \
+  --case main-control/diagnostic-lifecycle-fatal
+cargo run-dev -p tex-command-stream --bin command-semantic-channels -- \
+  --diff-diagnostics vacuous-dimension-units
+cargo run-dev -p tex-command-stream --bin command-semantic-channels -- \
+  --diff-diagnostics incomplete-source-nesting-warning
+cargo run-dev -p tex-command-stream --bin command-semantic-channels -- \
+  --diff-diagnostics diagnostic-lifecycle-fatal
+```
+
+The first command captures pinned pdfTeX. The second performs a read-only,
+side-by-side comparison against Umber; use the existing one-case reviewed
+publication route only after inspecting that output.
 
 The loaded raw-TeX82 batch uses the blessed regeneration entry point with the
 typed capture policy embedded in each V2 case:

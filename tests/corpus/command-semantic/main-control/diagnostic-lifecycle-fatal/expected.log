@@ -1,0 +1,26 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX) <HOST-CLOCK>
+**diagnostic-lifecycle-fatal.tex
+(./diagnostic-lifecycle-fatal.tex
+! Missing { inserted.
+<to be read again> 
+                   {
+l.2 \toks0={
+            }
+? 
+)
+Runaway text?
+{} \end 
+! File ended while scanning text of \toks.
+<inserted text> 
+                }
+<*> diagnostic-lifecycle-fatal.tex
+                                  
+? 
+! Emergency stop.
+<inserted text> 
+                }
+<*> diagnostic-lifecycle-fatal.tex
+                                  
+End of file on the terminal!
+
+No pages of output.

@@ -1,0 +1,27 @@
+{
+  "channels": {
+    "events": 63
+  },
+  "expected": [
+    "terminal-check:Warning: end of file when \\iftrue entered on line 1 is incomplete=true"
+  ],
+  "inputs": {
+    "warning-child.tex": "\\iftrue"
+  },
+  "profile": "etex-loaded",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Warning: end of file when \\iftrue entered on line 1 is incomplete"
+    ]
+  },
+  "property_id": "tex82.conditionals.stack-lifecycle",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/pdftex14029-oracle-manifest.txt",
+    "sections": [
+      328
+    ]
+  },
+  "schema": 2
+}

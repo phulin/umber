@@ -1,0 +1,30 @@
+{
+  "channels": {
+    "events": 38,
+    "status": "fatal:emergency-stop(End of file on the terminal!)"
+  },
+  "expected": [
+    "execution:error:emergency-stop(End of file on the terminal!)",
+    "terminal-check:! Emergency stop.=true"
+  ],
+  "profile": "initex",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "! Emergency stop."
+    ]
+  },
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      71,
+      93,
+      1226,
+      1227,
+      1228
+    ]
+  },
+  "schema": 2
+}

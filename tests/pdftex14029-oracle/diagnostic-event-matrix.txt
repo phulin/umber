@@ -1,0 +1,12 @@
+# Schema-v4 typed diagnostic lifecycle supported by canonical pdfTeX 1.40.29.
+# Columns: class|identity|canonical argument|hook seam|minifixture
+recoverable_error|missing-number|-|two scanner recovery sites|scanners-internal-quantities/vacuous-dimension-units
+recoverable_error|illegal-unit|pt|ordinary dimension unit recovery|scanners-internal-quantities/vacuous-dimension-units
+warning|incomplete-source-nesting|group|file_warning group loop|etex-diagnostics/incomplete-source-nesting-warning
+warning|incomplete-source-nesting|conditional|file_warning conditional loop|etex-diagnostics/incomplete-source-nesting-warning
+fatal|emergency-stop|help|fatal_error|main-control/diagnostic-lifecycle-fatal
+fatal|capacity-exceeded|resource|overflow|not fixture-selected
+fatal|confusion|site|confusion|alignments/span-width-record
+outcome|completed|error_message_issued|umber_trace_finish|scanners-internal-quantities/vacuous-dimension-units
+outcome|completed|warning_issued|umber_trace_finish|etex-diagnostics/incomplete-source-nesting-warning
+outcome|aborted|fatal_error_stop|umber_diag_report fatal close|main-control/diagnostic-lifecycle-fatal

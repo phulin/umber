@@ -10,6 +10,14 @@
 @!umber_trace_file:alpha_file;
 @!umber_trace_opened:boolean;
 @!umber_trace_sequence:integer;
+@!umber_diag_file:alpha_file;
+@!umber_diag_opened:boolean;
+@!umber_diag_sequence:integer;
+@!umber_diag_has_report:boolean;
+@!umber_diag_has_location:boolean;
+@!umber_diag_source:str_number;
+@!umber_diag_line:integer;
+@!umber_diag_byte:integer;
 @!umber_recovery_insert:boolean;
 @!umber_alignment_depth:integer;
 @!umber_mutation_command:boolean;
@@ -19,6 +27,33 @@
 @!umber_shift_stack:array[1..sup_max_in_open] of integer;
 @!umber_tail_stack:array[1..sup_max_in_open] of integer;
 @!umber_pos_stack:array[1..sup_max_in_open] of integer;
+@z
+
+@x [18] Observe central fatal-error procedure.
+begin normalize_selector;@/
+print_err("Emergency stop"); help1(s); succumb;
+@y
+begin normalize_selector;@/
+print_err("Emergency stop"); umber_diag_report(2,"emergency-stop",s);
+help1(s); succumb;
+@z
+
+@x [18] Observe central overflow procedure.
+print(s); print_char("="); print_int(n); print_char("]");
+help2("If you really absolutely need more capacity,")@/
+@y
+print(s); print_char("="); print_int(n); print_char("]");
+umber_diag_report(2,"capacity-exceeded",s);
+help2("If you really absolutely need more capacity,")@/
+@z
+
+@x [18] Observe central confusion procedure.
+begin normalize_selector;
+if history<error_message_issued then
+@y
+begin normalize_selector;
+umber_diag_report(2,"confusion",s);
+if history<error_message_issued then
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -260,6 +295,92 @@ if p>=umber_shift_pos then umber_source_column:=p+umber_line_shift
 else umber_source_column:=p+umber_line_shift-umber_shift_tail;
 end;
 
+procedure umber_diag_hex(@!c:integer);
+var d:integer;
+begin d:=c div 16;
+if d<10 then write(umber_diag_file,xchr[d+48])
+else write(umber_diag_file,xchr[d+87]);
+d:=c mod 16;
+if d<10 then write(umber_diag_file,xchr[d+48])
+else write(umber_diag_file,xchr[d+87]);
+end;
+
+procedure umber_diag_char(@!c:integer);
+begin
+if c=34 then write(umber_diag_file,'\"')
+else if c=92 then write(umber_diag_file,'\\')
+else if c=8 then write(umber_diag_file,'\b')
+else if c=9 then write(umber_diag_file,'\t')
+else if c=10 then write(umber_diag_file,'\n')
+else if c=12 then write(umber_diag_file,'\f')
+else if c=13 then write(umber_diag_file,'\r')
+else if c<32 then
+  begin write(umber_diag_file,'\u00'); umber_diag_hex(c mod 256); end
+else if c<128 then write(umber_diag_file,xchr[c])
+else begin
+  write(umber_diag_file,xchr[192+((c mod 256) div 64)]);
+  write(umber_diag_file,xchr[128+(c mod 64)]);
+  end;
+end;
+
+procedure umber_diag_string(@!s:str_number);
+var k:pool_pointer;
+begin write(umber_diag_file,'"');
+for k:=str_start[s] to str_start[s+1]-1 do umber_diag_char(so(str_pool[k]));
+write(umber_diag_file,'"');
+end;
+
+procedure umber_diag_begin;
+begin write(umber_diag_file,'{"sequence":',umber_diag_sequence:1,
+  ',"semantic":'); incr(umber_diag_sequence);
+end;
+
+procedure umber_diag_remember_location;
+begin
+if (state<>0)and(name>17) then
+  begin umber_diag_has_location:=true; umber_diag_source:=name;
+  umber_diag_line:=line;
+  if loc>start then umber_diag_byte:=umber_source_column(loc-start-1)
+  else umber_diag_byte:=0;
+  end;
+end;
+
+{Kinds: 0 recoverable error, 1 warning, 2 fatal. An empty argument string
+means the typed argument vector is empty; rendered help and context never
+enter this detached stream.}
+procedure umber_diag_report(@!kind:integer;@!diagnostic,@!argument:str_number);
+begin
+if (not umber_diag_opened)or(not umber_diag_has_location) then return;
+umber_diag_has_report:=true;
+umber_diag_begin;
+write(umber_diag_file,'{"event":"diagnostic_lifecycle",');
+write(umber_diag_file,'"data":{"transition":"report","class":"');
+if kind=0 then write(umber_diag_file,'recoverable_error')
+else if kind=1 then write(umber_diag_file,'warning')
+else write(umber_diag_file,'fatal');
+write(umber_diag_file,'","severity":"');
+if kind=0 then write(umber_diag_file,'error')
+else if kind=1 then write(umber_diag_file,'warning')
+else write(umber_diag_file,'fatal');
+write(umber_diag_file,'","diagnostic":'); umber_diag_string(diagnostic);
+write(umber_diag_file,',"arguments":[');
+if argument<>0 then
+  begin write(umber_diag_file,'{"type":"name","value":');
+  umber_diag_string(argument); write(umber_diag_file,'}'); end;
+write(umber_diag_file,'],"location":{"source":');
+umber_diag_string(umber_diag_source);
+write_ln(umber_diag_file,',"line":',umber_diag_line:1,
+  ',"byte":',umber_diag_byte:1,'}}}}');
+if kind=2 then
+  begin
+  umber_diag_begin;
+  write_ln(umber_diag_file,
+    '{"event":"diagnostic_lifecycle","data":{"transition":"outcome",',
+    '"history":"fatal_error_stop","outcome":"aborted"}}}');
+  a_close(umber_diag_file); umber_diag_opened:=false;
+  end;
+end;
+
 {The emitted |byte| is a column of the immutable source line, not an index
 into |buffer|. \S355 reduces an expanded code inside a control-sequence name
 in place and shifts later bytes down by |d|. The accumulated shift is added
@@ -268,6 +389,7 @@ before a collapse performed only by \S356 lookahead.}
 procedure umber_trace_command(@!expanded:boolean);
 begin
 if not umber_trace_opened then return;
+umber_diag_remember_location;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"command","data":{"delivery":"');
 if expanded then write(umber_trace_file,'expanded')
@@ -967,6 +1089,13 @@ umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
  '{"schema":1,"manifest":',
  '"0000000000000000000000000000000000000000000000000000000000000000"}');
+umber_diag_sequence:=0; umber_diag_has_report:=false;
+umber_diag_has_location:=false;
+rewrite(umber_diag_file,'pdftex14029-diagnostics.jsonl');
+umber_diag_opened:=true;
+if umber_diag_opened then write_ln(umber_diag_file,
+ '{"schema":4,"manifest":',
+ '"0000000000000000000000000000000000000000000000000000000000000000"}');
 end;
 
 procedure umber_trace_finish;
@@ -978,6 +1107,23 @@ write_ln(umber_trace_file,
  '{"event":"effect","data":{"kind":"terminate","channel":"engine",',
  '"value":{"type":"none"}}}}');
 a_close(umber_trace_file); umber_trace_opened:=false;
+if umber_diag_opened then
+  begin
+  if umber_diag_has_report then
+    begin
+    umber_diag_begin;
+    write(umber_diag_file,'{"event":"diagnostic_lifecycle",');
+    write(umber_diag_file,'"data":{"transition":"outcome","history":"');
+    if history=spotless then write(umber_diag_file,'spotless')
+    else if history=warning_issued then write(umber_diag_file,'warning_issued')
+    else if history=error_message_issued then write(umber_diag_file,'error_message_issued')
+    else write(umber_diag_file,'fatal_error_stop');
+    if history=fatal_error_stop then
+      write_ln(umber_diag_file,'","outcome":"aborted"}}}')
+    else write_ln(umber_diag_file,'","outcome":"completed"}}}');
+    end;
+  a_close(umber_diag_file); umber_diag_opened:=false;
+  end;
 end;
 @z
 
@@ -1353,6 +1499,19 @@ umber_trace_scanner(3,cur_val_level);
 exit:end;
 @z
 
+@x [26] Observe token-list-as-number recovery.
+if level<>tok_val then
+  begin print_err("Missing number, treated as zero");
+@.Missing number...@>
+  help3("A number should have been here; I inserted `0'.")@/
+@y
+if level<>tok_val then
+  begin print_err("Missing number, treated as zero");
+  umber_diag_report(0,"missing-number",0);
+@.Missing number...@>
+  help3("A number should have been here; I inserted `0'.")@/
+@z
+
 @x [26] Observe committed integer scanner results.
 if negative then negate(cur_val);
 end;
@@ -1362,6 +1521,17 @@ umber_trace_scanner(0,0);
 end;
 @z
 
+@x [26] Observe generic missing-number recovery.
+begin print_err("Missing number, treated as zero");
+@.Missing number...@>
+help3("A number should have been here; I inserted `0'.")@/
+@y
+begin print_err("Missing number, treated as zero");
+umber_diag_report(0,"missing-number",0);
+@.Missing number...@>
+help3("A number should have been here; I inserted `0'.")@/
+@z
+
 @x [26] Observe committed dimension scanner results.
 if negative then negate(cur_val);
 end;
@@ -1369,6 +1539,17 @@ end;
 if negative then negate(cur_val);
 umber_trace_scanner(1,1);
 end;
+@z
+
+@x [26] Observe ordinary-dimension illegal-unit recovery.
+begin print_err("Illegal unit of measure ("); print("pt inserted)");
+@.Illegal unit of measure@>
+help6("Dimensions can be in units of em, ex, in, pt, pc,")@/
+@y
+begin print_err("Illegal unit of measure ("); print("pt inserted)");
+umber_diag_report(0,"illegal-unit","pt");
+@.Illegal unit of measure@>
+help6("Dimensions can be in units of em, ex, in, pt, pc,")@/
 @z
 
 @x [26] Observe an internal glue result before the early return.
@@ -1997,6 +2178,26 @@ token_show(temp_head); selector:=old_setting;
     if info(link(cur_chr))=protected_token then
       begin umber_trace_token_splice(12,cur_tok); return; end;
   expand;
+@z
+
+@x [18] Observe e-TeX incomplete-source warning classes.
+while grp_stack[in_open]<>save_ptr do
+  begin decr(cur_level);
+  print_nl("Warning: end of file when ");
+@y
+while grp_stack[in_open]<>save_ptr do
+  begin decr(cur_level);
+  umber_diag_report(1,"incomplete-source-nesting","group");
+  print_nl("Warning: end of file when ");
+@z
+
+@x [18] Observe e-TeX incomplete conditional warning classes.
+while if_stack[in_open]<>cond_ptr do
+  begin print_nl("Warning: end of file when ");
+@y
+while if_stack[in_open]<>cond_ptr do
+  begin umber_diag_report(1,"incomplete-source-nesting","conditional");
+  print_nl("Warning: end of file when ");
 @z
 
 @x [53a] Observe the committed pdfTeX expression result.

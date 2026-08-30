@@ -95,13 +95,18 @@ fn main() -> ExitCode {
             let selector = arguments.next().unwrap_or_default();
             diff(&selector, StreamChannel::Log)
         }
+        Some("--diff-diagnostics") => {
+            let selector = arguments.next().unwrap_or_default();
+            diff(&selector, StreamChannel::Diagnostics)
+        }
         Some("--profile") => parse_profile_invocation(arguments)
             .and_then(|(profile, policy)| run(Some(profile), policy)),
         Some(other) => Err(format!(
             "unknown argument {other:?}; the only options are no arguments (regenerate the \
              corpus), `--diff <substring>` (print the oracle/Umber terminal text of every \
-             matching case), and `--diff-log <substring>` (the same for the transcript, which \
-             is where §90 puts an error's help lines). Neither `--diff` writes anything."
+             matching case), `--diff-log <substring>` (the same for the transcript, which is \
+             where §90 puts an error's help lines), and `--diff-diagnostics <substring>` (the \
+             source-located typed lifecycle stream). No `--diff` option writes anything."
         )),
         None => run(None, ProjectionPolicy::Preserve),
     };
@@ -165,6 +170,7 @@ fn diff(selector: &str, channel: StreamChannel) -> Result<String, String> {
         let completed = execute(&source, &declared.case)
             .map_err(|error| format!("{label}: this case does not run: {error}"))?;
         let captured = CapturedChannels::capture(&completed);
+        let projection = project(&completed, &declared.case.projection);
         let stem = declared
             .case
             .source
@@ -173,12 +179,21 @@ fn diff(selector: &str, channel: StreamChannel) -> Result<String, String> {
         let case_dir = oracle_root.join(&declared.domain).join(&declared.case.id);
         let oracle_path = match channel {
             StreamChannel::Log => case_dir.join(format!("{stem}.log")),
+            StreamChannel::Diagnostics => case_dir.join("pdftex14029-diagnostics.jsonl"),
             _ => case_dir.join("terminal.txt"),
         };
-        let raw_oracle = fs::read(&oracle_path).unwrap_or_default();
+        let raw_oracle = if channel == StreamChannel::Diagnostics {
+            oracle_diagnostic_channel(&oracle_path)?
+        } else {
+            fs::read(&oracle_path).unwrap_or_default()
+        };
         let oracle = normalize_channel(channel, &raw_oracle)?;
         let umber = normalize_channel(channel, captured.stream(channel))?;
         println!("=== {label} ({}) ===", channel.name());
+        println!(
+            "events={} status={} projection={projection:?}",
+            captured.events, captured.status
+        );
         println!("--- source ---");
         println!("{}", String::from_utf8_lossy(&source).trim_end());
         print_side_by_side(&oracle, &umber);
@@ -266,9 +281,15 @@ fn run(
     let cases: Vec<_> = all_cases
         .into_iter()
         .filter(|declared| {
-            profile.is_none_or(|profile| {
-                declared.case.profile == profile && declared.case.capture.selected()
-            })
+            let label = format!("{}/{}", declared.domain, declared.case.id);
+            let named = match &projection_policy {
+                ProjectionPolicy::Preserve => true,
+                ProjectionPolicy::AcceptNamed(selector) => selector == &label,
+            };
+            named
+                && profile.is_none_or(|profile| {
+                    declared.case.profile == profile && declared.case.capture.selected()
+                })
         })
         .collect();
     if cases.is_empty() {
@@ -533,7 +554,7 @@ struct ChannelsPlan {
     events: usize,
     status: String,
     /// In [`STREAM_CHANNELS`] order.
-    channels: [ChannelPlan; 4],
+    channels: [ChannelPlan; 5],
 }
 
 /// Derives one explicitly named `pass` case's `expected` array from its own
@@ -593,9 +614,9 @@ fn plan_case(
     for channel in STREAM_CHANNELS {
         channels.push(plan_channel(declared, channel, stem, &case_dir, captured)?);
     }
-    let channels: [ChannelPlan; 4] = channels
+    let channels: [ChannelPlan; 5] = channels
         .try_into()
-        .unwrap_or_else(|_| panic!("STREAM_CHANNELS has exactly 4 entries"));
+        .unwrap_or_else(|_| panic!("STREAM_CHANNELS has exactly 5 entries"));
 
     Ok(ChannelsPlan {
         events: captured.events,
@@ -631,9 +652,12 @@ fn plan_channel(
         StreamChannel::Log => case_dir.join(format!("{stem}.log")),
         StreamChannel::Dvi => case_dir.join(format!("{stem}.dvi")),
         StreamChannel::Effects => case_dir.join("pdftex14029-events.jsonl"),
+        StreamChannel::Diagnostics => case_dir.join("pdftex14029-diagnostics.jsonl"),
     };
     let raw_oracle = if channel == StreamChannel::Effects {
         oracle_effect_channel(case_dir)?
+    } else if channel == StreamChannel::Diagnostics {
+        oracle_diagnostic_channel(&oracle_path)?
     } else if oracle_path.exists() {
         fs::read(&oracle_path).map_err(|error| format!("{}: {error}", oracle_path.display()))?
     } else {
@@ -731,6 +755,29 @@ fn plan_channel(
                 mismatch,
             })
         }
+    }
+}
+
+/// Returns no comparison channel for the reference's header-only diagnostic
+/// stream. The instrumented engine opens that stream for every run, while the
+/// corpus opts into it only when a typed report exists; a report always keeps
+/// its final lifecycle outcome beside it.
+fn oracle_diagnostic_channel(path: &Path) -> Result<Vec<u8>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let stream = ObservationStream::from_canonical_json_lines(&bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if stream.events.iter().any(|event| {
+        matches!(
+            event.semantic,
+            Event::DiagnosticLifecycle(tex_oracle::DiagnosticLifecycleEvent::Report { .. })
+        )
+    }) {
+        Ok(bytes)
+    } else {
+        Ok(Vec::new())
     }
 }
 

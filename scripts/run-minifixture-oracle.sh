@@ -467,7 +467,8 @@ run_one_case() {
   # their own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \
-    status.txt terminal.txt pdftex14029-events.jsonl "${format_name}.fmt")
+    status.txt terminal.txt pdftex14029-events.jsonl pdftex14029-diagnostics.jsonl \
+    "${format_name}.fmt")
   local key
   while IFS= read -r key; do staged+=("$key"); done \
     < <(jq -r '(.inputs // {}) | keys[]' <<<"$case_json")
@@ -497,6 +498,7 @@ run_one_case() {
   printf ' dvi=%s' "$(byte_size "${run_dir}/${stem}.dvi")"
   printf ' pdf=%s' "$(byte_size "${run_dir}/${stem}.pdf")"
   printf ' events=%s' "$(byte_size "${run_dir}/pdftex14029-events.jsonl")"
+  printf ' diagnostics=%s' "$(byte_size "${run_dir}/pdftex14029-diagnostics.jsonl")"
   if [[ "${#effect_artifacts[@]}" -gt 0 ]]; then
     printf ' effects=%s' "${effect_artifacts[*]}"
   else

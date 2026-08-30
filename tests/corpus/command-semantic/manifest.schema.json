@@ -47,6 +47,16 @@
     "ChannelContractV2": {
       "additionalProperties": false,
       "properties": {
+        "diagnostics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StreamDisposition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "dvi": {
           "anyOf": [
             {

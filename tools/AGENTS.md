@@ -148,6 +148,12 @@ projection or event-counting pass.
 
 The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers each fixture's singleton versioned `manifest.json` under `tests/corpus/command-semantic/<domain>/<fixture>/`; every fixture directory is a closed unit containing that manifest, its declared TeX source, and each applicable `expected.<channel>` file, with no domain manifest or shared expected-output tree. The runner validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `MainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries. Manifests may select filtered canonical observation families and supply bounded in-memory terminal lines or named inputs, so pausing, read, and input-open cases remain hermetic. They may also select committed command, mode, final-box, and prepared-page artifact boundaries for focused execution evidence. Semantic projections, event counts, and status use the authored-fragment root-EOF boundary. Reference-derived terminal, log, DVI, and effects bytes use a second complete-job execution of the identical canonical driver, profile, source, and host inputs because real pdfTeX has no host-fragment boundary and necessarily enters TeX82 §360. The runner rejects a pair whose observations diverge before their typed termination boundary, preventing the two evidence contracts from becoming competing semantic authorities.
 
+The command-semantic channel set includes schema-v4 typed diagnostic
+lifecycle evidence beside terminal, log, DVI, and effects. The tool compares
+stable report identity, canonical arguments, direct source location, and final
+TeX82 §76 history/outcome; terminal and log remain the exclusive owners of
+rendered context and help.
+
 Comparison is a two-tier keyed sequence alignment, not an index-parallel
 scan: `src/compare.rs` splits each event into an identity key and a payload,
 reports a payload-only difference once without desynchronizing, and repairs a
