@@ -74,8 +74,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
   ordinary-group families. These commands bypass `ColdOperation`; the scanner
   writes the completed hot operation into the existing caller-owned
   `OperationFrame`, root preparation mutates that resident operation, and
-  application consumes its fields without a second carrier. Detached mutation
-  values and macro-body walks are demand-selected cold evidence.
+  application consumes its fields without a second carrier. Definition, let,
+  and catcode application, ordered evidence publication, and §1269
+  `afterassignment` backup share one callback-scoped admitted context; a group
+  transition ends admission before a possible page/host boundary. Detached
+  mutation values and macro-body walks are demand-selected cold evidence.
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
   values and the small attempt/prepared root fields that change domain in

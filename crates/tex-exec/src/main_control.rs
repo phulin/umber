@@ -6756,40 +6756,92 @@ impl<G> MainControl<G> {
                 context: "hot operation root preparation",
             }
         })?;
-        let mut context = stores
-            .command_context()
+        // TeX82 §1211's measured definition, let, and catcode arms reach
+        // §1269's `done` label without an intervening host transition. Admit
+        // their authoritative state directly in this callback's stack slot,
+        // and retain that one borrow through semantic apply, ordered evidence
+        // publication, and `afterassignment` backup. Group transitions can
+        // open page-output work, so they deliberately leave the callback at
+        // the existing host boundary and use the generic tail below.
+        let (result, settled_in_admission) = stores
+            .with_command_context(|context| {
+                let mut result = hot_apply::apply(
+                    operation,
+                    context,
+                    &mut self.modes,
+                    &mut CommandMachine {
+                        state: &mut self.command,
+                        fuel: self.fuel.fuel_mut(),
+                        capabilities: &mut self.capabilities,
+                        observations: &mut self.operation_observations,
+                        assignment_receipts: assignment_receipts.as_mut(),
+                        diagnostic_effects,
+                        shown_mode: &mut self.shown_mode,
+                        initex: self.initex,
+                        emit_dvi_override: self.emit_dvi_override,
+                        immediate_prints: &mut self.immediate_prints,
+                        prepared_shipout: &mut self.prepared_shipout,
+                        pending_show_completion: None,
+                        pending_outer_page_build_context: None,
+                        output_routine_active: self.boxes.output_routine_active,
+                    },
+                );
+                Self::capture_save_stack_usage(
+                    host_preparation,
+                    context,
+                    &self.boxes,
+                    self.command.state(),
+                    self.command_profile(),
+                );
+                // These are exactly §1211's assignment leaves. Unlike group
+                // transitions, none can contribute material, invoke the page
+                // builder, or cross a World publication boundary. A pending
+                // builder continuation is drained by the direct-episode loop
+                // before another command is delivered, so there is no second
+                // page-state probe to perform here.
+                if result.is_err() || !fires_afterassignment {
+                    return (result, false);
+                }
+
+                #[cfg(feature = "profiling")]
+                tex_state::measurement::record_hot_core_phase(
+                    tex_state::measurement::HotCorePhase::EvidencePublication,
+                );
+                #[cfg(feature = "profiling")]
+                let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                    tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+                );
+                let mut records = self
+                    .command
+                    .publish_named_token_list_pushes(context, diagnostic_effects)
+                    .into_iter()
+                    .map(CommandObservation::Input)
+                    .collect::<Vec<_>>();
+                records.extend(
+                    assignment_receipts
+                        .take()
+                        .into_iter()
+                        .flatten()
+                        .map(CommandObservation::Mutation),
+                );
+                self.observe_committed(records);
+                // §1269 publishes the completed assignment mutation before
+                // §325 observes the replay-level push of the saved token.
+                if let Err(error) = schedule_afterassignment(
+                    &mut self.command,
+                    self.fuel.fuel_mut(),
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    diagnostic_effects,
+                    context,
+                ) {
+                    result = Err(error);
+                }
+                (result, true)
+            })
             .map_err(|_| ExecError::MissingToken {
                 context: "hot operation admission",
             })?;
-        let result = hot_apply::apply(
-            operation,
-            &mut context,
-            &mut self.modes,
-            &mut CommandMachine {
-                state: &mut self.command,
-                fuel: self.fuel.fuel_mut(),
-                capabilities: &mut self.capabilities,
-                observations: &mut self.operation_observations,
-                assignment_receipts: assignment_receipts.as_mut(),
-                diagnostic_effects,
-                shown_mode: &mut self.shown_mode,
-                initex: self.initex,
-                emit_dvi_override: self.emit_dvi_override,
-                immediate_prints: &mut self.immediate_prints,
-                prepared_shipout: &mut self.prepared_shipout,
-                pending_show_completion: None,
-                pending_outer_page_build_context: None,
-                output_routine_active: self.boxes.output_routine_active,
-            },
-        );
-        Self::capture_save_stack_usage(
-            host_preparation,
-            &context,
-            &self.boxes,
-            self.command.state(),
-            self.command_profile(),
-        );
-        drop(context);
         if result.is_ok() {
             self.fire_pending_page_output(stores, diagnostic_effects)?;
         }
@@ -6801,13 +6853,13 @@ impl<G> MainControl<G> {
         let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
         );
-        if result.is_ok() {
-            let mut records = self
-                .command
-                .publish_named_token_list_pushes(
-                    &mut stores.command_context().expect("live generation"),
-                    diagnostic_effects,
-                )
+        if result.is_ok() && !settled_in_admission {
+            let mut records = stores
+                .with_command_context(|context| {
+                    self.command
+                        .publish_named_token_list_pushes(context, diagnostic_effects)
+                })
+                .expect("live generation")
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect::<Vec<_>>();
@@ -6833,21 +6885,30 @@ impl<G> MainControl<G> {
             self.page_output_observations.append_to(&mut records);
             self.observe_committed(records);
         }
-        if result.is_ok() && fires_afterassignment {
-            let context = stores
-                .command_context()
+        if result.is_ok() && fires_afterassignment && !settled_in_admission {
+            stores
+                .with_command_context(|context| {
+                    schedule_afterassignment(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    )
+                })
                 .map_err(|_| ExecError::MissingToken {
                     context: "afterassignment admission",
-                })?;
-            schedule_afterassignment(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                context,
-            )?;
+                })??;
         }
+        debug_assert!(
+            !settled_in_admission
+                || (stores.world().artifact_commits().len() == output_start.artifact_count
+                    && stores.world().effect_records().len() == output_start.effect_count
+                    && self.prepared_dvi_pages.len() == output_start.prepared_page_count
+                    && self.page_output_observations.is_empty()),
+            "hot assignment admission cannot cross a page or host-effect publication"
+        );
         self.page_output_observations.clear();
         if result.is_ok() {
             self.finish_shipout_publication(
@@ -7502,19 +7563,20 @@ impl<G> MainControl<G> {
         // reaches §1269's `done:` and `back_input`. Publish the mutation
         // before the replay-level push for that saved token.
         if result.is_ok() && fires_afterassignment {
-            let context = stores
-                .command_context()
+            stores
+                .with_command_context(|context| {
+                    schedule_afterassignment(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    )
+                })
                 .map_err(|_| ExecError::MissingToken {
                     context: "afterassignment admission",
-                })?;
-            schedule_afterassignment(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                context,
-            )?;
+                })??;
         }
         self.page_output_observations.clear();
         if result.is_ok() {

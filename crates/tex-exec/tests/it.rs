@@ -519,6 +519,21 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!ordinary_application.contains("command_context()"));
     assert!(!prepared_application.contains("cold.operation.take()"));
     assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
+    let hot_application = control
+        .split_once("fn apply_hot_operation(")
+        .and_then(|(_, tail)| tail.split_once("fn apply_prepared_operation("))
+        .map(|(body, _)| body)
+        .expect("locate hot application lifetime");
+    let hot_admission = hot_application
+        .split_once(".with_command_context(|context|")
+        .and_then(|(_, tail)| tail.split_once(".map_err(|_| ExecError::MissingToken"))
+        .map(|(body, _)| body)
+        .expect("locate callback-scoped hot command admission");
+    assert!(hot_admission.contains("hot_apply::apply("));
+    assert!(hot_admission.contains("publish_named_token_list_pushes(context"));
+    assert!(hot_admission.contains("schedule_afterassignment("));
+    assert!(!hot_application.contains("stores.command_context()"));
+    assert!(cold_support.contains("stores: &mut tex_state::CommandContext<'_, G>"));
     assert!(cold_support.contains("context: &'borrow mut tex_state::CommandContext<'stores, G>"));
     assert!(!cold_support.contains("context: tex_state::CommandContext<'a, G>"));
     let expansion_settlement = delivery

@@ -13611,6 +13611,110 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
 }
 
 #[test]
+fn hot_definition_publication_precedes_afterassignment_and_its_host_effect() {
+    // TeX82 §§1211/1269 commits `define`, publishes its mutation evidence,
+    // and invokes §325 `back_input` before the saved macro can execute its
+    // §1375 immediate write on the following main-control operation.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\mark{\immediate\write16{after}}\def\target{old}\afterassignment\mark\global\def\target{new}\end",
+        );
+        let mut observations = ObservationRecorder::default();
+        loop {
+            if matches!(
+                control
+                    .step_with_observer(stores, &mut observations)
+                    .expect("hot definition and saved token execute"),
+                MainControlStep::End | MainControlStep::EndOfInput
+            ) {
+                break;
+            }
+        }
+
+        let mutation = observations
+            .0
+            .iter()
+            .rposition(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Mutation(record)
+                        if observation_name(&record.key) == Some("target") && record.global
+                )
+            })
+            .expect("global hot definition mutation");
+        let backup = observations
+            .0
+            .iter()
+            .enumerate()
+            .skip(mutation + 1)
+            .find_map(|(index, observation)| {
+                matches!(
+                    observation,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Backup
+                            && record.reason == InputReason::Backup
+                )
+                .then_some(index)
+            })
+            .expect("afterassignment backup");
+        let write = observations
+            .0
+            .iter()
+            .enumerate()
+            .skip(backup + 1)
+            .find_map(|(index, observation)| {
+                matches!(
+                    observation,
+                    CommandObservation::Effect(record)
+                        if record.kind == ObservationEffectKind::Write
+                )
+                .then_some(index)
+            })
+            .expect("saved macro host effect");
+        assert!(mutation < backup && backup < write, "{:?}", observations.0);
+        assert_eq!(macro_character_text(stores, "target"), "new");
+    });
+}
+
+#[test]
+fn hot_definition_checkpoint_restore_replays_one_atomic_mutation() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\global\def\target{new}\end");
+        let checkpoint = control
+            .capture_checkpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+                stores,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("quiescent hot definition checkpoints");
+
+        assert_eq!(
+            control.step(stores).expect("hot definition executes"),
+            MainControlStep::Continue
+        );
+        assert_eq!(macro_character_text(stores, "target"), "new");
+        control
+            .restore_checkpoint(&checkpoint, stores)
+            .expect("hot definition checkpoint restores");
+        admitted!(stores, |context| {
+            let target = context.intern_control_sequence("target");
+            assert!(matches!(
+                context.meaning(target),
+                ResolvedMeaning::Static(Meaning::Undefined)
+            ));
+        });
+        assert_eq!(
+            control.step(stores).expect("hot definition retries"),
+            MainControlStep::Continue
+        );
+        assert_eq!(macro_character_text(stores, "target"), "new");
+    });
+}
+
+#[test]
 fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

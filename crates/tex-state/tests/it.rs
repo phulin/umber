@@ -12,6 +12,37 @@ static SHIPOUT_MARK_ALLOCATOR: tex_state::measurement::HotCoreAllocator =
 
 #[cfg(feature = "profiling")]
 #[test]
+fn callback_scoped_command_admission_is_allocation_free_and_stationary() {
+    use tex_state::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    let budget = tex_state::interner::InternerBudget::new(32, 32, 1024).expect("budget");
+    tex_state::with_universe(budget, |universe| {
+        let owner = HotCoreAllocationOwner::SemanticApply;
+        let before = hot_core_thread_allocation_measurement(owner);
+        let mut admitted_slot = None;
+        {
+            let _scope = hot_core_allocation_scope(owner);
+            for _ in 0..4_096 {
+                universe
+                    .with_command_context(|context| {
+                        let address = std::ptr::from_ref(context).cast::<()>();
+                        assert_eq!(*admitted_slot.get_or_insert(address), address);
+                        std::hint::black_box(context.execution_group_depth());
+                    })
+                    .expect("callback admission");
+            }
+        }
+        let after = hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    })
+    .expect("universe allocation");
+}
+
+#[cfg(feature = "profiling")]
+#[test]
 fn repeated_shipout_marks_allocate_and_copy_no_string_pool_storage() {
     use tex_state::measurement::{
         HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,

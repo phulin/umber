@@ -224,12 +224,12 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
     diagnostic_effects: &mut DiagnosticEffects,
-    mut stores: tex_state::CommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let token = {
         command
             .state_mut()
-            .take_afterassignment(&stores)
+            .take_afterassignment(stores)
             .expect("afterassignment uses the synchronized command generation")
     };
     let Some(token) = token else {
@@ -241,7 +241,7 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
         capabilities,
         observations,
         diagnostic_effects,
-        &mut stores,
+        stores,
     );
     let result = processor.back_input_token(token);
     result.map_err(command_error)

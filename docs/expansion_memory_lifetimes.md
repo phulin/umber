@@ -187,6 +187,13 @@ transaction boundary borrows those exact scalars instead of reconstructing
 the 240-byte admitted facade. Hot and ordinary cold application use their
 already-resident semantic context to write the post-apply checked save depth
 back into the same preparation, and settlement drains only that scalar.
+Measured definition, let, and catcode application constructs its 240-byte
+semantic context directly in one callback-owned stack slot and retains that
+borrow through named-token publication and §1269 `afterassignment` backup.
+The callback passes only narrow mutable borrows; it neither returns nor moves
+the admitted aggregate. Group application ends the callback before its
+possible page-output boundary and reacquires only for command-local
+publication afterward.
 Diagnostic or host boundaries which can change the sampled state refresh only
 their affected fields after the live dialogue. No layer returns, takes, or
 stores a whole admitted context or duplicate facts aggregate. Resource
