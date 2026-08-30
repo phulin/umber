@@ -527,9 +527,11 @@ leaf does not inflate every resident hot record. Preparation changes the cold
 leaf's small attempt-root fields to prepared-root fields in place; application
 admits one semantic `CommandContext`, consumes semantic leaves through a mutable
 borrow while that context stays resident, then clears and immediately reuses
-both slots. Only a genuine host boundary releases that context and admits the
-narrow host-specific continuation context. Resource suspension moves that exact
-frame and occupied cold slot into the attempt instead of boxing a prepared
+both slots. Named token-list push receipts produced during semantic apply drain
+through the same admission before detached evidence crosses settlement. Only a
+genuine host boundary releases that context and admits the narrow host-specific
+continuation context. Resource suspension moves that exact frame and occupied cold
+slot into the attempt instead of boxing a prepared
 operation or retaining completed operations in a generation-long lane. `MainControl` owns one
 singular direct-retry slot: the same operation capability moves together with
 exactly one in-place operation frame or alignment destination. The operation

@@ -386,6 +386,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     let cold_operation = include_str!("../src/main_control/cold/operation.rs");
     let cold_scan = include_str!("../src/main_control/cold/scan.rs");
     let cold_apply = include_str!("../src/main_control/cold/apply.rs");
+    let cold_support = include_str!("../src/main_control/cold/support.rs");
 
     assert!(control.contains("mod cold;"));
     assert!(control.contains("mod delivery;"));
@@ -503,16 +504,17 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .map(|(body, _)| body)
         .expect("locate resident prepared application");
     let ordinary_application = prepared_application
-        .split_once("} else {\n            apply_cold_operation(")
+        .split_once("} else {\n            let result = apply_cold_operation(")
         .and_then(|(_, body)| body.split_once("\n        };"))
         .map(|(body, _)| body)
         .expect("locate ordinary resident cold application");
-    assert!(
-        ordinary_application.contains("frame.unavailable_mut(cold),\n                context,")
-    );
+    assert!(ordinary_application.contains("operation,\n                &mut context,"));
+    assert!(!ordinary_application.contains("frame.unavailable_mut(cold)"));
     assert!(!ordinary_application.contains("command_context()"));
     assert!(!prepared_application.contains("cold.operation.take()"));
     assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
+    assert!(cold_support.contains("context: &'borrow mut tex_state::CommandContext<'stores, G>"));
+    assert!(!cold_support.contains("context: tex_state::CommandContext<'a, G>"));
     let expansion_settlement = delivery
         .split_once("fn settle_preflight_step<")
         .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))

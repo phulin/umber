@@ -57,7 +57,7 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
     scanned: &mut PreparedColdCommand<G>,
-    stores: tex_state::CommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,

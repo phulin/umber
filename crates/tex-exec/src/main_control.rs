@@ -2703,8 +2703,7 @@ impl<G> MainControl<G> {
         // this discretionary part while `show_box(p)` reports and flushes the
         // entire suffix beginning at the offending node.
         let (nodes, deleted, prefix_end) = {
-            let context = stores.command_context().expect("live generation");
-            let mut stores = LinearCommandContext::new(context);
+            let mut stores = stores.command_context().expect("live generation");
             let first_forbidden = level.list().nodes(&stores).iter().position(|node| {
                 !matches!(
                     node,
@@ -5310,8 +5309,7 @@ impl<G> MainControl<G> {
         )? {
             content = tex_state::node_arena::PageListId::empty();
         }
-        let mut context =
-            LinearCommandContext::new(stores.command_context().expect("inline-math admission"));
+        let mut context = stores.command_context().expect("inline-math admission");
         let _ = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
@@ -5388,8 +5386,7 @@ impl<G> MainControl<G> {
         ),
         ExecError,
     > {
-        let mut context =
-            LinearCommandContext::new(stores.command_context().expect("equation-number admission"));
+        let mut context = stores.command_context().expect("equation-number admission");
         let diagnostic_text = self.command.output_open_context(&context);
         let conversion_error_context =
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
@@ -5446,11 +5443,9 @@ impl<G> MainControl<G> {
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
-        let mut context = LinearCommandContext::new(
-            stores
-                .command_context()
-                .expect("display-alignment admission"),
-        );
+        let mut context = stores
+            .command_context()
+            .expect("display-alignment admission");
         let mut level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
@@ -5526,8 +5521,7 @@ impl<G> MainControl<G> {
         {
             content = tex_state::node_arena::PageListId::empty();
         }
-        let mut context =
-            LinearCommandContext::new(stores.command_context().expect("display-math admission"));
+        let mut context = stores.command_context().expect("display-math admission");
         let mut level = match display_level {
             Some(level) => level,
             None => crate::box_runtime::commit_current_list(
@@ -5757,9 +5751,7 @@ impl<G> MainControl<G> {
                     // `\left` or `\middle` are restored before the next
                     // segment starts.
                     let content = take_finished_math_list(&mut self.modes, stores)?;
-                    let mut context = LinearCommandContext::new(
-                        stores.command_context().expect("math-middle admission"),
-                    );
+                    let mut context = stores.command_context().expect("math-middle admission");
                     let _ = crate::box_runtime::commit_current_list(
                         &mut self.modes,
                         &mut context,
@@ -5841,9 +5833,7 @@ impl<G> MainControl<G> {
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_math_list(&mut self.modes, stores)?;
-                let mut context = LinearCommandContext::new(
-                    stores.command_context().expect("math-right admission"),
-                );
+                let mut context = stores.command_context().expect("math-right admission");
                 let _ = crate::box_runtime::commit_current_list(
                     &mut self.modes,
                     &mut context,
@@ -6723,14 +6713,14 @@ impl<G> MainControl<G> {
                 context: "hot operation root preparation",
             }
         })?;
-        let context = stores
+        let mut context = stores
             .command_context()
             .map_err(|_| ExecError::MissingToken {
                 context: "hot operation admission",
             })?;
         let result = hot_apply::apply(
             operation,
-            context,
+            &mut context,
             &mut self.modes,
             &mut CommandMachine {
                 state: &mut self.command,
@@ -6749,6 +6739,7 @@ impl<G> MainControl<G> {
                 output_routine_active: self.boxes.output_routine_active,
             },
         );
+        drop(context);
         if result.is_ok() {
             self.fire_pending_page_output(stores, diagnostic_effects)?;
         }
@@ -6872,7 +6863,8 @@ impl<G> MainControl<G> {
             active.preamble_start_pending = false;
             active.align_peek_pending = true;
         }
-        let resident = frame.prepared(cold);
+        let operation = frame.unavailable_mut(cold);
+        let resident = &*operation;
         let reports_synchronous_auxiliary_error = matches!(
             resident,
             ColdOperation::IllegalPrevDepth { .. } | ColdOperation::IllegalSpaceFactor { .. }
@@ -6924,8 +6916,8 @@ impl<G> MainControl<G> {
                 .world_mut()
                 .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
         }
-        let context = stores.command_context().expect("cold operation admission");
-        if let ColdOperation::ShowGroups { diagnostic } = frame.unavailable_mut(cold)
+        let mut context = stores.command_context().expect("cold operation admission");
+        if let ColdOperation::ShowGroups { diagnostic } = &mut *operation
             && diagnostic.is_none()
         {
             *diagnostic = Some(detached_showgroups(
@@ -6938,10 +6930,9 @@ impl<G> MainControl<G> {
                 &self.active_math_shifts,
             ));
         }
-        let reassigning_glue = self.local_glue_pointer_reassigned(&context, frame.prepared(cold));
-        let redundant_glue =
-            self.etex_redundant_local_glue_assignment(&context, frame.prepared(cold));
-        match frame.unavailable_mut(cold) {
+        let reassigning_glue = self.local_glue_pointer_reassigned(&context, &*operation);
+        let redundant_glue = self.etex_redundant_local_glue_assignment(&context, &*operation);
+        match &mut *operation {
             ColdOperation::Skip {
                 redundant,
                 reassigning,
@@ -6957,7 +6948,7 @@ impl<G> MainControl<G> {
             }
             _ => {}
         }
-        let scanned = frame.prepared(cold);
+        let scanned = &*operation;
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let begins_alignment = matches!(&scanned, ColdOperation::BeginAlignment { .. });
@@ -7077,15 +7068,15 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let mut result = if matches!(
-            frame.prepared(cold),
+        let (mut result, named_token_list_pushes) = if matches!(
+            &*operation,
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(_))
         ) {
             // Immediate form creation crosses back to the aggregate Universe;
             // only this uncommon host boundary releases the resident semantic
             // context and admits the narrower form context below.
             drop(context);
-            let request = match frame.unavailable_mut(cold) {
+            let request = match &mut *operation {
                 ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
                     request
                 }
@@ -7132,11 +7123,11 @@ impl<G> MainControl<G> {
                     geometry,
                 );
             }
-            Ok(ReplayStep::Continue)
+            (Ok(ReplayStep::Continue), Vec::new())
         } else {
-            apply_cold_operation(
-                frame.unavailable_mut(cold),
-                context,
+            let result = apply_cold_operation(
+                operation,
+                &mut context,
                 &mut self.modes,
                 &mut self.next_alignment_identity,
                 &mut self.active_alignment,
@@ -7148,7 +7139,16 @@ impl<G> MainControl<G> {
                 &self.active_math_left_boundaries,
                 &self.active_math_shifts,
                 &mut self.prepared_dvi_pages,
-            )
+            );
+            let named_token_list_pushes = if result.is_ok() {
+                command
+                    .state
+                    .publish_named_token_list_pushes(&mut context, command.diagnostic_effects)
+            } else {
+                Vec::new()
+            };
+            drop(context);
+            (result, named_token_list_pushes)
         };
         frame.clear_cold(cold);
         if result.is_ok()
@@ -7264,28 +7264,27 @@ impl<G> MainControl<G> {
         }
         if result.is_ok()
             && !redundant_glue
+            && let Some((muskip, index, source_identity)) = glue_assignment
             && let Some((index, physical, source_identity, pointer_sources)) = {
                 let context = stores.command_context().expect("live generation");
-                match glue_assignment {
-                    Some((false, index, source_identity)) => {
-                        context.glue_register(index).ok().flatten().map(|physical| {
-                            (
-                                index,
-                                physical,
-                                source_identity,
-                                &mut self.skip_pointer_sources,
-                            )
-                        })
-                    }
-                    Some((true, index, source_identity)) => context.muskip(index).map(|physical| {
+                if muskip {
+                    context.muskip(index).map(|physical| {
                         (
                             index,
                             physical,
                             source_identity,
                             &mut self.muskip_pointer_sources,
                         )
-                    }),
-                    _ => None,
+                    })
+                } else {
+                    context.glue_register(index).ok().flatten().map(|physical| {
+                        (
+                            index,
+                            physical,
+                            source_identity,
+                            &mut self.skip_pointer_sources,
+                        )
+                    })
                 }
             }
         {
@@ -7360,11 +7359,7 @@ impl<G> MainControl<G> {
             // state holds the push until the transition's borrow ends, so it
             // is published ahead of the transition's own committed records.
             records.extend(
-                self.command
-                    .publish_named_token_list_pushes(
-                        &mut stores.command_context().expect("live generation"),
-                        diagnostic_effects,
-                    )
+                named_token_list_pushes
                     .into_iter()
                     .map(CommandObservation::Input),
             );

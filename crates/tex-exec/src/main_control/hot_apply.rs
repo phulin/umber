@@ -241,7 +241,7 @@ pub(super) fn scan_catcode_assignment<G>(
 /// Applies one measured common operation to canonical state and journals.
 pub(super) fn apply<G>(
     operation: &mut HotOperation<G>,
-    stores: tex_state::CommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
@@ -509,7 +509,7 @@ fn leave_group<G>(
     kind: GroupKind,
     context: &'static str,
     modes: &mut ModeNest,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut LinearCommandContext<'_, '_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     flush_group_boundary(modes, stores, command)?;

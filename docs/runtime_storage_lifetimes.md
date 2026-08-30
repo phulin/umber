@@ -491,9 +491,10 @@ not another scratch lane. One caller-loop `OperationFrame` holds the prepared,
 applied, or diagnostic payload while preparation returns only a compact status.
 Application consumes its fields directly and completion reuses the empty slot.
 One admitted semantic command context remains resident across ordinary cold
-inspection and application; only an actual host boundary releases it. A
-resource suspension moves that same frame into the singular typed attempt;
-there is no per-operation box and no append lane retaining completed commands.
+inspection, application, and command-owned named-hook receipt drainage; only an
+actual host boundary releases it. A resource suspension moves that same frame
+into the singular typed attempt; there is no per-operation box and no append
+lane retaining completed commands.
 
 Construction is destination-directed. Ephemeral lookahead, matching, numeric
 text, delimiter prefixes, and incomplete builders use scratch. Any macro

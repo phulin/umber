@@ -11,7 +11,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     command: &mut CommandMachine<'_, G>,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     modes: &mut ModeNest,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let active = active_alignment
         .as_mut()
@@ -213,7 +213,7 @@ pub(in crate::main_control) fn report_extra_alignment_tab<G>(
 /// as every other canonical group exit does.
 pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let aftergroup = leave_alignment_save_level(
         command.state,

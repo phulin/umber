@@ -4,32 +4,34 @@ use super::super::*;
 use super::apply::enter_group;
 use super::operation::*;
 
-/// Stable owner for the one admitted command context used by semantic apply.
+/// Borrow-only facade for one admitted command context used by semantic apply.
 ///
-/// Short command-processor episodes borrow this value in place. The wrapper
-/// adds no state API or ownership; it keeps one admission stable across the
-/// large cold dispatcher without moving the whole borrowed context.
-pub(in crate::main_control) struct LinearCommandContext<'a, G> {
-    context: tex_state::CommandContext<'a, G>,
+/// Short command-processor episodes borrow this value in place. The facade
+/// adds no state API or ownership; the caller's admission remains resident
+/// across the large dispatcher instead of moving into another carrier.
+pub(in crate::main_control) struct LinearCommandContext<'borrow, 'stores, G> {
+    context: &'borrow mut tex_state::CommandContext<'stores, G>,
 }
 
-impl<'a, G> LinearCommandContext<'a, G> {
-    pub(in crate::main_control) const fn new(context: tex_state::CommandContext<'a, G>) -> Self {
+impl<'borrow, 'stores, G> LinearCommandContext<'borrow, 'stores, G> {
+    pub(in crate::main_control) const fn new(
+        context: &'borrow mut tex_state::CommandContext<'stores, G>,
+    ) -> Self {
         Self { context }
     }
 }
 
-impl<'a, G> core::ops::Deref for LinearCommandContext<'a, G> {
-    type Target = tex_state::CommandContext<'a, G>;
+impl<'borrow, 'stores, G> core::ops::Deref for LinearCommandContext<'borrow, 'stores, G> {
+    type Target = tex_state::CommandContext<'stores, G>;
 
     fn deref(&self) -> &Self::Target {
-        &self.context
+        self.context
     }
 }
 
-impl<'a, G> core::ops::DerefMut for LinearCommandContext<'a, G> {
+impl<G> core::ops::DerefMut for LinearCommandContext<'_, '_, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.context
+        self.context
     }
 }
 
@@ -183,7 +185,7 @@ pub(in crate::main_control) fn print_display_content<G>(
 /// structure and the order `unsave` observes it in.
 pub(in crate::main_control) fn schedule_aftergroup<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     tokens: Vec<tex_state::token::TracedTokenWord>,
 ) -> Result<(), ExecError> {
     if tokens.is_empty() {
@@ -198,7 +200,7 @@ pub(in crate::main_control) fn schedule_aftergroup<G>(
 }
 
 pub(in crate::main_control) fn warn_cross_file_group_close<G>(
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) {
     let (level, frame) = {
@@ -1264,7 +1266,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     class: u16,
     pre: bool,
     modes: &mut ModeNest,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`

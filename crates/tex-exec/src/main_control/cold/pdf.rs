@@ -742,7 +742,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
 
 pub(in crate::main_control) fn replay_text<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     kind: crate::shipout::ReplayTextKind,
     tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
@@ -779,10 +779,10 @@ pub(in crate::main_control) fn replay_text<G>(
         let token = word.semantic_token();
         match kind {
             crate::shipout::ReplayTextKind::Special => {
-                tex_state::token_show::append_token_string_text(&**stores, token, &mut text);
+                tex_state::token_show::append_token_string_text(&*stores, token, &mut text);
             }
             crate::shipout::ReplayTextKind::PdfLiteral => {
-                crate::diagnostics::append_token_show_text(&**stores, token, &mut text);
+                crate::diagnostics::append_token_show_text(&*stores, token, &mut text);
             }
         }
     }
@@ -803,7 +803,7 @@ pub(in crate::main_control) fn replay_text<G>(
 
 pub(in crate::main_control) fn replay_write<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut LinearCommandContext<'_, G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
@@ -824,7 +824,7 @@ pub(in crate::main_control) fn replay_write<G>(
     let expanded = expanded?;
     if expanded.unbalanced {
         crate::error_report::report_error(
-            &mut **stores,
+            &mut *stores,
             command.diagnostic_effects,
             "Unbalanced write command",
             &[
@@ -845,13 +845,9 @@ pub(in crate::main_control) fn replay_write<G>(
             context: "expanded write replay",
         })?;
     for word in words {
-        tex_state::token_show::append_token_string_text(
-            &**stores,
-            word.semantic_token(),
-            &mut text,
-        );
+        tex_state::token_show::append_token_string_text(&*stores, word.semantic_token(), &mut text);
     }
-    let mut text = crate::diagnostics::print_text_with_newlinechar(&**stores, &text);
+    let mut text = crate::diagnostics::print_text_with_newlinechar(&*stores, &text);
     text.push('\n');
     Ok(crate::shipout::ExpandedWrite::transactional(text))
 }
@@ -871,12 +867,11 @@ fn replay_text_transaction<G>(
                 context: "output replay snapshot",
             })?;
     let result = {
-        let context = stores
+        let mut context = stores
             .command_context()
             .map_err(|_| ExecError::MissingToken {
                 context: "output replay admission",
             })?;
-        let mut context = LinearCommandContext::new(context);
         let tokens = context
             .admit_shipout_tokens(tokens)
             .expect("output replay fits admitted durable storage");
@@ -905,12 +900,11 @@ fn replay_write_transaction<G>(
                 context: "write replay snapshot",
             })?;
     let result = {
-        let context = stores
+        let mut context = stores
             .command_context()
             .map_err(|_| ExecError::MissingToken {
                 context: "write replay admission",
             })?;
-        let mut context = LinearCommandContext::new(context);
         let tokens = context
             .admit_shipout_tokens(tokens)
             .expect("write replay fits admitted durable storage");
