@@ -399,6 +399,46 @@ the synthetic `->` separator. No diagnostic token vector, second token
 traversal, or success-path string exists; resource suspension retains only the
 sinks and cursor already owned by the scanner frame.
 
+### Diagnostic-context publication coordinates
+
+TeX82 §§310--318 input context has one live owner: `InputState`. Ordinary
+executor scan/apply handoffs do not project that owner into a `String`.
+`DiagnosticContextCoordinate` carries only the command-timeline owner and the
+current input/context incarnations. Capturing it performs no stack walk,
+pseudoprint, allocation, clone, or buffer move. Publication validates both
+incarnations before traversing the live stack; a foreign owner, input advance,
+push/pop, rollback, source-owner swap, or terminal-context replacement is
+stale and is rejected before rendering. The coordinate owns no row or backing,
+so it is neither a cache nor a lifetime registry and cannot cross a detached
+continuation boundary.
+
+The context-consumer audit has these publication boundaries:
+
+- command-core scanner and macro recovery render synchronously only after the
+  specific error/runaway branch is selected, while their source, macro
+  parameters, attempt words, and execution scratch are still live;
+- `MisplacedAlignmentDelimiter`, `DeleteLast`, `SetInteractionModeValue`,
+  `Unbox`, and `LastBox` carry one compact coordinate through the ordinary
+  executor operation frame and render only inside the apply-side reporter;
+- page building borrows live `CommandState` and renders only after selecting a
+  page diagnostic; replay that has already crossed a real suspension boundary
+  supplies detached text instead;
+- terminal/fatal reporting renders at the terminal error seam, before command
+  rollback can retire the triggering input; failure-only causal summaries are
+  separate content-free bounded facts;
+- `file_warning`, output-routine close, immediate output, shipout, and observer
+  extraction are externally visible output seams and therefore materialize
+  their final selector-aware text there; and
+- portable or host-retained continuations never contain a live coordinate.
+  A boundary that must outlive the admitted command generation renders once
+  before detaching and retains only the final owned text.
+
+The focused measurement around `InputState::output_open_context` records zero
+renders, owned allocations, and owned bytes for coordinate capture, exactly
+one render/allocation at publication, and no additional render when a stale or
+foreign coordinate is rejected. This directly measures removal of the former
+success-path context allocation/copy work without adding a mirror or cache.
+
 Suspension publication is one owner transaction. The execution-scratch lane
 preflights its slot, free-list capacity, and checked serial successor before it
 moves `PendingScanToks`. If admission fails, the payload remains with the

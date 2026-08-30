@@ -1667,6 +1667,15 @@ the TeX82 trace.
 
 No `CurrentCommand` is live at a durable named checkpoint.
 
+Diagnostic context follows the same generation rule. An ordinary command
+episode may retain a copy-small `DiagnosticContextCoordinate`, consisting of
+the command-timeline owner and authoritative input/context incarnations, but
+not rendered lines or strings. The executor validates that coordinate and
+renders TeX82 §§310--318 only when a diagnostic is actually published. Input
+mutation or owner mismatch makes the coordinate stale; detached continuations
+render before detachment and never serialize the coordinate. There is no
+context cache, shared string mirror, compaction pass, or coordinate registry.
+
 ## 12. Input levels
 
 Input is one generation-owned semantic stack:
