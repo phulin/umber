@@ -761,11 +761,13 @@ that 4,096 warmed lexer mutations perform zero allocations and one inverse at
 both one and 4,096 live source rows.
 When that resident selection finds an exhausted ordinary token or macro-
 argument row, it projects and pops the same coordinate, settles macro scratch,
-replay completion, alignment, and observation, then loops on the new top.
-Nothing returns an exhaustion status through the processor, and no second top
-lookup or owner validation occurs. Source EOF/file warning, terminal token and
-retained v-template behavior, and TeX82 §§325/390 backup/macro stack
-conservation remain explicit cold branches.
+replay completion, alignment, and observation, then loops on the new top. The
+same TeX82 §357 restart pops an exhausted v-template after §1131's `do_endv`
+has inspected and released its retained boundary. Nothing returns an
+exhaustion status through the processor, and no second top lookup or owner
+validation occurs. Source EOF/file warning, terminal token and a v-template
+still waiting for `do_endv`, and TeX82 §§325/390 backup/macro stack conservation
+remain explicit cold branches.
 While that source row is resident, it is the structural lifetime proof for its
 occupied physical source slot: row retirement is the only release path.
 Ordinary delivery uses that resident projection without repeating the slot's

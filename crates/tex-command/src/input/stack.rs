@@ -116,6 +116,39 @@ pub(crate) struct InputRetirement {
     pub(crate) closes_file_frame: bool,
 }
 
+impl InputRetirement {
+    /// Whether this receipt belongs to an exhausted non-source level which
+    /// canonical raw delivery may pop and immediately restart past.
+    ///
+    /// TeX82 §357 applies `end_token_list` both to ordinary depleted lists
+    /// and to the exhausted v-template after §1131's `do_endv` has inspected
+    /// (but not popped) it. Source and retained-pre-`do_endv` receipts remain
+    /// outside this resident boundary.
+    pub(crate) fn is_resident_restart(&self) -> bool {
+        let action_matches_reason = matches!(
+            (self.action, self.reason),
+            (
+                InputRetirementAction::TokenListPopped,
+                InputRetirementReason::Backup
+                    | InputRetirementReason::Macro
+                    | InputRetirementReason::Parameter
+                    | InputRetirementReason::AlignmentUTemplate
+                    | InputRetirementReason::Recovery
+                    | InputRetirementReason::TokenList(_),
+            ) | (
+                InputRetirementAction::VTemplatePopped,
+                InputRetirementReason::AlignmentVTemplate
+                    | InputRetirementReason::AlignmentOmitTemplate,
+            )
+        );
+        action_matches_reason
+            && self.name_class.is_none()
+            && self.source.is_none()
+            && self.file_warning_boundary.is_none()
+            && !self.closes_file_frame
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct FileWarningBoundary {
     pub(crate) group_start: u32,
@@ -411,12 +444,14 @@ impl<G> CommandState<G> {
         self.input.levels.pop_project(RetiredInputLevel::borrowed)
     }
 
-    /// Retires an exhausted ordinary token or macro-argument row selected by
-    /// the resident delivery transition itself.
+    /// Retires an exhausted restartable token or macro-argument row selected
+    /// by the resident delivery transition itself.
     ///
     /// `index` is the already-admitted top coordinate. Terminal token input
-    /// and the retained v-template boundary deliberately return `None` so the
-    /// processor's explicit cold handling remains authoritative.
+    /// and a v-template still waiting for `do_endv` deliberately return `None`
+    /// so the processor's explicit cold handling remains authoritative. Once
+    /// `do_endv` has completed, its awaiting v-template is a §357 resident
+    /// restart just like any other exhausted token list.
     pub(crate) fn retire_resident_ordinary_input(
         &mut self,
         index: usize,

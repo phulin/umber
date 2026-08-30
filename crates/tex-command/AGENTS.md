@@ -248,10 +248,11 @@ collector (see `src/conditionals.rs`).
   transition are the only mutable access. Source, token-list, and macro-
   argument cursors share its single top access, matching first-touch
   transition, direct final-command write, fuel/alignment/parameter settlement,
-  ordinary exhaustion pop, retirement observation/alignment/replay settlement,
+  restartable exhaustion pop, retirement observation/alignment/replay settlement,
   and diagnostic revision without a callback or returned exhaustion result.
   The resident transition continues immediately from the new top after an
-  ordinary token or macro-argument pop. The
+  ordinary token or macro-argument pop, including a v-template that has
+  crossed its retained `do_endv` boundary. The
   resident packed frame is read through only the required scalar fields and is
   never copied as a whole. No raw mutable top or mutable index survives.
   Focused gates prove exact coalescing and zero-allocation hot mutation. A resident source row
@@ -261,8 +262,9 @@ collector (see `src/conditionals.rs`).
   to validate the complete slot key.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
   Ordinary exhausted token and macro-argument rows are projected and popped
-  from the already-selected resident coordinate; terminal token input,
-  retained v-templates, source EOF, recovery, and parameter results retain
+  from the already-selected resident coordinate, as is a v-template after
+  successful `do_endv`; terminal token input, pre-`do_endv` retained
+  v-templates, source EOF, recovery, and parameter results retain
   no command-slot borrow; an ordinary final result has already resolved
   meaning, applied one-delivery suppression, classified only required
   alignment work, and ended the resolved borrow. The files also own the singular

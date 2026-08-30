@@ -249,6 +249,67 @@ fn in_place_retirement_preserves_semantic_transition_order() {
 }
 
 #[test]
+fn awaiting_v_template_retires_in_resident_delivery_before_parent_token() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        command.push_token_level(
+            PackedTokenSpanHandle::transient([]),
+            TokenBehavior::VTemplate,
+            RetirementBehavior::AwaitingVTemplateRetirement,
+            ReplayTrace::VTemplate,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        let mut destination = None;
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            )
+            .with_observer(&mut observer);
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("delivery after awaiting v-template"),
+                DeliveryStatus::Command
+            );
+        }
+
+        let retirement_reasons = observer
+            .observations
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Retire =>
+                {
+                    Some(record.reason)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(retirement_reasons, [InputReason::AlignmentVTemplate]);
+        assert_eq!(
+            destination
+                .expect("parent command delivered after v-template retirement")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+    });
+}
+
+#[test]
 fn processor_episode_borrows_generation_and_delivers_one_current_command() {
     crate::test_harness::with_universe(|universe| {
         let token = Token::Char {

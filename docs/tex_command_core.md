@@ -1805,10 +1805,12 @@ Ordinary delivery selects and discriminates the semantic top once inside the
 authoritative `InputStack`. Exhausted ordinary token and macro-argument rows
 are popped from that already-selected resident coordinate, their macro/replay/
 alignment and observation effects settle there, and the same transition
-continues immediately from the new top. No exhaustion status, second top
-lookup, or repeated owner validation returns through the processor. Terminal
-token input and retained v-templates remain explicit cold token boundaries;
-source EOF remains the cold file-warning/framing boundary. The source branch lends its row and checked slot
+continues immediately from the new top. TeX82 §357 applies that same resident
+restart to an exhausted v-template after §1131's `do_endv` has inspected and
+released its retained boundary. No exhaustion status, second top lookup, or
+repeated owner validation returns through the processor. Terminal token input
+and a v-template still waiting for `do_endv` remain explicit cold token
+boundaries; source EOF remains the cold file-warning/framing boundary. The source branch lends its row and checked slot
 together, tokenizes into the caller's final command slot, and advances the
 row's compact position before ending that borrow. Stored-token and macro-
 argument branches project their resident packed word and meaning into that same
@@ -2058,7 +2060,8 @@ Exhaustion commits against the exact `InputLevelId`. Ordinary, terminal-stop,
 and `\scantokens` levels pop once; popping releases only the cursor's ownership
 of transient or stored backing. An exhausted v-template instead transitions
 once to `AwaitingVTemplateRetirement`, remains the exact top level through
-end-template delivery, and is popped only after successful `do_endv`.
+end-template delivery, and is popped by the resident §357 restart only after
+successful §1131 `do_endv`.
 Macro-body retirement atomically removes the activation matching that level's
 typed `param_start`; a mismatched activation chain is rejected before either
 owner is mutated. Before a source pop, the processor borrows the still-live
@@ -2319,8 +2322,10 @@ There is one semantic raw-command operation. In conceptual order it:
 Steps may restart without returning a command, exactly as TeX restarts after
 ignored characters, exhausted input, parameter insertion, and template
 insertion. Ordinary token and macro exhaustion is an internal resident restart
-rather than a processor-visible exhaustion status. Source EOF, terminal token
-input, and retained v-template completion are the explicit cold exceptions.
+rather than a processor-visible exhaustion status. The same applies to an
+awaiting v-template after successful `do_endv`; source EOF, terminal token
+input, and the pre-`do_endv` retained v-template boundary are the explicit cold
+exceptions.
 
 For direct source, creation or lookup consumes the transient tokenizer name and
 returns an escaped control-sequence token that already contains its compact

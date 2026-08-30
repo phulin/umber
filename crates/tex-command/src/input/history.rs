@@ -589,8 +589,10 @@ impl<G> crate::CommandState<G> {
                 .retire_resident_ordinary_input(resident_index)
                 .map_err(|_| ())?
             else {
-                // Terminal token input and retained v-templates are explicit
-                // cold boundaries and still carry their identity outward.
+                // Terminal token input and v-templates still waiting for
+                // `do_endv` are explicit cold boundaries and still carry
+                // their identity outward. An awaiting post-`do_endv`
+                // v-template is popped above as a resident §357 restart.
                 return Ok(super::ResidentCommandTransition::TokenExhausted {
                     identity,
                     resident_index,
@@ -611,10 +613,7 @@ impl<G> crate::CommandState<G> {
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
     ) {
-        debug_assert!(matches!(
-            retirement.action,
-            super::InputRetirementAction::TokenListPopped
-        ));
+        debug_assert!(retirement.is_resident_restart());
         self.settle_input_retirement(retirement, observer, immediate_write_retirement);
     }
 
