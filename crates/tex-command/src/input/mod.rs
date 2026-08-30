@@ -20,9 +20,9 @@ pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
     MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership, PackedTokenSources,
     PackedTokenSpanHandle, PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace,
-    RetirementBehavior, SourceLevel, SourceLevelExecutionState, SourceLexExecutionState,
-    SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey, StoredReplayReason,
-    TokenBehavior, TokenCursor, packed_token_frame,
+    ReplayTransientMark, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
+    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
+    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -138,6 +138,30 @@ impl<G> Default for InputState<G> {
 }
 
 impl<G> InputState<G> {
+    pub(crate) fn begin_transient_replay(&mut self) -> ReplayTransientMark {
+        self.replay.begin_transient()
+    }
+
+    pub(crate) fn rollback_transient_replay(
+        &mut self,
+        mark: ReplayTransientMark,
+    ) -> Result<(), ()> {
+        self.replay.rollback_transient(mark);
+        for level in self.levels.iter() {
+            let InputLevel::Tokens(cursor) = level else {
+                continue;
+            };
+            if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
+                self.replay.reactivate(replay);
+            }
+        }
+        self.replay.end_transient().map_err(|_| ())
+    }
+
+    pub(crate) fn commit_transient_replay(&mut self) -> Result<(), ()> {
+        self.replay.end_transient().map_err(|_| ())
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(self.levels.retained_bytes())

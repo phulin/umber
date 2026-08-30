@@ -348,6 +348,139 @@ fn tracked_advance_abandons_before_resource_suspension_rollback() {
 }
 
 #[test]
+fn math_choice_nested_font_definition_suspends_and_resumes_once() {
+    // TeX82 §§1172/1174 executes each math-choice branch through ordinary
+    // main control, and §1270 dispatches assignments in that nested episode.
+    // A missing TFM is therefore a typed host suspension of the enclosing
+    // operation, not a terminal execution error. The increment immediately
+    // before the font definition proves rollback and retry do not duplicate
+    // a nested side effect.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \font\nested=cmti8 A}{B}{C}{D}$\global\count1=23\end",
+        );
+
+        let request = loop {
+            match control.advance_episode(stores) {
+                Ok(StepResult::Suspended(ResourceNeed::Font { request })) => break request,
+                Ok(StepResult::Progress(_)) => {}
+                other => panic!("unexpected nested font step: {other:?}"),
+            }
+        };
+        assert_eq!(request.name, "cmti8");
+        assert_eq!(stores.count(0).expect("count register"), 0);
+
+        register_cmr10_as(&mut control, stores, "cmti8.tfm");
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        assert_eq!(stores.count(1).expect("count register"), 23);
+        assert!(control.pending_direct_operation.is_none());
+        assert!(control.pending_resource_operation.is_none());
+    });
+}
+
+#[test]
+fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&br"\global\advance\count2 by1 \endinput"[..]),
+    );
+    for probe in [false, true] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_initex(stores);
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            let source = if probe {
+                br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \openin0=child \ifeof0\fi A}{B}{C}{D}$\global\count1=23\end".as_slice()
+            } else {
+                br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \input child A}{B}{C}{D}$\global\count1=23\end".as_slice()
+            };
+            register_source(&mut control, source);
+
+            let need = loop {
+                match control
+                    .advance_episode(stores)
+                    .expect("nested resource step")
+                {
+                    StepResult::Suspended(need) => break need,
+                    StepResult::Progress(_) => {}
+                }
+            };
+            assert_eq!(stores.count(0).expect("count register"), 0);
+            if probe {
+                let ResourceNeed::InputProbe { request } = need else {
+                    panic!("expected nested input probe, got {need:?}");
+                };
+                control.capabilities_mut().register_input_probe(
+                    request.name,
+                    tex_command::FileEnquiryResource::new(child.clone(), None),
+                );
+            } else {
+                let ResourceNeed::Input { name, .. } = need else {
+                    panic!("expected nested input request, got {need:?}");
+                };
+                control
+                    .capabilities_mut()
+                    .register_input(name, child.clone());
+            }
+
+            run_to_end(&mut control, stores);
+            assert_eq!(stores.count(0).expect("count register"), 1);
+            assert_eq!(stores.count(1).expect("count register"), 23);
+            assert_eq!(
+                stores.count(2).expect("count register"),
+                usize::from(!probe) as i32
+            );
+        });
+    }
+}
+
+#[test]
+fn math_choice_nested_pdf_image_suspends_and_resumes_once() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        crate::test_harness::assign_int_param(
+            stores,
+            IntParam::PDF_OUTPUT,
+            1,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("PDF output enables image loading");
+        register_source(
+            &mut control,
+            br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \pdfximage{image.pdf}A}{B}{C}{D}$\global\count1=23\end",
+        );
+
+        let request = loop {
+            match control.advance_episode(stores).expect("nested image step") {
+                StepResult::Suspended(ResourceNeed::PdfImage { request }) => break request,
+                StepResult::Suspended(need) => panic!("unexpected nested resource: {need:?}"),
+                StepResult::Progress(_) => {}
+            }
+        };
+        assert_eq!(stores.count(0).expect("count register"), 0);
+        control.capabilities_mut().register_pdf_image(
+            request,
+            PdfImageResource::Available(test_pdf_image_source()),
+        );
+
+        run_to_end(&mut control, stores);
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        assert_eq!(stores.count(1).expect("count register"), 23);
+        assert_ne!(
+            admitted!(stores, |context| context
+                .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
+                .expect("last image integer")),
+            0
+        );
+    });
+}
+
+#[test]
 fn tracked_group_exit_fails_closed_at_the_journal_timeline_barrier() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

@@ -756,6 +756,14 @@ impl<G> MainControl<G> {
                     self.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
                 }
+                ExecError::MissingFont { request } => {
+                    self.pending_resource_site = site.primary_origin();
+                    Ok(self.observed_suspension(ResourceNeed::Font { request }))
+                }
+                ExecError::MissingPdfImage { request } => {
+                    self.pending_resource_site = site.primary_origin();
+                    Ok(self.observed_suspension(ResourceNeed::PdfImage { request }))
+                }
                 error => Err(ExecError::Captured {
                     error: Box::new(error),
                     site,

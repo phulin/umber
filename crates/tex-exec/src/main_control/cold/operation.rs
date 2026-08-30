@@ -1453,6 +1453,17 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
 }
 
 impl<G> ColdOperation<G> {
+    /// Whether applying this resident operation enters ordinary main control
+    /// again before the enclosing command can finish.
+    ///
+    /// TeX82 §§1123--1124's accent assignment loop and §§1172--1174's
+    /// math-choice branches are the two synchronous nested command episodes.
+    /// Their resource rollback uses one generic command snapshot; the
+    /// operation variants do not own resource-specific continuation state.
+    pub(in crate::main_control) const fn executes_nested_operations(&self) -> bool {
+        matches!(self, Self::Accent(_) | Self::Math(MathRequest::Choice))
+    }
+
     /// Moves an already-durable token-list right-hand side into the same root
     /// field used by freshly scanned token lists. No promotion or owner copy
     /// is needed for TeX's pointer-assignment case.

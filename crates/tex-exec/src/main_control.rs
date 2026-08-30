@@ -3095,7 +3095,20 @@ impl<G> MainControl<G> {
                     PendingDirectDestination::Frame(pending) => {
                         operation_frame = std::mem::take(&mut pending.frame);
                         cold_operation = std::mem::take(&mut pending.cold);
-                        fill_preflight_delivery_from_frame(&operation_frame, &mut host_preparation);
+                        match pending.resume {
+                            PendingFrameResume::Delivery => fill_preflight_delivery_from_frame(
+                                &operation_frame,
+                                &mut host_preparation,
+                            ),
+                            PendingFrameResume::Prepared(capabilities) => {
+                                host_preparation.fill_preflight(
+                                    OperationDelivery::Prepared,
+                                    capabilities,
+                                    None,
+                                    None,
+                                );
+                            }
+                        }
                     }
                 };
                 self.pending_direct_operation = None;
@@ -3236,6 +3249,7 @@ impl<G> MainControl<G> {
                     let destination = PendingDirectDestination::Frame(PendingFrameDestination {
                         frame: operation_frame,
                         cold: cold_operation,
+                        resume: PendingFrameResume::Delivery,
                     });
                     let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
                     self.pending_direct_operation = Some(PendingDirectOperation {
@@ -3570,6 +3584,7 @@ impl<G> MainControl<G> {
                                             PendingFrameDestination {
                                                 frame: operation_frame,
                                                 cold: ColdOperationSlot::default(),
+                                                resume: PendingFrameResume::Delivery,
                                             },
                                         ),
                                     });
@@ -3757,6 +3772,34 @@ impl<G> MainControl<G> {
                         } else {
                             let _ = stores.abandon_dependency_region(mark);
                         }
+                    }
+                    if execution_error_needs_command_retry(&error) {
+                        let result = self.finish_resource_preflight_failure(stores, error);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            assert!(
+                                operation_frame.has_unavailable(),
+                                "nested resource suspension retains its enclosing operation"
+                            );
+                            self.discard_direct_operation(stores, operation_mark);
+                            self.pending_direct_operation = Some(PendingDirectOperation {
+                                state: PendingDirectState::Fresh,
+                                destination: PendingDirectDestination::Frame(
+                                    PendingFrameDestination {
+                                        frame: operation_frame,
+                                        cold: cold_operation,
+                                        resume: PendingFrameResume::Prepared(capabilities),
+                                    },
+                                ),
+                            });
+                            self.advance_telemetry.rollbacks += 1;
+                            #[cfg(feature = "profiling")]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                            #[cfg(not(feature = "profiling"))]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                        }
+                        return result;
                     }
                     return self.finish_direct_failure(
                         stores,
@@ -6945,6 +6988,18 @@ impl<G> MainControl<G> {
         cold: &mut ColdOperationSlot<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
+        let nested_snapshot = frame
+            .prepared(cold)
+            .executes_nested_operations()
+            .then(|| {
+                self.command
+                    .state_mut()
+                    .transient_snapshot(stores)
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "nested operation rollback snapshot",
+                    })
+            })
+            .transpose()?;
         let parking = self.suspend_main_control_parking(frame.prepared(cold));
         let alignment_preamble = frame.alignment_preamble.take();
         let output_start = frame
@@ -6962,8 +7017,27 @@ impl<G> MainControl<G> {
         if let Some(applied) =
             self.apply_host_owned_step(frame.unavailable_mut(cold), stores, diagnostic_effects)
         {
-            frame.clear_cold(cold);
-            return self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
+            let result =
+                self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
+            if let Some(snapshot) = nested_snapshot {
+                let settled = if result
+                    .as_ref()
+                    .is_err_and(execution_error_needs_command_retry)
+                {
+                    self.command
+                        .state_mut()
+                        .rollback_transient(snapshot, stores)
+                } else {
+                    self.command.state_mut().commit_transient(snapshot, stores)
+                };
+                settled.map_err(|_| ExecError::MissingToken {
+                    context: "nested operation command settlement",
+                })?;
+            }
+            if result.is_ok() {
+                frame.clear_cold(cold);
+            }
+            return result;
         }
         if let Some(preamble) = alignment_preamble {
             if preamble.columns.is_empty() {

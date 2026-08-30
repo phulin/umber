@@ -321,6 +321,7 @@ pub(super) fn own_alignment_retry_child<G>(
             .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame,
                 cold,
+                resume: PendingFrameResume::Delivery,
             }));
     };
     match frame.phase {
@@ -359,6 +360,7 @@ pub(super) fn own_alignment_retry_child<G>(
             Some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame,
                 cold,
+                resume: PendingFrameResume::Delivery,
             }))
         }
         // Alignment itself suspended without a command-owned continuation.
@@ -900,6 +902,13 @@ pub(super) enum PendingDirectDestination<G> {
 pub(super) struct PendingFrameDestination<G> {
     pub(super) frame: OperationFrame<G>,
     pub(super) cold: ColdOperationSlot<G>,
+    pub(super) resume: PendingFrameResume,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum PendingFrameResume {
+    Delivery,
+    Prepared(crate::transaction_protocol::CommandCapabilities),
 }
 
 pub(super) enum PendingDirectState {

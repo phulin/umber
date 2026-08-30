@@ -758,6 +758,11 @@ struct ReplayLaneCursor {
     offset: u16,
 }
 
+#[derive(Debug)]
+pub(crate) struct ReplayTransientMark {
+    entries: usize,
+}
+
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct ReplaySegment<T> {
     values: Vec<T>,
@@ -990,6 +995,7 @@ struct ReplayEntry {
     prefix_words: Option<ReplaySpan>,
     prefix_provenance: Option<ReplaySpan>,
     ownership: PackedTokenOwnership,
+    released: bool,
 }
 
 impl ReplayEntry {
@@ -1003,6 +1009,7 @@ pub(crate) struct ReplayLane<G> {
     entries: Vec<ReplayEntry>,
     words: SegmentedReplayLane<TracedTokenWord>,
     provenance: SegmentedReplayLane<Option<SourceProvenance>>,
+    transient_depth: u32,
     _generation: PhantomData<fn(&G) -> &G>,
 }
 
@@ -1012,6 +1019,7 @@ impl<G> Default for ReplayLane<G> {
             entries: Vec::new(),
             words: SegmentedReplayLane::default(),
             provenance: SegmentedReplayLane::default(),
+            transient_depth: 0,
             _generation: PhantomData,
         }
     }
@@ -1023,6 +1031,7 @@ impl<G> Clone for ReplayLane<G> {
             entries: self.entries.clone(),
             words: self.words.clone(),
             provenance: self.provenance.clone(),
+            transient_depth: 0,
             _generation: PhantomData,
         }
     }
@@ -1095,6 +1104,7 @@ impl<G> ReplayLane<G> {
             prefix_words: None,
             prefix_provenance: None,
             ownership,
+            released: false,
         });
         Ok(PackedTokenSpanHandle::Replay {
             replay: ReplayPayloadId {
@@ -1111,6 +1121,9 @@ impl<G> ReplayLane<G> {
         index: usize,
     ) -> Option<(TracedTokenWord, Option<SourceProvenance>)> {
         let entry = self.entries.get(replay.entry as usize)?;
+        if entry.released {
+            return None;
+        }
         if index >= entry.len() {
             return None;
         }
@@ -1132,6 +1145,7 @@ impl<G> ReplayLane<G> {
     pub(crate) fn ownership(&self, replay: ReplayPayloadId<G>) -> Option<PackedTokenOwnership> {
         self.entries
             .get(replay.entry as usize)
+            .filter(|entry| !entry.released)
             .map(|entry| entry.ownership)
     }
 
@@ -1173,12 +1187,66 @@ impl<G> ReplayLane<G> {
         &mut self,
         replay: ReplayPayloadId<G>,
     ) -> Result<(), crate::execution_scratch::ScratchError> {
-        if replay.entry as usize + 1 != self.entries.len() {
+        let index = replay.entry as usize;
+        if index >= self.entries.len()
+            || self.entries[index].released
+            || self.entries[index + 1..]
+                .iter()
+                .any(|entry| !entry.released)
+        {
             return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
         }
-        let entry = self.entries.pop().expect("validated replay entry");
-        self.words.restore(entry.word_mark)?;
-        self.provenance.restore(entry.provenance_mark)
+        self.entries[index].released = true;
+        if self.transient_depth == 0 {
+            self.reclaim_released_suffix()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn begin_transient(&mut self) -> ReplayTransientMark {
+        self.transient_depth = self
+            .transient_depth
+            .checked_add(1)
+            .expect("nested replay rollback depth is bounded");
+        ReplayTransientMark {
+            entries: self.entries.len(),
+        }
+    }
+
+    pub(crate) fn rollback_transient(&mut self, mark: ReplayTransientMark) {
+        let first = mark.entries.min(self.entries.len());
+        for entry in &mut self.entries[first..] {
+            entry.released = true;
+        }
+    }
+
+    pub(crate) fn reactivate(&mut self, replay: ReplayPayloadId<G>) {
+        if let Some(entry) = self.entries.get_mut(replay.entry as usize) {
+            entry.released = false;
+        }
+    }
+
+    pub(crate) fn end_transient(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
+        self.transient_depth = self
+            .transient_depth
+            .checked_sub(1)
+            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
+        if self.transient_depth == 0 {
+            self.reclaim_released_suffix()?;
+        }
+        Ok(())
+    }
+
+    fn reclaim_released_suffix(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
+        while self.entries.last().is_some_and(|entry| entry.released) {
+            let entry = self
+                .entries
+                .pop()
+                .expect("released replay suffix remains live");
+            self.words.restore(entry.word_mark)?;
+            self.provenance.restore(entry.provenance_mark)?;
+        }
+        Ok(())
     }
 }
 

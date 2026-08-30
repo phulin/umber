@@ -1064,6 +1064,8 @@ impl<G> CommandStateSnapshot<G> {
 pub struct TransientCommandSnapshot<G> {
     generation: CommandGenerationOwner<G>,
     cursor: CommandSnapshotCursor,
+    replay: crate::input::ReplayTransientMark,
+    scratch: crate::execution_scratch::ExecutionScratchTransientMark,
     brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -1078,10 +1080,17 @@ impl<G> fmt::Debug for TransientCommandSnapshot<G> {
 }
 
 impl<G> TransientCommandSnapshot<G> {
-    fn new(generation: CommandGenerationOwner<G>, cursor: CommandSnapshotCursor) -> Self {
+    fn new(
+        generation: CommandGenerationOwner<G>,
+        cursor: CommandSnapshotCursor,
+        replay: crate::input::ReplayTransientMark,
+        scratch: crate::execution_scratch::ExecutionScratchTransientMark,
+    ) -> Self {
         Self {
             generation,
             cursor,
+            replay,
+            scratch,
             brand: PhantomData,
         }
     }

@@ -342,9 +342,13 @@ impl<G> CommandState<G> {
         let attempt = self.attempt.arena().mark();
         let rollback = self.checkpoint_rollback_coordinates()?;
         let (cursor, timeline) = self.timeline.retain_transient(rollback)?;
+        let replay = self.input.begin_transient_replay();
+        let scratch = self.scratch.begin_transient();
         Ok(TransientCommandSnapshot::new(
             CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
             cursor,
+            replay,
+            scratch,
         ))
     }
 
@@ -591,6 +595,47 @@ impl<G> CommandState<G> {
                 self.expansion.profile.fingerprint(),
             )
             .map_err(CommandRestoreError::Profile)?;
-        self.apply_prepared_restore(restore)
+        self.apply_prepared_restore(restore)?;
+        self.scratch
+            .rollback_transient(snapshot.scratch)
+            .map_err(|_| CommandRestoreError::InvalidCursor)?;
+        self.input
+            .rollback_transient_replay(snapshot.replay)
+            .map_err(|()| CommandRestoreError::InvalidCursor)
+    }
+
+    /// Consumes one synchronous nested-episode rollback point after its
+    /// mutations have committed.
+    ///
+    /// The journal suffix remains authoritative history for any older named
+    /// checkpoint. Only the transient frame row is released, so repeated
+    /// successful nested episodes reuse one bounded coordinate without
+    /// cloning roots or retaining one frame per command.
+    pub fn commit_transient(
+        &mut self,
+        snapshot: TransientCommandSnapshot<G>,
+        universe: &Universe<G>,
+    ) -> Result<(), CommandRestoreError> {
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        if !snapshot.addresses(&generation, self.timeline.owner)
+            || self
+                .timeline
+                .resolve(snapshot.cursor, snapshot.generation.timeline)
+                .is_none()
+        {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        self.timeline
+            .release_frame(snapshot.generation.timeline)
+            .then_some(())
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        self.scratch
+            .commit_transient(snapshot.scratch)
+            .map_err(|_| CommandRestoreError::InvalidCursor)?;
+        self.input
+            .commit_transient_replay()
+            .map_err(|()| CommandRestoreError::InvalidCursor)
     }
 }

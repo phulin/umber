@@ -102,6 +102,7 @@ pub(crate) struct DurableBoxPrefixReleaseReceipt {
 pub(crate) struct DurableBoxOperation {
     position: usize,
     loan_position: usize,
+    group_position: usize,
 }
 
 struct DurableBoxTransferLoan {
@@ -1062,6 +1063,7 @@ impl DurableBoxState {
         let operation = DurableBoxOperation {
             position: self.operation_entries.len(),
             loan_position: self.transfer_loans.len(),
+            group_position: self.groups.len(),
         };
         self.active_operations.push(operation.position);
         operation
@@ -1107,6 +1109,13 @@ impl DurableBoxState {
         }
         for mutation in suffix {
             Self::retire_value(arena, mutation.alternate);
+        }
+        while self.groups.len() > operation.group_position {
+            let group = self
+                .groups
+                .pop()
+                .expect("operation-created group remains live");
+            Self::retire_group(arena, group);
         }
         self.active_operations.pop();
     }
