@@ -393,24 +393,7 @@ impl<G> CommandState<G> {
         pending_acquired_line: bool,
         queries: &mut dyn crate::SourceStepQueries,
     ) -> Result<Option<super::PhysicalLine>, ()> {
-        let occupied_below_active =
-            self.input
-                .levels
-                .iter()
-                .rev()
-                .skip(1)
-                .fold(0_usize, |total, level| {
-                    let Some((len, endline)) = crate::state::source_buffer_line(
-                        level,
-                        self.input.levels.source_slot_for_level(level),
-                    ) else {
-                        return total;
-                    };
-                    total
-                        .saturating_add(len)
-                        .saturating_add(usize::from(endline))
-                        .saturating_add(1)
-                });
+        let occupied_below_active = self.input.levels.occupied_source_buffer_slots_below_top();
         let buffer_start = 1_usize
             .saturating_add(self.terminal_buffer_slots)
             .saturating_add(occupied_below_active);

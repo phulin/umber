@@ -914,8 +914,10 @@ fn compact_source_touch_then_token_row_reuse_restores_the_source_incarnation() {
         command
             .input
             .levels
-            .mutate_top_source_lex(|_, slot| {
+            .mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
                 slot.cursor.load_next_line(13).expect("fixture line loads");
+                (stored, ())
             })
             .expect("source row is live");
         let source_slot = top_source_key(&command);
@@ -995,8 +997,10 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .input
             .levels
-            .mutate_top_source_lex(|_, slot| {
+            .mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
                 slot.cursor.load_next_line(13).expect("first line loads");
+                (stored, ())
             })
             .expect("original source is live");
         let original_slot = top_source_key(&command);

@@ -890,10 +890,12 @@ impl<G> CommandState<G> {
     pub fn profile_prepare_source_line(&mut self, endlinechar: i32) {
         self.input
             .levels
-            .mutate_top_source_lex(|_, slot| {
+            .mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
                 slot.cursor
                     .load_next_line(endlinechar)
                     .expect("profiling source has a first line");
+                (stored, ())
             })
             .expect("profiling fixture keeps a source frame on top");
     }
@@ -2246,19 +2248,7 @@ impl<G> CommandState<G> {
         if name_len == 0 {
             return;
         }
-        let occupied = self
-            .input
-            .levels
-            .iter()
-            .filter_map(|level| {
-                source_buffer_line(level, self.input.levels.source_slot_for_level(level))
-            })
-            .fold(0_usize, |total, (len, endline)| {
-                total
-                    .saturating_add(len)
-                    .saturating_add(usize::from(endline))
-                    .saturating_add(1)
-            });
+        let occupied = self.input.levels.occupied_source_buffer_slots();
         // §374 starts at `first`; §1334 adds one to the greatest written
         // buffer index.
         self.stack_usage.record_buffer_usage(
@@ -2503,33 +2493,6 @@ impl<G> CommandState<G> {
         self.profile()
             .validate_fingerprint(CommandProfileBoundary::Checkpoint, found)
     }
-}
-
-pub(crate) fn source_buffer_line<G>(
-    level: &InputLevel<G>,
-    slot: Option<&crate::input::SourceSlot<G>>,
-) -> Option<(usize, bool)> {
-    let InputLevel::Source(_) = level else {
-        return None;
-    };
-    let slot = slot.expect("source buffer projection receives its live slot");
-    let line = slot.cursor.line.as_ref()?;
-    let start = line.physical.content_range().start();
-    let retained = line.retained_end.saturating_sub(start);
-    let len = match slot.cursor.current_backing().mode {
-        crate::CharacterMode::EightBitExact => usize::try_from(retained).unwrap_or(usize::MAX),
-        crate::CharacterMode::UnicodeExtended => {
-            let start = usize::try_from(start).unwrap_or(usize::MAX);
-            let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
-            slot.cursor
-                .current_backing()
-                .bytes
-                .get(start..end)
-                .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .map_or(usize::MAX, |text| text.chars().count())
-        }
-    };
-    Some((len, line.endline.is_some()))
 }
 
 /// An input level referred to a source absent from retained registration.

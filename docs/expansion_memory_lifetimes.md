@@ -701,6 +701,12 @@ owner from that same swap. An interval-local row retains no owner inverse.
 Alternate owners exist only as generation-checked inverse payloads, so
 candidate redo restores the exact authoritative row without a second live
 input representation or the generic logical-stack stored-state machinery.
+Each source slot caches its current line's contribution to TeX's `buffer`, and
+the input stack owns one scalar sum across live slots. Cold line/backing owner
+and row transitions update those values; byte/scalar cursor advancement does
+not inspect or recount the line. Each input checkpoint retains the exact total
+for direct rollback and candidate redo. Buffer high-water queries never walk
+the input rows and no prefix ledger or shadow stack is retained.
 The source first-touch inverse is at most 48 bytes. One resident transition on
 the `InputStack` looks up and discriminates the semantic top once. Its source
 branch lends the row and checked slot together, while its stored and macro-

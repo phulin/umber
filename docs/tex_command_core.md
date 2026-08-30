@@ -1747,6 +1747,7 @@ struct SourceLevel {
 
 struct SourceSlot {
     cursor: SourceCursor,
+    occupied_buffer_slots: usize,
     every_eof: Option<TokenListId>,
     open_depths: Option<SourceOpenDepths>,
     name_class: SourceNameClass,
@@ -1762,6 +1763,16 @@ box. Retirement prepares its copy-small receipt while that slot is borrowed,
 then returns the slot to the free list as soon as neither a current row nor an
 ordered inverse can reach it. Reuse increments the generation, so a stale row
 or inverse cannot name the new source.
+
+Each source slot caches its current line's contribution to TeX's `buffer`.
+Only cold line acquisition/replacement/retirement and backing-owner swaps
+recount that contribution; ordinary byte/scalar cursor advancement never
+touches it. `InputStack` maintains one scalar sum across live slots as those
+owners and rows change. An input checkpoint records the sum beside its logical
+top, so rollback and candidate settlement restore it directly. The `\csname`
+§374 high-water projection and physical-line refill therefore read exact
+occupancy in constant time without a prefix array, source ancestry walk, or
+second input representation.
 
 `RegisteredBacking` refers to World input, generated immutable bytes, a
 registered editor fragment layout, or an explicitly typed read-line source.

@@ -120,6 +120,9 @@ impl SourceSlotKey {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceSlot<G> {
     pub(crate) cursor: SourceCursor,
+    /// Cached contribution of the currently loaded line to TeX's shared
+    /// `buffer`. Only cold line/backing owner transitions may update it.
+    pub(crate) occupied_buffer_slots: usize,
     /// e-TeX §24.362's once-only token list, pushed above this source when
     /// natural EOF is first observed and before `end_file_reading`.
     pub(crate) every_eof: Option<tex_state::TokenListId<G>>,
@@ -141,6 +144,7 @@ impl<G> SourceSlot<G> {
     ) -> Self {
         Self {
             cursor,
+            occupied_buffer_slots: 0,
             every_eof,
             open_depths,
             name_class,

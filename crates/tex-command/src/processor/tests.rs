@@ -789,13 +789,15 @@ fn forced_eof_before_production_acquisition_registers_source_before_retirement()
         command
             .input
             .levels
-            .mutate_top_source_lex(|_, slot| {
+            .mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
                 let line = slot
                     .cursor
                     .load_next_line(13)
                     .expect("line is acquired outside production delivery");
                 line.cursor.byte_cursor = line.retained_end;
                 line.cursor.endline_delivered = true;
+                (stored, ())
             })
             .expect("source is active");
         assert!(command.end_current_source_after_current_line());

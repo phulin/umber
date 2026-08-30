@@ -238,6 +238,76 @@ impl LineBackingRegistry<'_> {
     }
 }
 
+/// Test-only accounting for source-buffer projection work.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SourceBufferSlotMeasurement {
+    pub(crate) calls: usize,
+    pub(crate) unicode_scalars_counted: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_BUFFER_SLOT_MEASUREMENT: core::cell::Cell<SourceBufferSlotMeasurement> =
+        const { core::cell::Cell::new(SourceBufferSlotMeasurement {
+            calls: 0,
+            unicode_scalars_counted: 0,
+        }) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_source_buffer_slot_measurement() {
+    SOURCE_BUFFER_SLOT_MEASUREMENT
+        .with(|measurement| measurement.set(SourceBufferSlotMeasurement::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn source_buffer_slot_measurement() -> SourceBufferSlotMeasurement {
+    SOURCE_BUFFER_SLOT_MEASUREMENT.with(core::cell::Cell::get)
+}
+
+/// Number of TeX `buffer` slots occupied by one currently loaded source line.
+///
+/// TeX keeps every live source line in one contiguous buffer. The occupied
+/// range includes its retained characters, the optional normalized
+/// `endlinechar`, and the sentinel position after the line.
+pub(crate) fn occupied_source_buffer_slots(cursor: &SourceCursor) -> usize {
+    #[cfg(test)]
+    SOURCE_BUFFER_SLOT_MEASUREMENT.with(|measurement| {
+        let mut current = measurement.get();
+        current.calls = current.calls.saturating_add(1);
+        measurement.set(current);
+    });
+    let Some(line) = cursor.line.as_ref() else {
+        return 0;
+    };
+    let start = line.physical.content_range().start();
+    let retained = line.retained_end.saturating_sub(start);
+    let len = match cursor.current_backing().mode {
+        CharacterMode::EightBitExact => usize::try_from(retained).unwrap_or(usize::MAX),
+        CharacterMode::UnicodeExtended => {
+            let start = usize::try_from(start).unwrap_or(usize::MAX);
+            let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
+            let count = cursor
+                .current_backing()
+                .bytes
+                .get(start..end)
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map_or(usize::MAX, |text| text.chars().count());
+            #[cfg(test)]
+            SOURCE_BUFFER_SLOT_MEASUREMENT.with(|measurement| {
+                let mut current = measurement.get();
+                current.unicode_scalars_counted =
+                    current.unicode_scalars_counted.saturating_add(count);
+                measurement.set(current);
+            });
+            count
+        }
+    };
+    len.saturating_add(usize::from(line.endline.is_some()))
+        .saturating_add(1)
+}
+
 /// Returns the §1334 buffer-stack projection reached while acquiring one line.
 ///
 /// Ordinary tex.web §31 `input_ln` records every physical character before

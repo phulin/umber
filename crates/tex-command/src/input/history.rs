@@ -170,11 +170,13 @@ enum InputUndo<G> {
 pub(crate) struct InputStackMark {
     pub(crate) top: u32,
     pub(crate) undo: PackedJournalMark,
+    pub(crate) occupied_source_buffer_slots: usize,
 }
 
 #[derive(Debug)]
 struct InputStackFork {
     accepted_top: usize,
+    accepted_occupied_source_buffer_slots: usize,
 }
 
 /// One generation-tied input stack whose live rows are authoritative.
@@ -190,6 +192,7 @@ pub(crate) struct InputStack<G> {
     source_lex_states: PayloadSlab<SourceLexExecutionState>,
     source_owner_states: PayloadSlab<SourceLevelExecutionState<G>>,
     source_slots: PayloadSlab<SourceSlot<G>>,
+    occupied_source_buffer_slots: usize,
     fork: Option<InputStackFork>,
     recording: bool,
     interval: u64,
@@ -217,6 +220,7 @@ impl<G> Default for InputStack<G> {
             source_lex_states: PayloadSlab::default(),
             source_owner_states: PayloadSlab::default(),
             source_slots: PayloadSlab::default(),
+            occupied_source_buffer_slots: 0,
             fork: None,
             recording: false,
             interval: 1,
@@ -350,6 +354,7 @@ impl<G> InputStack<G> {
                 .backing
                 .clone_from(replacement.as_ref().expect("replacement was prepared"));
             slot.cursor.rehome_offsets(offsets);
+            slot.occupied_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
             root_slot = Some(SourceSlotKey(handle));
             rebound = true;
         });
@@ -365,6 +370,7 @@ impl<G> InputStack<G> {
                 state.rehome_physical_backing(root_slot, accepted, replacement);
                 state.rehome_offsets(root_slot, offsets);
             });
+            self.refresh_occupied_source_buffer_slots();
         }
         match failure {
             Some(error) => Err(error),
@@ -390,13 +396,6 @@ impl<G> InputStack<G> {
 
     pub(crate) fn source_level_slot(&self, source: &SourceLevel<G>) -> &SourceSlot<G> {
         self.source_slot(source.slot)
-    }
-
-    pub(crate) fn source_slot_for_level(&self, level: &InputLevel<G>) -> Option<&SourceSlot<G>> {
-        match level {
-            InputLevel::Source(source) => Some(self.source_level_slot(source)),
-            InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
-        }
     }
 
     pub(crate) fn top_source(&self) -> Option<(&SourceLevel<G>, &SourceSlot<G>)> {
@@ -441,8 +440,11 @@ impl<G> InputStack<G> {
             unreachable!()
         };
         let slot = slots.value_mut(key.0).expect("source slot remains live");
+        let prior_buffer_slots = slot.occupied_buffer_slots;
         let replacement_id = replacement.id;
         let state = SourceLevelExecutionState::physical_backing(source, slot, replacement);
+        let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
+        slot.occupied_buffer_slots = current_buffer_slots;
         if self.recording {
             self.source_owner_states.warm_first_page();
             let payload = self.source_owner_states.insert(state);
@@ -466,6 +468,7 @@ impl<G> InputStack<G> {
             self.rows[index].set_source_context(Some(replacement_id));
         }
         self.note_context_mutation();
+        self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         true
     }
 
@@ -482,6 +485,11 @@ impl<G> InputStack<G> {
             .and_then(InputLevel::source_context)
     }
 
+    /// Mutates only copy-small lexer execution state.
+    ///
+    /// The closure must not replace the loaded line or its backing, retained
+    /// end, or normalized endline. Those cold owner changes must use
+    /// [`Self::mutate_top_source`] so buffer occupancy is updated once.
     pub(crate) fn mutate_top_source_lex<R>(
         &mut self,
         mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
@@ -839,6 +847,11 @@ impl<G> InputStack<G> {
             self.partially_captured[self.top] = 0;
             self.source_owner_captured[self.top] = 0;
         }
+        if let InputLevel::Source(source) = &self.rows[self.top] {
+            self.occupied_source_buffer_slots = self
+                .occupied_source_buffer_slots
+                .saturating_add(self.source_slot(source.slot).occupied_buffer_slots);
+        }
         self.top += 1;
     }
 
@@ -852,6 +865,11 @@ impl<G> InputStack<G> {
             _ => None,
         };
         let result = project(&self.rows[index], source);
+        if let Some(source) = source {
+            self.occupied_source_buffer_slots = self
+                .occupied_source_buffer_slots
+                .saturating_sub(source.occupied_buffer_slots);
+        }
         self.note_context_mutation();
         self.top = index;
         if !self.recording {
@@ -899,6 +917,11 @@ impl<G> InputStack<G> {
             InputLevel::Source(source) => source.slot,
             _ => unreachable!("source mutation names a source row"),
         };
+        let prior_buffer_slots = self
+            .source_slots
+            .value(key.0)
+            .expect("source slot remains live")
+            .occupied_buffer_slots;
         if !self.recording {
             let (rows, slots) = (&mut self.rows, &mut self.source_slots);
             let InputLevel::Source(source) = &mut rows[index] else {
@@ -907,6 +930,9 @@ impl<G> InputStack<G> {
             let slot = slots.value_mut(key.0).expect("source slot remains live");
             let (state, result) = mutate(source, slot);
             drop(state);
+            let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
+            slot.occupied_buffer_slots = current_buffer_slots;
+            self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
             return result;
         }
         let row_needs_inverse = self.touched[index] != self.interval
@@ -920,6 +946,9 @@ impl<G> InputStack<G> {
             let slot = slots.value_mut(key.0).expect("source slot remains live");
             let (state, result) = mutate(source, slot);
             drop(state);
+            let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
+            slot.occupied_buffer_slots = current_buffer_slots;
+            self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
             self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
             return result;
         }
@@ -930,6 +959,8 @@ impl<G> InputStack<G> {
         };
         let slot = slots.value_mut(key.0).expect("source slot remains live");
         let (state, result) = mutate(source, slot);
+        let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
+        slot.occupied_buffer_slots = current_buffer_slots;
         let payload = self.source_owner_states.insert(state);
         self.undo.append(InputUndo::SourceOwner {
             index: u32::try_from(index).expect("input row index fits u32"),
@@ -941,6 +972,7 @@ impl<G> InputStack<G> {
         self.source_owner_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         self.note_context_mutation();
+        self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         result
     }
 
@@ -953,6 +985,7 @@ impl<G> InputStack<G> {
         let mark = InputStackMark {
             top: u32::try_from(self.top).ok()?,
             undo: self.undo.mark(),
+            occupied_source_buffer_slots: self.occupied_source_buffer_slots,
         };
         self.next_interval();
         Some(mark)
@@ -984,6 +1017,7 @@ impl<G> InputStack<G> {
         if restored {
             self.note_context_mutation();
             self.top = mark.top as usize;
+            self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
             self.next_interval();
         }
         restored
@@ -1014,6 +1048,7 @@ impl<G> InputStack<G> {
             "input candidate mark was prevalidated"
         );
         let accepted_top = self.top;
+        let accepted_occupied_source_buffer_slots = self.occupied_source_buffer_slots;
         let (rows, displaced, source_lex, source_owners, source_slots) = (
             &mut self.rows,
             &mut self.displaced_rows,
@@ -1025,8 +1060,12 @@ impl<G> InputStack<G> {
             inverse.swap(&mut (rows, displaced, source_lex, source_owners, source_slots));
         });
         self.top = mark.top as usize;
+        self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
         self.note_context_mutation();
-        self.fork = Some(InputStackFork { accepted_top });
+        self.fork = Some(InputStackFork {
+            accepted_top,
+            accepted_occupied_source_buffer_slots,
+        });
         self.next_interval();
     }
 
@@ -1050,6 +1089,7 @@ impl<G> InputStack<G> {
             },
         );
         self.top = fork.accepted_top;
+        self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
         self.note_context_mutation();
         self.next_interval();
     }
@@ -1075,6 +1115,21 @@ impl<G> InputStack<G> {
 
     pub(crate) fn as_slice(&self) -> &[InputLevel<G>] {
         &self.rows[..self.top]
+    }
+
+    /// Exact occupied TeX source-buffer slots across all live source levels.
+    #[inline(always)]
+    pub(crate) const fn occupied_source_buffer_slots(&self) -> usize {
+        self.occupied_source_buffer_slots
+    }
+
+    /// Exact occupied source-buffer slots below the current semantic top.
+    #[inline(always)]
+    pub(crate) fn occupied_source_buffer_slots_below_top(&self) -> usize {
+        let top = self
+            .top_source()
+            .map_or(0, |(_, slot)| slot.occupied_buffer_slots);
+        self.occupied_source_buffer_slots.saturating_sub(top)
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -1159,6 +1214,22 @@ impl<G> InputStack<G> {
             self.source_owner_captured.fill(0);
         }
     }
+
+    fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {
+        self.occupied_source_buffer_slots = self
+            .occupied_source_buffer_slots
+            .saturating_sub(prior)
+            .saturating_add(current);
+    }
+
+    fn refresh_occupied_source_buffer_slots(&mut self) {
+        self.occupied_source_buffer_slots = self.as_slice().iter().fold(0, |total, level| {
+            let InputLevel::Source(source) = level else {
+                return total;
+            };
+            total.saturating_add(self.source_level_slot(source).occupied_buffer_slots)
+        });
+    }
 }
 
 type InputUndoState<'a, G> = (
@@ -1200,6 +1271,8 @@ impl<G> InputUndo<G> {
                     .value_mut(source.slot.0)
                     .expect("source owner inverse names a live source slot");
                 source.swap_execution_state(slot, state);
+                slot.occupied_buffer_slots =
+                    super::source::occupied_source_buffer_slots(&slot.cursor);
             }
             Self::SourceContext { index, source } => {
                 let level = &mut rows[*index as usize];
