@@ -554,6 +554,8 @@ impl<G> EngineCheckpoint<G> {
         let mut context = source
             .command_context()
             .expect("profile mode/page admission");
+        modes.push_current_node(&mut context, tex_state::node::Node::Penalty(11));
+        modes.push_current_node(&mut context, tex_state::node::Node::Penalty(12));
         let mode_replace = u64::from(
             modes
                 .current_list_mutation()
@@ -562,7 +564,6 @@ impl<G> EngineCheckpoint<G> {
                 })
                 .is_some(),
         );
-        modes.push_current_node(&mut context, tex_state::node::Node::Penalty(17));
         let mode_private_pop = u64::from(
             modes
                 .current_list_mutation()
@@ -617,13 +618,20 @@ impl<G> EngineCheckpoint<G> {
     /// gate. Production demand is selected through [`CheckpointSink`].
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
-    pub(crate) fn profile_capture_checkpoint_with_identity_demand(
-        eligibility: CheckpointEligibility,
+    pub fn profile_capture_checkpoint_with_identity_demand(
+        boundary: EngineBoundary,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<Self, CommandSummaryError> {
+        let eligibility = match boundary {
+            EngineBoundary::JobStart => CheckpointEligibility::job_start(),
+            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::outer_paragraph_end(),
+            EngineBoundary::ShipoutComplete => {
+                panic!("shipout completion is evidence-only and cannot own a restart root")
+            }
+        };
         Self::capture_checkpoint_with_identity_demand(
             eligibility,
             command,
@@ -632,6 +640,55 @@ impl<G> EngineCheckpoint<G> {
             budget_counters,
             true,
         )
+    }
+
+    /// Runs ordinary restart-root capture for the standalone aggregate gate.
+    /// Production eligibility remains private; the profiling seam accepts only
+    /// the two boundary kinds which can carry restart state.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_capture_checkpoint(
+        boundary: EngineBoundary,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<Self, CommandSummaryError> {
+        let eligibility = match boundary {
+            EngineBoundary::JobStart => CheckpointEligibility::job_start(),
+            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::outer_paragraph_end(),
+            EngineBoundary::ShipoutComplete => {
+                panic!("shipout completion is evidence-only and cannot own a restart root")
+            }
+        };
+        Self::capture_checkpoint(eligibility, command, nest, universe, budget_counters)
+    }
+
+    /// Adds the output owner's bounded mark to a profiling-only checkpoint.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_attach_output_ledger(&mut self, output: &mut crate::OutputLedger) {
+        self.set_output_ledger(output.checkpoint());
+    }
+
+    /// Executes the production aggregate fork and rejection protocol while
+    /// returning the sole command owner to the accepted generation.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_fork_and_reject(
+        &self,
+        source: &mut Universe<G>,
+        command_owner: &mut Option<CommandState<G>>,
+        output: &mut crate::OutputLedger,
+    ) -> Result<u64, CheckpointRestoreError> {
+        let (mut candidate, control) = self.fork_state(source, command_owner, output)?;
+        let checksum = control.command_profile().fingerprint().get();
+        let command = control.into_rejected_checkpoint_command_with_state(&candidate);
+        output.reject_checkpoint_candidate();
+        source.reject_checkpoint_candidate(&mut candidate);
+        let displaced = command_owner.replace(command);
+        debug_assert!(displaced.is_none());
+        Ok(checksum)
     }
 
     pub(crate) fn capture_checkpoint_with_identity_demand(

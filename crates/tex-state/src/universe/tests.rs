@@ -378,18 +378,18 @@ fn runtime_checkpoint_hyphenation_restore_and_fork_isolate_mutable_state() {
                 vec![2]
             );
         }
+        universe.reject_checkpoint_candidate(&mut fork);
         assert_eq!(
             universe
                 .hyphenation
                 .hyphen_positions_for_language(7, "hyphen", 0, 0),
             vec![3],
-            "fork exceptions do not mutate the source"
+            "rejected fork exceptions do not mutate accepted state"
         );
         assert_eq!(
             universe.hyphenation.saved_hyphen_code(7, 'A'),
             Some(Some('a'))
         );
-        universe.reject_checkpoint_candidate(&mut fork);
     })
     .expect("universe allocation");
 }

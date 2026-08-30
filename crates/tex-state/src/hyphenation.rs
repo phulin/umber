@@ -11,7 +11,8 @@ use std::sync::OnceLock;
 
 use crate::state_hash::{SemanticMapIdentity, semantic_scalar_root};
 
-pub(crate) use storage::HyphenationCheckpoint;
+use storage::HyphenationInverse;
+pub(crate) use storage::{HyphenationCandidate, HyphenationCheckpoint};
 use storage::{HyphenationRuntime, PatternOwner};
 
 mod storage;
@@ -52,6 +53,7 @@ pub struct HyphenationTable {
     patterns: PatternOwner,
     pattern_retained_bytes: usize,
     runtime: HyphenationRuntime,
+    journal: Vec<HyphenationInverse>,
     dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
     /// Runtime `trie_size`. This is configuration, not format-image state.
     trie_capacity: usize,
@@ -188,6 +190,7 @@ impl HyphenationTable {
             patterns: PatternOwner::Building(BTreeMap::new()),
             pattern_retained_bytes: 0,
             runtime: HyphenationRuntime::default(),
+            journal: Vec::new(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
             reachable_state_identity: None,
@@ -199,6 +202,8 @@ impl HyphenationTable {
     /// Keeping this explicit permits deterministic capacity-boundary tests and
     /// avoids making exhaustion depend on the host allocator.
     pub fn set_trie_capacity(&mut self, capacity: usize) {
+        self.journal
+            .push(HyphenationInverse::TrieCapacity(self.trie_capacity));
         if let Some(root) = &mut self.reachable_state_identity {
             root.replace(0, Some(self.trie_capacity as u64), Some(capacity as u64));
         }
@@ -206,6 +211,9 @@ impl HyphenationTable {
     }
 
     pub fn set_exception_capacity(&mut self, capacity: usize) {
+        self.journal.push(HyphenationInverse::ExceptionCapacity(
+            self.runtime.exception_capacity,
+        ));
         if let Some(root) = &mut self.reachable_state_identity {
             root.replace(
                 1,
@@ -434,13 +442,21 @@ impl HyphenationTable {
                 .map(|positions| positions_identity(positions))
         });
         let new_identity = key.map(|_| positions_identity(&exception.positions));
-        let replaced = self
+        let word = exception.word.clone();
+        let old_occupied = self.runtime.exception_occupied;
+        let replaced_value = self
             .runtime
             .exceptions
             .entry(language)
             .or_default()
-            .insert(exception.word, exception.positions)
-            .is_some();
+            .insert(exception.word, exception.positions);
+        let replaced = replaced_value.is_some();
+        self.journal.push(HyphenationInverse::Exception {
+            language,
+            word,
+            value: replaced_value,
+            occupied: old_occupied,
+        });
         if let (Some(root), Some(key)) = (&mut self.reachable_state_identity, key) {
             root.replace(key, old_identity, new_identity);
         }
@@ -468,7 +484,11 @@ impl HyphenationTable {
                 hyphen_codes_identity(&codes),
             )
         });
-        self.runtime.hyphen_codes.insert(language, codes);
+        let old_codes = self.runtime.hyphen_codes.insert(language, codes);
+        self.journal.push(HyphenationInverse::Codes {
+            language,
+            value: old_codes,
+        });
         if let (Some(root), Some((old_identity, new_identity))) =
             (&mut self.reachable_state_identity, identities)
         {

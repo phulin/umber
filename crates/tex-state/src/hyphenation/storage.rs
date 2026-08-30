@@ -57,6 +57,31 @@ pub(super) struct HyphenationRuntime {
     pub(super) exception_capacity: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(super) enum HyphenationInverse {
+    Exception {
+        language: u8,
+        word: String,
+        value: Option<Vec<usize>>,
+        occupied: usize,
+    },
+    Codes {
+        language: u8,
+        value: Option<BTreeMap<char, char>>,
+    },
+    ExceptionCapacity(usize),
+    TrieCapacity(usize),
+}
+
+pub(crate) struct HyphenationCandidate {
+    candidate_mark: usize,
+    accepted_journal: Vec<HyphenationInverse>,
+    accepted_patterns: PatternOwner,
+    accepted_pattern_retained_bytes: usize,
+    accepted_trie_capacity: usize,
+    accepted_identity: Option<crate::state_hash::SemanticMapIdentity>,
+}
+
 /// Checkpoint root for hyphenation's immutable and mutable ownership families.
 ///
 /// Once initialized, cloning `patterns` aliases one coarse owner. The runtime
@@ -66,7 +91,8 @@ pub(super) struct HyphenationRuntime {
 pub(crate) struct HyphenationCheckpoint {
     patterns: PatternOwner,
     pattern_retained_bytes: usize,
-    runtime: HyphenationRuntime,
+    journal: usize,
+    exception_capacity: usize,
     trie_capacity: usize,
     reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
 }
@@ -97,6 +123,7 @@ impl Clone for HyphenationTable {
             patterns: self.patterns.clone(),
             pattern_retained_bytes: self.pattern_retained_bytes,
             runtime: self.runtime.clone(),
+            journal: self.journal.clone(),
             // This is only a derived lookup cache. A checkpoint owns semantic
             // roots, not a duplicate of warmed dependency evidence.
             dependency_fingerprints: OnceLock::new(),
@@ -117,30 +144,114 @@ impl HyphenationTable {
         HyphenationCheckpoint {
             patterns: self.patterns.clone(),
             pattern_retained_bytes: self.pattern_retained_bytes,
-            runtime: self.runtime.clone(),
+            journal: self.journal.len(),
+            exception_capacity: self.runtime.exception_capacity,
             trie_capacity: self.trie_capacity,
             reachable_state_identity: self.reachable_state_identity,
         }
     }
 
-    pub(crate) fn from_checkpoint(checkpoint: &HyphenationCheckpoint) -> Self {
-        Self {
-            patterns: checkpoint.patterns.clone(),
-            pattern_retained_bytes: checkpoint.pattern_retained_bytes,
-            runtime: checkpoint.runtime.clone(),
-            dependency_fingerprints: OnceLock::new(),
-            trie_capacity: checkpoint.trie_capacity,
-            reachable_state_identity: checkpoint.reachable_state_identity,
-        }
+    pub(crate) fn validates_checkpoint(&self, checkpoint: &HyphenationCheckpoint) -> bool {
+        checkpoint.journal <= self.journal.len()
     }
 
     pub(crate) fn restore_checkpoint(&mut self, checkpoint: &HyphenationCheckpoint) {
+        assert!(self.validates_checkpoint(checkpoint));
+        while self.journal.len() > checkpoint.journal {
+            let mut inverse = self.journal.pop().expect("checked hyphenation suffix");
+            inverse.swap(&mut self.runtime, &mut self.trie_capacity);
+        }
         self.patterns = checkpoint.patterns.clone();
         self.pattern_retained_bytes = checkpoint.pattern_retained_bytes;
-        self.runtime = checkpoint.runtime.clone();
+        self.runtime.exception_capacity = checkpoint.exception_capacity;
         self.dependency_fingerprints = OnceLock::new();
         self.trie_capacity = checkpoint.trie_capacity;
         self.reachable_state_identity = checkpoint.reachable_state_identity;
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        checkpoint: &HyphenationCheckpoint,
+    ) -> HyphenationCandidate {
+        assert!(self.validates_checkpoint(checkpoint));
+        let mut accepted_journal = self.journal.split_off(checkpoint.journal);
+        for inverse in accepted_journal.iter_mut().rev() {
+            inverse.swap(&mut self.runtime, &mut self.trie_capacity);
+        }
+        let accepted_patterns = std::mem::replace(&mut self.patterns, checkpoint.patterns.clone());
+        let accepted_pattern_retained_bytes = std::mem::replace(
+            &mut self.pattern_retained_bytes,
+            checkpoint.pattern_retained_bytes,
+        );
+        let accepted_trie_capacity =
+            std::mem::replace(&mut self.trie_capacity, checkpoint.trie_capacity);
+        self.runtime.exception_capacity = checkpoint.exception_capacity;
+        let accepted_identity = std::mem::replace(
+            &mut self.reachable_state_identity,
+            checkpoint.reachable_state_identity,
+        );
+        self.dependency_fingerprints = OnceLock::new();
+        HyphenationCandidate {
+            candidate_mark: checkpoint.journal,
+            accepted_journal,
+            accepted_patterns,
+            accepted_pattern_retained_bytes,
+            accepted_trie_capacity,
+            accepted_identity,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(&mut self, mut candidate: HyphenationCandidate) {
+        while self.journal.len() > candidate.candidate_mark {
+            let mut inverse = self.journal.pop().expect("candidate hyphenation suffix");
+            inverse.swap(&mut self.runtime, &mut self.trie_capacity);
+        }
+        for inverse in &mut candidate.accepted_journal {
+            inverse.swap(&mut self.runtime, &mut self.trie_capacity);
+        }
+        self.journal.append(&mut candidate.accepted_journal);
+        self.patterns = candidate.accepted_patterns;
+        self.pattern_retained_bytes = candidate.accepted_pattern_retained_bytes;
+        self.trie_capacity = candidate.accepted_trie_capacity;
+        self.reachable_state_identity = candidate.accepted_identity;
+        self.dependency_fingerprints = OnceLock::new();
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, _candidate: HyphenationCandidate) {}
+}
+
+impl HyphenationInverse {
+    pub(super) fn swap(&mut self, runtime: &mut HyphenationRuntime, trie_capacity: &mut usize) {
+        match self {
+            Self::Exception {
+                language,
+                word,
+                value,
+                occupied,
+            } => {
+                let language_map = runtime.exceptions.entry(*language).or_default();
+                let current = match value.take() {
+                    Some(prior) => language_map.insert(word.clone(), prior),
+                    None => language_map.remove(word),
+                };
+                *value = current;
+                if language_map.is_empty() {
+                    runtime.exceptions.remove(language);
+                }
+                std::mem::swap(&mut runtime.exception_occupied, occupied);
+            }
+            Self::Codes { language, value } => {
+                let current = match value.take() {
+                    Some(prior) => runtime.hyphen_codes.insert(*language, prior),
+                    None => runtime.hyphen_codes.remove(language),
+                };
+                *value = current;
+            }
+            Self::ExceptionCapacity(value) => {
+                std::mem::swap(&mut runtime.exception_capacity, value)
+            }
+            Self::TrieCapacity(value) => std::mem::swap(trie_capacity, value),
+        }
     }
 }
 
@@ -217,6 +328,7 @@ impl<'de> Deserialize<'de> for HyphenationTable {
                 exception_occupied: rows.exception_occupied,
                 exception_capacity: rows.exception_capacity,
             },
+            journal: Vec::new(),
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
             reachable_state_identity: None,

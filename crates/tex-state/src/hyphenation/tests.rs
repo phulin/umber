@@ -204,3 +204,98 @@ fn dependency_fingerprints_follow_snapshot_roots_and_invalidate_on_write() {
     assert_ne!(table.dependency_fingerprint(0, 0), before);
     assert_eq!(snapshot.dependency_fingerprint(0, 0), before);
 }
+
+#[test]
+fn checkpoint_restore_rewinds_mutable_hyphenation_without_copying_patterns() {
+    let mut table = HyphenationTable::new();
+    table
+        .add_pattern_for_language(
+            3,
+            PatternSpec {
+                letters: "checkpoint".chars().collect(),
+                values: vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            },
+        )
+        .expect("pattern fits");
+    table.add_exception_for_language(
+        3,
+        ExceptionSpec {
+            word: "checkpoint".to_owned(),
+            positions: vec![5],
+        },
+    );
+    table.save_hyphen_codes(3, [('a', 'a')]);
+    table.set_exception_capacity(1_024);
+    table.close_patterns();
+    assert!(table.enable_reachable_state_identity());
+    let identity = table.reachable_state_identity_root();
+    let checkpoint = table.checkpoint();
+
+    table.add_exception_for_language(
+        3,
+        ExceptionSpec {
+            word: "checkpoint".to_owned(),
+            positions: vec![2, 7],
+        },
+    );
+    table.add_exception_for_language(
+        3,
+        ExceptionSpec {
+            word: "temporary".to_owned(),
+            positions: vec![4],
+        },
+    );
+    table.save_hyphen_codes(3, [('a', 'b'), ('z', 'z')]);
+    table.set_exception_capacity(2_048);
+
+    table.restore_checkpoint(&checkpoint);
+    assert_eq!(
+        table.exception_for_language(3, "checkpoint"),
+        Some(&[5][..])
+    );
+    assert_eq!(table.exception_for_language(3, "temporary"), None);
+    assert_eq!(table.saved_hyphen_code(3, 'a'), Some(Some('a')));
+    assert_eq!(table.saved_hyphen_code(3, 'z'), Some(None));
+    assert_eq!(table.runtime.exception_capacity, 1_024);
+    assert_eq!(table.reachable_state_identity_root(), identity);
+    assert_eq!(
+        table.hyphen_positions_for_language(3, "checkpoint", 0, 0),
+        vec![5]
+    );
+}
+
+#[test]
+fn checkpoint_candidate_settlement_preserves_exact_accepted_or_candidate_state() {
+    let mut table = HyphenationTable::new();
+    table.add_exception(ExceptionSpec {
+        word: "word".to_owned(),
+        positions: vec![1],
+    });
+    table.save_hyphen_codes(0, [('a', 'a')]);
+    let checkpoint = table.checkpoint();
+
+    table.add_exception(ExceptionSpec {
+        word: "word".to_owned(),
+        positions: vec![2],
+    });
+    table.save_hyphen_codes(0, [('a', 'b')]);
+    let candidate = table.begin_checkpoint_candidate(&checkpoint);
+    table.add_exception(ExceptionSpec {
+        word: "word".to_owned(),
+        positions: vec![3],
+    });
+    table.save_hyphen_codes(0, [('a', 'c')]);
+    table.reject_checkpoint_candidate(candidate);
+    assert_eq!(table.exception("word"), Some(&[2][..]));
+    assert_eq!(table.saved_hyphen_code(0, 'a'), Some(Some('b')));
+
+    let candidate = table.begin_checkpoint_candidate(&checkpoint);
+    table.add_exception(ExceptionSpec {
+        word: "word".to_owned(),
+        positions: vec![4],
+    });
+    table.save_hyphen_codes(0, [('a', 'd')]);
+    table.accept_checkpoint_candidate(candidate);
+    assert_eq!(table.exception("word"), Some(&[4][..]));
+    assert_eq!(table.saved_hyphen_code(0, 'a'), Some(Some('d')));
+}

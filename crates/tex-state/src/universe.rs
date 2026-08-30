@@ -215,6 +215,7 @@ struct CheckpointStateCandidate<G> {
     world_mark: WorldSnapshot,
     world: AcceptedWorldTail,
     dependencies: AcceptedDependencyTail,
+    hyphenation: crate::hyphenation::HyphenationCandidate,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -924,6 +925,9 @@ impl<G> Universe<G> {
             || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
+            || !self
+                .hyphenation
+                .validates_checkpoint(&checkpoint.hyphenation)
             || !self.page_region.validates_checkpoint(checkpoint.page)
             || !self.checkpoint_state_is_ready(checkpoint)
         {
@@ -955,6 +959,9 @@ impl<G> Universe<G> {
             .begin_checkpoint_candidate(&checkpoint.dependencies);
         let source_tail = self.sources.begin_checkpoint_candidate(checkpoint.sources);
         let font_tail = self.fonts.begin_checkpoint_candidate(checkpoint.fonts);
+        let hyphenation_tail = self
+            .hyphenation
+            .begin_checkpoint_candidate(&checkpoint.hyphenation);
         let core = self
             .core
             .take()
@@ -964,6 +971,7 @@ impl<G> Universe<G> {
         let fonts = std::mem::take(&mut self.fonts);
         let world = std::mem::take(&mut self.world);
         let dependencies = std::mem::take(&mut self.dependencies);
+        let hyphenation = std::mem::take(&mut self.hyphenation);
         let destination_owner = core.generation_owner();
         let pdf = self.pdf.take_candidate(&checkpoint.pdf);
         self.page_lent_to_candidate = true;
@@ -986,13 +994,14 @@ impl<G> Universe<G> {
                 world_mark: checkpoint.world.clone(),
                 world: world_tail,
                 dependencies: dependency_tail,
+                hyphenation: hyphenation_tail,
             }),
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
             page_lent_to_candidate: false,
             pdf,
             sources,
-            hyphenation: HyphenationTable::from_checkpoint(&checkpoint.hyphenation),
+            hyphenation,
             world,
             dependencies,
             interaction_mode: checkpoint.interaction_mode,
@@ -1033,6 +1042,9 @@ impl<G> Universe<G> {
             .dependencies
             .reject_checkpoint_candidate(transaction.dependencies);
         candidate
+            .hyphenation
+            .reject_checkpoint_candidate(transaction.hyphenation);
+        candidate
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
         candidate.durable_boxes.reject_checkpoint_candidate(
@@ -1064,6 +1076,7 @@ impl<G> Universe<G> {
         self.fonts = std::mem::take(&mut candidate.fonts);
         self.world = std::mem::take(&mut candidate.world);
         self.dependencies = std::mem::take(&mut candidate.dependencies);
+        self.hyphenation = std::mem::take(&mut candidate.hyphenation);
         self.pdf.return_rejected(&mut candidate.pdf);
         self.page_lent_to_candidate = false;
     }
@@ -1089,6 +1102,8 @@ impl<G> Universe<G> {
         self.world.accept_checkpoint_candidate(transaction.world);
         self.dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
+        self.hyphenation
+            .accept_checkpoint_candidate(transaction.hyphenation);
         self.sources
             .accept_checkpoint_candidate(transaction.sources);
         self.fonts.accept_checkpoint_candidate(transaction.fonts);

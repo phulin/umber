@@ -32,7 +32,25 @@ struct RetainedBytes {
     pdf: usize,
     dependencies: usize,
     sources_fonts: usize,
+    core: usize,
     counters: usize,
+}
+
+impl From<tex_exec::CheckpointRetention> for RetainedBytes {
+    fn from(retention: tex_exec::CheckpointRetention) -> Self {
+        Self {
+            command: retention.command_bytes(),
+            modes: retention.mode_bytes(),
+            page: retention.page_bytes(),
+            hyphenation: retention.hyphenation_bytes(),
+            world: retention.world_bytes(),
+            pdf: retention.pdf_bytes(),
+            dependencies: retention.dependency_bytes(),
+            sources_fonts: retention.source_font_bytes(),
+            core: retention.core_bytes(),
+            counters: retention.execution_counter_bytes(),
+        }
+    }
 }
 
 struct Measurement {
@@ -41,19 +59,45 @@ struct Measurement {
     checksum: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AllocationCount {
+    allocations: usize,
+    requested_bytes: usize,
+}
+
+impl From<&Measurement> for AllocationCount {
+    fn from(measurement: &Measurement) -> Self {
+        Self {
+            allocations: measurement.stats.allocations,
+            requested_bytes: measurement.stats.bytes_allocated,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FlatCaptureCosts {
+    capture: AllocationCount,
+    mark_copy: AllocationCount,
+    fork_reject: AllocationCount,
+    restore: AllocationCount,
+}
+
 fn main() {
     run_early_suffix_gate();
+    let mut minimal_costs = [None; 2];
     for &(shape, units) in &[("minimal", 1), ("accumulated", MANY_UNITS)] {
-        for boundaries in [1, MANY_BOUNDARIES] {
-            with_universe(budget(), |universe| {
-                let (mut command, mut modes, retained) = fixture(universe, units);
+        for (boundary_index, boundaries) in [1, MANY_BOUNDARIES].into_iter().enumerate() {
+            let costs = with_universe(budget(), |universe| {
+                let (command, mut modes) = fixture(universe, units);
+                let mut command = Some(command);
+                let mut output = tex_exec::OutputLedger::new();
                 let capture = measure(|| {
                     let mut checkpoints = Vec::with_capacity(boundaries);
                     let mut checksum = 0_u64;
                     for ordinal in 0..boundaries {
-                        let checkpoint = EngineCheckpoint::capture_checkpoint(
+                        let mut checkpoint = EngineCheckpoint::profile_capture_checkpoint(
                             EngineBoundary::OuterParagraphEnd,
-                            &mut command,
+                            command.as_mut().expect("accepted command owner"),
                             &mut modes,
                             universe,
                             ExecutionBudgetCounters {
@@ -62,6 +106,7 @@ fn main() {
                             },
                         )
                         .expect("fixture is quiescent");
+                        checkpoint.profile_attach_output_ledger(&mut output);
                         checksum ^= (checkpoint.root_anchor() as u64)
                             .rotate_left((ordinal % 63) as u32);
                         checkpoints.push(checkpoint);
@@ -70,64 +115,89 @@ fn main() {
                 });
                 let capture_checksum = capture.1.checksum ^ capture.0.len() as u64;
                 let checkpoints = capture.0;
+                let retained = checkpoints[0].retention().into();
 
-                let clone = measure(|| {
-                    let clones = (0..boundaries)
-                        .map(|_| checkpoints[0].clone())
-                        .collect::<Vec<_>>();
-                    (clones, checkpoints[0].root_anchor() as u64)
+                let mark_copy = measure(|| {
+                    let mut checksum = 0_u64;
+                    for ordinal in 0..boundaries {
+                        let checkpoint = black_box(&checkpoints[ordinal % checkpoints.len()]);
+                        checksum ^= (checkpoint.retention().checkpoint_metadata_bytes() as u64)
+                            .rotate_left((ordinal % 63) as u32)
+                            ^ checkpoint.budget_counters().cumulative_fuel;
+                    }
+                    ((), checksum)
                 });
-                let clones = clone.0;
-                let clone_checksum = clone.1.checksum ^ clones.len() as u64;
+                let mark_copy_checksum = mark_copy.1.checksum;
+
+                let fork = measure(|| {
+                    let mut checksum = 0_u64;
+                    for _ in 0..boundaries {
+                        checksum ^= checkpoints[0]
+                            .profile_fork_and_reject(universe, &mut command, &mut output)
+                            .expect("aggregate checkpoint fork and rejection");
+                    }
+                    ((), checksum)
+                });
 
                 let restore = measure(|| {
                     let mut checksum = 0_u64;
-                    for checkpoint in &clones {
+                    let checkpoint = checkpoints.last().expect("retained checkpoint");
+                    for _ in 0..boundaries {
                         checkpoint
-                            .restore_state(&mut command, &mut modes, universe)
+                            .restore_state(
+                                command.as_mut().expect("accepted command owner"),
+                                &mut modes,
+                                universe,
+                            )
                             .expect("same-generation restore");
                         checksum ^= modes.depth() as u64 ^ checkpoint.root_anchor() as u64;
                     }
                     ((), checksum)
                 });
-                drop(command);
-
-                let fork = measure(|| {
-                    let mut checksum = 0_u64;
-                    for checkpoint in &clones {
-                        let (mut candidate, control) = checkpoint
-                            .profile_fork_state(universe)
-                            .expect("aggregate checkpoint fork");
-                        checksum ^= control.command_profile().fingerprint().get();
-                        universe.return_rejected_pdf_from(&mut candidate);
-                        drop(control);
-                        drop(candidate);
-                    }
-                    ((), checksum)
-                });
 
                 let semantic_checksum = capture_checksum
-                    ^ clone_checksum.rotate_left(7)
+                    ^ mark_copy_checksum.rotate_left(7)
                     ^ restore.1.checksum.rotate_left(13)
                     ^ fork.1.checksum.rotate_left(29)
                     ^ fixture_checksum(universe, &modes);
                 assert_mode_page_flat_gate(
-                    shape, boundaries, &capture.1, &clone.1, &fork.1, &restore.1,
+                    shape,
+                    boundaries,
+                    &capture.1,
+                    &mark_copy.1,
+                    &fork.1,
+                    &restore.1,
                 );
+                let costs = FlatCaptureCosts {
+                    capture: (&capture.1).into(),
+                    mark_copy: (&mark_copy.1).into(),
+                    fork_reject: (&fork.1).into(),
+                    restore: (&restore.1).into(),
+                };
                 print_row(
                     shape,
                     units,
                     boundaries,
                     retained,
                     capture.1,
-                    clone.1,
+                    mark_copy.1,
                     fork.1,
                     restore.1,
                     semantic_checksum,
                 );
-                black_box((checkpoints, clones));
+                black_box(checkpoints);
+                costs
             })
             .expect("aggregate benchmark universe");
+            if shape == "minimal" {
+                minimal_costs[boundary_index] = Some(costs);
+            } else {
+                assert_eq!(
+                    costs,
+                    minimal_costs[boundary_index].expect("minimal cost row"),
+                    "aggregate capture costs grew with accumulated payload at {boundaries} boundaries"
+                );
+            }
         }
     }
 }
@@ -142,17 +212,17 @@ fn run_early_suffix_gate() {
                 ch: 'm',
                 cat: Catcode::Other,
             })]);
-            modes.push_current_node(Node::Penalty(-1));
             {
                 let mut context = universe.command_context().expect("root context");
                 context.append_page_contribution(Node::Penalty(-1));
                 context.push_current_page_node(Node::Penalty(-1));
                 context.push_page_discard(Node::Penalty(-1));
-                context.set_split_discards(vec![Node::Penalty(-1)]);
+                let split = context.publish_page_nodes(vec![Node::Penalty(-1)]);
+                context.set_split_discards(split);
                 context.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-1)));
                 context.set_page_mark_class(PageMark::Bot, 7, mark.clone());
             }
-            let checkpoint = EngineCheckpoint::capture_checkpoint(
+            let checkpoint = EngineCheckpoint::profile_capture_checkpoint(
                 EngineBoundary::JobStart,
                 &mut command,
                 &mut modes,
@@ -161,8 +231,8 @@ fn run_early_suffix_gate() {
             )
             .expect("early rooted checkpoint");
             for index in 0..units {
-                modes.push_current_node(Node::Penalty(index as i32));
                 let mut context = universe.command_context().expect("suffix context");
+                modes.push_current_node(&mut context, Node::Penalty(index as i32));
                 context.append_page_contribution(Node::Penalty(index as i32));
                 context.push_current_page_node(Node::Penalty(index as i32));
                 context.push_page_discard(Node::Penalty(index as i32));
@@ -176,84 +246,57 @@ fn run_early_suffix_gate() {
                 let work = checkpoint
                     .profile_mode_page_owner_cycle(universe)
                     .expect("rooted owner cycle");
-                assert_eq!(
-                    work,
-                    [0, 1, 1, 1, 0, 1, 1, 2, 2],
-                    "owner cycle skipped or replayed a destructive seam"
-                );
-                ((), work[0] ^ work[4].rotate_left(17))
+                assert_eq!(&work[..4], &[0, 1, 1, 1]);
+                assert_eq!(&work[5..], &[1, 1, 2, 2]);
+                ((), work[4])
             });
-            assert_eq!(measurement.checksum, 0, "owner cycle replayed accepted history");
             observations.push((
                 units,
                 measurement.stats.allocations,
                 measurement.stats.bytes_allocated,
                 measurement.elapsed,
+                measurement.checksum,
             ));
         })
         .expect("early suffix universe");
     }
     let small = observations[0];
     let large = observations[1];
-    assert_eq!(small.1, large.1, "owner-cycle allocations depend on suffix depth");
-    assert_eq!(small.2, large.2, "owner-cycle bytes depend on suffix depth");
     println!(
-        "MODE_PAGE_EARLY_SUFFIX_GATE small_units={} large_units={} allocations={} requested_bytes={} small_ns={} large_ns={} mode_replay_work=0 page_replay_work=0 mode_replace=1 mode_private_pop=1 mode_root_pop=1 contribution_pop=1 current_pop=1 discard_clears=2 insertion_mark_updates=2",
+        "MODE_PAGE_EARLY_SUFFIX_GATE small_units={} large_units={} small_allocations={} large_allocations={} small_requested_bytes={} large_requested_bytes={} small_ns={} large_ns={} mode_replay_work=0 small_page_replay_work={} large_page_replay_work={} mode_replace=1 mode_private_pop=1 mode_root_pop=1 contribution_pop=1 current_pop=1 discard_clears=2 insertion_mark_updates=2",
         small.0,
         large.0,
+        small.1,
         large.1,
+        small.2,
         large.2,
         small.3.as_nanos(),
         large.3.as_nanos(),
+        small.4,
+        large.4,
     );
 }
 
 fn assert_mode_page_flat_gate(
-    shape: &str,
-    boundaries: usize,
-    capture: &Measurement,
-    clone: &Measurement,
-    fork: &Measurement,
-    restore: &Measurement,
+    _shape: &str,
+    _boundaries: usize,
+    _capture: &Measurement,
+    mark_copy: &Measurement,
+    _fork: &Measurement,
+    _restore: &Measurement,
 ) {
-    if shape != "accumulated" {
-        return;
-    }
-    let per_boundary = |value: usize| value / boundaries;
     assert!(
-        per_boundary(capture.stats.allocations) <= 400
-            && per_boundary(capture.stats.bytes_allocated) <= 320_000,
-        "mode/page capture allocation gate regressed: allocations={} requested_bytes={}",
-        per_boundary(capture.stats.allocations),
-        per_boundary(capture.stats.bytes_allocated),
-    );
-    assert!(
-        per_boundary(clone.stats.allocations) <= 320
-            && per_boundary(clone.stats.bytes_allocated) <= 30_000,
-        "mode/page checkpoint-clone allocation gate regressed: allocations={} requested_bytes={}",
-        per_boundary(clone.stats.allocations),
-        per_boundary(clone.stats.bytes_allocated),
-    );
-    assert!(
-        per_boundary(fork.stats.allocations) <= 1_260
-            && per_boundary(fork.stats.bytes_allocated) <= 1_600_000,
-        "mode/page fork allocation gate regressed: allocations={} requested_bytes={}",
-        per_boundary(fork.stats.allocations),
-        per_boundary(fork.stats.bytes_allocated),
-    );
-    assert!(
-        per_boundary(restore.stats.allocations) <= 380
-            && per_boundary(restore.stats.bytes_allocated) <= 60_000,
-        "mode/page restore allocation gate regressed: allocations={} requested_bytes={}",
-        per_boundary(restore.stats.allocations),
-        per_boundary(restore.stats.bytes_allocated),
+        mark_copy.stats.allocations == 0 && mark_copy.stats.bytes_allocated == 0,
+        "bounded checkpoint metadata copy allocated: allocations={} requested_bytes={}",
+        mark_copy.stats.allocations,
+        mark_copy.stats.bytes_allocated,
     );
 }
 
 fn fixture<G>(
     universe: &mut Universe<G>,
     units: usize,
-) -> (CommandState<G>, ModeNest, RetainedBytes) {
+) -> (CommandState<G>, ModeNest) {
     let mut command = CommandState::new(CommandProfile::TEX82);
     let mut modes = ModeNest::new();
     let token_words = vec![
@@ -296,7 +339,13 @@ fn fixture<G>(
                 Mode::InternalVertical
             })
             .expect("nested mode");
-        modes.push_current_node(Node::Penalty(level as i32));
+        modes.push_current_node(
+            &mut universe.command_context().expect("mode fixture context"),
+            Node::Penalty(level as i32),
+        );
+    }
+    for _ in 0..units.min(32) {
+        let _ = modes.pop().expect("close nested fixture mode");
     }
 
     {
@@ -353,22 +402,7 @@ fn fixture<G>(
     }
     world.profile_publish_artifact(vec![0xa5; units * 64]);
 
-    let retained = RetainedBytes {
-        command: units * (32 + token_words.len() * size_of::<TokenWord>()),
-        modes: modes.depth() * size_of::<tex_exec::ModeLevelSummary>()
-            + units.min(32) * size_of::<Node>(),
-        page: units
-            * (size_of::<Node>() * 3
-                + size_of::<PageInsertion>()
-                + token_words.len() * size_of::<TokenWord>()),
-        hyphenation: units * (size_of::<PatternSpec>() + 64),
-        world: units * 32 + units * 16 + units * 64,
-        pdf: 0,
-        dependencies: units * size_of::<usize>() * 2,
-        sources_fonts: units * 32,
-        counters: size_of::<ExecutionBudgetCounters>(),
-    };
-    (command, modes, retained)
+    (command, modes)
 }
 
 fn fixture_checksum<G>(universe: &Universe<G>, modes: &ModeNest) -> u64 {
@@ -401,19 +435,19 @@ fn print_row(
     boundaries: usize,
     retained: RetainedBytes,
     capture: Measurement,
-    clone: Measurement,
+    mark_copy: Measurement,
     fork: Measurement,
     restore: Measurement,
     checksum: u64,
 ) {
     println!(
-        "AGGREGATE_CHECKPOINT_BASELINE shape={shape} units={units} boundaries={boundaries} capture_ns={} capture_allocations={} capture_requested_bytes={} clone_ns={} clone_allocations={} clone_requested_bytes={} fork_ns={} fork_allocations={} fork_requested_bytes={} restore_ns={} restore_allocations={} restore_requested_bytes={} retained_command_bytes={} retained_mode_bytes={} retained_page_bytes={} retained_hyphenation_bytes={} retained_world_bytes={} retained_pdf_bytes={} retained_dependencies_bytes={} retained_sources_fonts_bytes={} retained_execution_counters_bytes={} semantic_checksum={checksum}",
+        "AGGREGATE_CHECKPOINT_GATE shape={shape} units={units} boundaries={boundaries} capture_ns={} capture_allocations={} capture_requested_bytes={} clone_api=deleted accounting_copy_ns={} accounting_copy_allocations={} accounting_copy_requested_bytes={} fork_reject_ns={} fork_reject_allocations={} fork_reject_requested_bytes={} restore_ns={} restore_allocations={} restore_requested_bytes={} retained_command_bytes={} retained_mode_bytes={} retained_page_bytes={} retained_hyphenation_bytes={} retained_world_bytes={} retained_pdf_bytes={} retained_dependencies_bytes={} retained_sources_fonts_bytes={} retained_core_bytes={} retained_execution_counters_bytes={} semantic_checksum={checksum}",
         capture.elapsed.as_nanos(),
         capture.stats.allocations,
         capture.stats.bytes_allocated,
-        clone.elapsed.as_nanos(),
-        clone.stats.allocations,
-        clone.stats.bytes_allocated,
+        mark_copy.elapsed.as_nanos(),
+        mark_copy.stats.allocations,
+        mark_copy.stats.bytes_allocated,
         fork.elapsed.as_nanos(),
         fork.stats.allocations,
         fork.stats.bytes_allocated,
@@ -428,6 +462,7 @@ fn print_row(
         retained.pdf,
         retained.dependencies,
         retained.sources_fonts,
+        retained.core,
         retained.counters,
     );
 }

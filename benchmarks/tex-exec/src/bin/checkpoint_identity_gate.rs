@@ -44,11 +44,6 @@ fn early_root_read_gate() {
             assert!(command.enable_reachable_state_identity());
             modes.enable_reachable_state_identity();
             universe.enable_reachable_state_identity();
-            modes.push_current_node(Node::Penalty(-1));
-            universe
-                .command_context()
-                .expect("root context")
-                .append_page_contribution(Node::Penalty(-1));
             let checkpoint = EngineCheckpoint::profile_capture_checkpoint_with_identity_demand(
                 EngineBoundary::OuterParagraphEnd,
                 &mut command,
@@ -63,11 +58,9 @@ fn early_root_read_gate() {
                 .reachable_state_identity()
                 .expect("all authoritative roots are available");
             for index in 0..suffix {
-                modes.push_current_node(Node::Penalty(index as i32));
-                universe
-                    .command_context()
-                    .expect("suffix context")
-                    .append_page_contribution(Node::Penalty(index as i32));
+                let mut context = universe.command_context().expect("suffix context");
+                modes.push_current_node(&mut context, Node::Penalty(index as i32));
+                context.append_page_contribution(Node::Penalty(index as i32));
             }
 
             let region = Region::new(GLOBAL);
@@ -112,13 +105,19 @@ fn sample(mode_levels: usize, demand_identity: bool) -> Stats {
                     Mode::InternalVertical
                 })
                 .expect("bounded mode nest");
-            modes.push_current_node(Node::Penalty(level as i32));
+            modes.push_current_node(
+                &mut universe.command_context().expect("mode context"),
+                Node::Penalty(level as i32),
+            );
+        }
+        for _ in 0..mode_levels {
+            let _ = modes.pop().expect("close accumulated mode level");
         }
 
         // Warm the generation-owned checkpoint slots before measuring the
         // difference made solely by optional identity demand.
         black_box(
-            EngineCheckpoint::capture_checkpoint(
+            EngineCheckpoint::profile_capture_checkpoint(
                 EngineBoundary::OuterParagraphEnd,
                 &mut command,
                 &mut modes,
@@ -137,7 +136,7 @@ fn sample(mode_levels: usize, demand_identity: bool) -> Stats {
                 ExecutionBudgetCounters::default(),
             )
         } else {
-            EngineCheckpoint::capture_checkpoint(
+            EngineCheckpoint::profile_capture_checkpoint(
                 EngineBoundary::OuterParagraphEnd,
                 &mut command,
                 &mut modes,
