@@ -391,11 +391,15 @@ publish a definition for a dead row. No live handle is relocated or rehomed.
 ## Hot resolution and suspension
 
 At episode admission, `tex-command` receives a borrowed view of the generation
-which matches the dense state it will execute. A meaning lookup explicitly
-clones the definition's non-atomic owner; macro entry moves that owner into its
-active frame or owning view. Parameter and replacement reads dereference the
-shared immutable slice directly. Admission acquires one guard for the episode,
-not one lock or heap allocation per lookup.
+which matches the dense state it will execute. One dense probe lends a
+reference-sized `MeaningProjection`; its single row-tag decode writes the final
+owned meaning and command identity directly into `CurrentCommand`. A macro row
+clones the definition's non-atomic owner exactly once and moves it into that
+destination; no intermediate `ResolvedMeaning` or whole row is reconstructed.
+Macro entry later moves that owner into its active frame or owning view.
+Parameter and replacement reads dereference the shared immutable slice
+directly. Admission acquires one guard for the episode, not one lock or heap
+allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
 Reference-only `EmptyCommand`, `RawCommand`, and `ResolvedCommand` typestates

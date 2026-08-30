@@ -354,3 +354,124 @@ fn command_code_partition_classifies_character_internal_unexpandable_and_expanda
         assert_eq!(ExpandablePrimitive::ExpandAfter.operand(), 0);
     });
 }
+
+#[test]
+fn borrowed_projection_preserves_table_meaning_families_and_active_namespace() {
+    crate::test_harness::with_universe(|universe| {
+        let undefined = universe.intern("projectionundefined").expect("undefined");
+        let primitive = universe.intern("projectionprimitive").expect("primitive");
+        let register = universe.intern("projectionregister").expect("register");
+        let font = universe.intern("projectionfont").expect("font");
+        let macro_name = universe.intern("projectionmacro").expect("macro");
+        let macro_alias = universe.intern("projectionalias").expect("alias");
+        let definition = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(Token::Char {
+                    ch: 'm',
+                    cat: Catcode::Letter,
+                })],
+            )
+            .expect("definition");
+        for (symbol, meaning) in [
+            (
+                primitive,
+                MeaningWord::from_static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::ExpandAfter,
+                )),
+            ),
+            (
+                register,
+                MeaningWord::from_static(Meaning::CountRegister(32_767)),
+            ),
+            (
+                font,
+                MeaningWord::from_static(Meaning::Font(tex_state::font::NULL_FONT)),
+            ),
+            (
+                macro_name,
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+            ),
+            (
+                macro_alias,
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+            ),
+        ] {
+            universe
+                .assign_meaning(symbol, meaning, AssignmentScope::Global)
+                .expect("meaning assignment");
+        }
+        let active = universe
+            .intern_active_character('~')
+            .expect("active character");
+        universe
+            .assign_meaning(
+                active,
+                MeaningWord::from_static(Meaning::CharGiven('A')),
+                AssignmentScope::Global,
+            )
+            .expect("active meaning");
+
+        let cases = [
+            (
+                Token::Cs(undefined.symbol()),
+                ResolvedMeaning::Static(Meaning::Undefined),
+            ),
+            (
+                Token::Cs(primitive.symbol()),
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::ExpandAfter,
+                )),
+            ),
+            (
+                Token::Cs(register.symbol()),
+                ResolvedMeaning::Static(Meaning::CountRegister(32_767)),
+            ),
+            (
+                Token::Cs(font.symbol()),
+                ResolvedMeaning::Static(Meaning::Font(tex_state::font::NULL_FONT)),
+            ),
+        ];
+        for (token, expected) in cases {
+            assert_eq!(resolved(universe, token).meaning_ref(), &expected);
+        }
+
+        let first = resolved(universe, Token::Cs(macro_name.symbol()));
+        let alias = resolved(universe, Token::Cs(macro_alias.symbol()));
+        assert_eq!(first.meaning_ref(), alias.meaning_ref());
+        assert_eq!(
+            first.spelling().semantic_token(),
+            Token::Cs(macro_name.symbol())
+        );
+        assert_eq!(
+            alias.spelling().semantic_token(),
+            Token::Cs(macro_alias.symbol())
+        );
+
+        let active_command = resolved(
+            universe,
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            },
+        );
+        assert_eq!(active_command.control_sequence(), Some(active.symbol()));
+        assert_eq!(active_command.meaning_ref(), &Meaning::CharGiven('A'));
+        let undefined_active = resolved(
+            universe,
+            Token::Char {
+                ch: '?',
+                cat: Catcode::Active,
+            },
+        );
+        assert_eq!(undefined_active.control_sequence(), None);
+        assert_eq!(undefined_active.meaning_ref(), &Meaning::Undefined);
+        assert_eq!(
+            definition.replacement_word(0),
+            Some(TokenWord::pack(Token::Char {
+                ch: 'm',
+                cat: Catcode::Letter,
+            }))
+        );
+    });
+}

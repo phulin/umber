@@ -348,13 +348,16 @@ macro-parameter replay. The ordinary path therefore does not reconstruct a
 complete token merely to ask whether it needs interception, and meaning
 resolution remains the single full spelling classification.
 
-An admitted control-sequence spelling indexes and borrows its dense meaning row
-for resolution. The same token classification reports the work ledger's
-meaning-lookup fact; no second spelling decode precedes resolution. Static
-meanings decode inside that borrow. A macro row acquires one `DefinitionId<G>`
-owner in the final owned `CurrentCommand`; borrowing the row itself acquires
-none. Trace eligibility and expanded-loop classification likewise borrow that
-resolved meaning instead of retaining and releasing another definition owner.
+An admitted control-sequence spelling probes and borrows its dense meaning row
+once. The reference-sized projection decodes the canonical row tag once and
+writes the final owned meaning and command identity directly into
+`CurrentCommand`; no intermediate resolved meaning is reconstructed or matched
+again. The same token classification reports the work ledger's meaning-lookup
+fact, and no second spelling decode precedes resolution. A macro row acquires
+one `DefinitionId<G>` owner in the final owned `CurrentCommand`; borrowing the
+row itself acquires none. Trace eligibility and expanded-loop classification
+likewise borrow that resolved meaning instead of retaining and releasing
+another definition owner.
 The expanded loop classifies that meaning once into return, expand, or
 `end_template`; policy handling does not repeat meaning matches.
 The temporary bank borrow ends before any command-driven mutation, while the

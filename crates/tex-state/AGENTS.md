@@ -179,7 +179,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed shared
-  macro owners; raw integers never materialize runtime definition handles.
+  macro owners and the reference-only projection target which decodes one
+  borrowed canonical row directly into its caller's final fields; raw integers
+  never materialize runtime definition handles.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, and coarse retained

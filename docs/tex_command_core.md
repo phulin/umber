@@ -247,10 +247,14 @@ retirement receipt carries only copy-small semantic facts and never clones the
 row's replay explanation. It neither clears nor reconstructs the caller-owned
 `CurrentCommand` slot.
 
-Control-sequence resolution borrows the already-admitted dense meaning row
-through the live `CommandContext`. Static words decode during that borrow; a
-macro meaning clones its generation-branded definition owner exactly once into
-the owned `CurrentCommand`. The row borrow ends with resolution, before outer
+Control-sequence resolution performs one direct probe of the already-admitted
+dense meaning row through the live `CommandContext`. The probe returns only a
+reference-sized `MeaningProjection`. Consuming that view decodes the canonical
+row tag once and writes the final owned meaning and command-identity fields in
+the caller's `CurrentCommand`; it does not first construct a
+`ResolvedMeaning`. Static words decode during that borrow, while a macro row
+clones its generation-branded definition owner exactly once and moves that
+owner into the destination. The row borrow ends with projection, before outer
 recovery, alignment handling, expansion, execution, assignment, replay, or
 suspension can mutate state. Assignment level remains solely in the dense bank,
 so delivered-command ownership does not duplicate journaling or reinterpret a

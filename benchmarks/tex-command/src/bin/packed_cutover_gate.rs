@@ -79,6 +79,11 @@ fn main() {
         "stored_control_sequence_delivery",
         stored_control_sequence_delivery,
     );
+    run_row(
+        only,
+        "borrowed_meaning_projection",
+        borrowed_meaning_projection,
+    );
     run_row(only, "macro_argument_matching", macro_argument_matching);
     run_row(
         only,
@@ -128,6 +133,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "source_new_creating_delivery",
     "source_unknown_probe_delivery",
     "stored_control_sequence_delivery",
+    "borrowed_meaning_projection",
     "macro_argument_matching",
     "warmed_keyword_mismatch",
     "destination_directed_warm_delivery",
@@ -406,6 +412,43 @@ fn stored_control_sequence_delivery() {
             "stored_control_sequence_delivery operations={OPERATIONS} throughput_ns_per_op={:.2}",
             elapsed.as_nanos() as f64 / OPERATIONS as f64
         );
+    });
+}
+
+fn borrowed_meaning_projection() {
+    with_universe(|universe| {
+        let mut benchmark = tex_command::MeaningProjectionBenchmark::new(universe);
+        let context = universe.command_context().expect("command context");
+        let _ = benchmark.run(&context, 64);
+        let mut one = None;
+        let mut four_k = None;
+        measure_zero("borrowed_meaning_projection_1_4096", || {
+            one = Some(black_box(benchmark.run(&context, 1)));
+            four_k = Some(black_box(benchmark.run(&context, 4096)));
+        });
+        for (rounds, receipt) in [
+            (1_u32, one.expect("one-round projection receipt")),
+            (4096_u32, four_k.expect("4096-round projection receipt")),
+        ] {
+            assert_eq!(receipt.table_probes, receipt.resolved_meanings);
+            assert_eq!(receipt.tag_decodes, receipt.resolved_meanings);
+            assert_eq!(receipt.macro_owner_resolutions, receipt.macro_meanings);
+            assert_eq!(receipt.duplicate_owner_resolutions, 0);
+            assert_eq!(receipt.whole_meaning_copies, 0);
+            assert_eq!(receipt.whole_command_copies, 0);
+            println!(
+                "borrowed_meaning_projection rounds={rounds} meanings={} table_probes={} tag_decodes={} macro_meanings={} owner_resolutions={} duplicate_owner_resolutions={} whole_meaning_copies={} whole_command_copies={} checksum={}",
+                receipt.resolved_meanings,
+                receipt.table_probes,
+                receipt.tag_decodes,
+                receipt.macro_meanings,
+                receipt.macro_owner_resolutions,
+                receipt.duplicate_owner_resolutions,
+                receipt.whole_meaning_copies,
+                receipt.whole_command_copies,
+                receipt.checksum,
+            );
+        }
     });
 }
 

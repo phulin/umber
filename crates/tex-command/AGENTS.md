@@ -110,6 +110,11 @@ collector (see `src/conditionals.rs`).
   ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
+- `src/meaning_projection.rs`: profiling-only mixed-meaning structural harness
+  for the borrow-scoped dense-row projection into the caller-owned command.
+  Its one/4,096-round gate counts table probes, tag decodes, final macro-owner
+  acquisitions, whole-meaning/command copies, and warmed allocations without
+  adding production state or an alternate delivery path.
 - `src/processor/expand.rs`: canonical destination-directed raw/expanded
   delivery state machine and static primitive dispatch. Its const-specialized
   raw and expanded entries advance resident input into the caller's final slot,

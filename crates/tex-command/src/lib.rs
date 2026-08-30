@@ -57,6 +57,8 @@ mod fuel;
 mod host;
 mod input;
 mod macro_call;
+#[cfg(feature = "profiling")]
+mod meaning_projection;
 mod observation;
 mod primitives;
 pub use primitives::{
@@ -117,6 +119,8 @@ pub use input::{
     LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
     MixedPackedCursorReceipt,
 };
+#[cfg(feature = "profiling")]
+pub use meaning_projection::{MeaningProjectionBenchmark, MeaningProjectionReceipt};
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
 pub use observation::canonical_names;

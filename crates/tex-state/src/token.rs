@@ -315,13 +315,13 @@ impl<G> crate::CommandContext<'_, G> {
     /// [`Token`] and without returning a second resolved-command carrier.
     /// Frozen engine sentinels remain on their distinct semantic branch.
     #[inline(always)]
-    pub fn resolve_packed_token_meaning_into(
+    pub fn project_packed_token_meaning_into(
         &self,
         word: TokenWord,
-        meaning: &mut crate::meaning::ResolvedMeaning<G>,
+        target: &mut impl crate::meaning::MeaningProjectionTarget<G>,
         control_sequence: &mut Option<Symbol>,
     ) -> PackedMeaningResolution {
-        use crate::meaning::{Meaning, ResolvedMeaning};
+        use crate::meaning::Meaning;
 
         let kind = word.0 >> TokenWord::KIND_SHIFT;
         let payload = word.0 & TokenWord::PAYLOAD_MASK;
@@ -334,13 +334,16 @@ impl<G> crate::CommandContext<'_, G> {
                 let meaning_lookup = if cat == Catcode::Active {
                     let symbol = self.active_character_symbol(ch);
                     *control_sequence = symbol;
-                    *meaning = symbol
-                        .map(|symbol| self.compact_control_sequence_meaning(symbol))
-                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined));
+                    if let Some(symbol) = symbol {
+                        self.compact_control_sequence_meaning_projection(symbol)
+                            .project_into(target);
+                    } else {
+                        target.project_static(Meaning::Undefined);
+                    }
                     true
                 } else {
                     *control_sequence = None;
-                    *meaning = ResolvedMeaning::Static(Meaning::CharToken { ch, cat });
+                    target.project_static(Meaning::CharToken { ch, cat });
                     false
                 };
                 PackedMeaningResolution {
@@ -351,7 +354,8 @@ impl<G> crate::CommandContext<'_, G> {
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
                 *control_sequence = Some(symbol);
-                *meaning = self.compact_control_sequence_meaning(symbol);
+                self.compact_control_sequence_meaning_projection(symbol)
+                    .project_into(target);
                 PackedMeaningResolution {
                     meaning_lookup: true,
                     literal_catcode: None,
@@ -359,7 +363,7 @@ impl<G> crate::CommandContext<'_, G> {
             }
             TokenWord::KIND_PARAM => {
                 *control_sequence = None;
-                *meaning = ResolvedMeaning::Static(Meaning::Undefined);
+                target.project_static(Meaning::Undefined);
                 PackedMeaningResolution {
                     meaning_lookup: false,
                     literal_catcode: None,
@@ -368,20 +372,23 @@ impl<G> crate::CommandContext<'_, G> {
             TokenWord::KIND_FROZEN => {
                 let frozen = FrozenToken::from_raw(payload as u16);
                 *control_sequence = None;
-                *meaning = if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
-                    ResolvedMeaning::Static(Meaning::Undefined)
+                if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
+                    target.project_static(Meaning::Undefined);
                 } else if frozen == FrozenToken::END_TEMPLATE {
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                    target.project_static(Meaning::ExpandablePrimitive(
                         crate::meaning::ExpandablePrimitive::EndTemplate,
-                    ))
+                    ));
                 } else if frozen == FrozenToken::END_V {
-                    ResolvedMeaning::Static(Meaning::EndV)
+                    target.project_static(Meaning::EndV);
                 } else if frozen == FrozenToken::RELAX {
-                    ResolvedMeaning::Static(Meaning::Relax)
+                    target.project_static(Meaning::Relax);
+                } else if let Some(projection) =
+                    self.frozen_primitive_meaning_projection(Token::Frozen(frozen))
+                {
+                    projection.project_into(target);
                 } else {
-                    self.frozen_primitive_resolved(Token::Frozen(frozen))
-                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined))
-                };
+                    target.project_static(Meaning::Undefined);
+                }
                 PackedMeaningResolution {
                     meaning_lookup: false,
                     literal_catcode: None,

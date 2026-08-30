@@ -1,8 +1,9 @@
 //! Ephemeral current-command representation.
 
 use tex_state::CommandContext;
+use tex_state::DefinitionId;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, ResolvedMeaning};
+use tex_state::meaning::{Meaning, MeaningFlags, MeaningProjectionTarget, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TokenWord, TracedTokenWord};
 
 use crate::{SourceLocation, SourceProvenance, SourceRange};
@@ -35,7 +36,7 @@ thread_local! {
         }) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "profiling"))]
 pub(crate) fn command_ownership_counters() -> CommandOwnershipCounters {
     COMMAND_OWNERSHIP_COUNTERS.with(core::cell::Cell::get)
 }
@@ -288,26 +289,26 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
-    fn from_meaning<G>(meaning: &ResolvedMeaning<G>) -> Self {
+    fn from_static_meaning(meaning: Meaning) -> Self {
         match meaning {
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                tex_state::meaning::ExpandablePrimitive::ExpandAfter,
-            )) => Self::ExpandAfter,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                tex_state::meaning::ExpandablePrimitive::CsName,
-            )) => Self::CsName,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                tex_state::meaning::ExpandablePrimitive::EndCsName,
-            )) => Self::EndCsName,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
-                if let Some(selector) = ConvertSelector::from_primitive(*primitive) {
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter) => {
+                Self::ExpandAfter
+            }
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::CsName) => {
+                Self::CsName
+            }
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
+                Self::EndCsName
+            }
+            Meaning::ExpandablePrimitive(primitive) => {
+                if let Some(selector) = ConvertSelector::from_primitive(primitive) {
                     Self::Convert(selector)
                 } else {
                     Self::Ordinary
                 }
             }
-            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => {
-                if let Some(selector) = XRaySelector::from_primitive(*primitive) {
+            Meaning::UnexpandablePrimitive(primitive) => {
+                if let Some(selector) = XRaySelector::from_primitive(primitive) {
                     Self::XRay(selector)
                 } else {
                     Self::Ordinary
@@ -315,6 +316,25 @@ impl CommandIdentity {
             }
             _ => Self::Ordinary,
         }
+    }
+}
+
+struct CurrentMeaningProjection<'command, G> {
+    meaning: &'command mut ResolvedMeaning<G>,
+    identity: &'command mut CommandIdentity,
+}
+
+impl<G> MeaningProjectionTarget<G> for CurrentMeaningProjection<'_, G> {
+    #[inline(always)]
+    fn project_static(&mut self, meaning: Meaning) {
+        *self.identity = CommandIdentity::from_static_meaning(meaning);
+        *self.meaning = ResolvedMeaning::Static(meaning);
+    }
+
+    #[inline(always)]
+    fn project_macro(&mut self, flags: MeaningFlags, definition: DefinitionId<G>) {
+        *self.identity = CommandIdentity::Ordinary;
+        *self.meaning = ResolvedMeaning::Macro { flags, definition };
     }
 }
 
@@ -717,12 +737,15 @@ impl<'slot, G> EmptyCommand<'slot, G> {
             CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
             suppress_expandable,
         );
-        let resolution = state.resolve_packed_token_meaning_into(
+        let mut projection = CurrentMeaningProjection {
+            meaning: &mut command.meaning,
+            identity: &mut command.identity,
+        };
+        let resolution = state.project_packed_token_meaning_into(
             word,
-            &mut command.meaning,
+            &mut projection,
             &mut command.control_sequence,
         );
-        command.identity = CommandIdentity::from_meaning(&command.meaning);
         (ResolvedCommand(command), resolution)
     }
 }
