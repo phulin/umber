@@ -12,7 +12,8 @@ pub(crate) use expression::{ExpressionFrame, PendingExpressionScan};
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{
-    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScannedScalar,
+    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScalarScanFrame,
+    ScalarScanStatus, ScannedScalar,
 };
 pub(crate) use scalar::{PendingScalarFrame, ScalarChildDestination};
 pub use structured::{

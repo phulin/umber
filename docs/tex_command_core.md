@@ -678,26 +678,26 @@ The intentionally small public surface is expected to include:
 ### 5.2 Executor scalar-scanner contract
 
 `CommandProcessor` owns every scalar operand read required by executor main
-control. Its public `scan_integer`, `scan_dimension`, `scan_glue`,
-`scan_keyword`, `scan_optional_equals`, and
-`scan_internal_value` operations consume only the command-owned expanded input
-stream. Each returns a typed `ScannedScalar` value carrying the first-token
-provenance and any canonical recovery; callers never receive an input cursor,
-token frame, or raw-delivery capability. Failed optional keyword scans replay
+control. Its destination-directed integer, dimension, glue, keyword,
+optional-equals, internal-value, font, and filename operations consume only the
+command-owned expanded input stream. Each writes one typed `ScannedScalar` or
+structured scalar value into the executor operation's reusable
+`ScalarScanFrame` and returns a payload-free status; callers never receive an
+input cursor, token frame, raw-delivery capability, or result envelope. Failed optional keyword scans replay
 through the same `get_next` path, so executor code cannot create a second
 lexer, expansion loop, or backup mechanism. `CommandState::snapshot` remains
 the transaction boundary for the resulting future input state.
 
-Within one synchronous scalar call, integer and internal-value results use a
-bounded caller-owned frame with disjoint typed-value and `CommandError` slots.
-Integer and internal-value call boundaries return only a compact
+The one operation-owned frame has disjoint typed-value and `CommandError`
+storage. Every scalar boundary returns only a compact
 complete/suspended/failed status; the successful path never transfers the
-error-sized carrier. Legacy `Result`-returning scalar boundaries settle at the
-producing call site instead of handing the whole carrier to a generic helper.
-Completion consumes the value immediately, while only a genuine resource
-suspension installs the existing move-only continuation edge in
-generation-owned scratch. The call frame owns no heap allocation, retained
-arena, cache, or durable state.
+error-sized carrier. Completion consumes the value immediately. Only a genuine
+resource suspension installs the existing move-only continuation edge in
+generation-owned scratch and retains its key beside the operation's exact
+phase. The frame is explicitly emptied before reuse and owns no heap
+allocation, retained arena, cache, or durable state. Nested expression
+evaluation uses the same destination-directed rule for its child result rather
+than returning a large `Result` through `scan_expression`.
 
 Recoverable scalar diagnostics use the same borrow-scoped `CommandContext`
 that the processor already holds: its §73 `print_err` forwarding method opens

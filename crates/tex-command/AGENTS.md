@@ -274,10 +274,11 @@ collector (see `src/conditionals.rs`).
   space inside §341's `get_next`. The same reusable ABA-tagged scalar lane owns
   optional-equals, fixed-inline keyword prefix, integer, dimension, glue,
   filename, internal-value, expression, and font-selector continuation state.
-  Raw resource-capable scanners remain private; public retained calls return a
-  move-only completed/suspended/failed result, and each expansion,
-  conditional, alignment, structured scanner, or executor operation moves the
-  suspended child into its exact typed phase. Success, resuspension, abort, and
+  Raw resource-capable scanners remain private; executor scalar phases write
+  once into the reusable `ScalarScanFrame` owned by their `OperationFrame` and
+  return only a compact status. Internal expansion, conditional, alignment,
+  and structured parents move a suspended child into their exact typed phase.
+  Success, resuspension, abort, and
   fallible parent-frame storage all close or reinstall that chain
   deepest-first. Do not add a root mailbox, caller-order result tape,
   destination inference/search, or command redispatch fallback.

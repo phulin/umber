@@ -33,6 +33,7 @@ pub(in crate::main_control) fn scan<G>(
     let tex_state::meaning::ResolvedMeaning::Static(meaning) = command.meaning() else {
         unreachable!("expanded macro reached cold stomach dispatch")
     };
+    let command_origin = command.origin();
     match meaning {
         Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -142,6 +143,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             scan_count_register_assignment(
                 processor,
+                &mut command.scalar,
                 None,
                 global,
                 RegisterAssignmentScanPhase::RegisterIndex,
@@ -150,6 +152,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::CountRegister(index) => scan_count_register_assignment(
             processor,
+            &mut command.scalar,
             Some(index),
             global,
             RegisterAssignmentScanPhase::OptionalEquals,
@@ -158,6 +161,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             scan_dimension_register_assignment(
                 processor,
+                &mut command.scalar,
                 None,
                 global,
                 RegisterAssignmentScanPhase::RegisterIndex,
@@ -177,6 +181,7 @@ pub(in crate::main_control) fn scan<G>(
             };
             scan_box_dimension_assignment(
                 processor,
+                &mut command.scalar,
                 None,
                 dimension,
                 global,
@@ -186,6 +191,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::DimenRegister(index) => scan_dimension_register_assignment(
             processor,
+            &mut command.scalar,
             Some(index),
             global,
             RegisterAssignmentScanPhase::OptionalEquals,
@@ -194,6 +200,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
             scan_glue_register_assignment(
                 processor,
+                &mut command.scalar,
                 None,
                 global,
                 false,
@@ -203,6 +210,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::SkipRegister(index) => scan_glue_register_assignment(
             processor,
+            &mut command.scalar,
             Some(index),
             global,
             false,
@@ -212,6 +220,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             scan_glue_register_assignment(
                 processor,
+                &mut command.scalar,
                 None,
                 global,
                 true,
@@ -221,6 +230,7 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::MuskipRegister(index) => scan_glue_register_assignment(
             processor,
+            &mut command.scalar,
             Some(index),
             global,
             true,
@@ -234,18 +244,20 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::Value,
                 suspended_operation_scan,
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => scan_unary_scalar_operation(
             processor,
+            &mut command.scalar,
             meaning,
             global,
-            command.origin(),
+            command_origin,
             UnaryOperationScanPhase::Value,
             suspended_operation_scan,
         ),
@@ -256,9 +268,10 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::Value,
                 suspended_operation_scan,
             )
@@ -270,9 +283,10 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
                 scan_unary_scalar_operation(
                     processor,
+                    &mut command.scalar,
                     meaning,
                     global,
-                    command.origin(),
+                    command_origin,
                     UnaryOperationScanPhase::OptionalEquals,
                     suspended_operation_scan,
                 )
@@ -301,9 +315,10 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::OptionalEquals,
                 suspended_operation_scan,
             )
@@ -312,9 +327,10 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 scan_unary_scalar_operation(
                     processor,
+                    &mut command.scalar,
                     meaning,
                     global,
-                    command.origin(),
+                    command_origin,
                     UnaryOperationScanPhase::OptionalEquals,
                     suspended_operation_scan,
                 )
@@ -327,9 +343,10 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::OptionalEquals,
                 suspended_operation_scan,
             )
@@ -338,6 +355,7 @@ pub(in crate::main_control) fn scan<G>(
             let origin = material_origin(processor, command);
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
                 origin,
@@ -423,9 +441,10 @@ pub(in crate::main_control) fn scan<G>(
         {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::Value,
                 suspended_operation_scan,
             )
@@ -459,6 +478,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
             scan_paragraph_shape_assignment(
                 processor,
+                &mut command.scalar,
                 global,
                 ParagraphShapeScanPhase::OptionalEquals,
                 suspended_operation_scan,
@@ -483,6 +503,7 @@ pub(in crate::main_control) fn scan<G>(
             };
             scan_penalty_array_assignment(
                 processor,
+                &mut command.scalar,
                 kind,
                 global,
                 PenaltyArrayScanPhase::OptionalEquals,
@@ -519,17 +540,19 @@ pub(in crate::main_control) fn scan<G>(
         }
         Meaning::IntParam(index) => scan_unary_scalar_operation(
             processor,
+            &mut command.scalar,
             Meaning::IntParam(index),
             global,
-            command.origin(),
+            command_origin,
             UnaryOperationScanPhase::OptionalEquals,
             suspended_operation_scan,
         ),
         Meaning::DimenParam(index) => scan_unary_scalar_operation(
             processor,
+            &mut command.scalar,
             Meaning::DimenParam(index),
             global,
-            command.origin(),
+            command_origin,
             UnaryOperationScanPhase::OptionalEquals,
             suspended_operation_scan,
         ),
@@ -544,17 +567,19 @@ pub(in crate::main_control) fn scan<G>(
         // anything to scope.
         Meaning::PageDimension(dimension) => scan_unary_scalar_operation(
             processor,
+            &mut command.scalar,
             Meaning::PageDimension(dimension),
             global,
-            command.origin(),
+            command_origin,
             UnaryOperationScanPhase::OptionalEquals,
             suspended_operation_scan,
         ),
         Meaning::PageInteger(integer) => scan_unary_scalar_operation(
             processor,
+            &mut command.scalar,
             Meaning::PageInteger(integer),
             global,
-            command.origin(),
+            command_origin,
             UnaryOperationScanPhase::OptionalEquals,
             suspended_operation_scan,
         ),
@@ -653,9 +678,10 @@ pub(in crate::main_control) fn scan<G>(
             if primitive == UnexpandablePrimitive::PdfRefXImage {
                 return scan_unary_scalar_operation(
                     processor,
+                    &mut command.scalar,
                     meaning,
                     global,
-                    command.origin(),
+                    command_origin,
                     UnaryOperationScanPhase::Value,
                     suspended_operation_scan,
                 );
@@ -673,9 +699,10 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
             scan_unary_scalar_operation(
                 processor,
+                &mut command.scalar,
                 meaning,
                 global,
-                command.origin(),
+                command_origin,
                 UnaryOperationScanPhase::Value,
                 suspended_operation_scan,
             )
@@ -878,6 +905,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
             scan_font_dimen_assignment(
                 processor,
+                &mut command.scalar,
                 FontDimenScanPhase::Number,
                 suspended_operation_scan,
             )
@@ -886,12 +914,14 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
         ) => scan_font_integer_assignment(
             processor,
+            &mut command.scalar,
             primitive,
             FontIntegerScanPhase::Font,
             suspended_operation_scan,
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => scan_open_out_operation(
             processor,
+            &mut command.scalar,
             OpenOutScanPhase::Stream,
             suspended_operation_scan,
         ),
@@ -906,6 +936,7 @@ pub(in crate::main_control) fn scan<G>(
             // both DVI and PDF mode.
             scan_pdf_font_expand_assignment(
                 processor,
+                &mut command.scalar,
                 PdfFontExpandScanPhase::Font,
                 suspended_operation_scan,
             )
@@ -967,9 +998,10 @@ pub(in crate::main_control) fn scan<G>(
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 scan_unary_scalar_operation(
                     processor,
+                    &mut command.scalar,
                     meaning,
                     global,
-                    command.origin(),
+                    command_origin,
                     UnaryOperationScanPhase::Value,
                     suspended_operation_scan,
                 )
@@ -993,6 +1025,7 @@ pub(in crate::main_control) fn scan<G>(
             // selector's recovery.
             scan_code_table_assignment(
                 processor,
+                &mut command.scalar,
                 primitive,
                 global,
                 CodeTableScanPhase::Character,
@@ -1014,12 +1047,18 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PdfKnacCode),
         ) => scan_pdf_font_code_assignment(
             processor,
+            &mut command.scalar,
             primitive,
             PdfFontCodeScanPhase::Font,
             suspended_operation_scan,
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
-            scan_font_only_operation(processor, meaning, suspended_operation_scan)
+            scan_font_only_operation(
+                processor,
+                &mut command.scalar,
+                meaning,
+                suspended_operation_scan,
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Advance
@@ -1027,6 +1066,7 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::Divide),
         ) => scan_arithmetic_assignment(
             processor,
+            &mut command.scalar,
             primitive,
             global,
             ArithmeticScanPhase::TargetCommand,
@@ -1361,7 +1401,13 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::Leaders
             | UnexpandablePrimitive::CLeaders
             | UnexpandablePrimitive::XLeaders),
-        ) => scan_leaders_step(processor, primitive, mode, suspended_operation_scan),
+        ) => scan_leaders_step(
+            processor,
+            &mut command.scalar,
+            primitive,
+            mode,
+            suspended_operation_scan,
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
             Ok(ColdOperation::BeginShipout)
         }
@@ -1450,9 +1496,12 @@ pub(in crate::main_control) fn scan<G>(
         // e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: `\marks` first scans
         // one extended register number (recovering an invalid selector to
         // class zero), then performs TeX82's expanded mark-text scan.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => {
-            scan_marks_operation(processor, MarksScanPhase::Class, suspended_operation_scan)
-        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => scan_marks_operation(
+            processor,
+            &mut command.scalar,
+            MarksScanPhase::Class,
+            suspended_operation_scan,
+        ),
         // TeX82 §1095's `hmode+halign: head_for_vmode` ends an unrestricted
         // paragraph and retries the alignment in vertical mode.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
@@ -2521,6 +2570,7 @@ fn unimplemented_meaning<G>(
 /// borrow ends.
 pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
+    scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     global: bool,
     phase: ArithmeticScanPhase,
@@ -2548,10 +2598,10 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                 }
                 tex_state::meaning::ResolvedMeaning::Static(meaning) => match meaning {
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-                        let scan = processor.scan_profile_register_index_retained();
-                        ArithmeticTarget::IntegerRegister(retain_operation_scalar(
-                            processor,
-                            scan,
+                        let status = processor.scan_profile_register_index_into(scalar);
+                        ArithmeticTarget::IntegerRegister(take_operation_scalar!(
+                            scalar,
+                            status,
                             PendingOperationScanPhase::Arithmetic {
                                 primitive,
                                 global,
@@ -2560,13 +2610,14 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                                 },
                             },
                             suspended,
-                        )?)
+                            take_register
+                        ))
                     }
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-                        let scan = processor.scan_profile_register_index_retained();
-                        ArithmeticTarget::DimensionRegister(retain_operation_scalar(
-                            processor,
-                            scan,
+                        let status = processor.scan_profile_register_index_into(scalar);
+                        ArithmeticTarget::DimensionRegister(take_operation_scalar!(
+                            scalar,
+                            status,
                             PendingOperationScanPhase::Arithmetic {
                                 primitive,
                                 global,
@@ -2575,14 +2626,15 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                                 },
                             },
                             suspended,
-                        )?)
+                            take_register
+                        ))
                     }
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-                        let scan = processor.scan_profile_register_index_retained();
+                        let status = processor.scan_profile_register_index_into(scalar);
                         ArithmeticTarget::GlueRegister {
-                            index: retain_operation_scalar(
-                                processor,
-                                scan,
+                            index: take_operation_scalar!(
+                                scalar,
+                                status,
                                 PendingOperationScanPhase::Arithmetic {
                                     primitive,
                                     global,
@@ -2591,16 +2643,17 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                                     },
                                 },
                                 suspended,
-                            )?,
+                                take_register
+                            ),
                             mu: false,
                         }
                     }
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-                        let scan = processor.scan_profile_register_index_retained();
+                        let status = processor.scan_profile_register_index_into(scalar);
                         ArithmeticTarget::GlueRegister {
-                            index: retain_operation_scalar(
-                                processor,
-                                scan,
+                            index: take_operation_scalar!(
+                                scalar,
+                                status,
                                 PendingOperationScanPhase::Arithmetic {
                                     primitive,
                                     global,
@@ -2609,7 +2662,8 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
                                     },
                                 },
                                 suspended,
-                            )?,
+                                take_register
+                            ),
                             mu: true,
                         }
                     }
@@ -2639,17 +2693,18 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
             }
         }
         ArithmeticScanPhase::TargetIndex { target } => {
-            let scan = processor.scan_profile_register_index_retained();
-            let index = retain_operation_scalar(
-                processor,
-                scan,
+            let status = processor.scan_profile_register_index_into(scalar);
+            let index = take_operation_scalar!(
+                scalar,
+                status,
                 PendingOperationScanPhase::Arithmetic {
                     primitive,
                     global,
                     phase: ArithmeticScanPhase::TargetIndex { target },
                 },
                 suspended,
-            )?;
+                take_register
+            );
             match target {
                 ArithmeticIndexedTarget::Integer => ArithmeticTarget::IntegerRegister(index),
                 ArithmeticIndexedTarget::Dimension => ArithmeticTarget::DimensionRegister(index),
@@ -2661,17 +2716,18 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
         ArithmeticScanPhase::Keyword { target } | ArithmeticScanPhase::Operand { target } => target,
     };
     if !matches!(phase, ArithmeticScanPhase::Operand { .. }) {
-        let scan = processor.scan_keyword_retained("by");
-        let _ = retain_operation_scalar(
-            processor,
-            scan,
+        let status = processor.scan_keyword_into("by", scalar);
+        let _ = take_operation_scalar!(
+            scalar,
+            status,
             PendingOperationScanPhase::Arithmetic {
                 primitive,
                 global,
                 phase: ArithmeticScanPhase::Keyword { target },
             },
             suspended,
-        )?;
+            take_boolean
+        );
     }
     let scalar_phase = PendingOperationScanPhase::Arithmetic {
         primitive,
@@ -2680,23 +2736,37 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
     };
     let operand = match target {
         ArithmeticTarget::IntegerRegister(_) | ArithmeticTarget::IntegerParameter(_) => {
-            let scan = processor.scan_integer_retained();
+            let status = processor.scan_integer_into(scalar);
             ArithmeticOperand::Integer(
-                retain_operation_scalar(processor, scan, scalar_phase, suspended)?.value,
+                take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value,
             )
         }
         ArithmeticTarget::DimensionRegister(_) | ArithmeticTarget::DimensionParameter(_) => {
             match primitive {
                 UnexpandablePrimitive::Advance => {
-                    let scan = processor.scan_dimension_retained();
+                    let status = processor.scan_dimension_into(scalar);
                     ArithmeticOperand::Dimension(
-                        retain_operation_scalar(processor, scan, scalar_phase, suspended)?.value,
+                        take_operation_scalar!(
+                            scalar,
+                            status,
+                            scalar_phase,
+                            suspended,
+                            take_dimension
+                        )
+                        .value,
                     )
                 }
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
-                    let scan = processor.scan_integer_retained();
+                    let status = processor.scan_integer_into(scalar);
                     ArithmeticOperand::Integer(
-                        retain_operation_scalar(processor, scan, scalar_phase, suspended)?.value,
+                        take_operation_scalar!(
+                            scalar,
+                            status,
+                            scalar_phase,
+                            suspended,
+                            take_integer
+                        )
+                        .value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),
@@ -2705,15 +2775,23 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
         ArithmeticTarget::GlueRegister { mu, .. } | ArithmeticTarget::GlueParameter { mu, .. } => {
             match primitive {
                 UnexpandablePrimitive::Advance => {
-                    let scan = processor.scan_glue_retained(mu);
+                    let status = processor.scan_glue_into(mu, scalar);
                     ArithmeticOperand::Glue(
-                        retain_operation_scalar(processor, scan, scalar_phase, suspended)?.value,
+                        take_operation_scalar!(scalar, status, scalar_phase, suspended, take_glue)
+                            .value,
                     )
                 }
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
-                    let scan = processor.scan_integer_retained();
+                    let status = processor.scan_integer_into(scalar);
                     ArithmeticOperand::Integer(
-                        retain_operation_scalar(processor, scan, scalar_phase, suspended)?.value,
+                        take_operation_scalar!(
+                            scalar,
+                            status,
+                            scalar_phase,
+                            suspended,
+                            take_integer
+                        )
+                        .value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),

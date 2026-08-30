@@ -24,15 +24,19 @@ fn filename_scan_stops_at_space_and_keeps_area_name_and_extension() {
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
-        let scanned = crate::test_harness::processor(
+        let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
             &mut capabilities,
             &mut fuel,
             &mut diagnostic_effects,
-        )
-        .scan_file_name()
-        .expect("filename");
+        );
+        let mut scalar = crate::ScalarScanFrame::default();
+        assert_eq!(
+            processor.scan_file_name_into(&mut scalar),
+            crate::ScalarScanStatus::Complete
+        );
+        let scanned = scalar.take_file_name();
 
         assert_eq!(scanned.packed(), "dir/job.tex");
         assert_eq!(scanned.components.area, "dir/");

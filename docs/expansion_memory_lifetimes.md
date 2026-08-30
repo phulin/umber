@@ -493,24 +493,24 @@ The reusable allocation-free scalar-frame family now owns optional-equals,
 keyword and matched-prefix restoration, integer, dimension, glue, filename,
 internal-value, expression, and font-selector progress. Every nested scalar or
 expansion is a non-`Copy` child edge tagged with its exact return destination.
-Synchronous integer and internal-value delivery use one bounded caller-owned
-`ScalarCallFrame<T>` whose value and `CommandError` occupy disjoint slots; a
-compact status names completion, suspension, or failure. The successful hot
-path therefore moves only `T`, while a real cold edge moves the error once.
-Legacy `Result`-returning scalar boundaries settle at their producing call
-site rather than passing the whole carrier to a generic helper. Completion
-consumes the value immediately, failure consumes the error, and the frame ends
-with the call; it is neither generation-retained storage nor a second
-continuation lane.
-The raw resource-capable entry points are private; the executor-facing retained
-surface returns a move-only result that carries either the completed value, the
-exact child capability, or a non-resource failure. An external caller therefore
-cannot use a raw scalar API, and an internal structured caller cannot propagate
-a suspension with `?` while silently abandoning its child.
+The executor's singular `OperationFrame` owns one reusable `ScalarScanFrame`.
+Every scalar phase writes its typed result or cold error into that same slot
+and returns only a compact complete/suspended/failed status. Completion
+consumes the typed value immediately; a real resource edge consumes the error
+and retains the existing scanner key beside the scalar phase in the same
+operation frame. Starting another phase asserts that the prior payload was
+consumed, so reuse cannot retain stale values. Expression evaluation likewise
+writes through a bounded caller-owned `ScalarCallFrame<T>` instead of returning
+the error-sized `Result` carrier measured by the copy census.
+The raw resource-capable entry points remain private. Internal structured
+parents still move a child through their exact typed continuation result, so
+they cannot propagate a suspension with `?` while silently abandoning it. The
+executor has no retained scalar-result envelope, fallback scanner API, result
+tape, mailbox, heap owner, or second representation.
 
 One singular caller-owned preflight frame holds the sole current command,
-delivery cursor, compact dispatch phase, optional scalar child, and completed
-fixed-sequence operands. Initial raw delivery and resumed expansion write
+delivery cursor, compact dispatch phase, reusable scalar result destination,
+optional scalar child, and completed fixed-sequence operands. Initial raw delivery and resumed expansion write
 directly into that frame's command field; settlement advances only its scalar
 phase instead of transferring the whole command through a temporary slot.
 Raw, settled, expanding, main-loop, prefix, leader, and direct-operation

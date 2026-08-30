@@ -3,14 +3,17 @@ use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
-use crate::{CommandHostCapabilities, CommandState, RetainedScalarScan, processor::DeliveryStatus};
+use crate::{
+    CommandHostCapabilities, CommandState, ScalarScanFrame, ScalarScanStatus,
+    processor::DeliveryStatus,
+};
 
 #[test]
 fn keyword_replay_keeps_scalar_continuations_compact() {
     let prefix = std::mem::size_of::<super::MatchedKeywordPrefix<()>>();
     let pending = std::mem::size_of::<super::PendingScalarFrame<()>>();
-    assert_eq!(prefix, 632);
-    assert_eq!(pending, 688);
+    assert_eq!(prefix, 536);
+    assert_eq!(pending, 592);
 }
 
 #[test]
@@ -72,9 +75,12 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let RetainedScalarScan::Complete(integer) = processor.scan_integer_retained() else {
-            panic!("integer scan must complete");
-        };
+        let mut scalar = ScalarScanFrame::default();
+        assert_eq!(
+            processor.scan_integer_into(&mut scalar),
+            ScalarScanStatus::Complete
+        );
+        let integer = scalar.take_integer();
         assert_eq!(integer.value, -42);
         let mut terminator = None;
         assert_eq!(
@@ -109,10 +115,17 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        assert!(processor.scan_optional_equals().expect("equals").value);
-        let RetainedScalarScan::Complete(integer) = processor.scan_integer_retained() else {
-            panic!("integer scan must complete");
-        };
+        let mut scalar = ScalarScanFrame::default();
+        assert_eq!(
+            processor.scan_optional_equals_into(&mut scalar),
+            ScalarScanStatus::Complete
+        );
+        assert!(scalar.take_boolean().value);
+        assert_eq!(
+            processor.scan_integer_into(&mut scalar),
+            ScalarScanStatus::Complete
+        );
+        let integer = scalar.take_integer();
         assert_eq!(integer.value, 7);
     });
 }
@@ -158,7 +171,7 @@ fn failed_keyword_replays_the_matched_prefix_before_the_offender() {
 #[test]
 fn warmed_keyword_success_path_allocates_zero_heap() {
     crate::test_harness::with_universe(|universe| {
-        const SCANS: usize = 257;
+        const SCANS: usize = 4_097;
         let mut command = CommandState::default();
         crate::test_harness::push(
             &mut command,
@@ -175,11 +188,12 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let crate::RetainedScalarScan::Complete(warm) =
-            processor.scan_keyword_retained("dimension")
-        else {
-            panic!("preloaded keyword scan must complete synchronously")
-        };
+        let mut scalar = ScalarScanFrame::default();
+        assert_eq!(
+            processor.scan_keyword_into("dimension", &mut scalar),
+            ScalarScanStatus::Complete
+        );
+        let warm = scalar.take_boolean();
         assert!(warm.value);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
@@ -187,11 +201,11 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                let crate::RetainedScalarScan::Complete(scanned) =
-                    processor.scan_keyword_retained("dimension")
-                else {
-                    panic!("preloaded keyword scan must complete synchronously")
-                };
+                assert_eq!(
+                    processor.scan_keyword_into("dimension", &mut scalar),
+                    ScalarScanStatus::Complete
+                );
+                let scanned = scalar.take_boolean();
                 assert!(scanned.value);
             }
         }
@@ -205,7 +219,7 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
 #[test]
 fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
     crate::test_harness::with_universe(|universe| {
-        const SCANS: usize = 257;
+        const SCANS: usize = 4_097;
         let mut command = CommandState::default();
         crate::test_harness::push(
             &mut command,
@@ -222,12 +236,14 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let run = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
-            let crate::RetainedScalarScan::Complete(scanned) =
-                processor.scan_keyword_retained("dimension")
-            else {
-                panic!("preloaded keyword scan must complete synchronously")
-            };
+        let mut scalar = ScalarScanFrame::default();
+        let run = |processor: &mut crate::CommandProcessor<'_, '_, _>,
+                   scalar: &mut ScalarScanFrame| {
+            assert_eq!(
+                processor.scan_keyword_into("dimension", scalar),
+                ScalarScanStatus::Complete
+            );
+            let scanned = scalar.take_boolean();
             assert!(!scanned.value);
             for _ in 0..9 {
                 let mut replayed = None;
@@ -240,14 +256,14 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
                 replayed.expect("replayed token");
             }
         };
-        run(&mut processor);
+        run(&mut processor, &mut scalar);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                run(&mut processor);
+                run(&mut processor, &mut scalar);
             }
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -283,8 +299,13 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
             &mut diagnostic_effects,
         );
 
+        let mut scalar = ScalarScanFrame::default();
         assert_eq!(
-            processor.scan_dimension().expect("dimension").value,
+            processor.scan_dimension_into(&mut scalar),
+            ScalarScanStatus::Complete
+        );
+        assert_eq!(
+            scalar.take_dimension().value,
             Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2)
         );
         let mut terminator = None;
@@ -330,8 +351,13 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
             &mut diagnostic_effects,
         );
 
+        let mut scalar = ScalarScanFrame::default();
         assert_eq!(
-            processor.scan_glue(false).expect("glue").value,
+            processor.scan_glue_into(false, &mut scalar),
+            ScalarScanStatus::Complete
+        );
+        assert_eq!(
+            scalar.take_glue().value,
             GlueSpec {
                 width: Scaled::from_raw(Scaled::UNITY),
                 stretch: Scaled::from_raw(2 * Scaled::UNITY),

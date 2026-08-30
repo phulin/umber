@@ -4,7 +4,8 @@
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
 //! processor releases its borrow. `ColdOperation` and the caller-owned cold
-//! [`OperationFrame`] never exist on this path.
+//! [`OperationFrame`] owns the reusable scalar destination but no cold
+//! operation payload is materialized on this path.
 
 use super::*;
 
@@ -127,7 +128,7 @@ pub(super) fn prepare<G>(
 /// mode/group cases have selected the ordinary assignment arm.
 pub(super) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &tex_command::CurrentCommand<G>,
+    command: &mut OperationFrame<G>,
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
@@ -151,6 +152,7 @@ pub(super) fn scan<G>(
             UnexpandablePrimitive::CatCode,
         )) => scan_catcode_assignment(
             processor,
+            &mut command.scalar,
             global,
             CatCodeScanPhase::Character,
             suspended_operation_scan,
@@ -185,22 +187,24 @@ pub(super) fn scan<G>(
 
 pub(super) fn scan_catcode_assignment<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
+    scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
     phase: CatCodeScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<HotOperation<G>, ExecError> {
     let phase = if matches!(phase, CatCodeScanPhase::Character) {
-        let scan =
-            processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode);
-        let character = retain_operation_scalar(
-            processor,
-            scan,
+        let status =
+            processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
+        let character = take_operation_scalar!(
+            scalar,
+            status,
             PendingOperationScanPhase::CatCode {
                 global,
                 phase: CatCodeScanPhase::Character,
             },
             suspended,
-        )?
+            take_restricted
+        )
         .value;
         CatCodeScanPhase::OptionalEquals {
             character: char::from_u32(character as u32)
@@ -211,16 +215,17 @@ pub(super) fn scan_catcode_assignment<G>(
     };
     let phase = match phase {
         CatCodeScanPhase::OptionalEquals { character } => {
-            let scan = processor.scan_optional_equals_retained();
-            let _ = retain_operation_scalar(
-                processor,
-                scan,
+            let status = processor.scan_optional_equals_into(scalar);
+            let _ = take_operation_scalar!(
+                scalar,
+                status,
                 PendingOperationScanPhase::CatCode {
                     global,
                     phase: CatCodeScanPhase::OptionalEquals { character },
                 },
                 suspended,
-            )?;
+                take_boolean
+            );
             CatCodeScanPhase::Value { character }
         }
         phase => phase,
@@ -228,16 +233,17 @@ pub(super) fn scan_catcode_assignment<G>(
     let CatCodeScanPhase::Value { character } = phase else {
         unreachable!()
     };
-    let scan = processor.scan_integer_retained();
-    let value = retain_operation_scalar(
-        processor,
-        scan,
+    let status = processor.scan_integer_into(scalar);
+    let value = take_operation_scalar!(
+        scalar,
+        status,
         PendingOperationScanPhase::CatCode {
             global,
             phase: CatCodeScanPhase::Value { character },
         },
         suspended,
-    )?
+        take_integer
+    )
     .value;
     Ok(HotOperation::CatCode {
         character,

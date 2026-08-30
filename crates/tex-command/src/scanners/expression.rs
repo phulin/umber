@@ -249,9 +249,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::Fatal(fatal));
         }
 
-        let result = self.scan_expression(primitive, kind);
+        let mut call = crate::scanners::scalar::ScalarCallFrame::default();
+        let status = self.scan_expression(primitive, kind, &mut call);
         self.expression_depth -= 1;
-        let (mut value, overflow) = result?;
+        let (mut value, overflow) = match status {
+            crate::scanners::scalar::ScalarCallStatus::Complete => call.take_complete(),
+            crate::scanners::scalar::ScalarCallStatus::Suspended
+            | crate::scanners::scalar::ScalarCallStatus::Failed => {
+                return Err(call.take_error());
+            }
+        };
         if overflow {
             self.expression_arithmetic_error()?;
             value = kind.zero();
@@ -299,38 +306,58 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
         kind: ExpressionKind,
-    ) -> Result<(ExpressionValue<G>, bool), CommandError> {
-        let pending = self.take_pending_scalar_frame()?;
-        let (stack_mark, mut frame, mut overflow, mut phase, mut child) = match pending {
-            Some(crate::scanners::PendingScalarFrame::Expression { progress, child })
-                if progress.primitive == primitive =>
-            {
-                (
-                    progress.stack_mark,
-                    progress.frame,
-                    progress.overflow,
-                    progress.phase,
-                    child,
-                )
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (
+        call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
+    ) -> crate::scanners::scalar::ScalarCallStatus {
+        use crate::scanners::scalar::ScalarCallStatus;
+
+        macro_rules! fail {
+            ($error:expr) => {{
+                call.put_error($error);
+                return ScalarCallStatus::Failed;
+            }};
+        }
+
+        let mut pending = None;
+        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
+            return ScalarCallStatus::Failed;
+        }
+        let (stack_mark, mut frame, mut overflow, mut phase, mut child) = if pending.is_none() {
+            (
                 self.command.scratch.expression_stack_len(),
                 ExpressionFrame::new(kind),
                 false,
                 PendingExpressionPhase::FactorLeading,
                 None,
-            ),
+            )
+        } else {
+            match pending.take().expect("present expression continuation") {
+                crate::scanners::PendingScalarFrame::Expression { progress, child }
+                    if progress.primitive == primitive =>
+                {
+                    (
+                        progress.stack_mark,
+                        progress.frame,
+                        progress.overflow,
+                        progress.phase,
+                        child,
+                    )
+                }
+                mut pending => {
+                    if let Some(child) = pending.take_child() {
+                        if let Err(error) = self.abort_continuation(child) {
+                            fail!(error);
+                        }
+                    }
+                    fail!(CommandError::input_invariant());
+                }
+            }
         };
-        self.restore_scalar_child(
+        if let Err(error) = self.restore_scalar_child(
             &mut child,
             crate::scanners::ScalarChildDestination::Expression,
-        )?;
+        ) {
+            fail!(error);
+        }
 
         loop {
             let factor = match phase {
@@ -349,6 +376,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         overflow,
                                         phase: PendingExpressionPhase::FactorLeading,
                                     },
+                                    call,
                                 );
                             }
                         };
@@ -377,16 +405,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .is_some_and(|command| is_other_character(command, '('))
                     {
                         let factor_kind = frame.factor_kind();
-                        self.command
-                            .scratch
-                            .push_expression_frame(frame)
-                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        if let Err(error) = self.command.scratch.push_expression_frame(frame) {
+                            fail!(crate::scan_toks::scratch_command_error(error));
+                        }
                         frame = ExpressionFrame::new(factor_kind);
                         phase = PendingExpressionPhase::FactorLeading;
                         continue;
                     }
                     if let Some(command) = first {
-                        self.back_input(command)?;
+                        if let Err(error) = self.back_input(command) {
+                            fail!(error);
+                        }
                     }
                     phase = PendingExpressionPhase::FactorScalar;
                     continue;
@@ -437,6 +466,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     overflow,
                                     phase: PendingExpressionPhase::FactorScalar,
                                 },
+                                call,
                             );
                         }
                     }
@@ -457,6 +487,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             overflow,
                             phase: PendingExpressionPhase::Operator { factor },
                         },
+                        call,
                     );
                 }
             };
@@ -475,17 +506,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             let completed = frame.expression;
-            let parent = self
-                .command
-                .scratch
-                .pop_expression_frame(stack_mark)
-                .map_err(crate::scan_toks::scratch_command_error)?;
+            let parent = match self.command.scratch.pop_expression_frame(stack_mark) {
+                Ok(parent) => parent,
+                Err(error) => fail!(crate::scan_toks::scratch_command_error(error)),
+            };
             let Some(parent) = parent else {
-                self.command
-                    .scratch
-                    .truncate_expression_stack(stack_mark)
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-                return Ok((completed, overflow));
+                if let Err(error) = self.command.scratch.truncate_expression_stack(stack_mark) {
+                    fail!(crate::scan_toks::scratch_command_error(error));
+                }
+                call.put_complete((completed, overflow));
+                return ScalarCallStatus::Complete;
             };
             frame = parent;
             phase = PendingExpressionPhase::Operator { factor: completed };
@@ -508,21 +538,35 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn suspend_expression(
         &mut self,
-        error: CommandError,
+        mut error: CommandError,
         progress: PendingExpressionScan<G>,
-    ) -> Result<(ExpressionValue<G>, bool), CommandError> {
-        if error.is_resource_suspension() {
-            self.retain_scalar_frame(crate::scanners::PendingScalarFrame::Expression {
+        call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
+    ) -> crate::scanners::scalar::ScalarCallStatus {
+        use crate::scanners::scalar::ScalarCallStatus;
+
+        let status = if error.is_resource_suspension() {
+            match self.retain_scalar_frame(crate::scanners::PendingScalarFrame::Expression {
                 progress,
                 child: None,
-            })?;
+            }) {
+                Ok(()) => ScalarCallStatus::Suspended,
+                Err(retain_error) => {
+                    error = retain_error;
+                    ScalarCallStatus::Failed
+                }
+            }
         } else {
-            self.command
+            if let Err(truncate_error) = self
+                .command
                 .scratch
                 .truncate_expression_stack(progress.stack_mark)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-        }
-        Err(error)
+            {
+                error = crate::scan_toks::scratch_command_error(truncate_error);
+            }
+            ScalarCallStatus::Failed
+        };
+        call.put_error(error);
+        status
     }
 
     fn scan_expression_operator(

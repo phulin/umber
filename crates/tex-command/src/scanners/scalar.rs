@@ -157,35 +157,25 @@ impl InlineKeyword {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct MatchedKeywordPrefix<G> {
-    inline: [Option<crate::input::BackedUpToken>; KEYWORD_PREFIX_INLINE_CAPACITY],
-    len: usize,
+    inline: smallvec::SmallVec<[crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY]>,
     _generation: core::marker::PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> MatchedKeywordPrefix<G> {
-    fn new() -> Self {
-        Self {
-            inline: std::array::from_fn(|_| None),
-            len: 0,
-            _generation: core::marker::PhantomData,
-        }
-    }
-
     fn is_empty(&self) -> bool {
-        self.len == 0
+        self.inline.is_empty()
     }
 
-    fn push(&mut self, command: CurrentCommand<G>) {
-        debug_assert!(self.len < KEYWORD_PREFIX_INLINE_CAPACITY);
-        self.inline[self.len] = Some(crate::input::BackedUpToken {
+    fn push(&mut self, command: &CurrentCommand<G>) {
+        debug_assert!(self.inline.len() < KEYWORD_PREFIX_INLINE_CAPACITY);
+        self.inline.push(crate::input::BackedUpToken {
             spelling: command.spelling(),
             source_provenance: command.source_provenance(),
         });
-        self.len += 1;
     }
 
     fn into_backed_up(self) -> impl Iterator<Item = crate::input::BackedUpToken> {
-        self.inline.into_iter().take(self.len).flatten()
+        self.inline.into_iter()
     }
 }
 
@@ -535,13 +525,157 @@ pub enum RetainedScalarScan<G, T> {
     Failed(CommandError),
 }
 
+/// Reusable destination for one executor-owned scalar scan.
+///
+/// The operation that requested the operand owns this slot across ordinary
+/// completion and resource retry.  A scanner writes one typed value or one
+/// cold error; the caller consumes that payload before starting the next
+/// scalar phase.  The exact continuation capability remains in the owning
+/// operation frame's scanner field, so this slot never becomes a mailbox or
+/// an independently retained owner.
+#[derive(Debug, Default)]
+pub struct ScalarScanFrame {
+    value: Option<ScalarScanValue>,
+    error: Option<CommandError>,
+}
+
+#[derive(Debug)]
+enum ScalarScanValue {
+    Boolean(ScannedScalar<bool>),
+    Integer(ScannedScalar<i32>),
+    Dimension(ScannedScalar<Scaled>),
+    Glue(ScannedScalar<GlueSpec>),
+    Internal(ScannedScalar<InternalValue>),
+    OptionalInternal(Option<InternalValue>),
+    Character(char),
+    Register(u16),
+    Restricted(crate::RestrictedInteger),
+    Font(FontId),
+    FileName(crate::ScannedFileName),
+}
+
+/// Payload-free outcome of a scan into [`ScalarScanFrame`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScalarScanStatus {
+    Complete,
+    Suspended,
+    Failed,
+}
+
+impl ScalarScanFrame {
+    pub fn is_empty(&self) -> bool {
+        self.value.is_none() && self.error.is_none()
+    }
+
+    fn begin(&self) {
+        assert!(
+            self.is_empty(),
+            "a scalar result must be consumed before the operation frame is reused"
+        );
+    }
+
+    fn put_value(&mut self, value: ScalarScanValue) {
+        debug_assert!(self.value.is_none() && self.error.is_none());
+        self.value = Some(value);
+    }
+
+    fn put_error(&mut self, error: CommandError) {
+        debug_assert!(self.value.is_none() && self.error.is_none());
+        self.error = Some(error);
+    }
+
+    pub fn take_error(&mut self) -> CommandError {
+        debug_assert!(self.value.is_none());
+        self.error
+            .take()
+            .expect("failed scalar scan stores its error in the operation frame")
+    }
+
+    pub fn take_boolean(&mut self) -> ScannedScalar<bool> {
+        match self.value.take() {
+            Some(ScalarScanValue::Boolean(value)) => value,
+            _ => panic!("completed boolean scan stores its typed result"),
+        }
+    }
+
+    pub fn take_integer(&mut self) -> ScannedScalar<i32> {
+        match self.value.take() {
+            Some(ScalarScanValue::Integer(value)) => value,
+            _ => panic!("completed integer scan stores its typed result"),
+        }
+    }
+
+    pub fn take_dimension(&mut self) -> ScannedScalar<Scaled> {
+        match self.value.take() {
+            Some(ScalarScanValue::Dimension(value)) => value,
+            _ => panic!("completed dimension scan stores its typed result"),
+        }
+    }
+
+    pub fn take_glue(&mut self) -> ScannedScalar<GlueSpec> {
+        match self.value.take() {
+            Some(ScalarScanValue::Glue(value)) => value,
+            _ => panic!("completed glue scan stores its typed result"),
+        }
+    }
+
+    pub fn take_internal(&mut self) -> ScannedScalar<InternalValue> {
+        match self.value.take() {
+            Some(ScalarScanValue::Internal(value)) => value,
+            _ => panic!("completed internal-value scan stores its typed result"),
+        }
+    }
+
+    pub fn take_optional_internal(&mut self) -> Option<InternalValue> {
+        match self.value.take() {
+            Some(ScalarScanValue::OptionalInternal(value)) => value,
+            _ => panic!("completed internal-value probe stores its typed result"),
+        }
+    }
+
+    pub fn take_character(&mut self) -> char {
+        match self.value.take() {
+            Some(ScalarScanValue::Character(value)) => value,
+            _ => panic!("completed character scan stores its typed result"),
+        }
+    }
+
+    pub fn take_register(&mut self) -> u16 {
+        match self.value.take() {
+            Some(ScalarScanValue::Register(value)) => value,
+            _ => panic!("completed register scan stores its typed result"),
+        }
+    }
+
+    pub fn take_restricted(&mut self) -> crate::RestrictedInteger {
+        match self.value.take() {
+            Some(ScalarScanValue::Restricted(value)) => value,
+            _ => panic!("completed restricted-integer scan stores its typed result"),
+        }
+    }
+
+    pub fn take_font(&mut self) -> FontId {
+        match self.value.take() {
+            Some(ScalarScanValue::Font(value)) => value,
+            _ => panic!("completed font scan stores its typed result"),
+        }
+    }
+
+    pub fn take_file_name(&mut self) -> crate::ScannedFileName {
+        match self.value.take() {
+            Some(ScalarScanValue::FileName(value)) => value,
+            _ => panic!("completed filename scan stores its typed result"),
+        }
+    }
+}
+
 /// Compact outcome of a scalar call whose payload remains in its caller's
 /// bounded frame.
 ///
 /// Keeping the status separate from [`CommandError`] prevents every
 /// successful nested scalar scan from moving the error-sized return carrier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScalarCallStatus {
+pub(crate) enum ScalarCallStatus {
     Complete,
     Suspended,
     Failed,
@@ -552,7 +686,7 @@ enum ScalarCallStatus {
 /// The value and error have disjoint slots so a successful call moves only
 /// `T`. A real failure or suspension moves the error once at that cold edge.
 /// The frame is call-local and retains no allocation or append arena.
-struct ScalarCallFrame<T> {
+pub(crate) struct ScalarCallFrame<T> {
     value: Option<T>,
     error: Option<CommandError>,
 }
@@ -567,24 +701,24 @@ impl<T> Default for ScalarCallFrame<T> {
 }
 
 impl<T> ScalarCallFrame<T> {
-    fn put_complete(&mut self, value: T) {
+    pub(crate) fn put_complete(&mut self, value: T) {
         debug_assert!(self.value.is_none() && self.error.is_none());
         self.value = Some(value);
     }
 
-    fn put_error(&mut self, error: CommandError) {
+    pub(crate) fn put_error(&mut self, error: CommandError) {
         debug_assert!(self.value.is_none() && self.error.is_none());
         self.error = Some(error);
     }
 
-    fn take_complete(&mut self) -> T {
+    pub(crate) fn take_complete(&mut self) -> T {
         debug_assert!(self.error.is_none());
         self.value
             .take()
             .expect("complete scalar call stores its value")
     }
 
-    fn take_error(&mut self) -> CommandError {
+    pub(crate) fn take_error(&mut self) -> CommandError {
         debug_assert!(self.value.is_none());
         self.error
             .take()
@@ -904,7 +1038,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///
     /// The synchronous no-continuation path returns only a compact status;
     /// neither the pending-frame nor error carrier crosses this boundary.
-    fn take_pending_scalar_frame_into<T>(
+    pub(crate) fn take_pending_scalar_frame_into<T>(
         &mut self,
         pending: &mut Option<PendingScalarFrame<G>>,
         call: &mut ScalarCallFrame<T>,
@@ -1048,6 +1182,185 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.detach_retained_scalar(result)
     }
 
+    fn publish_scalar_result<T>(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+        result: Result<T, CommandError>,
+        wrap: impl FnOnce(T) -> ScalarScanValue,
+    ) -> ScalarScanStatus {
+        frame.begin();
+        match result {
+            Ok(value) => {
+                debug_assert!(self.scanner_resume.is_none());
+                frame.put_value(wrap(value));
+                ScalarScanStatus::Complete
+            }
+            Err(error) if error.is_resource_suspension() => {
+                debug_assert!(self.scanner_resume.is_some());
+                frame.put_error(error);
+                ScalarScanStatus::Suspended
+            }
+            Err(error) => {
+                debug_assert!(self.scanner_resume.is_none());
+                frame.put_error(error);
+                ScalarScanStatus::Failed
+            }
+        }
+    }
+
+    fn publish_scalar_call<T>(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+        call: &mut ScalarCallFrame<T>,
+        status: ScalarCallStatus,
+        wrap: impl FnOnce(T) -> ScalarScanValue,
+    ) -> ScalarScanStatus {
+        frame.begin();
+        match status {
+            ScalarCallStatus::Complete => {
+                debug_assert!(self.scanner_resume.is_none());
+                frame.put_value(wrap(call.take_complete()));
+                ScalarScanStatus::Complete
+            }
+            ScalarCallStatus::Suspended => {
+                debug_assert!(self.scanner_resume.is_some());
+                frame.put_error(call.take_error());
+                ScalarScanStatus::Suspended
+            }
+            ScalarCallStatus::Failed => {
+                debug_assert!(self.scanner_resume.is_none());
+                frame.put_error(call.take_error());
+                ScalarScanStatus::Failed
+            }
+        }
+    }
+
+    fn publish_retained_scalar_frame<T>(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+        result: RetainedScalarScan<G, T>,
+        wrap: impl FnOnce(T) -> ScalarScanValue,
+    ) -> ScalarScanStatus {
+        frame.begin();
+        match result {
+            RetainedScalarScan::Complete(value) => {
+                frame.put_value(wrap(value));
+                ScalarScanStatus::Complete
+            }
+            RetainedScalarScan::Suspended { error, child } => {
+                self.install_scanner_resume(Some(child));
+                frame.put_error(error);
+                ScalarScanStatus::Suspended
+            }
+            RetainedScalarScan::Failed(error) => {
+                frame.put_error(error);
+                ScalarScanStatus::Failed
+            }
+        }
+    }
+
+    pub fn scan_optional_equals_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let mut call = ScalarCallFrame::default();
+        let status = self.scan_optional_equals_into_call(&mut call);
+        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Boolean)
+    }
+
+    pub fn scan_keyword_into(
+        &mut self,
+        keyword: &str,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let mut call = ScalarCallFrame::default();
+        let status = self.scan_keyword_into_call(keyword, &mut call);
+        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Boolean)
+    }
+
+    pub fn scan_integer_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let mut call = ScalarCallFrame::default();
+        let status = self.scan_integer(&mut call);
+        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Integer)
+    }
+
+    pub fn scan_dimension_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_dimension();
+        self.publish_scalar_result(frame, result, ScalarScanValue::Dimension)
+    }
+
+    pub fn scan_mu_dimension_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_mu_dimension();
+        self.publish_scalar_result(frame, result, ScalarScanValue::Dimension)
+    }
+
+    pub fn scan_glue_into(&mut self, mu: bool, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_glue(mu);
+        self.publish_scalar_result(frame, result, ScalarScanValue::Glue)
+    }
+
+    pub fn scan_internal_value_or_zero_into(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_internal_value_or_zero();
+        self.publish_scalar_result(frame, result, ScalarScanValue::Internal)
+    }
+
+    pub fn scan_the_internal_value_into(
+        &mut self,
+        target: &CurrentCommand<G>,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_the_internal_value(target);
+        self.publish_scalar_result(frame, result, ScalarScanValue::OptionalInternal)
+    }
+
+    pub fn scan_character_number_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_character_number_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Character)
+    }
+
+    pub fn scan_profile_register_index_into(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_profile_register_index_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Register)
+    }
+
+    pub fn scan_eight_bit_register_index_into(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_eight_bit_register_index_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Register)
+    }
+
+    pub fn scan_extended_register_index_into(
+        &mut self,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_extended_register_index_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Register)
+    }
+
+    pub fn scan_restricted_integer_into(
+        &mut self,
+        class: crate::RestrictedIntegerClass,
+        frame: &mut ScalarScanFrame,
+    ) -> ScalarScanStatus {
+        let result = self.scan_restricted_integer_retained(class);
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Restricted)
+    }
+
+    pub fn scan_font_selector_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_font_selector_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::Font)
+    }
+
+    pub fn scan_file_name_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
+        let result = self.scan_file_name_retained();
+        self.publish_retained_scalar_frame(frame, result, ScalarScanValue::FileName)
+    }
+
     fn detach_scalar_call<T>(
         &mut self,
         call: &mut ScalarCallFrame<T>,
@@ -1136,35 +1449,65 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
-        let pending = self.take_pending_scalar_frame()?;
-        let mut provenance = match pending {
-            Some(PendingScalarFrame::OptionalEquals {
-                provenance,
-                mut child,
-            }) => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::OptionalEqualsToken)?;
-                provenance
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
+        let mut call = ScalarCallFrame::default();
+        match self.scan_optional_equals_into_call(&mut call) {
+            ScalarCallStatus::Complete => Ok(call.take_complete()),
+            ScalarCallStatus::Suspended | ScalarCallStatus::Failed => Err(call.take_error()),
+        }
+    }
+
+    fn scan_optional_equals_into_call(
+        &mut self,
+        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+    ) -> ScalarCallStatus {
+        macro_rules! fail {
+            ($error:expr) => {{
+                call.put_error($error);
+                return ScalarCallStatus::Failed;
+            }};
+        }
+
+        let mut pending = None;
+        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
+            return ScalarCallStatus::Failed;
+        }
+        let mut provenance = OriginId::UNKNOWN;
+        if let Some(pending) = pending.take() {
+            match pending {
+                PendingScalarFrame::OptionalEquals {
+                    provenance: retained,
+                    mut child,
+                } => {
+                    if let Err(error) = self.restore_scalar_child(
+                        &mut child,
+                        ScalarChildDestination::OptionalEqualsToken,
+                    ) {
+                        fail!(error);
+                    }
+                    provenance = retained;
                 }
-                return Err(CommandError::input_invariant());
+                mut pending => {
+                    if let Some(child) = pending.take_child() {
+                        if let Err(error) = self.abort_continuation(child) {
+                            fail!(error);
+                        }
+                    }
+                    fail!(CommandError::input_invariant());
+                }
             }
-            None => OriginId::UNKNOWN,
         };
         loop {
             let mut command = None;
             let delivery = match self.get_x_token_into(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return finish_scalar_result!(
-                        self,
-                        Err(error),
+                    return self.finish_scalar_error(
+                        error,
                         Some(PendingScalarFrame::OptionalEquals {
                             provenance,
                             child: None,
                         }),
+                        &mut call.error,
                     );
                 }
             };
@@ -1173,13 +1516,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command.expect("command delivery initializes destination")
                 }
                 DeliveryStatus::End => {
-                    return Ok(ScannedScalar {
+                    call.put_complete(ScannedScalar {
                         value: false,
                         recovery: ScalarRecovery::None,
                         provenance: ScalarProvenance {
                             primary: provenance,
                         },
                     });
+                    return ScalarCallStatus::Complete;
                 }
                 _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
@@ -1198,23 +1542,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '=',
                     cat: Catcode::Other,
                 } => {
-                    return Ok(ScannedScalar {
+                    call.put_complete(ScannedScalar {
                         value: true,
                         recovery: ScalarRecovery::None,
                         provenance: ScalarProvenance {
                             primary: provenance,
                         },
                     });
+                    return ScalarCallStatus::Complete;
                 }
                 _ => {
-                    self.back_input(command)?;
-                    return Ok(ScannedScalar {
+                    if let Err(error) = self.back_input(command) {
+                        fail!(error);
+                    }
+                    call.put_complete(ScannedScalar {
                         value: false,
                         recovery: ScalarRecovery::None,
                         provenance: ScalarProvenance {
                             primary: provenance,
                         },
                     });
+                    return ScalarCallStatus::Complete;
                 }
             }
         }
@@ -1259,41 +1607,81 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
     fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
-        let keyword = InlineKeyword::parse(keyword)?;
-        let pending = self.take_pending_scalar_frame()?;
-        // `link(backup_head)`: the tokens matched so far, in delivery order.
-        let (mut matched, mut provenance) = match pending {
-            Some(PendingScalarFrame::Keyword {
-                keyword: retained,
-                matched,
-                provenance,
-                mut child,
-            }) if retained == keyword => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::KeywordToken)?;
-                (matched, provenance)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (MatchedKeywordPrefix::new(), OriginId::UNKNOWN),
+        let mut call = ScalarCallFrame::default();
+        match self.scan_keyword_into_call(keyword, &mut call) {
+            ScalarCallStatus::Complete => Ok(call.take_complete()),
+            ScalarCallStatus::Suspended | ScalarCallStatus::Failed => Err(call.take_error()),
+        }
+    }
+
+    fn scan_keyword_into_call(
+        &mut self,
+        keyword: &str,
+        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+    ) -> ScalarCallStatus {
+        macro_rules! fail {
+            ($error:expr) => {{
+                call.put_error($error);
+                return ScalarCallStatus::Failed;
+            }};
+        }
+
+        let keyword = match InlineKeyword::parse(keyword) {
+            Ok(keyword) => keyword,
+            Err(error) => fail!(error),
         };
-        while let Some(letter) = keyword.get(matched.len) {
+        let mut pending = None;
+        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
+            return ScalarCallStatus::Failed;
+        }
+        // `link(backup_head)`: the tokens matched so far, in delivery order.
+        let mut matched;
+        let mut provenance;
+        if pending.is_none() {
+            matched = MatchedKeywordPrefix {
+                inline: smallvec::SmallVec::new(),
+                _generation: core::marker::PhantomData,
+            };
+            provenance = OriginId::UNKNOWN;
+        } else {
+            (matched, provenance) = match pending.take().expect("present keyword continuation") {
+                PendingScalarFrame::Keyword {
+                    keyword: retained,
+                    matched,
+                    provenance,
+                    mut child,
+                } if retained == keyword => {
+                    if let Err(error) =
+                        self.restore_scalar_child(&mut child, ScalarChildDestination::KeywordToken)
+                    {
+                        fail!(error);
+                    }
+                    (matched, provenance)
+                }
+                mut pending => {
+                    if let Some(child) = pending.take_child() {
+                        if let Err(error) = self.abort_continuation(child) {
+                            fail!(error);
+                        }
+                    }
+                    fail!(CommandError::input_invariant());
+                }
+            };
+        }
+        while let Some(letter) = keyword.get(matched.inline.len()) {
             let mut command = None;
             let delivery = match self.get_x_token_into(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return finish_scalar_result!(
-                        self,
-                        Err(error),
+                    return self.finish_scalar_error(
+                        error,
                         Some(PendingScalarFrame::Keyword {
                             keyword,
                             matched,
                             provenance,
                             child: None,
                         }),
+                        &mut call.error,
                     );
                 }
             };
@@ -1308,7 +1696,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if !matched.is_empty() {
                         self.back_matched_keyword_prefix(matched);
                     }
-                    return Ok(Self::keyword_result(false, provenance));
+                    call.put_complete(Self::keyword_result(false, provenance));
+                    return ScalarCallStatus::Complete;
                 }
                 _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
@@ -1321,7 +1710,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&letter)
                 )
             {
-                matched.push(command);
+                matched.push(&command);
             } else if matched.is_empty()
                 && matches!(
                     scalar_meaning(command.meaning()),
@@ -1334,16 +1723,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `(cur_cmd<>spacer)or(p<>backup_head)` is false: §407 drops
                 // the space and rereads without advancing `k`.
             } else {
-                self.back_input(command)?;
+                if let Err(error) = self.back_input(command) {
+                    fail!(error);
+                }
                 if !matched.is_empty() {
                     self.back_matched_keyword_prefix(matched);
                 }
-                return Ok(Self::keyword_result(false, provenance));
+                call.put_complete(Self::keyword_result(false, provenance));
+                return ScalarCallStatus::Complete;
             }
         }
         // `flush_list(link(backup_head))`: a complete match consumes its
         // tokens outright.
-        Ok(Self::keyword_result(true, provenance))
+        call.put_complete(Self::keyword_result(true, provenance));
+        ScalarCallStatus::Complete
     }
 
     /// §407's `back_list(link(backup_head))`, over commands rather than raw
