@@ -683,8 +683,9 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         }
     }
 
-    let main_control = fs::read_to_string(repository.join("crates/tex-exec/src/main_control.rs"))
-        .expect("read main-control continuation architecture");
+    let main_control =
+        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/operation_frame.rs"))
+            .expect("read main-control continuation architecture");
     let operation_frame = main_control
         .split("struct OperationFrame<G>")
         .nth(1)
