@@ -79,7 +79,12 @@ pub struct CurrentCommand<G> {
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
     source_provenance: Option<SourceProvenance>,
-    direct_source_line: Option<u32>,
+    /// External file or `\scantokens` source active at this delivery. This
+    /// is input execution context, not the spelling's definition-site
+    /// provenance: a package-defined macro invoked from the main file keeps
+    /// the main file here.
+    active_source: u32,
+    direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     delivery_flags: CommandDeliveryFlags,
 }
@@ -114,6 +119,8 @@ impl CommandDeliveryFlags {
     const DIRECT_SOURCE: u8 = 1 << 0;
     const SUPPRESS_EXPANDABLE: u8 = 1 << 1;
     const OUTER_RECOVERY_SPACE: u8 = 1 << 2;
+    const HAS_ACTIVE_SOURCE: u8 = 1 << 3;
+    const HAS_DIRECT_SOURCE_LINE: u8 = 1 << 4;
 
     const fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
@@ -141,6 +148,7 @@ impl<G> Clone for CurrentCommand<G> {
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
+            active_source: self.active_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
@@ -156,6 +164,7 @@ impl<G> PartialEq for CurrentCommand<G> {
             && self.control_sequence == other.control_sequence
             && self.delivery == other.delivery
             && self.source_provenance == other.source_provenance
+            && self.active_source == other.active_source
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
             && self.delivery_flags == other.delivery_flags
@@ -172,6 +181,7 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.control_sequence.hash(state);
         self.delivery.hash(state);
         self.source_provenance.hash(state);
+        self.active_source.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
         self.delivery_flags.hash(state);
@@ -330,6 +340,7 @@ impl<G> CurrentCommand<G> {
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut command = Self::empty();
+        let active_source = source_provenance.map(|provenance| provenance.range().source());
         let _ = command
             .empty_for_raw_delivery()
             .write_raw_delivery(
@@ -337,6 +348,7 @@ impl<G> CurrentCommand<G> {
                 delivery.input_level,
                 delivery.position,
                 source_provenance,
+                active_source,
                 direct_source,
                 direct_source_line,
                 false,
@@ -369,7 +381,8 @@ impl<G> CurrentCommand<G> {
             control_sequence: None,
             delivery: DeliveryStamp::new(0, 0, 0),
             source_provenance: None,
-            direct_source_line: None,
+            active_source: 0,
+            direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             delivery_flags: CommandDeliveryFlags::default(),
         }
@@ -669,6 +682,23 @@ impl<G> CurrentCommand<G> {
         self.source_provenance
     }
 
+    /// External source context active when this command was delivered.
+    ///
+    /// This differs deliberately from [`Self::source_provenance`]: expansion
+    /// may deliver a package-defined token while the active source remains
+    /// the user's main file.
+    #[must_use]
+    pub const fn active_source_id(&self) -> Option<tex_state::SourceId> {
+        if self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::HAS_ACTIVE_SOURCE)
+        {
+            Some(tex_state::SourceId::new(self.active_source))
+        } else {
+            None
+        }
+    }
+
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
@@ -690,9 +720,9 @@ impl<G> CurrentCommand<G> {
     pub const fn direct_source_line_number(&self) -> Option<u32> {
         if self
             .delivery_flags
-            .contains(CommandDeliveryFlags::DIRECT_SOURCE)
+            .contains(CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE)
         {
-            self.direct_source_line
+            Some(self.direct_source_line)
         } else {
             None
         }
@@ -712,6 +742,7 @@ impl<G> CurrentCommand<G> {
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_provenance: self.source_provenance,
+            active_source: self.active_source,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
@@ -733,6 +764,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         input_level: u64,
         position: u64,
         source_provenance: Option<SourceProvenance>,
+        active_source: Option<tex_state::SourceId>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -745,12 +777,21 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         command.spelling = spelling;
         command.delivery = DeliveryStamp::new(input_level, position, 0);
         command.source_provenance = source_provenance;
-        command.direct_source_line = direct_source_line;
+        command.active_source = active_source.map_or(0, tex_state::SourceId::raw);
+        command.direct_source_line = direct_source_line.unwrap_or(0);
         command.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
         command.delivery_flags = CommandDeliveryFlags::default();
         command
             .delivery_flags
             .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
+        command.delivery_flags.set(
+            CommandDeliveryFlags::HAS_ACTIVE_SOURCE,
+            active_source.is_some(),
+        );
+        command.delivery_flags.set(
+            CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE,
+            direct_source_line.is_some(),
+        );
         command.delivery_flags.set(
             CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
             suppress_expandable,

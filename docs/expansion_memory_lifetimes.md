@@ -585,7 +585,11 @@ input representation or the generic logical-stack stored-state machinery.
 The source first-touch inverse is at most 48 bytes. Ordinary source delivery
 lends the semantic top row and checked slot together, writes the caller's
 final command once, and advances the compact position in the same borrow. The
-stack exposes no raw mutable top or mutable index. Its allocation gate proves
+common packed frame on every row carries the active external-source context;
+source rows install it and replay rows inherit it at admission. Main-control
+root-file eligibility therefore consumes the source fact delivered with the
+command rather than walking input ancestry after delivery. The stack exposes
+no raw mutable top or mutable index. Its allocation gate proves
 that 4,096 warmed lexer mutations perform zero allocations and one inverse at
 both one and 4,096 live source rows.
 Nested source opening installs ancestry as part of the same frame transition

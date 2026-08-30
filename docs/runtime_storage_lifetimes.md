@@ -352,6 +352,12 @@ packed input frame. The storage boundary retains the unavoidable safe-Rust
 owner-domain choice. No source-specific delivery object, second advancing
 cursor, handle clone, relocation, or payload copy occurs per word.
 
+That same common packed frame stores the active external-source identity.
+Source admission writes its own identity; replay and macro-argument admission
+inherit the enclosing value. A delivered command carries that execution fact
+beside its distinct spelling provenance, so checkpoint-origin classification
+requires one semantic-top read and no later ancestry or source-owner lookup.
+
 Reads, moves, restoration, warmed reuse, and explicit alias clones allocate no
 heap memory. An `Rc` count change is not construction of a new heap owner.
 Scratch token lists and macro arguments do not use shared ownership: their

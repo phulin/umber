@@ -1743,19 +1743,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                     continue;
                 }
                 InputTopTransition::TokenExhausted(identity) => {
-                    let Some(index) =
+                    let Some((index, active_source)) =
                         self.command
                             .input
                             .levels
                             .last()
                             .and_then(|level| match level {
                                 InputLevel::Tokens(cursor) if cursor.identity() == identity => {
-                                    Some(cursor.frame.position())
+                                    Some((cursor.frame.position(), cursor.frame.source_id()))
                                 }
                                 InputLevel::MacroArgument(cursor)
                                     if cursor.identity() == identity =>
                                 {
-                                    Some(cursor.frame.position())
+                                    Some((cursor.frame.position(), cursor.frame.source_id()))
                                 }
                                 _ => None,
                             })
@@ -1792,6 +1792,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 level.0,
                                 u64::from(index),
                                 None,
+                                active_source,
                                 false,
                                 None,
                                 false,

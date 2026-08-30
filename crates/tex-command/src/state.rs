@@ -1400,6 +1400,28 @@ impl<G> CommandState<G> {
         self.input.current_file_source_id()
     }
 
+    /// Resets the focused active-source delivery counters.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_reset_input_source_context_counters(&self) {
+        crate::input::reset_input_source_context_counters();
+    }
+
+    /// Returns `(top reads, ancestry rows, owner-slot lookups, lexer-slot
+    /// borrows)` for focused active-source delivery measurements.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_input_source_context_counters(&self) -> (u64, u64, u64, u64) {
+        let counters = crate::input::input_source_context_counters();
+        (
+            counters.top_reads,
+            counters.ancestry_rows,
+            counters.owner_slot_lookups,
+            counters.source_lex_slot_borrows,
+        )
+    }
+
     /// Captures TeX82 §530's current input display before deferred shipout
     /// releases the command processor borrow.
     #[must_use]
@@ -2690,9 +2712,16 @@ impl<G> CommandState<G> {
         open_depths: Option<crate::input::SourceOpenDepths>,
     ) -> InputLevelId {
         let identity = self.allocate_input_level_identity();
+        let enclosing_source = self.input.levels.current_source_context();
+        let source_context = match name_class {
+            SourceNameClass::File | SourceNameClass::Scantokens(_) => Some(registered.id),
+            SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => enclosing_source,
+        };
+        let mut frame = crate::input::PackedInputFrame::source(identity.0, registered.id);
+        frame.set_source_context(source_context);
         self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
         self.input.levels.push_source(
-            crate::input::PackedInputFrame::source(identity.0, registered.id),
+            frame,
             crate::input::SourceSlot::new(
                 SourceCursor::new(registered),
                 every_eof,

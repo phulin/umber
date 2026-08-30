@@ -207,6 +207,11 @@ replay-completion frontier, and rollback authority. Its storage-lifetime tag
 was selected when the level was created; delivery borrows that domain, writes
 the spelling, raw delivery coordinate, only-present provenance, and input
 flags directly into `CurrentCommand`, and advances the fixed frame in place.
+The frame also carries the active external-source identity inherited when the
+row is pushed. Delivery therefore emits spelling provenance and execution
+source context together without searching lower input rows. Main control
+retains the resulting root-main-file fact only when it retires the command
+slot into a scanned operation.
 A macro parameter candidate pushes its argument range and overwrites the same
 unresolved value on the next iteration. No raw command envelope is created or
 copied, and only a resolved command may enter a scanner or resource
@@ -1730,7 +1735,11 @@ character-index representation.
 Ordinary delivery selects the semantic top once. Source delivery lends its row
 and checked slot together, tokenizes into the caller's final command slot, and
 advances the row's compact position before ending that borrow. Stored-token and
-macro-argument delivery use corresponding typed top operations. `InputStack`
+macro-argument delivery use corresponding typed top operations. Every row's
+common packed frame holds the active external-source context: source pushes
+install their own identity, while stored and macro-argument pushes inherit the
+current top's value. Reading the context is consequently one top-row read and
+no ancestry or source-slot lookup, independent of replay depth. `InputStack`
 exposes no raw mutable top, mutable index, shadow stack, or alternate token
 representation.
 

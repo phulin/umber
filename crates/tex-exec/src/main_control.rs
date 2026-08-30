@@ -1321,6 +1321,11 @@ struct OperationFrame<G> {
     scalar: tex_command::ScalarScanFrame,
     operation_scan: Option<PendingOperationScanPhase>,
     alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+    /// Whether the command which produced a detached operation was delivered
+    /// while the root main source was active. This is written only when the
+    /// command slot is about to be retired, then travels with that operation
+    /// through resource suspension.
+    root_main_file_origin: bool,
 }
 
 impl<G> Default for OperationFrame<G> {
@@ -1339,6 +1344,7 @@ impl<G> Default for OperationFrame<G> {
             scalar: tex_command::ScalarScanFrame::default(),
             operation_scan: None,
             alignment_scanner: None,
+            root_main_file_origin: false,
         }
     }
 }
@@ -1511,6 +1517,27 @@ impl<G> OperationFrame<G> {
         self.operation_scan = None;
     }
 
+    fn retain_root_main_file_origin(&mut self, root_main_source: Option<tex_state::SourceId>) {
+        self.root_main_file_origin = root_main_source
+            .zip(
+                self.current_option()
+                    .and_then(|command| command.active_source_id()),
+            )
+            .is_some_and(|(root, active)| root == active);
+    }
+
+    fn is_root_main_file_operation(&self, root_main_source: Option<tex_state::SourceId>) -> bool {
+        self.current_option()
+            .and_then(|command| command.active_source_id())
+            .zip(root_main_source)
+            .is_some_and(|(active, root)| active == root)
+            || self.root_main_file_origin
+    }
+
+    fn clear_operation_origin(&mut self) {
+        self.root_main_file_origin = false;
+    }
+
     fn assert_empty(&self) {
         assert!(
             self.applied.is_none()
@@ -1525,7 +1552,8 @@ impl<G> OperationFrame<G> {
                 && self.scanner.is_none()
                 && self.scalar.is_empty()
                 && self.operation_scan.is_none()
-                && self.alignment_scanner.is_none(),
+                && self.alignment_scanner.is_none()
+                && !self.root_main_file_origin,
             "one command attempt owns one empty operation frame"
         );
     }
@@ -4265,11 +4293,6 @@ impl<G> MainControl<G> {
                     root_main_file_origin,
                 });
         }
-    }
-
-    fn active_external_file_is_root_main(&self) -> bool {
-        self.root_main_source
-            .is_some_and(|root| self.command.current_file_source_id() == Some(root))
     }
 
     /// Publishes at most one queued named boundary after every command-owned
@@ -8213,6 +8236,7 @@ impl<G> MainControl<G> {
         let display_eq_no = self.modes.current_list().display_eq_no().is_some();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
+        let root_main_source = self.root_main_source;
         let (delivery_status, trace_reported, fused_delivery, fused_error) = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -8341,11 +8365,13 @@ impl<G> MainControl<G> {
                             // result. Retire the delivery/scanner episode as a
                             // unit before handing that operation to execution;
                             // no preflight marker belongs to the next stage.
+                            frame.retain_root_main_file_origin(root_main_source);
                             frame.clear_preflight();
                             frame.write_hot(operation);
                             fused_delivery = Some((OperationDelivery::Hot, capabilities));
                         }
                         Ok(ScannedOperation::Cold(operation)) => {
+                            frame.retain_root_main_file_origin(root_main_source);
                             frame.clear_preflight();
                             frame.write_unavailable(operation);
                             fused_delivery = Some((OperationDelivery::Scanned, capabilities));
@@ -8468,6 +8494,7 @@ impl<G> MainControl<G> {
             let capabilities = crate::transaction_protocol::canonical_command_capabilities(
                 frame.current().meaning(),
             );
+            frame.retain_root_main_file_origin(root_main_source);
             frame.discard_resident_command();
             return Ok(Some(PreflightDelivery::<G> {
                 delivery: OperationDelivery::Prepared,
@@ -8558,6 +8585,7 @@ impl<G> MainControl<G> {
         if result.is_ok() {
             self.apply_error_stop_transition(stores, diagnostic_effects)?;
             frame.clear_preflight();
+            frame.clear_operation_origin();
         }
         result
     }
@@ -8630,7 +8658,7 @@ impl<G> MainControl<G> {
             _scope: _,
         } = host_preparation;
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let root_main_file_origin = self.active_external_file_is_root_main();
+        let root_main_file_origin = frame.is_root_main_file_operation(self.root_main_source);
         if matches!(delivery, OperationDelivery::Hot) {
             let operation = frame.take_hot();
             frame.applied = Some(self.apply_hot_operation(

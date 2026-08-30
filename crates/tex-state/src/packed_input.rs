@@ -127,6 +127,16 @@ impl InputFrame {
         self.source
     }
 
+    /// Installs the external source context active at this frame.
+    ///
+    /// For file and `\scantokens` source frames this is their own source;
+    /// terminal/read frames and token frames inherit the enclosing external
+    /// source. The scalar is immutable after admission and is not a backing
+    /// owner, cache, or provenance graph.
+    pub const fn set_source_context(&mut self, source: Option<crate::SourceId>) {
+        self.source = source;
+    }
+
     /// Advances once and returns the position that was consumed.
     pub const fn advance(&mut self) -> Option<u32> {
         if self.position >= self.limit {

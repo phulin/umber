@@ -14,6 +14,59 @@ use super::{
 
 const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
 
+/// Profiling-only proof that active-source delivery is independent of input
+/// depth. Shipping builds contain neither the counters nor their updates.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct InputSourceContextCounters {
+    pub(crate) top_reads: u64,
+    pub(crate) ancestry_rows: u64,
+    pub(crate) owner_slot_lookups: u64,
+    pub(crate) source_lex_slot_borrows: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+thread_local! {
+    static INPUT_SOURCE_CONTEXT_COUNTERS: core::cell::Cell<InputSourceContextCounters> =
+        const { core::cell::Cell::new(InputSourceContextCounters {
+            top_reads: 0,
+            ancestry_rows: 0,
+            owner_slot_lookups: 0,
+            source_lex_slot_borrows: 0,
+        }) };
+}
+
+#[cfg(any(test, feature = "profiling"))]
+pub(crate) fn input_source_context_counters() -> InputSourceContextCounters {
+    INPUT_SOURCE_CONTEXT_COUNTERS.with(core::cell::Cell::get)
+}
+
+#[cfg(any(test, feature = "profiling"))]
+pub(crate) fn reset_input_source_context_counters() {
+    INPUT_SOURCE_CONTEXT_COUNTERS
+        .with(|counters| counters.set(InputSourceContextCounters::default()));
+}
+
+#[inline(always)]
+fn record_source_context_read() {
+    #[cfg(any(test, feature = "profiling"))]
+    INPUT_SOURCE_CONTEXT_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.top_reads = counters.top_reads.saturating_add(1);
+        slot.set(counters);
+    });
+}
+
+#[inline(always)]
+fn record_source_lex_slot_borrow() {
+    #[cfg(any(test, feature = "profiling"))]
+    INPUT_SOURCE_CONTEXT_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.source_lex_slot_borrows = counters.source_lex_slot_borrows.saturating_add(1);
+        slot.set(counters);
+    });
+}
+
 /// One inverse in the authoritative ordering of all input mutations.
 ///
 /// Source owners and displaced rows live in generation-checked reusable slabs;
@@ -40,6 +93,13 @@ enum InputUndo<G> {
         index: u32,
         payload: PayloadHandle,
         generation: core::marker::PhantomData<fn() -> G>,
+    },
+    /// One active external-source scalar changed by editor-root rebinding.
+    /// This remains separate from ordinary cursor first-touch capture so a
+    /// later delivery still records its initial execution position.
+    SourceContext {
+        index: u32,
+        source: Option<tex_state::SourceId>,
     },
     Replacement {
         index: u32,
@@ -306,6 +366,7 @@ impl<G> InputStack<G> {
             unreachable!()
         };
         let slot = slots.value_mut(key.0).expect("source slot remains live");
+        let replacement_id = replacement.id;
         let state = SourceLevelExecutionState::physical_backing(source, slot, replacement);
         if self.recording {
             self.source_owner_states.warm_first_page();
@@ -317,7 +378,33 @@ impl<G> InputStack<G> {
             });
             self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         }
+
+        for index in 0..self.top {
+            if self.rows[index].source_context() != Some(id) {
+                continue;
+            }
+            if self.recording {
+                self.undo.append(InputUndo::SourceContext {
+                    index: u32::try_from(index).expect("input row index fits u32"),
+                    source: Some(id),
+                });
+            }
+            self.rows[index].set_source_context(Some(replacement_id));
+        }
         true
+    }
+
+    /// External file or `\scantokens` context of the semantic top.
+    ///
+    /// Every admitted row carries this compact immutable execution fact in
+    /// its common frame, so the query reads one row and never walks input
+    /// ancestry or validates a source-owner slot.
+    #[inline(always)]
+    pub(crate) fn current_source_context(&self) -> Option<tex_state::SourceId> {
+        record_source_context_read();
+        self.rows
+            .get(self.top.checked_sub(1)?)
+            .and_then(InputLevel::source_context)
     }
 
     pub(crate) fn mutate_top_source_lex<R>(
@@ -325,21 +412,37 @@ impl<G> InputStack<G> {
         mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         let index = self.top.checked_sub(1)?;
-        if !matches!(self.rows[index], InputLevel::Source(_)) {
-            return None;
-        }
-        self.record(index);
         let key = match &self.rows[index] {
             InputLevel::Source(source) => source.slot,
-            _ => unreachable!(),
+            _ => return None,
         };
-        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
+        let needs_inverse = self.recording && self.touched[index] != self.interval;
+        if self.recording && !needs_inverse {
+            self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
+        }
+        let (rows, slots, states, undo) = (
+            &mut self.rows,
+            &mut self.source_slots,
+            &mut self.source_lex_states,
+            &mut self.undo,
+        );
         let InputLevel::Source(source) = &mut rows[index] else {
             unreachable!()
         };
         let slot = slots
             .value_mut(key.0)
             .expect("source row names its live ABA-checked slot");
+        record_source_lex_slot_borrow();
+        if needs_inverse {
+            self.source_lex_captures = self.source_lex_captures.saturating_add(1);
+            let payload = states.insert(SourceLexExecutionState::capture(source, slot));
+            undo.append(InputUndo::SourceLex {
+                index: u32::try_from(index).expect("input row index fits u32"),
+                payload,
+            });
+            self.touched[index] = self.interval;
+            self.partially_captured[index] = self.interval;
+        }
         Some(mutate(source, slot))
     }
 
@@ -712,13 +815,7 @@ impl<G> InputStack<G> {
                     InputLevelInlineState::new(argument.frame, super::RetirementBehavior::Pop);
                 self.undo.append(InputUndo::Inline { index, state });
             }
-            InputLevel::Source(source) => {
-                self.source_lex_captures = self.source_lex_captures.saturating_add(1);
-                let slot = self.source_slot(source.slot);
-                let state = SourceLexExecutionState::capture(source, slot);
-                let payload = self.source_lex_states.insert(state);
-                self.undo.append(InputUndo::SourceLex { index, payload });
-            }
+            InputLevel::Source(_) => unreachable!("source lexer mutations record in one borrow"),
         }
     }
 
@@ -772,6 +869,12 @@ impl<G> InputUndo<G> {
                     .expect("source owner inverse names a live source slot");
                 source.swap_execution_state(slot, state);
             }
+            Self::SourceContext { index, source } => {
+                let level = &mut rows[*index as usize];
+                let mut current = level.source_context();
+                level.set_source_context(*source);
+                core::mem::swap(source, &mut current);
+            }
             Self::Replacement { index, payload } => {
                 displaced.swap(*payload, &mut rows[*index as usize]);
             }
@@ -799,7 +902,7 @@ impl<G> InputUndo<G> {
             Self::SourceOwner { payload, .. } | Self::PhysicalBacking { payload, .. } => {
                 source_owners.release(payload)
             }
-            Self::Inline { .. } => {}
+            Self::Inline { .. } | Self::SourceContext { .. } => {}
         }
     }
 }

@@ -244,6 +244,7 @@ impl<G> MacroArgumentCursor<G> {
             frame.identity(),
             u64::from(position),
             None,
+            frame.source_id(),
             false,
             None,
             frame
@@ -427,6 +428,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 frame.identity(),
                 u64::from(position),
                 source_provenance,
+                frame.source_id(),
                 false,
                 None,
                 frame
@@ -608,6 +610,25 @@ impl<G> SourceLevelExecutionState<G> {
 }
 
 impl<G> InputLevel<G> {
+    /// External source context inherited when this semantic input row became
+    /// visible. Source owners remain exclusively in `InputStack`; this is the
+    /// compact execution fact delivered commands need for checkpoint origin.
+    pub(crate) const fn source_context(&self) -> Option<tex_state::SourceId> {
+        match self {
+            Self::Source(source) => source.frame.source_id(),
+            Self::Tokens(tokens) => tokens.frame.source_id(),
+            Self::MacroArgument(argument) => argument.frame.source_id(),
+        }
+    }
+
+    pub(crate) fn set_source_context(&mut self, source: Option<tex_state::SourceId>) {
+        match self {
+            Self::Source(level) => level.frame.set_source_context(source),
+            Self::Tokens(tokens) => tokens.frame.set_source_context(source),
+            Self::MacroArgument(argument) => argument.frame.set_source_context(source),
+        }
+    }
+
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
             Self::Tokens(tokens) => {

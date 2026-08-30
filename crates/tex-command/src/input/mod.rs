@@ -14,6 +14,8 @@ mod tokenizer;
 mod tests;
 
 pub(crate) use history::{InputStack, InputStackMark};
+#[cfg(any(test, feature = "profiling"))]
+pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
     MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership, PackedTokenSources,
@@ -1332,23 +1334,6 @@ impl<G> InputState<G> {
     }
 
     pub(crate) fn current_file_source_id(&self) -> Option<tex_state::SourceId> {
-        self.levels.iter().rev().find_map(|level| match level {
-            InputLevel::Source(source)
-                if matches!(
-                    self.levels.source_level_slot(source).name_class,
-                    SourceNameClass::Scantokens(_) | SourceNameClass::File
-                ) =>
-            {
-                Some(
-                    self.levels
-                        .source_level_slot(source)
-                        .cursor
-                        .current_backing()
-                        .id,
-                )
-            }
-            InputLevel::Source(_) => None,
-            InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
-        })
+        self.levels.current_source_context()
     }
 }

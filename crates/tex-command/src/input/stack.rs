@@ -262,7 +262,14 @@ impl<G> CommandState<G> {
                         state,
                         create_control_sequences,
                     };
-                    let (identity, position, direct_source_line, step, frame_advanced) = roots
+                    let (
+                        identity,
+                        position,
+                        active_source,
+                        direct_source_line,
+                        step,
+                        frame_advanced,
+                    ) = roots
                         .input
                         .levels
                         .mutate_top_source_lex(|source, slot| {
@@ -283,7 +290,14 @@ impl<G> CommandState<G> {
                                 !matches!(&step, CompactSourceTokenizationStep::Token(_))
                                     || (source.frame.identity() == identity.0
                                         && source.frame.advance().is_some());
-                            (identity, position, direct_source_line, step, frame_advanced)
+                            (
+                                identity,
+                                position,
+                                source.frame.source_id(),
+                                direct_source_line,
+                                step,
+                                frame_advanced,
+                            )
                         })
                         .expect("the inspected source remains on top");
                     if !frame_advanced {
@@ -310,6 +324,7 @@ impl<G> CommandState<G> {
                                 identity.0,
                                 position,
                                 Some(token.provenance),
+                                active_source,
                                 true,
                                 direct_source_line,
                                 false,
@@ -661,6 +676,7 @@ impl<G> CommandState<G> {
         let identity = self.allocate_input_level_identity();
         let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
+        frame.set_source_context(self.input.levels.current_source_context());
         if has_macro_lineage {
             frame.add_flags(tex_state::packed_input::InputFrameFlags::HAS_MACRO_LINEAGE);
         }
@@ -764,13 +780,14 @@ impl<G> CommandState<G> {
             .ok_or(ParameterReplayError::MissingArgument { slot })?;
         let identity = self.allocate_input_level_identity();
         let trace = ReplayTrace::MacroParameter { slot };
-        let frame = super::packed_token_frame(
+        let mut frame = super::packed_token_frame(
             identity,
             range.len() as usize,
             &TokenBehavior::Parameter,
             RetirementBehavior::Pop,
             &trace,
         );
+        frame.set_source_context(self.input.levels.current_source_context());
         self.push_input_level(InputLevel::MacroArgument(super::MacroArgumentCursor {
             range,
             slot,

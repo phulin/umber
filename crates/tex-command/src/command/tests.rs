@@ -104,7 +104,7 @@ fn raw_resolution_preparation_and_execution_borrow_one_command_address() {
         let slot = core::ptr::from_ref(&command);
         let raw = command
             .empty_for_raw_delivery()
-            .write_raw_delivery(spelling, 17, 23, None, false, None, false);
+            .write_raw_delivery(spelling, 17, 23, None, None, false, None, false);
         assert_eq!(core::ptr::from_ref(raw.0), slot);
         let (resolved, meaning_lookup) =
             raw.resolve_in_place(29, &universe.command_context().expect("command context"));
@@ -206,6 +206,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
             3,
             5,
             None,
+            None,
             false,
             None,
             false,
@@ -224,6 +225,7 @@ fn resolving_in_place_acquires_and_releases_exactly_one_macro_owner() {
             ),
             11,
             13,
+            None,
             None,
             false,
             None,
