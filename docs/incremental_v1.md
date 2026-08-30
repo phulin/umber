@@ -132,6 +132,10 @@ restores a retained checkpoint does not create a second `JobStart`: the
 restored record is the schedule anchor, and newly emitted records begin after
 it. Restoring `JobStart` therefore means full TeX re-execution, not rebuilding
 the session or repinning inputs halfway through a run.
+An edit that has no eligible live checkpoint materializes this frozen anchor
+and remains a slow edit for telemetry, but it is a cold recomputation owner:
+it does not compare later boundaries or adopt output from the accepted suffix.
+Suffix convergence begins only from a live retained boundary fork.
 
 ### `OuterParagraphEnd`
 

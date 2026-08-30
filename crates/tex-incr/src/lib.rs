@@ -2885,9 +2885,6 @@ impl<'store> Session<'store> {
             } else {
                 let metadata = self.job_start_session_metadata();
                 if let Some(prior) = self.prior_generation.as_mut() {
-                    if plan.execution_path == RevisionExecutionPath::SlowEdit {
-                        plan.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
-                    }
                     let anchor = self
                         .job_start_anchor
                         .as_mut()
@@ -2913,11 +2910,13 @@ impl<'store> Session<'store> {
                 }
             };
         let comparison_history: Arc<[BoundaryRecord]> = Arc::from(self.history.clone());
-        let comparison_start = plan.restart_boundary.and_then(|selected| {
-            comparison_history
-                .iter()
-                .position(|record| record.key == selected)
-                .map(|index| index.saturating_add(1))
+        let comparison_start = checkpoint_control_key.as_ref().and_then(|_| {
+            plan.restart_boundary.and_then(|selected| {
+                comparison_history
+                    .iter()
+                    .position(|record| record.key == selected)
+                    .map(|index| index.saturating_add(1))
+            })
         });
         plan.restart_fork_latency = fork_started.elapsed();
         Ok(RevisionCandidate {
@@ -2976,15 +2975,7 @@ impl<'store> Session<'store> {
             .completed
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
-        let old_history_start = candidate
-            .plan
-            .restart_boundary
-            .and_then(|selected| {
-                self.history
-                    .iter()
-                    .position(|record| record.key == selected)
-            })
-            .map_or(0, |selected| selected.saturating_add(1));
+        let old_history_start = candidate.comparison_start.unwrap_or(self.history.len());
         let new_history_start = candidate
             .plan
             .restart_boundary

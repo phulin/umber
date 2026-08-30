@@ -553,9 +553,61 @@ fn semantic_edit_matches_a_fresh_cold_execution() {
     assert_detached_output_eq(&accepted, &expected);
     assert_eq!(
         accepted.reuse.execution_path,
-        RevisionExecutionPath::ForcedJobStartFallback
+        RevisionExecutionPath::SlowEdit
     );
     assert_eq!(accepted.reuse.pages_reused, 0);
+}
+
+#[test]
+fn materialized_job_start_recomputes_the_changed_output_suffix() {
+    let original = concat!(
+        "\\input stable.tex \\font\\f=cmr10 \\f reusable paragraph\\par ",
+        "\\immediate\\write16{old-output} \\message{tail}\\end"
+    );
+    let output_start = original.find("old-output").expect("output text");
+    let mut incremental = session(RevisionId::new(1), original);
+    incremental
+        .register_input_file(Path::new("stable.tex"), b"\\relax\n".to_vec())
+        .expect("stable input registers");
+    incremental
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("paragraph font registers");
+    incremental.cold().expect("baseline");
+    assert!(
+        incremental
+            .history()
+            .iter()
+            .any(|record| record.key().boundary == EngineBoundary::OuterParagraphEnd)
+    );
+
+    let accepted = incremental
+        .advance(
+            RevisionId::new(2),
+            edit(
+                &incremental,
+                output_start..output_start + "old-output".len(),
+                "new-output",
+            ),
+        )
+        .expect("edited revision");
+
+    let effects = terminal_effect_text(&accepted);
+    assert!(effects.contains("new-output"), "{effects:?}");
+    assert!(!effects.contains("old-output"), "{effects:?}");
+    assert_eq!(
+        accepted.reuse.execution_path,
+        RevisionExecutionPath::SlowEdit
+    );
+    assert_eq!(
+        accepted.reuse.restart_boundary,
+        Some(BoundaryKey {
+            position: 0,
+            boundary: EngineBoundary::JobStart,
+            ordinal: 0,
+        })
+    );
+    assert_eq!(accepted.reuse.convergence_boundary, None);
+    assert_eq!(accepted.reuse.suffixes_adopted, 0);
 }
 
 #[test]
