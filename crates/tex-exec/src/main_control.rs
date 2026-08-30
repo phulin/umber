@@ -5151,10 +5151,14 @@ impl<G> MainControl<G> {
                 );
                 (operation, pending)
             });
-            let pending_direct = if resumed_resource.is_none() {
+            // Inspect the discriminant before taking the large typed retry
+            // aggregate so the ordinary None path leaves its storage resident.
+            let pending_direct = if resumed_resource.is_some() {
+                debug_assert!(self.pending_direct_operation.is_none());
+                None
+            } else if self.pending_direct_operation.is_some() {
                 self.pending_direct_operation.take()
             } else {
-                debug_assert!(self.pending_direct_operation.is_none());
                 None
             };
             let (retained_operation, pending_destination) = match pending_direct {
