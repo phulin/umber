@@ -168,6 +168,11 @@ impl<T> ChunkStorage<T> {
         self.pages.len()
     }
 
+    #[cfg(test)]
+    fn live_chunk_count(&self) -> usize {
+        self.chunks.iter().filter(|chunk| chunk.live).count()
+    }
+
     fn allocated_heap_bytes(&self) -> usize {
         self.pages
             .capacity()
@@ -742,6 +747,11 @@ impl<T> ChunkPool<T> {
         self.payload.page_count()
     }
 
+    #[cfg(test)]
+    pub(crate) fn live_payload_chunk_count(&self) -> usize {
+        self.payload.live_chunk_count()
+    }
+
     #[must_use]
     pub const fn logical_block_metadata_bytes(&self) -> usize {
         std::mem::size_of::<ChunkMeta>()
@@ -1146,6 +1156,7 @@ pub struct ForkArenaCounters {
     pub accepted_chunks_reattached: u64,
     pub obsolete_chunks_pruned: u64,
     pub sealed_prefix_chunks_shared: u64,
+    pub rootless_suffix_chunks_released: u64,
 }
 
 /// Exact work performed while recovering an identity from stored summaries.
@@ -3173,6 +3184,64 @@ impl<T, Lane> ForkArena<T, Lane> {
         prefix.descriptors.extend(current.descriptors);
         self.ownership = ForkOwnership::Accepted(prefix);
         Ok(())
+    }
+
+    /// Releases whole current-lineage chunks above the newest retained mark.
+    ///
+    /// `boundary` proves that no builder or partial tail can still publish
+    /// into the suffix. An accepted arena releases only the chunks after
+    /// `retained`; a forked arena additionally preserves its selected prefix
+    /// and parked accepted suffix. Shared chunks lose only this arena's
+    /// bounded lineage slot and remain live for their other owner.
+    pub(crate) fn release_rootless_current_suffix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        boundary: SealedBoundary<Lane>,
+        retained: Option<CheckpointMark<Lane>>,
+    ) -> Result<usize, ForkArenaError> {
+        self.bind_pool(pool)?;
+        if self.active_builder
+            || self.pending_batch.is_some()
+            || boundary.arena != self.owner
+            || boundary.payload_chunks as usize != self.live_payload_len()
+            || boundary.descriptor_chunks as usize != self.live_descriptor_len()
+            || retained.is_some_and(|mark| !self.validates_checkpoint(mark))
+        {
+            return Err(ForkArenaError::UnsealedBoundary);
+        }
+
+        let (payload_origin, descriptor_origin) = match &self.ownership {
+            ForkOwnership::Accepted(_) => (
+                self.base_payload_chunks as usize,
+                self.base_descriptor_chunks as usize,
+            ),
+            ForkOwnership::Forked { prefix, .. } => (
+                self.base_payload_chunks as usize + prefix.payload.len(),
+                self.base_descriptor_chunks as usize + prefix.descriptors.len(),
+            ),
+        };
+        let payload_floor = retained
+            .map_or(payload_origin, |mark| mark.payload_chunks as usize)
+            .checked_sub(payload_origin)
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let descriptor_floor = retained
+            .map_or(descriptor_origin, |mark| mark.descriptor_chunks as usize)
+            .checked_sub(descriptor_origin)
+            .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        let current = self.current_chunks_mut();
+        if payload_floor > current.payload.len() || descriptor_floor > current.descriptors.len() {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let released = ChunkSet {
+            payload: current.payload.split_off(payload_floor),
+            descriptors: current.descriptors.split_off(descriptor_floor),
+        };
+        let count = self.release_set(pool, released)?;
+        self.counters.rootless_suffix_chunks_released = self
+            .counters
+            .rootless_suffix_chunks_released
+            .saturating_add(count as u64);
+        Ok(count)
     }
 
     fn validate_settlement_boundary(

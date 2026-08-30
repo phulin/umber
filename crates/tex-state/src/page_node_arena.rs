@@ -396,6 +396,17 @@ impl PageMaterialRegion {
         pool.retire_region(self.region).map_err(|(error, _)| error)
     }
 
+    pub(crate) fn release_rootless_suffix(
+        &mut self,
+        pool: &mut NodePool,
+        retained: Option<CheckpointMark<PageMaterialLane>>,
+    ) -> Result<usize, ForkArenaError> {
+        let boundary = self.region.pub_arena.seal_boundary(&mut pool.chunks)?;
+        self.region
+            .pub_arena
+            .release_rootless_current_suffix(&mut pool.chunks, boundary, retained)
+    }
+
     pub(crate) fn copy_closure_between(
         pool: &mut NodePool,
         destination: &mut Self,

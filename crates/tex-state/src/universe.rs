@@ -2752,8 +2752,9 @@ impl<G> Universe<G> {
     /// Releases only rootless page rows above the generation's monotonic
     /// retained checkpoint prefix.
     pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {
-        // Root liveness is not yet tracked at chunk-envelope granularity.
-        // Retain conservatively until generation retirement.
+        self.page_region
+            .release_rootless_current_suffix()
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         Ok(())
     }
 

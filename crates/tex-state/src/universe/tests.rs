@@ -998,7 +998,7 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
 }
 
 #[test]
-fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_cleanly() {
+fn rootless_runtime_checkpoint_releases_only_the_unreachable_suffix() {
     with_universe(budget(), |universe| {
         let retained = universe.publish_page_nodes(&[Node::Penalty(3)]);
         universe
@@ -1037,11 +1037,11 @@ fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_c
         let rootless = universe.runtime_checkpoint().expect("rootless checkpoint");
         assert_eq!(
             universe.page_node_rows(),
-            4,
-            "without a per-root registry, accepted whole chunks remain available to sibling marks"
+            2,
+            "the retained checkpoint prefix survives while incidental suffix rows retire"
         );
-        assert!(universe.page_node_list(discarded_a).is_ok());
-        assert!(universe.page_node_list(discarded_b).is_ok());
+        assert!(universe.page_node_list(discarded_a).is_err());
+        assert!(universe.page_node_list(discarded_b).is_err());
 
         for checkpoint in [&partial, &rootless, &partial, &rootless] {
             let mut candidate = universe
@@ -1051,7 +1051,7 @@ fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_c
         }
         universe
             .restore_runtime_checkpoint_with_roots(&partial, || {})
-            .expect("accepted restore prunes the superseded suffix");
+            .expect("accepted restore keeps the retained prefix exact");
         assert!(universe.page_node_list(retained).is_ok());
         assert!(universe.page_node_list(discarded_a).is_err());
         assert!(universe.page_node_list(discarded_b).is_err());
@@ -1063,6 +1063,36 @@ fn rootless_runtime_checkpoint_retains_whole_chunks_while_sibling_forks_reject_c
                 .len(),
             1,
             "the partial-page checkpoint remains restorable after rootless siblings"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn external_mode_roots_block_rootless_page_suffix_release() {
+    with_universe(budget(), |universe| {
+        let unreachable = universe.publish_page_nodes(&[Node::Penalty(7), Node::Penalty(9)]);
+        let before = universe.page_material_counters();
+
+        assert!(
+            !universe
+                .release_page_suffix_if_rootless(true)
+                .expect("external root check is nonmutating")
+        );
+        assert!(universe.page_node_list(unreachable).is_ok());
+        assert_eq!(universe.page_material_counters(), before);
+
+        assert!(
+            universe
+                .release_page_suffix_if_rootless(false)
+                .expect("fully rootless boundary releases")
+        );
+        assert!(universe.page_node_list(unreachable).is_err());
+        assert!(
+            universe
+                .page_material_counters()
+                .rootless_suffix_chunks_released
+                > before.rootless_suffix_chunks_released
         );
     })
     .expect("universe allocation");

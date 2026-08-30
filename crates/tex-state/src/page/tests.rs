@@ -1657,6 +1657,173 @@ fn production_uncheckpointed_pages_reuse_pool_at_a_fixed_high_water() {
 }
 
 #[test]
+fn rootless_suffix_releases_live_chunks_but_keeps_retained_floor_and_high_water() {
+    let mut history = PageRegionHistory::default();
+    let chunk_capacity = history.pool.chunks.chunk_capacity();
+    let retained = publish_nodes(
+        &mut history.nodes_mut(),
+        (0..chunk_capacity).map(|value| kern(value as i32)),
+    );
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, retained);
+    }
+    let checkpoint = history.seal_checkpoint().expect("retained page floor");
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        let carrier = builder.remove_contribution_range(&mut nodes, 0..=chunk_capacity - 1);
+        builder.discard_carrier(carrier);
+    }
+    let unreachable = publish_nodes(
+        &mut history.nodes_mut(),
+        (0..chunk_capacity.saturating_mul(4)).map(|value| kern(value as i32 + 10_000)),
+    );
+    let live_before = history.pool.chunks.live_payload_chunk_count();
+    let pages_before = history.pool.chunks.page_count();
+    let counters_before = history.current().material_counters();
+
+    let released = history
+        .release_rootless_current_suffix()
+        .expect("rootless suffix has an exact retained floor");
+
+    assert!(
+        released >= 4,
+        "the unreachable suffix spans multiple chunks"
+    );
+    assert!(history.pool.chunks.live_payload_chunk_count() < live_before);
+    assert_eq!(history.pool.chunks.page_count(), pages_before);
+    assert!(history.nodes().contains(retained));
+    assert!(!history.nodes().contains(unreachable));
+    assert!(history.validates_checkpoint(checkpoint));
+    let counters_after = history.current().material_counters();
+    assert_eq!(
+        counters_after.source_nodes_copied,
+        counters_before.source_nodes_copied
+    );
+    assert_eq!(
+        counters_after.direct_blocks_allocated,
+        counters_before.direct_blocks_allocated
+    );
+    assert_eq!(
+        counters_after.rootless_suffix_chunks_released
+            - counters_before.rootless_suffix_chunks_released,
+        released as u64
+    );
+
+    history
+        .restore_checkpoint(checkpoint)
+        .expect("retained floor remains exactly restorable");
+    let restored = history.builder().payload_roots().contribution;
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), restored),
+        (0..chunk_capacity)
+            .map(|value| kern(value as i32))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rootless_suffix_release_rejects_all_four_live_page_builder_roots() {
+    let mut history = PageRegionHistory::default();
+    let contribution = publish_nodes(&mut history.nodes_mut(), [kern(1)]);
+    let current_page = publish_nodes(&mut history.nodes_mut(), [kern(2)]);
+    let split_discards = publish_nodes(&mut history.nodes_mut(), [kern(4)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, contribution);
+        builder.push_current_page_list(&mut nodes, current_page);
+        builder.push_page_discard(&mut nodes, kern(3));
+        builder.set_split_discards(&nodes, split_discards);
+    }
+    let roots = history.builder().payload_roots();
+    let live_before = history.pool.chunks.live_payload_chunk_count();
+
+    assert_eq!(
+        history.release_rootless_current_suffix(),
+        Err(crate::fork_arena::ForkArenaError::InvalidRegion)
+    );
+    assert_eq!(history.pool.chunks.live_payload_chunk_count(), live_before);
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(1)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.current_page),
+        [kern(2)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.page_discards),
+        [kern(3)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.split_discards),
+        [kern(4)]
+    );
+}
+
+#[test]
+fn forked_rootless_release_keeps_parked_accepted_suffix_for_rejection() {
+    let mut history = PageRegionHistory::default();
+    let checkpoint = history.seal_checkpoint().expect("fork floor");
+    let accepted_suffix = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    let tail = history
+        .begin_checkpoint_candidate(checkpoint)
+        .expect("candidate fork");
+    let candidate_suffix = publish_nodes(&mut history.nodes_mut(), [kern(7), kern(8)]);
+
+    history
+        .release_rootless_current_suffix()
+        .expect("rootless candidate suffix releases independently");
+    assert!(!history.nodes().contains(candidate_suffix));
+    assert!(
+        !history.nodes().contains(accepted_suffix),
+        "the accepted suffix remains parked outside current admission"
+    );
+
+    history
+        .reject_checkpoint_candidate(tail)
+        .expect("rejection reattaches the untouched accepted lineage");
+    assert!(history.nodes().contains(accepted_suffix));
+    assert!(!history.nodes().contains(candidate_suffix));
+}
+
+#[test]
+fn rootless_shared_successor_releases_only_its_lineage() {
+    let mut history = PageRegionHistory::default();
+    let checkpoint = history
+        .seal_checkpoint()
+        .expect("retained predecessor checkpoint");
+    history.arm_output_successor_build();
+    let shared = publish_nodes(&mut history.nodes_mut(), [kern(11), kern(12)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, shared);
+    }
+    history
+        .prepare_production_shipout()
+        .expect("shared successor prepares");
+    history
+        .commit_prepared_shipout()
+        .expect("shared successor commits");
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        let carrier = builder.remove_contribution_range(&mut nodes, 0..=1);
+        builder.discard_carrier(carrier);
+    }
+
+    history
+        .release_rootless_current_suffix()
+        .expect("current shared lineage releases");
+    assert!(!history.nodes().contains(shared));
+    let prior = history.region(checkpoint).expect("retained predecessor");
+    assert!(
+        prior.nodes(&history.pool).contains(shared),
+        "the predecessor lineage still owns the sealed shared chunk"
+    );
+    assert!(history.validates_checkpoint(checkpoint));
+}
+
+#[test]
 fn production_heldover_moves_a_self_contained_successor_envelope() {
     let mut history = PageRegionHistory::default();
     let _shipped_prefix = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);

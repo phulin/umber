@@ -1076,6 +1076,23 @@ impl PageRegionHistory {
         self.current_mut().builder_mut()
     }
 
+    pub(crate) fn release_rootless_current_suffix(&mut self) -> Result<usize, ForkArenaError> {
+        let current = self
+            .regions
+            .last_mut()
+            .expect("page history always has a current region");
+        if current.builder.retains_page_node_handles() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let retained = current
+            .checkpoints
+            .last()
+            .map(|checkpoint| checkpoint.nodes);
+        current
+            .nodes
+            .release_rootless_suffix(&mut self.pool, retained)
+    }
+
     pub(crate) fn parts_mut(&mut self) -> (PageNodeArena<'_>, &mut PageBuilderState) {
         let current = self
             .regions
