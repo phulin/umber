@@ -1805,6 +1805,14 @@ no ancestry or source-slot lookup, independent of replay depth. `InputStack`
 exposes no raw mutable top, mutable index, shadow stack, or alternate token
 representation.
 
+The live source row is itself the reachability proof for its occupied source
+slot: the stack cannot release or reuse that slot until the row retires.
+Ordinary source delivery therefore projects the slot by its resident physical
+index without repeating the ABA-generation comparison on every token. Cold
+history coordinates, rollback/redo payloads, and any lookup not protected by
+the resident-row borrow continue to validate the complete generation-bearing
+key before mutation.
+
 The first source mutation after an observable mark stores only the eight-byte
 slot key, four-byte input position, 24-byte lexical cursor, and registration
 flags. The resulting packed inverse is at most 48 bytes. Cold line, backing,

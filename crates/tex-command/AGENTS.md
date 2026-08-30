@@ -241,7 +241,11 @@ collector (see `src/conditionals.rs`).
   share its single top access, matching first-touch transition, direct final-
   command write, and diagnostic revision without a callback or returned token
   carrier. No raw mutable top or mutable index survives. Focused gates prove
-  exact coalescing and zero-allocation hot mutation.
+  exact coalescing and zero-allocation hot mutation. A resident source row
+  structurally proves its source slot remains occupied, so ordinary source
+  delivery borrows that slot by physical index without repeating the ABA
+  generation check. Cold history, rollback, and detached coordinates continue
+  to validate the complete slot key.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the destination-directed `advance_resident_command_into` transition over the resident top,
   whose EOF, recovery, parameter, and exhaustion results retain no command-

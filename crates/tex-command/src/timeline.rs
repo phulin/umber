@@ -174,6 +174,20 @@ impl<T> PayloadSlab<T> {
         self.slot_mut(handle).and_then(|slot| slot.value.as_mut())
     }
 
+    /// Borrows the occupied slot whose lifetime is already proved by a live
+    /// authoritative row.
+    ///
+    /// Unlike [`Self::value_mut`], this does not revalidate the ABA generation.
+    /// The caller must own a resident row whose removal is the only operation
+    /// allowed to release this slot. The occupied-value check remains the safe
+    /// storage projection; no unchecked memory access is involved.
+    pub(crate) fn resident_value_mut(&mut self, slot: u32) -> &mut T {
+        self.slot_by_index_mut(slot)
+            .value
+            .as_mut()
+            .expect("resident row owns its occupied payload slot")
+    }
+
     fn slot(&self, handle: PayloadHandle) -> Option<&PayloadSlot<T>> {
         let slot = handle.slot as usize;
         let slot = self

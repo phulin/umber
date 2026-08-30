@@ -125,6 +125,16 @@ fn record_source_lex_slot_borrow() {
     });
 }
 
+#[inline(always)]
+fn record_source_owner_slot_lookup() {
+    #[cfg(any(test, feature = "profiling"))]
+    INPUT_SOURCE_CONTEXT_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.owner_slot_lookups = counters.owner_slot_lookups.saturating_add(1);
+        slot.set(counters);
+    });
+}
+
 /// One inverse in the authoritative ordering of all input mutations.
 ///
 /// Source owners and displaced rows live in generation-checked reusable slabs;
@@ -389,6 +399,7 @@ impl<G> InputStack<G> {
     }
 
     pub(crate) fn source_slot(&self, key: SourceSlotKey) -> &SourceSlot<G> {
+        record_source_owner_slot_lookup();
         self.source_slots
             .value(key.0)
             .expect("source row names its live ABA-checked slot")
@@ -561,11 +572,11 @@ impl<G> InputStack<G> {
         }
         let delivery = match &mut self.rows[index] {
             InputLevel::Source(source) => {
-                let key = source.slot;
-                let slot = self
-                    .source_slots
-                    .value_mut(key.0)
-                    .expect("source row names its live ABA-checked slot");
+                // This authoritative resident row prevents its slot from
+                // being released or reused until the row itself retires. ABA
+                // validation belongs to cold history coordinates, not every
+                // ordinary token delivered through the live row.
+                let slot = self.source_slots.resident_value_mut(source.slot.0.slot);
                 record_source_lex_slot_borrow();
                 if state.tracked_region_is_active() {
                     super::observe_immutable_source(state, source, slot);

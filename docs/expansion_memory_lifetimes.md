@@ -729,6 +729,11 @@ command rather than walking input ancestry after delivery. The stack exposes
 no raw mutable top or mutable index. Its allocation gate proves
 that 4,096 warmed lexer mutations perform zero allocations and one inverse at
 both one and 4,096 live source rows.
+While that source row is resident, it is the structural lifetime proof for its
+occupied physical source slot: row retirement is the only release path.
+Ordinary delivery uses that resident projection without repeating the slot's
+ABA-generation comparison. Cold inverse, rollback/redo, and owner-swap paths
+retain complete checked keys.
 Nested source opening installs ancestry as part of the same frame transition
 which updates the singular session-owned TeX82 input-stack maximum; before
 retirement the processor borrows it and returns only copy-small common-prefix
