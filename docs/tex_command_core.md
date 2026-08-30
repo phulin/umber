@@ -2106,10 +2106,17 @@ nine absolute ranges plus the exact §394 paragraph
 and removable-outer-group facts established during their first scan, beside
 one traced-word suffix in the generation's fixed-chunk lane. The paragraph fact records only
 the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
-prefix and later committed after a mismatch is not reclassified. The scalar
-matcher admits the one live frame before collection and updates its direct
-current-argument slot in definition order. It consumes those facts for the
-non-`\long` decision and outer-pair removal without rereading stored words.
+prefix and later committed after a mismatch retains its first spelling/group
+classification but does not acquire the ordinary paragraph-check fact. The
+scalar matcher classifies each completed raw delivery once. Its admitted
+`MacroMatchWriter` then performs the sole accepted-token transition: it appends
+the exact traced word, accepts the lane's returned cursor, and updates paragraph,
+brace-depth, and removable-outer-group aggregates under the same scratch
+borrow. Delimiter-prefix storage retains that classification beside the word,
+so overlap recovery neither decodes provenance/group facts again nor rebuilds
+an aggregate. The writer's brace depth is also the delimiter matcher's depth;
+there is no scanner-local duplicate. The matcher consumes the resident facts
+for the non-`\long` decision and outer-pair removal without rereading stored words.
 Sealing advances the live depth of that same metadata frame without moving its
 physical words because admission already appended to the shared lane. No
 chunk owner, argument table, range, fact, or sealed word moves.
@@ -2660,7 +2667,10 @@ matching retains the
 maximal overlapping delimiter prefix after a partial mismatch, commits each
 unreusable leading token literally with its command-owned
 `macro_delimiter_recovery` observation, ignores delimiters below literal brace
-depth, and cancels the raw brace accounting for a matched `#{` delimiter. A
+depth, and cancels the raw brace accounting for a matched `#{` delimiter. The
+prefix carries the original delivered-token facts, while the resident writer's
+single lane settlement decides whether the ordinary paragraph check applies;
+it never reclassifies a committed prefix. A
 successful call freezes every range once, creates one invocation origin, and
 installs exactly one activation/body pair over the canonical replacement list;
 replay resolves its compact `OutParameter` tokens through that activation.

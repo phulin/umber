@@ -348,6 +348,18 @@ macro-parameter replay. The ordinary path therefore does not reconstruct a
 complete token merely to ask whether it needs interception, and meaning
 resolution remains the single full spelling classification.
 
+Macro argument collection begins only after that raw-delivery boundary. Each
+delivered command projects its spelling, brace kind, paragraph-token identity,
+and required recovery flags once. An admitted `MacroMatchWriter` owns the one
+accepted-token settlement over the reusable word lane: the lane returns its
+new absolute cursor and the same borrow updates writer-local paragraph,
+brace-depth, and removable-outer-group aggregates. Delimiter-prefix storage is
+the existing semantic holdback lane, enriched with those first facts; overlap
+recovery moves the retained record into the writer without classifying its word
+or provenance again. The matcher reads the writer's depth directly, and sealing
+projects its aggregate without scanning stored words. No command, input frame,
+token buffer, or second argument representation crosses this transition.
+
 An admitted control-sequence spelling probes and borrows its dense meaning row
 once. The reference-sized projection decodes the canonical row tag once and
 writes the final owned meaning and command identity directly into

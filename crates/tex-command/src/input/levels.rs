@@ -1492,7 +1492,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
             .expect("mixed-cursor argument buffer");
         for word in traced {
             scratch
-                .write_match_word(
+                .settle_preclassified_match_token(
                     &mut buffer,
                     word,
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),
@@ -1631,7 +1631,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 cat: crate::Catcode::Letter,
             });
             scratch
-                .write_match_word(
+                .settle_preclassified_match_token(
                     &mut buffer,
                     TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),

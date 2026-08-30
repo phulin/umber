@@ -143,7 +143,7 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         for spelling in [word('a'), word('b')] {
             state
                 .scratch
-                .write_match_word(
+                .settle_preclassified_match_token(
                     &mut buffer,
                     spelling,
                     crate::execution_scratch::MacroArgumentTokenFacts::default(),

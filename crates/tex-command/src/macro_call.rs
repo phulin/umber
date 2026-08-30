@@ -706,7 +706,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         paragraph_token: Option<Token>,
     ) -> Result<MacroMatchWriter<G>, CommandError> {
         let mut delivered = None;
-        let first = loop {
+        let (first, first_word, first_facts) = loop {
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
             }
@@ -716,8 +716,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 return Err(CommandError::OuterInMacroArgument);
             }
+            let word = command.spelling();
+            let (token, facts) = self
+                .command
+                .scratch
+                .classify_match_token(word, paragraph_token);
             if matches!(
-                command.spelling().semantic_token(),
+                token,
                 Token::Char {
                     cat: Catcode::Space,
                     ..
@@ -725,28 +730,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             ) {
                 continue;
             }
-            if matches!(
-                command.spelling().semantic_token(),
-                Token::Char {
-                    cat: Catcode::EndGroup,
-                    ..
-                }
-            ) {
+            if facts.is_end_group() {
                 return self.recover_extra_right_brace_argument(command);
             }
-            break command;
+            break (command, word, facts);
         };
-        let first_facts = argument_token_facts(&first, paragraph_token, true);
         self.check_argument_paragraph(&first, flags, first_facts, None)?;
-        if !matches!(
-            first.spelling().semantic_token(),
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            }
-        ) {
+        if !first_facts.is_begin_group() {
             let mut tokens = self.allocate_argument_buffer(matching)?;
-            self.push_argument_token(matching, &mut tokens, first.spelling(), first_facts)?;
+            self.settle_argument_token(&mut tokens, first_word, first_facts, true)?;
             return Ok(tokens);
         }
 
@@ -754,9 +746,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // argument list and removes the matching outer pair only after the
         // argument completes.  Keep that ownership here too: §396's
         // runaway pseudoprint must still see an unmatched opening brace.
-        let mut depth = 1_u32;
         let mut tokens = self.allocate_argument_buffer(matching)?;
-        self.push_argument_token(matching, &mut tokens, first.spelling(), first_facts)?;
+        let first_depth = self.settle_argument_token(&mut tokens, first_word, first_facts, true)?;
+        debug_assert_eq!(first_depth, 1);
         loop {
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
@@ -778,29 +770,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            let facts = argument_token_facts(command, paragraph_token, true);
+            let word = command.spelling();
+            let (_token, facts) = self
+                .command
+                .scratch
+                .classify_match_token(word, paragraph_token);
             self.check_argument_paragraph(command, flags, facts, Some((matching, &tokens)))?;
-            match command.spelling().semantic_token() {
-                Token::Char {
-                    cat: Catcode::BeginGroup,
-                    ..
-                } => {
-                    depth += 1;
-                    self.push_argument_token(matching, &mut tokens, command.spelling(), facts)?;
-                }
-                Token::Char {
-                    cat: Catcode::EndGroup,
-                    ..
-                } => {
-                    depth -= 1;
-                    if depth == 0 {
-                        self.push_argument_token(matching, &mut tokens, command.spelling(), facts)?;
-                        tokens = self.strip_argument_outer_group(matching, tokens)?;
-                        return Ok(tokens);
-                    }
-                    self.push_argument_token(matching, &mut tokens, command.spelling(), facts)?;
-                }
-                _ => self.push_argument_token(matching, &mut tokens, command.spelling(), facts)?,
+            let depth = self.settle_argument_token(&mut tokens, word, facts, true)?;
+            if facts.is_end_group() && depth == 0 {
+                tokens = self.strip_argument_outer_group(matching, tokens)?;
+                return Ok(tokens);
             }
             delivered = None;
         }
@@ -821,7 +800,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert_ne!(delimiter.len, 0);
         let mut tokens = self.allocate_argument_buffer(matching)?;
         self.command.scratch.clear_delimiter_prefix();
-        let mut depth = 0_u32;
         let mut delivered = None;
 
         loop {
@@ -841,9 +819,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            let token = command.spelling().semantic_token();
+            let word = command.spelling();
+            let (token, facts) = self
+                .command
+                .scratch
+                .classify_match_token(word, paragraph_token);
 
-            if depth == 0
+            if self.match_argument_depth(&tokens) == 0
                 && token
                     == self.macro_delimiter_token(
                         delimiter,
@@ -852,13 +834,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 self.command
                     .scratch
-                    .push_delimiter_prefix(command.spelling())
+                    .push_delimiter_prefix(word, facts)
                     .map_err(|_| CommandError::input_invariant())?;
                 if self.command.scratch.delimiter_prefix_len() == delimiter.len {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
                     // replay exists yet to provide the balancing delivery.
-                    if is_begin_group(token) {
+                    if facts.is_begin_group() {
                         self.undo_delimiter_begin_group_delivery();
                     }
                     self.command.scratch.clear_delimiter_prefix();
@@ -870,14 +852,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             if !self.command.scratch.delimiter_prefix_is_empty() {
-                let retained = self.overlapping_delimiter_prefix(command.spelling(), delimiter)?;
+                let retained = self.overlapping_delimiter_prefix(word, delimiter)?;
                 let committed = if retained == 0 {
                     self.command.scratch.delimiter_prefix_len()
                 } else {
                     self.command.scratch.delimiter_prefix_len() + 1 - retained
                 };
                 for _ in 0..committed {
-                    let prefix_token = self
+                    let (prefix_token, prefix_facts) = self
                         .command
                         .scratch
                         .pop_delimiter_prefix_word()
@@ -890,19 +872,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             tokens: vec![self.observed_token(prefix_token)],
                         }),
                     );
-                    let facts = argument_word_facts(prefix_token, paragraph_token, false);
-                    self.push_delimited_argument_token(
-                        matching,
-                        &mut tokens,
-                        &mut depth,
-                        prefix_token,
-                        facts,
-                    )?;
+                    self.settle_argument_token(&mut tokens, prefix_token, prefix_facts, false)?;
                 }
                 if retained != 0 {
                     self.command
                         .scratch
-                        .push_delimiter_prefix(command.spelling())
+                        .push_delimiter_prefix(word, facts)
                         .map_err(|_| CommandError::input_invariant())?;
                     delivered = None;
                     continue;
@@ -911,7 +886,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // TeX82 §394 contributes a failed delimiter prefix first,
                 // then applies §395 to the current token. A top-level `}`
                 // therefore never becomes delimited argument material.
-                if depth == 0 && is_end_group(token) {
+                if self.match_argument_depth(&tokens) == 0 && facts.is_end_group() {
                     let command = delivered
                         .take()
                         .expect("command destination remains initialized");
@@ -923,35 +898,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
                 // only this newly ordinary token is subject to the non-long
                 // paragraph check.
-                let facts = argument_token_facts(command, paragraph_token, true);
                 self.check_argument_paragraph(command, flags, facts, Some((matching, &tokens)))?;
-                self.push_delimited_argument_token(
-                    matching,
-                    &mut tokens,
-                    &mut depth,
-                    command.spelling(),
-                    facts,
-                )?;
+                self.settle_argument_token(&mut tokens, word, facts, true)?;
                 delivered = None;
                 continue;
             }
 
-            if depth == 0 && is_end_group(token) {
+            if self.match_argument_depth(&tokens) == 0 && facts.is_end_group() {
                 let command = delivered
                     .take()
                     .expect("command destination remains initialized");
                 return self.recover_extra_right_brace_argument(command);
             }
 
-            let facts = argument_token_facts(command, paragraph_token, true);
             self.check_argument_paragraph(command, flags, facts, Some((matching, &tokens)))?;
-            self.push_delimited_argument_token(
-                matching,
-                &mut tokens,
-                &mut depth,
-                command.spelling(),
-                facts,
-            )?;
+            self.settle_argument_token(&mut tokens, word, facts, true)?;
             delivered = None;
         }
     }
@@ -1009,7 +970,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
             return Err(CommandError::ParagraphInMacroArgument);
         }
-        if facts.rejects_non_long_paragraph && !flags.contains(MeaningFlags::LONG) {
+        if facts.rejects_non_long_paragraph(true) && !flags.contains(MeaningFlags::LONG) {
             // TeX82 §394 reports this through `back_error` while the macro
             // matcher is still live.  The caller will then restore its
             // enclosing scanner status, so retain the exact `\par` input
@@ -1052,17 +1013,23 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())
     }
 
-    fn push_argument_token(
+    #[inline]
+    fn settle_argument_token(
         &mut self,
-        _matching: &MacroMatch<G>,
         buffer: &mut MacroMatchWriter<G>,
         token: TracedTokenWord,
         facts: MacroArgumentTokenFacts,
-    ) -> Result<(), CommandError> {
+        paragraph_checked: bool,
+    ) -> Result<u32, CommandError> {
         self.command
             .scratch
-            .write_match_word(buffer, token, facts)
+            .settle_match_token(buffer, token, facts, paragraph_checked)
             .map_err(|_| CommandError::input_invariant())
+    }
+
+    #[inline]
+    fn match_argument_depth(&self, buffer: &MacroMatchWriter<G>) -> u32 {
+        crate::execution_scratch::ExecutionScratch::match_writer_depth(buffer)
     }
 
     fn strip_argument_outer_group(
@@ -1083,22 +1050,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(buffer)
-    }
-
-    fn push_delimited_argument_token(
-        &mut self,
-        matching: &MacroMatch<G>,
-        buffer: &mut MacroMatchWriter<G>,
-        depth: &mut u32,
-        token: TracedTokenWord,
-        facts: MacroArgumentTokenFacts,
-    ) -> Result<(), CommandError> {
-        if facts.begin_group {
-            *depth = depth.saturating_add(1);
-        } else if facts.end_group && *depth > 0 {
-            *depth -= 1;
-        }
-        self.push_argument_token(matching, buffer, token, facts)
     }
 
     fn argument_token_count(&self, arguments: MacroArguments<G>) -> usize {
@@ -1124,49 +1075,11 @@ fn is_paragraph_command<G>(command: &crate::CurrentCommand<G>) -> bool {
     )
 }
 
-/// Classifies the only token facts §394 needs while the raw delivery is
-/// already in hand. The `paragraph_checked` bit is semantic: a delimiter
-/// prefix committed after a mismatch becomes argument material without
-/// passing through the ordinary `cur_tok=par_token` branch.
-fn argument_token_facts<G>(
-    command: &crate::CurrentCommand<G>,
-    paragraph_token: Option<Token>,
-    paragraph_checked: bool,
-) -> MacroArgumentTokenFacts {
-    argument_word_facts(command.spelling(), paragraph_token, paragraph_checked)
-}
-
-fn argument_word_facts(
-    word: TracedTokenWord,
-    paragraph_token: Option<Token>,
-    paragraph_checked: bool,
-) -> MacroArgumentTokenFacts {
-    let token = word.semantic_token();
-    MacroArgumentTokenFacts {
-        // TeX82 §394 tests `cur_tok=par_token`, not `cur_cmd=par_end`.
-        // Aliases of `\par` therefore remain ordinary, while the original
-        // token stays forbidden after its mutable meaning is reassigned.
-        rejects_non_long_paragraph: paragraph_checked && Some(token) == paragraph_token,
-        begin_group: is_begin_group(token),
-        end_group: is_end_group(token),
-    }
-}
-
 fn is_begin_group(token: Token) -> bool {
     matches!(
         token,
         Token::Char {
             cat: Catcode::BeginGroup,
-            ..
-        }
-    )
-}
-
-fn is_end_group(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
             ..
         }
     )

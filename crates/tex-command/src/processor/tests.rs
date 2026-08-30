@@ -663,7 +663,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             for spelling in &traced {
                 command
                     .scratch
-                    .write_match_word(
+                    .settle_preclassified_match_token(
                         &mut writer,
                         *spelling,
                         crate::execution_scratch::MacroArgumentTokenFacts::default(),

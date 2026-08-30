@@ -46,8 +46,11 @@ collector (see `src/conditionals.rs`).
   invocation storage does not use this arena.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   The admitted macro frame's fixed nine-slot metadata owns the current argument
-  cursor and first-scan facts while words append to one logically contiguous
-  fixed-chunk LIFO lane. Sealing changes only the frame role; retirement
+  cursor and first-scan facts while its resident writer settles each accepted
+  delivered token once into one logically contiguous fixed-chunk LIFO lane.
+  That same transition advances the cursor, brace depth, paragraph fact, and
+  removable-outer-group aggregate; delimiter-prefix holdback retains the first
+  classification until commit. Sealing changes only the frame role; retirement
   truncates to its absolute mark and returns suffix chunks to a reusable high
   water. A pending child can inherit a retiring parent's earlier reclaim mark,
   and its unpublished suffix may rebase only after the last active ancestor
