@@ -168,6 +168,31 @@ impl NodePool {
         Ok(())
     }
 
+    fn can_advance_region<Role>(&self, region: &NodeRegion<Role>) -> Result<u32, ForkArenaError> {
+        self.validate_region(region)?;
+        region
+            .id
+            .generation
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)
+    }
+
+    /// Gives a consumed semantic predecessor a fresh region generation while
+    /// retaining its physical arena and chunk addresses.
+    fn advance_region<Role>(
+        &mut self,
+        region: &mut NodeRegion<Role>,
+    ) -> Result<(), ForkArenaError> {
+        let generation = self.can_advance_region(region)?;
+        let entry = self
+            .regions
+            .get_mut(region.id.slot as usize)
+            .ok_or(ForkArenaError::InvalidRegion)?;
+        entry.generation = generation;
+        region.id.generation = generation;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn validates_id(&self, id: NodeRegionId) -> bool {
         id.pool == self.id
@@ -273,6 +298,36 @@ impl<Role> NodeRegion<Role> {
         }
         self.pub_arena
             .restore_operation(&mut pool.chunks, mark.rollback)
+    }
+
+    pub(crate) fn preflight_unique_successor_adoption<const N: usize>(
+        &self,
+        pool: &NodePool,
+        mark: &ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<(), ForkArenaError> {
+        pool.can_advance_region(self)?;
+        if mark.region != self.id {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let coordinates = roots.map(PageListId::coordinate);
+        self.pub_arena
+            .preflight_unique_successor_adoption(&pool.chunks, &mark.batch, &coordinates)
+    }
+
+    pub(crate) fn adopt_unique_successor<const N: usize>(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<Role>,
+        roots: [PageListId; N],
+    ) -> Result<(), ForkArenaError> {
+        self.preflight_unique_successor_adoption(pool, &mark, roots)?;
+        let coordinates = roots.map(PageListId::coordinate);
+        self.pub_arena
+            .adopt_unique_successor_suffix(&mut pool.chunks, mark.batch, &coordinates)?;
+        pool.advance_region(self)
+            .expect("unique-successor region generation was preflighted");
+        Ok(())
     }
 
     /// Converts the caller's owner-local root audit into the receipt consumed

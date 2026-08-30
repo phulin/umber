@@ -453,6 +453,25 @@ impl PageMaterialRegion {
     ) -> Result<(), ForkArenaError> {
         self.region.cancel_closure_build(pool, mark)
     }
+
+    pub(crate) fn preflight_unique_successor_adoption(
+        &self,
+        pool: &NodePool,
+        mark: &ClosureBuildMark<PageRole>,
+        roots: [PageListId; 4],
+    ) -> Result<(), ForkArenaError> {
+        self.region
+            .preflight_unique_successor_adoption(pool, mark, roots)
+    }
+
+    pub(crate) fn adopt_unique_successor(
+        &mut self,
+        pool: &mut NodePool,
+        mark: ClosureBuildMark<PageRole>,
+        roots: [PageListId; 4],
+    ) -> Result<(), ForkArenaError> {
+        self.region.adopt_unique_successor(pool, mark, roots)
+    }
 }
 
 impl<'a> PageMaterialArena<'a> {

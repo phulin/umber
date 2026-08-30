@@ -213,11 +213,16 @@ bytes are never charged once per checkpoint, and detached committed shipout
 artifacts are charged to the output owner rather than the speculative page
 timeline.
 
-Shipout starts a new page region. Handle-free output keeps no runtime node.
-The page-breaking traversal evacuates only the exact held-over closure into the
-new region, moving self-contained whole envelopes when no historical owner
-needs them and otherwise copying that bounded closure. An old region remains
-live only while its checkpoint interval remains retained, then drops wholesale.
+Shipout starts a new semantic page generation. Handle-free output keeps no
+runtime node. When every live PageBuilder root was constructed after the
+sealed output boundary and no checkpoint retains the predecessor, succession
+consumes that predecessor and adopts its whole suffix chunks and partial tail
+without copying or changing their physical arena identity. It drops prefix
+chunks and advances the generation key; the ownership change is O(1) per
+adopted chunk. A retained checkpoint or a root crossing the boundary instead
+keeps the bounded, explicitly counted closure copy because predecessor and
+successor tails must remain independently owned. An old region remains live
+only while its checkpoint interval remains retained, then drops wholesale.
 
 Prepared DVI receipts have their own direct `OutputLedger` owner. An engine
 checkpoint stores one fixed receipt-count mark into that accepted ledger.

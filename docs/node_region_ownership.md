@@ -322,12 +322,25 @@ recipes own no runtime node. Once output construction has borrowed the runtime
 closure and committed its detached result, output does not keep the old page
 region alive.
 
-Held-over material must become self-contained in the new page region. If the
-old region has no historical checkpoint owner and the held-over closure
-occupies independently transferable whole envelopes, the implementation may
-move those envelopes. Otherwise it copies exactly the held-over closure while
-the page-break traversal already visits it. It never copies the shipped page,
-the complete old region, or unrelated checkpoint material.
+Held-over material must become self-contained in the new page region. Output
+opens a sealed construction boundary before it builds the next-page material.
+When the old region has no historical checkpoint owner and every live
+PageBuilder root, including nested children, belongs to that suffix, commit
+consumes the predecessor and adopts the suffix under the same physical arena
+identity. The predecessor prefix drops, the semantic region generation
+advances so old handles become stale, and the successor retains the suffix's
+sealed chunks plus its mutable partial tail. Adoption changes only one chunk
+index per retained payload or descriptor chunk, so ownership transfer is O(1)
+per adopted chunk and copies or rebrands no payload.
+
+Prepare only proves that ownership shape and records the build mark; cancel
+re-arms the same suffix without changing chunks or counters. If a checkpoint
+keeps the predecessor live, or any successor root crosses the boundary, the
+implementation copies exactly the live closure so both regions own independent
+tails. It never copies the shipped page, the complete old region, or unrelated
+checkpoint material. Page-to-durable box255 publication remains a separate
+lifetime boundary and retains its explicitly counted copy while page and
+durable owners coexist.
 
 An old page region is retained precisely when at least one retained restart
 row belongs to its contiguous boundary interval. If a page contains no

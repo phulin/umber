@@ -2934,6 +2934,75 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Proves that every declared successor root and nested child belongs to
+    /// the construction suffix opened at `mark`.
+    ///
+    /// Unlike batch promotion, unique-successor adoption keeps this arena's
+    /// identity. The proof therefore needs no destination, relocation map, or
+    /// coordinate rewrite; it only excludes references into the predecessor
+    /// prefix before that prefix is released.
+    pub(crate) fn preflight_unique_successor_adoption(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: &BatchMark<Lane>,
+        lists: &[ArenaListId<Lane>],
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        if !matches!(self.ownership, ForkOwnership::Accepted(_)) {
+            return Err(ForkArenaError::AlreadyForked);
+        }
+        self.validate_live_chunks(pool)?;
+        self.preflight_batch_closure(pool, mark, lists)
+    }
+
+    /// Releases one consumed predecessor prefix and keeps its construction
+    /// suffix as the sole semantic successor.
+    ///
+    /// Chunk keys, payload addresses, arena identity, sequence summaries, and
+    /// the unsealed partial tail stay unchanged. Ownership work is one release
+    /// for each predecessor chunk and one index update for each adopted chunk;
+    /// no payload is copied or rebranded.
+    pub(crate) fn adopt_unique_successor_suffix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        mark: BatchMark<Lane>,
+        lists: &[ArenaListId<Lane>],
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.preflight_unique_successor_adoption(pool, &mark, lists)?;
+        let payload_start = (mark.payload_start - self.base_payload_chunks) as usize;
+        let descriptor_start = (mark.descriptor_start - self.base_descriptor_chunks) as usize;
+        let ForkOwnership::Accepted(mut accepted) = std::mem::replace(
+            &mut self.ownership,
+            ForkOwnership::Accepted(ChunkSet::default()),
+        ) else {
+            unreachable!("unique-successor adoption preflighted accepted ownership")
+        };
+        let successor = ChunkSet {
+            payload: accepted.payload.split_off(payload_start),
+            descriptors: accepted.descriptors.split_off(descriptor_start),
+        };
+        let released = self.release_set(pool, accepted)?;
+        self.base_payload_chunks = 0;
+        self.base_descriptor_chunks = 0;
+        for (position, key) in successor.payload.iter().copied().enumerate() {
+            self.index_chunk(pool, false, key, position);
+        }
+        for (position, key) in successor.descriptors.iter().copied().enumerate() {
+            self.index_chunk(pool, true, key, position);
+        }
+        self.counters.obsolete_chunks_pruned = self
+            .counters
+            .obsolete_chunks_pruned
+            .saturating_add(released as u64);
+        self.ownership = ForkOwnership::Accepted(successor);
+        Ok(())
+    }
+
     #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn cancel_batch(&mut self, batch: SealedBatch<Lane>) -> Result<(), ForkArenaError> {
         if batch.arena != self.owner

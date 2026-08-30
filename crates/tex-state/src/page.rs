@@ -1013,11 +1013,14 @@ pub struct ModeListRegionPreflight {
 }
 
 struct PreparedPageRegionSuccessor {
-    current: PageRegion,
+    current: Option<PageRegion>,
     /// Test-only compatibility projection for the focused region seam. The
     /// production transition carries the complete PageBuilder root set and
     /// therefore has no naked root to return.
     held_over: Option<PageListId>,
+    /// A completely consumed predecessor whose construction suffix can keep
+    /// its arena identity, sealed chunks, and mutable partial tail.
+    unique_adoption: Option<(PageClosureBuildMark, PagePayloadRoots)>,
 }
 
 impl Default for PageRegionHistory {
@@ -1402,10 +1405,18 @@ impl PageRegionHistory {
 
     pub(crate) fn cancel_prepared_shipout(&mut self) {
         if let Some(prepared) = self.pending_successor.take() {
-            prepared
-                .current
-                .retire(&mut self.pool)
-                .expect("canceled successor is a quiescent unpublished region");
+            match (prepared.current, prepared.unique_adoption) {
+                (Some(current), None) => current
+                    .retire(&mut self.pool)
+                    .expect("canceled successor is a quiescent unpublished region"),
+                (None, Some((build, _))) => self
+                    .regions
+                    .last_mut()
+                    .expect("page history always has a current region")
+                    .builder
+                    .arm_output_successor_build(build),
+                _ => unreachable!("prepared successor has exactly one ownership plan"),
+            }
         }
     }
 
@@ -1728,8 +1739,9 @@ impl PageRegion {
                 .push_current_page_list(&mut nodes, held_over);
         }
         Ok(PreparedPageRegionSuccessor {
-            current,
+            current: Some(current),
             held_over: Some(held_over),
+            unique_adoption: None,
         })
     }
 
@@ -1759,6 +1771,29 @@ impl PageRegion {
                     .saturating_add(1);
                 return Err(ForkArenaError::InvalidRegion);
             }
+        }
+
+        let root_lists = [
+            roots.contribution.list(),
+            roots.current_page.list(),
+            roots.page_discards.list(),
+            roots.split_discards.list(),
+        ];
+        let uniquely_adoptable = self.checkpoints.is_empty()
+            && build.as_ref().is_some_and(|build| {
+                self.nodes
+                    .preflight_unique_successor_adoption(pool, build, root_lists)
+                    .is_ok()
+            });
+        if uniquely_adoptable {
+            return Ok(PreparedPageRegionSuccessor {
+                current: None,
+                held_over: None,
+                unique_adoption: Some((
+                    build.expect("unique-successor preflight requires one build"),
+                    roots,
+                )),
+            });
         }
 
         let mut current = PageRegion::new(pool);
@@ -1803,8 +1838,9 @@ impl PageRegion {
                             .node_closure_scan_nodes
                             .saturating_add(scanned);
                         return Ok(PreparedPageRegionSuccessor {
-                            current,
+                            current: Some(current),
                             held_over: None,
+                            unique_adoption: None,
                         });
                     }
                     Err((_error, Some(build))) => fallback_build = Some(build),
@@ -1890,8 +1926,9 @@ impl PageRegion {
             .held_over_nodes_copied
             .saturating_add(copied as u64);
         Ok(PreparedPageRegionSuccessor {
-            current,
+            current: Some(current),
             held_over: None,
+            unique_adoption: None,
         })
     }
 
@@ -1900,10 +1937,46 @@ impl PageRegion {
         pool: &mut NodePool,
         prepared: PreparedPageRegionSuccessor,
     ) -> PageRegionSuccession {
+        if let Some((build, roots)) = prepared.unique_adoption {
+            debug_assert!(prepared.current.is_none());
+            let root_lists = [
+                roots.contribution.list(),
+                roots.current_page.list(),
+                roots.page_discards.list(),
+                roots.split_discards.list(),
+            ];
+            self.nodes
+                .adopt_unique_successor(pool, build, root_lists)
+                .expect("prepared unique successor remains adoptable");
+            let builder = self.builder.successor_with_roots(roots);
+            let mut counters = self.counters;
+            counters.page_regions_started = counters.page_regions_started.saturating_add(1);
+            counters.page_regions_dropped = counters.page_regions_dropped.saturating_add(1);
+            if root_lists.iter().any(|root| !root.is_empty()) {
+                counters.held_over_envelopes_moved =
+                    counters.held_over_envelopes_moved.saturating_add(1);
+            }
+            return PageRegionSuccession {
+                current: PageRegion {
+                    nodes: self.nodes,
+                    builder,
+                    checkpoints: Vec::with_capacity(64),
+                    next_boundary: 1,
+                    counters,
+                },
+                retained_prior: None,
+                held_over: PageListId::empty(),
+            };
+        }
         let PreparedPageRegionSuccessor {
-            mut current,
+            current,
             held_over,
-        } = prepared;
+            unique_adoption: None,
+        } = prepared
+        else {
+            unreachable!("unique adoption returned before materialized succession")
+        };
+        let mut current = current.expect("materialized successor owns its next region");
         let retained_prior = if self.checkpoints.is_empty() {
             current.counters.page_regions_dropped =
                 current.counters.page_regions_dropped.saturating_add(1);

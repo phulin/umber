@@ -1195,6 +1195,8 @@ fn prepared_successor_does_not_drop_current_owner_before_shipout_commit() {
 fn production_succession_transfers_complete_page_builder_owner() {
     let mut history = PageRegionHistory::default();
     let old_region = history.current().id();
+    let shipped_prefix = publish_nodes(&mut history.nodes_mut(), (100..228).map(kern));
+    history.arm_output_successor_build();
     let contribution = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
     let current_page = publish_nodes(&mut history.nodes_mut(), [kern(3)]);
     let split_discards = publish_nodes(&mut history.nodes_mut(), [kern(5), kern(6)]);
@@ -1211,17 +1213,49 @@ fn production_succession_transfers_complete_page_builder_owner() {
             tokens(&[Token::param(1), Token::param(2)]),
         );
     }
+    let roots_before = history.builder().payload_roots();
+    let contribution_address = history
+        .nodes_mut()
+        .span_list(roots_before.contribution)
+        .expect("successor contribution")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("successor contribution address");
+    let material_before = history.current().material_counters();
 
     history
         .prepare_production_shipout()
         .expect("complete page owner preflights");
     assert_eq!(history.current().id(), old_region);
+    assert!(history.nodes().contains(roots_before.contribution.list()));
+    assert_eq!(history.current().material_counters(), material_before);
     history
         .commit_prepared_shipout()
         .expect("production succession commits");
 
     assert!(!history.pool.validates_id(old_region));
+    assert!(!history.nodes().contains(shipped_prefix));
     let roots = history.builder().payload_roots();
+    assert_eq!(roots.contribution.list(), roots_before.contribution.list());
+    assert_eq!(roots.current_page.list(), roots_before.current_page.list());
+    assert_eq!(
+        roots.page_discards.list(),
+        roots_before.page_discards.list()
+    );
+    assert_eq!(
+        roots.split_discards.list(),
+        roots_before.split_discards.list()
+    );
+    assert_eq!(
+        history
+            .nodes_mut()
+            .span_list(roots.contribution)
+            .expect("adopted contribution")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(contribution_address),
+        "unique succession keeps payload addresses stable"
+    );
     assert_eq!(
         list_nodes(&history.nodes_mut(), roots.contribution),
         [kern(1), kern(2)]
@@ -1245,6 +1279,161 @@ fn production_succession_transfers_complete_page_builder_owner() {
         Some(&tokens(&[Token::param(1), Token::param(2)]))
     );
     assert_eq!(history.current().counters().page_regions_started, 2);
+    let material = history.current().material_counters();
+    assert_eq!(material.source_nodes_copied, 0);
+    assert!(material.obsolete_chunks_pruned > material_before.obsolete_chunks_pruned);
+    assert_eq!(material.chunks_promoted, material_before.chunks_promoted);
+    assert_eq!(material.chunks_sealed, material_before.chunks_sealed);
+
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.push_contribution(&mut nodes, kern(9));
+    }
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(1), kern(2)],
+        "the adopted root stays immutable when the successor reuses its partial tail"
+    );
+    let extended_contribution = history.builder().payload_roots().contribution;
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), extended_contribution),
+        [kern(1), kern(2), kern(9)]
+    );
+}
+
+#[test]
+fn canceled_unique_successor_prepare_rearms_the_same_build_suffix() {
+    let mut history = PageRegionHistory::default();
+    let old_region = history.current().id();
+    let _shipped_prefix = publish_nodes(&mut history.nodes_mut(), [kern(1), kern(2)]);
+    history.arm_output_successor_build();
+    let held_over = publish_nodes(&mut history.nodes_mut(), [kern(7), kern(8)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, held_over);
+    }
+    let roots = history.builder().payload_roots();
+    let before = history.current().material_counters();
+
+    history
+        .prepare_production_shipout()
+        .expect("unique successor prepare");
+    history.cancel_prepared_shipout();
+
+    assert_eq!(history.current().id(), old_region);
+    assert!(history.pool.validates_id(old_region));
+    let canceled_roots = history.builder().payload_roots();
+    assert_eq!(
+        canceled_roots.contribution.list(),
+        roots.contribution.list()
+    );
+    assert_eq!(
+        canceled_roots.current_page.list(),
+        roots.current_page.list()
+    );
+    assert_eq!(
+        canceled_roots.page_discards.list(),
+        roots.page_discards.list()
+    );
+    assert_eq!(
+        canceled_roots.split_discards.list(),
+        roots.split_discards.list()
+    );
+    assert_eq!(history.current().material_counters(), before);
+
+    history
+        .prepare_production_shipout()
+        .expect("rearmed unique successor prepare");
+    history
+        .commit_prepared_shipout()
+        .expect("rearmed unique successor commit");
+    assert!(!history.pool.validates_id(old_region));
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(7), kern(8)]
+    );
+}
+
+#[test]
+fn retained_checkpoint_keeps_production_succession_as_a_genuine_copy() {
+    let mut history = PageRegionHistory::default();
+    let checkpoint = history
+        .seal_checkpoint()
+        .expect("retained predecessor checkpoint");
+    let old_region = history.current().id();
+    let shipped_prefix = publish_nodes(&mut history.nodes_mut(), (100..228).map(kern));
+    history.arm_output_successor_build();
+    let contribution = publish_nodes(&mut history.nodes_mut(), [kern(11), kern(12)]);
+    let current_page = publish_nodes(&mut history.nodes_mut(), [kern(13)]);
+    let split_discards = publish_nodes(&mut history.nodes_mut(), [kern(15), kern(16)]);
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, contribution);
+        builder.push_current_page_list(&mut nodes, current_page);
+        builder.push_page_discard(&mut nodes, kern(14));
+        builder.set_split_discards(&nodes, split_discards);
+    }
+    let predecessor_contribution = history.builder().payload_roots().contribution;
+    let old_address = history
+        .nodes_mut()
+        .span_list(predecessor_contribution)
+        .expect("predecessor contribution")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("predecessor contribution address");
+
+    history
+        .prepare_production_shipout()
+        .expect("retained successor prepare");
+    history
+        .commit_prepared_shipout()
+        .expect("retained successor commit");
+
+    assert!(history.pool.validates_id(old_region));
+    assert!(history.validates_checkpoint(checkpoint));
+    assert!(!history.nodes().contains(shipped_prefix));
+    let roots = history.builder().payload_roots();
+    assert_ne!(
+        history
+            .nodes_mut()
+            .span_list(roots.contribution)
+            .expect("copied contribution")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(old_address)
+    );
+    let material = history.current().material_counters();
+    assert_eq!(material.source_nodes_copied, 6);
+    assert_eq!(material.chunks_promoted, 0);
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(11), kern(12)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.current_page),
+        [kern(13)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.page_discards),
+        [kern(14)]
+    );
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.split_discards),
+        [kern(15), kern(16)]
+    );
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.push_contribution(&mut nodes, kern(19));
+    }
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), roots.contribution),
+        [kern(11), kern(12)]
+    );
+
+    history
+        .release_checkpoint(checkpoint)
+        .expect("release retained predecessor");
+    assert!(!history.pool.validates_id(old_region));
 }
 
 #[test]
