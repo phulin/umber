@@ -1429,11 +1429,13 @@ only the outer cell, never a second copy of `align_state`.
 `ExpansionState` owns only persistent expansion facts:
 
 - cumulative job-level expansion accounting that can affect a future result;
-- deterministic resource-resolution order;
-- recoverable diagnostics awaiting executor delivery;
-- the active profile;
-- expansion-derived dependency-recording state; and
-- semantic barriers needed by incremental reuse.
+  and
+- the active profile.
+
+Recoverable diagnostics live once in the canonical semantic-diagnostic queue,
+which the executor claims after the processor episode. Resource resolution,
+dependency observation, and semantic barriers retain no parallel expansion
+ledger.
 
 Per-request expansion fuel is call-local but shared by nested expansion within
 that request. A resource retry restarts the complete executor step and
@@ -1491,8 +1493,8 @@ pub struct CommandProcessor<'episode, 'admission> {
 
 It does not own state and cannot outlive one bounded executor operation. The
 executor admits one call-local `CommandContext`, refreshes its transient mode
-and page capabilities through a borrow of that value, and lends the same
-context in place to the processor. Processor retirement ends the borrow; it
+facts, and lends the same context in place to the processor. Page-owned facts
+remain direct demand-time reads through that context. Processor retirement ends the borrow; it
 does not move the complete admitted context out of and back into a facade.
 `CommandHostContext` contains only the capabilities installed for that
 operation, such as input resolution and optional read recording. Host

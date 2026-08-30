@@ -173,6 +173,12 @@ unchanged while generated math boundaries and layout nodes advance
 The command profile and compiled semantic dispatch are configuration, not
 revision history. Expansion borrows them. Host capabilities are also borrowed
 for an admitted episode; they are not smuggled into tokens or definitions.
+The persistent expansion root contains only the active profile and
+`cumulative_expansions`, whose job-level value still participates in future
+expansion and suspension classification. Recoverable reports live once in the
+canonical semantic-diagnostic queue and transfer to the executor as one owner;
+resource resolution, dependency observation, and semantic barriers have no
+parallel expansion ledger.
 One call-local admitted `CommandContext` remains stable while the executor
 refreshes those capabilities and the command processor borrows it in place;
 processor retirement ends that borrow without an owned context handoff.
