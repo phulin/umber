@@ -3323,6 +3323,26 @@ impl<G> MainControl<G> {
         Ok(id)
     }
 
+    /// Substitutes the edited root buffer after an aggregate checkpoint fork.
+    /// The command input owner journals the old backing; this scalar root id
+    /// changes only in the candidate's restored MainControl.
+    #[doc(hidden)]
+    pub fn rebind_root_source_for_editor(
+        &mut self,
+        bytes: std::sync::Arc<[u8]>,
+        unchanged_prefix: usize,
+    ) -> Result<(), SourceRegistrationError> {
+        let accepted = self
+            .root_main_source
+            .or_else(|| self.command.current_file_source_id())
+            .expect("a rooted checkpoint retains its main source identity");
+        let current =
+            self.command
+                .rebind_generated_source(accepted, bytes, unchanged_prefix)?;
+        self.root_main_source = Some(current);
+        Ok(())
+    }
+
     /// Renders the registered root's §537 opening at the driver's startup
     /// boundary without advancing input.
     pub fn open_registered_root_framing(&mut self, stores: &mut Universe<G>) {

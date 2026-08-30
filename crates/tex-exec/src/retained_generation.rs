@@ -856,6 +856,37 @@ impl<'store> RetainedEngineGeneration<'store> {
         Ok((generation, runtime, counters, evidence, key, retention))
     }
 
+    /// Forks the latest live restart root whose conservative root-source
+    /// anchor does not exceed `position`. Detached evidence is deliberately
+    /// ignored: `None` tells the session to select its explicit frozen
+    /// JobStart path rather than disguising a cold materialization as reuse.
+    pub fn fork_latest_boundary_at_or_before(
+        &mut self,
+        position: usize,
+    ) -> Result<
+        Option<(
+            Self,
+            RetainedEngineAttachmentKey,
+            crate::ExecutionBudgetCounters,
+            RetainedBoundaryEvidence,
+            RetainedCheckpointKey,
+            crate::CheckpointRetention,
+        )>,
+        RetainedEngineForkError,
+    > {
+        let selected = self
+            .with_admitted(SelectLatestBoundary { position })
+            .map_err(RetainedEngineForkError::Access)?
+            .map_err(RetainedEngineForkError::Access)?;
+        let Some((key, evidence, retention)) = selected else {
+            return Ok(None);
+        };
+        let (generation, runtime, counters) = self.fork_checkpoint(&key)?;
+        Ok(Some((
+            generation, runtime, counters, evidence, key, retention,
+        )))
+    }
+
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
@@ -1145,6 +1176,10 @@ struct SelectBoundary {
     selected: Option<(usize, crate::EngineBoundary, u32)>,
 }
 
+struct SelectLatestBoundary {
+    position: usize,
+}
+
 struct PreflightBoundaryLane;
 
 impl RetainedEngineOperation for PreflightBoundaryLane {
@@ -1202,6 +1237,30 @@ impl RetainedEngineOperation for SelectBoundary {
             .get(&key)?
             .retention();
         Ok((key, evidence, retention))
+    }
+}
+
+impl RetainedEngineOperation for SelectLatestBoundary {
+    type Output = Result<
+        Option<(
+            RetainedCheckpointKey,
+            RetainedBoundaryEvidence,
+            crate::CheckpointRetention,
+        )>,
+        RetainedEngineAccessError,
+    >;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        let boundaries = admitted
+            .sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
+        let Some((key, evidence)) = boundaries.latest_restart_at_or_before(self.position)? else {
+            return Ok(None);
+        };
+        let retention = boundaries.get(&key)?.retention();
+        Ok(Some((key, evidence, retention)))
     }
 }
 
@@ -1556,6 +1615,20 @@ impl<G> BoundaryLane<G> {
         }
         .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
         Ok((self.public_key(raw), evidence))
+    }
+
+    fn latest_restart_at_or_before(
+        &self,
+        position: usize,
+    ) -> Result<Option<(RetainedCheckpointKey, RetainedBoundaryEvidence)>, RetainedEngineAccessError>
+    {
+        let mut selected = None;
+        self.visit_visible(|raw, cell| {
+            if cell.checkpoint.is_some() && cell.evidence.position <= position {
+                selected = Some((raw, cell.evidence));
+            }
+        })?;
+        Ok(selected.map(|(raw, evidence)| (self.public_key(raw), evidence)))
     }
 
     fn validate_all(&self) -> Result<(), RetainedEngineAccessError> {

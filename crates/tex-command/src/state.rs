@@ -2359,6 +2359,43 @@ impl<G> CommandState<G> {
         Ok(id)
     }
 
+    /// Rebinds one live generated source after a checkpoint fork.
+    ///
+    /// Validation precedes mutation. The input stack then records the old
+    /// owner in its existing ordered journal, so rejection restores the
+    /// accepted bytes and acceptance releases them with the obsolete suffix.
+    #[doc(hidden)]
+    pub fn rebind_generated_source(
+        &mut self,
+        source: tex_state::SourceId,
+        bytes: std::sync::Arc<[u8]>,
+        unchanged_prefix: usize,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let accepted = self
+            .input
+            .levels
+            .physical_source(source)
+            .expect("the retained root source remains live at a restart boundary");
+        if unchanged_prefix > accepted.bytes.len()
+            || unchanged_prefix > bytes.len()
+            || accepted.bytes[..unchanged_prefix] != bytes[..unchanged_prefix]
+        {
+            return Err(SourceRegistrationError::RestartPrefixMismatch {
+                anchor: u64::try_from(unchanged_prefix).unwrap_or(u64::MAX),
+            });
+        }
+        let raw = u32::try_from(self.input.next_source_identity)
+            .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
+        let id = tex_state::SourceId::new(raw);
+        let replacement = accepted.rebind_generated(id, bytes)?;
+        self.timeline
+            .record_next_source_identity(self.input.next_source_identity);
+        self.input.next_source_identity += 1;
+        let rebound = self.input.levels.rebind_physical_source(source, replacement);
+        debug_assert!(rebound, "the validated root source remains present");
+        Ok(id)
+    }
+
     fn take_registered_source(
         &mut self,
         source: tex_state::SourceId,

@@ -504,6 +504,14 @@ pub(crate) enum SourceLevelExecutionState<G> {
         backing: RegisteredSource,
         name_class: SourceNameClass,
     },
+    /// Editor restart substitutes only the immutable physical backing. The
+    /// normalized current line and every other source cursor field remain the
+    /// checkpoint's semantic state.
+    PhysicalBacking {
+        slot: SourceSlotKey,
+        backing: RegisteredSource,
+        backing_registered: bool,
+    },
 }
 
 impl<G> SourceLevelExecutionState<G> {
@@ -536,6 +544,20 @@ impl<G> SourceLevelExecutionState<G> {
             cursor: slot.cursor.take_execution_state(),
             backing,
             name_class: slot.name_class,
+        }
+    }
+
+    pub(crate) fn physical_backing(
+        source: &SourceLevel<G>,
+        slot: &mut SourceSlot<G>,
+        replacement: RegisteredSource,
+    ) -> Self {
+        let backing = std::mem::replace(&mut slot.cursor.backing, replacement);
+        let backing_registered = std::mem::replace(&mut slot.cursor.backing_registered, false);
+        Self::PhysicalBacking {
+            slot: source.slot,
+            backing,
+            backing_registered,
         }
     }
 }
@@ -619,6 +641,18 @@ impl<G> SourceLevel<G> {
                 owner.cursor.swap_execution_state(cursor);
                 std::mem::swap(&mut owner.cursor.backing, backing);
                 std::mem::swap(&mut owner.name_class, name_class);
+            }
+            SourceLevelExecutionState::PhysicalBacking {
+                slot,
+                backing,
+                backing_registered,
+            } => {
+                assert_eq!(self.slot, *slot, "source inverse names the live slot");
+                std::mem::swap(&mut owner.cursor.backing, backing);
+                std::mem::swap(
+                    &mut owner.cursor.backing_registered,
+                    backing_registered,
+                );
             }
         }
     }

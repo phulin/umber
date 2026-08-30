@@ -1193,6 +1193,83 @@ fn late_edit_restarts_from_a_retained_non_job_start_boundary() {
 }
 
 #[test]
+fn late_edit_rebinds_the_restored_root_source_and_rejection_restores_it() {
+    let source = "A\\par\nB\\par\nC\\par\\end";
+    let edit_position = source.find('C').expect("third paragraph exists");
+    let mut incremental = session(RevisionId::new(1), source);
+    incremental.cold().expect("baseline");
+
+    let mut rejected = incremental
+        .start_advance_candidate(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position + 1, "D"),
+        )
+        .expect("rooted candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
+        .expect("candidate reads rebound source");
+    assert!(
+        rejected
+            .plan
+            .restart_boundary
+            .is_some_and(|key| key.boundary != EngineBoundary::JobStart)
+    );
+    rejected.reject();
+
+    let edited = source.replacen('C', "E", 1);
+    let accepted = incremental
+        .advance(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position + 1, "E"),
+        )
+        .expect("sibling candidate reuses the restored source owner");
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&accepted, &expected);
+}
+
+#[test]
+fn fully_pruned_live_roots_select_explicit_job_start() {
+    let source = "A\\par\nB\\par\nC\\par\\end";
+    let edit_position = source.find('C').expect("third paragraph exists");
+    let mut incremental = Session::start(
+        Box::leak(Box::new(new_reachability_store())),
+        "pruned-restart",
+        RevisionId::new(1),
+        source,
+        0,
+    )
+    .expect("session");
+    incremental.cold().expect("baseline");
+    assert_eq!(incremental.current_retained_checkpoint_count(), 0);
+    let restores_before = incremental
+        .job_start_anchor_metrics()
+        .expect("frozen anchor")
+        .restore_count;
+
+    let edited = source.replacen('C', "D", 1);
+    let accepted = incremental
+        .advance(
+            RevisionId::new(2),
+            edit(&incremental, edit_position..edit_position + 1, "D"),
+        )
+        .expect("explicit JobStart succeeds");
+    assert_eq!(
+        accepted.reuse.restart_boundary.map(|key| key.boundary),
+        Some(EngineBoundary::JobStart)
+    );
+    assert_eq!(
+        incremental
+            .job_start_anchor_metrics()
+            .expect("frozen anchor")
+            .restore_count,
+        restores_before + 1
+    );
+    let mut cold = session(RevisionId::new(2), &edited);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&accepted, &expected);
+}
+
+#[test]
 fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
     let source = "A\\par\nB\\par\nC\\par\\end";
     let mut incremental = session(RevisionId::new(1), source);

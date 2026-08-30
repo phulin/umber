@@ -33,6 +33,14 @@ enum InputUndo<G> {
         payload: PayloadHandle,
         generation: core::marker::PhantomData<fn() -> G>,
     },
+    /// An editor-root backing substitution. Keeping this distinct from a
+    /// complete owner capture lets the first later cursor mutation retain
+    /// the checkpoint's execution state in the ordinary ordered journal.
+    PhysicalBacking {
+        index: u32,
+        payload: PayloadHandle,
+        generation: core::marker::PhantomData<fn() -> G>,
+    },
     Replacement {
         index: u32,
         payload: PayloadHandle,
@@ -208,6 +216,55 @@ impl<G> InputStack<G> {
         Some((source, self.source_slot(source.slot)))
     }
 
+    pub(crate) fn physical_source(
+        &self,
+        id: tex_state::SourceId,
+    ) -> Option<&super::RegisteredSource> {
+        self.as_slice().iter().find_map(|level| {
+            let InputLevel::Source(source) = level else {
+                return None;
+            };
+            let backing = &self.source_level_slot(source).cursor.backing;
+            (backing.id == id).then_some(backing)
+        })
+    }
+
+    pub(crate) fn rebind_physical_source(
+        &mut self,
+        id: tex_state::SourceId,
+        replacement: super::RegisteredSource,
+    ) -> bool {
+        let Some(index) = self.as_slice().iter().position(|level| {
+            let InputLevel::Source(source) = level else {
+                return false;
+            };
+            self.source_level_slot(source).cursor.backing.id == id
+        }) else {
+            return false;
+        };
+        let key = match &self.rows[index] {
+            InputLevel::Source(source) => source.slot,
+            _ => unreachable!("physical source lookup returned a token row"),
+        };
+        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
+        let InputLevel::Source(source) = &mut rows[index] else {
+            unreachable!()
+        };
+        let slot = slots.value_mut(key.0).expect("source slot remains live");
+        let state = SourceLevelExecutionState::physical_backing(source, slot, replacement);
+        if self.recording {
+            self.source_owner_states.warm_first_page();
+            let payload = self.source_owner_states.insert(state);
+            self.undo.append(InputUndo::PhysicalBacking {
+                index: u32::try_from(index).expect("input row index fits u32"),
+                payload,
+                generation: core::marker::PhantomData,
+            });
+            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        }
+        true
+    }
+
     pub(crate) fn mutate_top_source_lex<R>(
         &mut self,
         mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
@@ -340,9 +397,23 @@ impl<G> InputStack<G> {
         ) -> (SourceLevelExecutionState<G>, R),
     ) -> Option<R> {
         let index = self.top.checked_sub(1)?;
+        if !matches!(self.rows[index], InputLevel::Source(_)) {
+            return None;
+        }
+        Some(self.mutate_source(index, mutate))
+    }
+
+    fn mutate_source<R>(
+        &mut self,
+        index: usize,
+        mutate: impl FnOnce(
+            &mut SourceLevel<G>,
+            &mut SourceSlot<G>,
+        ) -> (SourceLevelExecutionState<G>, R),
+    ) -> R {
         let key = match &self.rows[index] {
             InputLevel::Source(source) => source.slot,
-            _ => return None,
+            _ => unreachable!("source mutation names a source row"),
         };
         if !self.recording {
             let (rows, slots) = (&mut self.rows, &mut self.source_slots);
@@ -352,7 +423,7 @@ impl<G> InputStack<G> {
             let slot = slots.value_mut(key.0).expect("source slot remains live");
             let (state, result) = mutate(source, slot);
             drop(state);
-            return Some(result);
+            return result;
         }
         let row_needs_inverse = self.touched[index] != self.interval
             || (self.partially_captured[index] == self.interval
@@ -366,7 +437,7 @@ impl<G> InputStack<G> {
             let (state, result) = mutate(source, slot);
             drop(state);
             self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-            return Some(result);
+            return result;
         }
         self.source_owner_states.warm_first_page();
         let (rows, slots) = (&mut self.rows, &mut self.source_slots);
@@ -385,7 +456,7 @@ impl<G> InputStack<G> {
         self.partially_captured[index] = self.interval;
         self.source_owner_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
-        Some(result)
+        result
     }
 
     pub(crate) fn mark(&mut self) -> Option<InputStackMark> {
@@ -633,7 +704,8 @@ impl<G> InputUndo<G> {
                     .expect("source lexer inverse names a live source slot");
                 source.swap_lex_state(slot, state);
             }
-            Self::SourceOwner { index, payload, .. } => {
+            Self::SourceOwner { index, payload, .. }
+            | Self::PhysicalBacking { index, payload, .. } => {
                 let state = source_owners
                     .value_mut(*payload)
                     .expect("input source-owner inverse remains live");
@@ -669,7 +741,9 @@ impl<G> InputUndo<G> {
                 }
             }
             Self::SourceLex { payload, .. } => source_lex.release(payload),
-            Self::SourceOwner { payload, .. } => source_owners.release(payload),
+            Self::SourceOwner { payload, .. } | Self::PhysicalBacking { payload, .. } => {
+                source_owners.release(payload)
+            }
             Self::Inline { .. } => {}
         }
     }

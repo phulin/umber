@@ -309,6 +309,9 @@ pub enum SourceRegistrationError {
     SourceIdentityExhausted,
     /// The backing cannot be represented in the command core's `u64` ranges.
     BackingTooLarge,
+    /// The new editor buffer differs before a checkpoint's conservative
+    /// physical-line anchor.
+    RestartPrefixMismatch { anchor: u64 },
 }
 
 impl fmt::Display for SourceRegistrationError {
@@ -323,6 +326,10 @@ impl fmt::Display for SourceRegistrationError {
             Self::BackingTooLarge => {
                 formatter.write_str("source backing is too large for source ranges")
             }
+            Self::RestartPrefixMismatch { anchor } => write!(
+                formatter,
+                "editor source changed before restart anchor {anchor}"
+            ),
         }
     }
 }
@@ -353,13 +360,29 @@ impl RegisteredSource {
             .flatten()
     }
 
-    #[cfg(test)]
     pub(crate) fn rebind_generated(
         &self,
         id: SourceId,
         bytes: Arc<[u8]>,
     ) -> Result<Self, SourceRegistrationError> {
         u64::try_from(bytes.len()).map_err(|_| SourceRegistrationError::BackingTooLarge)?;
+        if self.mode == CharacterMode::UnicodeExtended
+            && let Err(error) = std::str::from_utf8(&bytes)
+        {
+            let start = u64::try_from(error.valid_up_to())
+                .map_err(|_| SourceRegistrationError::BackingTooLarge)?;
+            let remaining = bytes.len() - error.valid_up_to();
+            let error_len = error.error_len().unwrap_or(remaining);
+            let end = start
+                .checked_add(
+                    u64::try_from(error_len)
+                        .map_err(|_| SourceRegistrationError::BackingTooLarge)?,
+                )
+                .ok_or(SourceRegistrationError::BackingTooLarge)?;
+            return Err(SourceRegistrationError::MalformedUnicode(
+                MalformedUnicodeRange { start, end },
+            ));
+        }
         let descriptor = Arc::new(self.name.as_ref().map_or_else(
             || SourceDescriptor::generated(Arc::clone(&bytes)),
             |name| SourceDescriptor::named_generated(name.to_string(), Arc::clone(&bytes)),

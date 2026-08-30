@@ -549,6 +549,7 @@ struct CandidatePlan {
     fragments: FragmentStore,
     layout: EditorLayout,
     execution_path: RevisionExecutionPath,
+    restart_limit: Option<usize>,
     restart_boundary: Option<BoundaryKey>,
     revision_setup_latency: Duration,
 }
@@ -1502,10 +1503,10 @@ fn initialize_candidate_runtime<G: 'static>(
     let options = CandidateControlOptions {
         job_name: &candidate.job_name,
         source_path: &candidate.source_path,
-        bytes: source_file_bytes(
+        bytes: Arc::from(source_file_bytes(
             &candidate.plan.source,
             candidate.root_source_is_byte_projection,
-        ),
+        )),
         profile: candidate.profile,
         compatibility: candidate.compatibility,
         initex: candidate.initex,
@@ -1517,6 +1518,14 @@ fn initialize_candidate_runtime<G: 'static>(
     let control = control
         .as_mut()
         .expect("candidate control is installed before runtime initialization");
+    if rooted_restart {
+        let anchor = candidate
+            .plan
+            .restart_boundary
+            .expect("a rooted restart has an exact selected boundary")
+            .position;
+        control.rebind_root_source_for_editor(Arc::clone(&options.bytes), anchor)?;
+    }
     control
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
@@ -1851,7 +1860,7 @@ fn install_plain_catcodes<G>(universe: &mut Universe<G>) -> Result<(), SessionEr
 struct CandidateControlOptions<'a> {
     job_name: &'a str,
     source_path: &'a str,
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     profile: CommandProfile,
     compatibility: CommandCompatibility,
     initex: bool,
@@ -2524,6 +2533,7 @@ impl<'store> Session<'store> {
             fragments: self.fragments.clone(),
             layout: clone_layout(&self.layout, &self.fragments)?,
             execution_path: RevisionExecutionPath::Cold,
+            restart_limit: None,
             restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
         })
@@ -2568,6 +2578,7 @@ impl<'store> Session<'store> {
             fragments: self.fragments.clone(),
             layout: clone_layout(&self.layout, &self.fragments)?,
             execution_path: RevisionExecutionPath::ExternalInputDelta,
+            restart_limit: None,
             restart_boundary: None,
             revision_setup_latency: Duration::ZERO,
         })
@@ -2605,15 +2616,9 @@ impl<'store> Session<'store> {
             fragments,
             layout,
             execution_path,
-            restart_boundary: (execution_path == RevisionExecutionPath::SlowEdit)
-                .then_some(edit.range.start)
-                .and_then(|position| {
-                    self.history
-                        .iter()
-                        .rev()
-                        .find(|record| record.key.position <= position)
-                        .map(|record| record.key)
-                }),
+            restart_limit: (execution_path == RevisionExecutionPath::SlowEdit)
+                .then_some(edit.range.start),
+            restart_boundary: None,
             revision_setup_latency: started.elapsed(),
         })
     }
@@ -2623,12 +2628,43 @@ impl<'store> Session<'store> {
         mut plan: CandidatePlan,
     ) -> Result<RevisionCandidate<'store>, SessionError> {
         let candidate_lease = self.candidate_lease.claim()?;
-        let job_start_fallback = self.prior_generation.is_some()
-            && plan
-                .restart_boundary
-                .is_none_or(|key| key.boundary == EngineBoundary::JobStart);
         let mut materialized_job_start = false;
-        let (generation, checkpoint_control_key, inherited_boundary) = if job_start_fallback {
+        let rooted = if let (Some(prior), Some(limit)) =
+            (self.prior_generation.as_mut(), plan.restart_limit)
+        {
+            prior
+                .generation
+                .fork_latest_boundary_at_or_before(limit)
+                .map_err(SessionError::RetainedEngineFork)?
+        } else {
+            None
+        };
+        let (generation, checkpoint_control_key, inherited_boundary) = if let Some((
+            generation,
+            runtime,
+            _budget_counters,
+            selected,
+            selected_key,
+            retention,
+        )) = rooted
+        {
+            let selected_boundary = BoundaryKey {
+                position: selected.position(),
+                boundary: selected.boundary(),
+                ordinal: selected.ordinal(),
+            };
+            let inherited_boundary = (!self
+                .history
+                .iter()
+                .any(|record| record.key == selected_boundary))
+            .then_some(InheritedBoundary {
+                key: selected_key,
+                evidence: selected,
+                retention,
+            });
+            plan.restart_boundary = Some(selected_boundary);
+            (Some(generation), Some(runtime), inherited_boundary)
+        } else if self.prior_generation.is_some() {
             let metadata = self.job_start_session_metadata();
             let anchor = self
                 .job_start_anchor
@@ -2653,30 +2689,6 @@ impl<'store> Session<'store> {
                 .map(|record| record.key);
             materialized_job_start = true;
             (Some(generation), None, None)
-        } else if let Some(prior) = self.prior_generation.as_mut() {
-            let selected = plan
-                .restart_boundary
-                .map(|key| (key.position, key.boundary, key.ordinal));
-            let (generation, runtime, _budget_counters, selected, selected_key, retention) = prior
-                .generation
-                .fork_boundary(selected)
-                .map_err(SessionError::RetainedEngineFork)?;
-            let selected_boundary = BoundaryKey {
-                position: selected.position(),
-                boundary: selected.boundary(),
-                ordinal: selected.ordinal(),
-            };
-            let inherited_boundary = (!self
-                .history
-                .iter()
-                .any(|record| record.key == selected_boundary))
-            .then_some(InheritedBoundary {
-                key: selected_key,
-                evidence: selected,
-                retention,
-            });
-            plan.restart_boundary = Some(selected_boundary);
-            (Some(generation), Some(runtime), inherited_boundary)
         } else {
             (None, None, None)
         };
