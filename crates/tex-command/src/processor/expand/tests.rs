@@ -339,6 +339,51 @@ fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
 }
 
 #[test]
+fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let work_before = fuel.work();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        assert_eq!(
+            processor
+                .main_loop_lookahead_into(&mut destination)
+                .expect("raw main-loop exit"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("main-loop exit occupies its caller destination")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+        drop(processor);
+        assert_eq!(
+            fuel.work().expanded_deliveries - work_before.expanded_deliveries,
+            0
+        );
+    });
+}
+
+#[test]
 fn noexpand_suppresses_exactly_one_expandable_delivery() {
     crate::test_harness::with_universe(|universe| {
         let noexpand = install_static(

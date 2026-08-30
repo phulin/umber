@@ -1073,11 +1073,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             let first = std::mem::take(&mut first);
             let action =
                 classify_expanded_command(command, expanded.protected_macros, expanded.undefined);
-            if first
-                && expanded.first_command == FirstCommandPolicy::MainLoopCharacter
-                && is_main_loop_character(command.meaning_ref())
-            {
-                return Ok(DeliveryStatus::Command);
+            if first && expanded.first_command == FirstCommandPolicy::MainLoopCharacter {
+                if is_main_loop_character(command.meaning_ref()) {
+                    return Ok(DeliveryStatus::Command);
+                }
+                if action == ExpandedCommandAction::Return {
+                    debug_assert_eq!(expanded.observation, ExpandedObservationPolicy::Commit);
+                    self.observe_expanded_delivery(command);
+                    return Ok(DeliveryStatus::Command);
+                }
             }
             if first
                 && expanded.first_command == FirstCommandPolicy::PreflightRaw
