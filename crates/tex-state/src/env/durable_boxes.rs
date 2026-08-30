@@ -74,11 +74,28 @@ struct DurableGroup {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[doc(hidden)]
 pub struct DurableBoxCursor {
+    /// Monotonic position in the checkpoint journal. The live journal may
+    /// release a physical prefix without rewriting retained cursors.
     checkpoint_entries: usize,
+    /// Monotonic position in the completed-group journal at capture.
+    retained_groups: usize,
     group_id: u64,
     group_entry_position: usize,
     group_depth: usize,
     next_group_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RebasedDurableBoxCursor {
+    checkpoint_entries: usize,
+    retained_groups: usize,
+}
+
+/// Exact durable-owner work performed by one retained-prefix release.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DurableBoxPrefixReleaseReceipt {
+    pub(crate) checkpoint_entries: usize,
+    pub(crate) retained_groups: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +112,7 @@ struct DurableBoxTransferLoan {
 pub(crate) struct AcceptedDurableBoxTail {
     entries: Vec<DurableMutation>,
     groups: AcceptedDurableGroupTail,
+    retained_group_base: usize,
 }
 
 enum AcceptedDurableGroupTail {
@@ -110,6 +128,101 @@ enum AcceptedDurableGroupTail {
     },
 }
 
+impl AcceptedDurableBoxTail {
+    fn accepted_retained_groups(&self) -> &[DurableGroup] {
+        match &self.groups {
+            AcceptedDurableGroupTail::Root {
+                accepted_retained_groups,
+                ..
+            }
+            | AcceptedDurableGroupTail::Arbitrary {
+                accepted_retained_groups,
+                ..
+            } => accepted_retained_groups,
+        }
+    }
+
+    fn accepted_retained_groups_mut(&mut self) -> &mut Vec<DurableGroup> {
+        match &mut self.groups {
+            AcceptedDurableGroupTail::Root {
+                accepted_retained_groups,
+                ..
+            }
+            | AcceptedDurableGroupTail::Arbitrary {
+                accepted_retained_groups,
+                ..
+            } => accepted_retained_groups,
+        }
+    }
+
+    fn release_retained_group_prefix(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        floor: usize,
+    ) -> Result<usize, super::StateError> {
+        if floor <= self.retained_group_base {
+            return Ok(0);
+        }
+        let released = floor
+            .checked_sub(self.retained_group_base)
+            .filter(|released| *released <= self.accepted_retained_groups_mut().len())
+            .ok_or(super::StateError::InvalidCursor)?;
+        for group in self.accepted_retained_groups_mut().drain(..released) {
+            DurableBoxState::retire_group(arena, group);
+        }
+        self.retained_group_base = floor;
+        Ok(released)
+    }
+
+    fn validates_retained_group_floor(&self, floor: usize) -> bool {
+        floor <= self.retained_group_base
+            || floor
+                .checked_sub(self.retained_group_base)
+                .is_some_and(|released| released <= self.accepted_retained_groups().len())
+    }
+
+    fn contains_retained_group_position(&self, position: usize) -> bool {
+        position >= self.retained_group_base
+            && self
+                .retained_group_base
+                .checked_add(self.accepted_retained_groups().len())
+                .is_some_and(|end| position <= end)
+    }
+
+    fn group(&self, id: u64) -> Option<&DurableGroup> {
+        match &self.groups {
+            AcceptedDurableGroupTail::Root {
+                accepted_groups,
+                accepted_retained_groups,
+                ..
+            }
+            | AcceptedDurableGroupTail::Arbitrary {
+                accepted_groups,
+                accepted_retained_groups,
+                ..
+            } => accepted_groups
+                .iter()
+                .chain(accepted_retained_groups)
+                .find(|group| group.id == id),
+        }
+    }
+
+    fn clear_checkpoint_pins(&mut self) {
+        match &mut self.groups {
+            AcceptedDurableGroupTail::Root {
+                accepted_groups, ..
+            }
+            | AcceptedDurableGroupTail::Arbitrary {
+                accepted_groups, ..
+            } => {
+                for group in accepted_groups {
+                    group.checkpoint_pinned = false;
+                }
+            }
+        }
+    }
+}
+
 pub(crate) struct DurableGroupRestoration {
     pub(crate) index: u16,
     pub(crate) saved: Option<DurableNodeMetadata>,
@@ -121,10 +234,12 @@ pub(crate) struct DurableBoxState {
     dense: Box<[DurableBoxCell]>,
     overflow: HashMap<u16, DurableBoxCell>,
     checkpoint_entries: Vec<DurableMutation>,
+    checkpoint_entry_base: usize,
     checkpoint_stamps: HashMap<u16, u64>,
     checkpoint_epoch: u64,
     groups: Vec<DurableGroup>,
     retained_groups: Vec<DurableGroup>,
+    retained_group_base: usize,
     next_group_id: u64,
     semantic_identity: Option<crate::state_hash::SemanticMapIdentity>,
     operation_entries: Vec<DurableMutation>,
@@ -238,10 +353,12 @@ impl DurableBoxState {
                 .into_boxed_slice(),
             overflow: HashMap::new(),
             checkpoint_entries: Vec::new(),
+            checkpoint_entry_base: 0,
             checkpoint_stamps: HashMap::new(),
             checkpoint_epoch: 1,
             groups: Vec::new(),
             retained_groups: Vec::new(),
+            retained_group_base: 0,
             next_group_id: 0,
             semantic_identity: None,
             operation_entries: Vec::new(),
@@ -406,6 +523,144 @@ impl DurableBoxState {
         for mutation in group.entries {
             Self::retire_value(arena, mutation.alternate);
         }
+    }
+
+    fn checkpoint_end(&self) -> Option<usize> {
+        self.checkpoint_entry_base
+            .checked_add(self.checkpoint_entries.len())
+    }
+
+    fn retained_group_end(&self) -> Option<usize> {
+        self.retained_group_base
+            .checked_add(self.retained_groups.len())
+    }
+
+    /// Converts a stable monotonic cursor into positions relative to the
+    /// prefixes which remain physically resident. This is the only cursor
+    /// rebase seam; outer checkpoint owners never scan or rewrite their roots.
+    fn rebase_cursor(&self, cursor: DurableBoxCursor) -> Option<RebasedDurableBoxCursor> {
+        let checkpoint_entries = cursor
+            .checkpoint_entries
+            .checked_sub(self.checkpoint_entry_base)?;
+        let retained_groups = cursor
+            .retained_groups
+            .checked_sub(self.retained_group_base)?;
+        if checkpoint_entries > self.checkpoint_entries.len()
+            || retained_groups > self.retained_groups.len()
+        {
+            return None;
+        }
+        Some(RebasedDurableBoxCursor {
+            checkpoint_entries,
+            retained_groups,
+        })
+    }
+
+    fn release_checkpoint_entries(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        floor: usize,
+    ) -> Result<usize, super::StateError> {
+        let released = floor
+            .checked_sub(self.checkpoint_entry_base)
+            .filter(|released| *released <= self.checkpoint_entries.len())
+            .ok_or(super::StateError::InvalidCursor)?;
+        for mutation in self.checkpoint_entries.drain(..released) {
+            Self::retire_value(arena, mutation.alternate);
+        }
+        self.checkpoint_entry_base = floor;
+        Ok(released)
+    }
+
+    fn release_retained_groups(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        floor: usize,
+    ) -> Result<usize, super::StateError> {
+        // During a candidate fork the current lane begins at the selected
+        // cursor while the older accepted group prefix lives in its tail.
+        if floor <= self.retained_group_base {
+            return Ok(0);
+        }
+        let released = floor
+            .checked_sub(self.retained_group_base)
+            .filter(|released| *released <= self.retained_groups.len())
+            .ok_or(super::StateError::InvalidCursor)?;
+        for group in self.retained_groups.drain(..released) {
+            Self::retire_group(arena, group);
+        }
+        self.retained_group_base = floor;
+        Ok(released)
+    }
+
+    /// Releases checkpoint-only durable alternates older than the earliest
+    /// surviving ordinary checkpoint. Active cells, groups, and operations
+    /// own disjoint alternates and are never visited.
+    pub(crate) fn validates_checkpoint_prefix_release(
+        &self,
+        oldest_retained: Option<DurableBoxCursor>,
+        accepted: Option<&AcceptedDurableBoxTail>,
+    ) -> bool {
+        let Some((checkpoint_floor, retained_group_floor)) = oldest_retained
+            .map(|cursor| {
+                self.validates_cursor_with_accepted(cursor, accepted)
+                    .then_some((cursor.checkpoint_entries, cursor.retained_groups))
+            })
+            .unwrap_or_else(|| Some((self.checkpoint_end()?, self.retained_group_end()?)))
+        else {
+            return false;
+        };
+        let checkpoint_valid = checkpoint_floor
+            .checked_sub(self.checkpoint_entry_base)
+            .is_some_and(|released| released <= self.checkpoint_entries.len());
+        let groups_valid = retained_group_floor <= self.retained_group_base
+            || retained_group_floor
+                .checked_sub(self.retained_group_base)
+                .is_some_and(|released| released <= self.retained_groups.len());
+        checkpoint_valid
+            && groups_valid
+            && accepted.is_none_or(|tail| tail.validates_retained_group_floor(retained_group_floor))
+    }
+
+    pub(crate) fn release_checkpoint_prefix(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        oldest_retained: Option<DurableBoxCursor>,
+        mut accepted: Option<&mut AcceptedDurableBoxTail>,
+    ) -> Result<DurableBoxPrefixReleaseReceipt, super::StateError> {
+        let (checkpoint_floor, retained_group_floor) = if let Some(cursor) = oldest_retained {
+            if !self.validates_cursor_with_accepted(cursor, accepted.as_deref()) {
+                return Err(super::StateError::InvalidCursor);
+            }
+            (cursor.checkpoint_entries, cursor.retained_groups)
+        } else {
+            (
+                self.checkpoint_end()
+                    .ok_or(super::StateError::InvalidCursor)?,
+                self.retained_group_end()
+                    .ok_or(super::StateError::InvalidCursor)?,
+            )
+        };
+
+        let checkpoint_entries = self.release_checkpoint_entries(arena, checkpoint_floor)?;
+        let mut retained_groups = self.release_retained_groups(arena, retained_group_floor)?;
+        if let Some(accepted) = accepted.as_mut() {
+            retained_groups = retained_groups.saturating_add(
+                accepted.release_retained_group_prefix(arena, retained_group_floor)?,
+            );
+        }
+        if oldest_retained.is_none() {
+            for group in &mut self.groups {
+                group.checkpoint_pinned = false;
+            }
+            if let Some(accepted) = accepted.as_mut() {
+                accepted.clear_checkpoint_pins();
+            }
+        }
+        Ok(DurableBoxPrefixReleaseReceipt {
+            checkpoint_entries,
+            retained_groups,
+        })
     }
 
     fn copy_group(
@@ -685,7 +940,12 @@ impl DurableBoxState {
             group.checkpoint_pinned = true;
         }
         let cursor = DurableBoxCursor {
-            checkpoint_entries: self.checkpoint_entries.len(),
+            checkpoint_entries: self
+                .checkpoint_end()
+                .expect("durable checkpoint position overflow"),
+            retained_groups: self
+                .retained_group_end()
+                .expect("durable group position overflow"),
             group_id: self.groups.last().map_or(0, |group| group.id),
             group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
             group_depth: self.groups.len(),
@@ -696,14 +956,51 @@ impl DurableBoxState {
     }
 
     pub(crate) fn validates_cursor(&self, cursor: DurableBoxCursor) -> bool {
-        if cursor.checkpoint_entries > self.checkpoint_entries.len() {
+        self.validates_cursor_with_accepted(cursor, None)
+    }
+
+    pub(crate) fn validates_cursor_for_release(
+        &self,
+        cursor: DurableBoxCursor,
+        accepted: Option<&AcceptedDurableBoxTail>,
+    ) -> bool {
+        self.validates_cursor_with_accepted(cursor, accepted)
+    }
+
+    fn validates_cursor_with_accepted(
+        &self,
+        cursor: DurableBoxCursor,
+        accepted: Option<&AcceptedDurableBoxTail>,
+    ) -> bool {
+        let Some(checkpoint_entries) = cursor
+            .checkpoint_entries
+            .checked_sub(self.checkpoint_entry_base)
+        else {
+            return false;
+        };
+        let current_contains_groups = cursor.retained_groups >= self.retained_group_base
+            && self
+                .retained_group_end()
+                .is_some_and(|end| cursor.retained_groups <= end);
+        if checkpoint_entries > self.checkpoint_entries.len()
+            || !(current_contains_groups
+                || accepted.is_some_and(|tail| {
+                    tail.contains_retained_group_position(cursor.retained_groups)
+                }))
+        {
             return false;
         }
         if cursor.group_depth == 0 {
             return cursor.group_id == 0 && cursor.group_entry_position == 0;
         }
-        let groups = self.groups.iter().chain(&self.retained_groups);
-        let Some(inner) = groups.clone().find(|group| group.id == cursor.group_id) else {
+        let find_group = |id| {
+            self.groups
+                .iter()
+                .chain(&self.retained_groups)
+                .find(|group| group.id == id)
+                .or_else(|| accepted.and_then(|tail| tail.group(id)))
+        };
+        let Some(inner) = find_group(cursor.group_id) else {
             return false;
         };
         if cursor.group_entry_position > inner.entries.len() {
@@ -713,12 +1010,7 @@ impl DurableBoxState {
         let mut id = cursor.group_id;
         while id != 0 {
             depth += 1;
-            let Some(group) = self
-                .groups
-                .iter()
-                .chain(&self.retained_groups)
-                .find(|group| group.id == id)
-            else {
+            let Some(group) = find_group(id) else {
                 return false;
             };
             id = group.parent;
@@ -828,11 +1120,14 @@ impl DurableBoxState {
     }
 
     pub(crate) fn restore(&mut self, arena: &mut PageMaterialArena, cursor: DurableBoxCursor) {
+        let rebased = self
+            .rebase_cursor(cursor)
+            .expect("validated durable cursor rebases");
         let restored_groups = self
             .checkpoint_groups(arena, cursor)
             .expect("checkpoint group preservation copy must succeed");
-        self.swap_checkpoint_suffix(cursor.checkpoint_entries);
-        for mutation in self.checkpoint_entries.drain(cursor.checkpoint_entries..) {
+        self.swap_checkpoint_suffix(rebased.checkpoint_entries);
+        for mutation in self.checkpoint_entries.drain(rebased.checkpoint_entries..) {
             Self::retire_value(arena, mutation.alternate);
         }
         for group in std::mem::take(&mut self.groups) {
@@ -842,6 +1137,7 @@ impl DurableBoxState {
             Self::retire_group(arena, group);
         }
         self.groups = restored_groups;
+        self.retained_group_base = cursor.retained_groups;
         self.next_group_id = cursor.next_group_id;
         self.checkpoint_stamps.clear();
         self.checkpoint_epoch = self.checkpoint_epoch.checked_add(1).expect("box epoch");
@@ -853,13 +1149,19 @@ impl DurableBoxState {
         cursor: DurableBoxCursor,
     ) -> Result<AcceptedDurableBoxTail, BankError> {
         assert!(self.active_operations.is_empty());
+        let rebased = self
+            .rebase_cursor(cursor)
+            .expect("validated durable candidate cursor rebases");
         let candidate_groups = self.checkpoint_groups(arena, cursor)?;
-        self.swap_checkpoint_suffix(cursor.checkpoint_entries);
-        let entries = self.checkpoint_entries.split_off(cursor.checkpoint_entries);
+        self.swap_checkpoint_suffix(rebased.checkpoint_entries);
+        let entries = self
+            .checkpoint_entries
+            .split_off(rebased.checkpoint_entries);
         self.checkpoint_stamps.clear();
         self.checkpoint_epoch = self.checkpoint_epoch.checked_add(1).expect("box epoch");
         let accepted_groups = std::mem::replace(&mut self.groups, candidate_groups);
-        let accepted_retained_groups = std::mem::take(&mut self.retained_groups);
+        let accepted_retained_groups = self.retained_groups.split_off(rebased.retained_groups);
+        let retained_group_base = cursor.retained_groups;
         let groups = if cursor.group_depth == 0 {
             AcceptedDurableGroupTail::Root {
                 accepted_groups,
@@ -874,7 +1176,11 @@ impl DurableBoxState {
             }
         };
         self.next_group_id = cursor.next_group_id;
-        Ok(AcceptedDurableBoxTail { entries, groups })
+        Ok(AcceptedDurableBoxTail {
+            entries,
+            groups,
+            retained_group_base,
+        })
     }
 
     pub(crate) fn reject_checkpoint_candidate(
@@ -883,8 +1189,11 @@ impl DurableBoxState {
         cursor: DurableBoxCursor,
         mut accepted: AcceptedDurableBoxTail,
     ) {
-        self.swap_checkpoint_suffix(cursor.checkpoint_entries);
-        for mutation in self.checkpoint_entries.drain(cursor.checkpoint_entries..) {
+        let rebased = self
+            .rebase_cursor(cursor)
+            .expect("validated durable rejection cursor rebases");
+        self.swap_checkpoint_suffix(rebased.checkpoint_entries);
+        for mutation in self.checkpoint_entries.drain(rebased.checkpoint_entries..) {
             Self::retire_value(arena, mutation.alternate);
         }
         for mutation in &mut accepted.entries {
@@ -894,9 +1203,14 @@ impl DurableBoxState {
         for group in std::mem::take(&mut self.groups) {
             Self::retire_group(arena, group);
         }
-        for group in std::mem::take(&mut self.retained_groups) {
+        let candidate_retained_groups = self.retained_groups.split_off(rebased.retained_groups);
+        for group in candidate_retained_groups {
             Self::retire_group(arena, group);
         }
+        debug_assert_eq!(
+            self.retained_group_end(),
+            Some(accepted.retained_group_base)
+        );
         match accepted.groups {
             AcceptedDurableGroupTail::Root {
                 accepted_groups,
@@ -909,7 +1223,7 @@ impl DurableBoxState {
                 next_group_id,
             } => {
                 self.groups = accepted_groups;
-                self.retained_groups = accepted_retained_groups;
+                self.retained_groups.extend(accepted_retained_groups);
                 self.next_group_id = next_group_id;
             }
         }

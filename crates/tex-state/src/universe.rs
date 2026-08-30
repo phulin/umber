@@ -790,6 +790,18 @@ pub struct Universe<G> {
 
 impl<G> Universe<G> {
     fn checkpoint_state_is_ready(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
+        self.checkpoint_state_is_ready_with_durable(
+            checkpoint,
+            self.durable_boxes
+                .validates_cursor(*checkpoint.state.mark().durable()),
+        )
+    }
+
+    fn checkpoint_state_is_ready_with_durable(
+        &self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        durable_ready: bool,
+    ) -> bool {
         let mark = checkpoint.state.mark();
         let Some(core) = self.core.as_ref() else {
             return false;
@@ -797,7 +809,7 @@ impl<G> Universe<G> {
         core.owns_generation(checkpoint.state.owner())
             && core.state().validate_restore(*mark.journal()).is_ok()
             && core.state().validate_checkpoint_cursor(*mark.input())
-            && self.durable_boxes.validates_cursor(*mark.durable())
+            && durable_ready
             && core.validates_generation_cursor(checkpoint.generation)
             && self
                 .page_region
@@ -2717,14 +2729,31 @@ impl<G> Universe<G> {
         oldest_retained: Option<&RuntimeCheckpoint<G>>,
     ) -> Result<(), UniverseError> {
         let retained = |checkpoint: &RuntimeCheckpoint<G>| {
+            let durable_ready = self.durable_boxes.validates_cursor_for_release(
+                *checkpoint.state.mark().durable(),
+                self.checkpoint_candidate
+                    .as_ref()
+                    .map(|candidate| &candidate.durable_boxes),
+            );
             self.world.snapshot_is_retained(&checkpoint.world)
                 && self.pdf.snapshot_is_retained(&checkpoint.pdf)
                 && self.fonts.validates(checkpoint.fonts)
                 && self.sources.validates(checkpoint.sources)
-                && self.checkpoint_state_is_ready(checkpoint)
+                && self.checkpoint_state_is_ready_with_durable(checkpoint, durable_ready)
                 && self.page_region.validates_checkpoint(checkpoint.page)
         };
         if !retained(released) || oldest_retained.is_some_and(|checkpoint| !retained(checkpoint)) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        let oldest_durable = oldest_retained.map(|checkpoint| *checkpoint.state.mark().durable());
+        let accepted_durable = self
+            .checkpoint_candidate
+            .as_ref()
+            .map(|candidate| &candidate.durable_boxes);
+        if !self
+            .durable_boxes
+            .validates_checkpoint_prefix_release(oldest_durable, accepted_durable)
+        {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         Ok(())
@@ -2744,6 +2773,18 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .state_mut()
             .release_checkpoint_prefix(*mark.journal())?;
+        let oldest_durable = oldest_retained.map(|checkpoint| *checkpoint.state.mark().durable());
+        let accepted_durable = self
+            .checkpoint_candidate
+            .as_mut()
+            .map(|candidate| &mut candidate.durable_boxes);
+        self.durable_boxes
+            .release_checkpoint_prefix(
+                &mut self.page_region.nodes_mut(),
+                oldest_durable,
+                accepted_durable,
+            )
+            .expect("runtime release prevalidated durable history");
         self.page_region
             .release_checkpoint(released.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))

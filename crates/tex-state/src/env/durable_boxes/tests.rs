@@ -393,3 +393,269 @@ fn candidate_reject_redoes_accepted_group_exit_with_exact_owner() {
     assert!(!arena.durable_region_is_live(candidate_id));
     state.retire_all(&mut arena);
 }
+
+#[test]
+fn released_checkpoint_prefix_retires_only_obsolete_alternates_and_rebases_cursors() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let obsolete = owner(&mut arena, 73);
+    let obsolete_id = obsolete.region_id();
+    state
+        .replace(&mut arena, 25, Some(obsolete))
+        .expect("obsolete value");
+    let root = state.checkpoint_cursor();
+    let first = owner(&mut arena, 79);
+    let first_id = first.region_id();
+    state
+        .replace(&mut arena, 25, Some(first))
+        .expect("first value");
+    let floor = state.checkpoint_cursor();
+    let current = owner(&mut arena, 89);
+    let current_id = current.region_id();
+    state
+        .replace(&mut arena, 25, Some(current))
+        .expect("current value");
+    let before = arena.durable_transition_counters();
+
+    let released = state
+        .release_checkpoint_prefix(&mut arena, Some(floor), None)
+        .expect("durable prefix release");
+
+    assert_eq!(released.checkpoint_entries, 2);
+    assert_eq!(released.retained_groups, 0);
+    assert!(!state.validates_cursor(root));
+    assert!(state.validates_cursor(floor));
+    assert!(!arena.durable_region_is_live(obsolete_id));
+    assert!(arena.durable_region_is_live(first_id));
+    assert!(arena.durable_region_is_live(current_id));
+    assert_eq!(arena.durable_transition_counters(), before);
+
+    state.restore(&mut arena, floor);
+    assert_eq!(current_region(&state, 25), Some(first_id));
+    assert!(!arena.durable_region_is_live(current_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn released_prefix_keeps_candidate_rejection_exact() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let root = state.checkpoint_cursor();
+    let selected_value = owner(&mut arena, 97);
+    let selected_id = selected_value.region_id();
+    state
+        .replace(&mut arena, 27, Some(selected_value))
+        .expect("selected value");
+    let selected = state.checkpoint_cursor();
+    let accepted_value = owner(&mut arena, 101);
+    let accepted_id = accepted_value.region_id();
+    state
+        .replace(&mut arena, 27, Some(accepted_value))
+        .expect("accepted value");
+    let mut accepted = state
+        .begin_checkpoint_candidate(&mut arena, selected)
+        .expect("candidate");
+    let candidate_value = owner(&mut arena, 103);
+    let candidate_id = candidate_value.region_id();
+    state
+        .replace(&mut arena, 27, Some(candidate_value))
+        .expect("candidate value");
+
+    let released = state
+        .release_checkpoint_prefix(&mut arena, Some(selected), Some(&mut accepted))
+        .expect("candidate prefix release");
+    assert_eq!(released.checkpoint_entries, 1);
+    assert!(!state.validates_cursor(root));
+    assert!(state.validates_cursor(selected));
+    state.reject_checkpoint_candidate(&mut arena, selected, accepted);
+
+    assert_eq!(current_region(&state, 27), Some(accepted_id));
+    assert!(arena.durable_region_is_live(selected_id));
+    assert!(!arena.durable_region_is_live(candidate_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn released_prefix_keeps_candidate_acceptance_restorable() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let obsolete = owner(&mut arena, 107);
+    let obsolete_id = obsolete.region_id();
+    state
+        .replace(&mut arena, 29, Some(obsolete))
+        .expect("obsolete value");
+    let obsolete_cursor = state.checkpoint_cursor();
+    let selected_value = owner(&mut arena, 109);
+    let selected_id = selected_value.region_id();
+    state
+        .replace(&mut arena, 29, Some(selected_value))
+        .expect("selected value");
+    let selected = state.checkpoint_cursor();
+    let accepted_value = owner(&mut arena, 113);
+    let accepted_id = accepted_value.region_id();
+    state
+        .replace(&mut arena, 29, Some(accepted_value))
+        .expect("accepted value");
+    let mut accepted = state
+        .begin_checkpoint_candidate(&mut arena, selected)
+        .expect("candidate");
+    let candidate_value = owner(&mut arena, 127);
+    let candidate_id = candidate_value.region_id();
+    state
+        .replace(&mut arena, 29, Some(candidate_value))
+        .expect("candidate value");
+
+    state
+        .release_checkpoint_prefix(&mut arena, Some(selected), Some(&mut accepted))
+        .expect("candidate prefix release");
+    assert!(!state.validates_cursor(obsolete_cursor));
+    state.accept_checkpoint_candidate(&mut arena, accepted);
+
+    assert_eq!(current_region(&state, 29), Some(candidate_id));
+    assert!(!arena.durable_region_is_live(obsolete_id));
+    assert!(!arena.durable_region_is_live(accepted_id));
+    assert!(arena.durable_region_is_live(selected_id));
+    state.restore(&mut arena, selected);
+    assert_eq!(current_region(&state, 29), Some(selected_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn group_local_replacement_survives_checkpoint_prefix_release() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let outer = owner(&mut arena, 131);
+    let outer_id = outer.region_id();
+    state
+        .replace(&mut arena, 31, Some(outer))
+        .expect("outer value");
+    state.begin_group(2);
+    let old_local = owner(&mut arena, 137);
+    state
+        .assign(
+            &mut arena,
+            31,
+            Some(old_local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("old local value");
+    let old_group_cursor = state.checkpoint_cursor();
+    state.end_group(&mut arena, 2).expect("old group exit");
+    let floor = state.checkpoint_cursor();
+
+    state.begin_group(2);
+    let live_local = owner(&mut arena, 139);
+    let live_local_id = live_local.region_id();
+    state
+        .assign(
+            &mut arena,
+            31,
+            Some(live_local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("live local value");
+    let before = arena.durable_transition_counters();
+
+    let released = state
+        .release_checkpoint_prefix(&mut arena, Some(floor), None)
+        .expect("group prefix release");
+
+    assert_eq!(released.retained_groups, 1);
+    assert!(!state.validates_cursor(old_group_cursor));
+    assert_eq!(current_region(&state, 31), Some(live_local_id));
+    assert!(arena.durable_region_is_live(outer_id));
+    assert_eq!(arena.durable_transition_counters(), before);
+    state.end_group(&mut arena, 2).expect("live group exit");
+    assert_eq!(current_region(&state, 31), Some(outer_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn releasing_last_checkpoint_unpins_but_preserves_an_active_group() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let outer = owner(&mut arena, 149);
+    let outer_id = outer.region_id();
+    state
+        .replace(&mut arena, 33, Some(outer))
+        .expect("outer value");
+    state.begin_group(2);
+    let local = owner(&mut arena, 151);
+    state
+        .assign(
+            &mut arena,
+            33,
+            Some(local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("local value");
+    let _released = state.checkpoint_cursor();
+
+    state
+        .release_checkpoint_prefix(&mut arena, None, None)
+        .expect("last checkpoint release");
+
+    assert!(!state.groups[0].checkpoint_pinned);
+    assert!(arena.durable_region_is_live(outer_id));
+    state.end_group(&mut arena, 2).expect("group exit");
+    assert_eq!(current_region(&state, 33), Some(outer_id));
+    assert!(state.retained_groups.is_empty());
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn candidate_accept_preserves_earlier_retained_group_ancestry() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let outer = owner(&mut arena, 157);
+    let outer_id = outer.region_id();
+    state
+        .replace(&mut arena, 35, Some(outer))
+        .expect("outer value");
+    state.begin_group(2);
+    let local = owner(&mut arena, 163);
+    let local_id = local.region_id();
+    state
+        .assign(
+            &mut arena,
+            35,
+            Some(local),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("local value");
+    let earlier = state.checkpoint_cursor();
+    state.end_group(&mut arena, 2).expect("accepted group exit");
+    let selected = state.checkpoint_cursor();
+    let mut accepted = state
+        .begin_checkpoint_candidate(&mut arena, selected)
+        .expect("candidate");
+    let candidate = owner(&mut arena, 167);
+    state
+        .replace(&mut arena, 36, Some(candidate))
+        .expect("candidate value");
+
+    state
+        .release_checkpoint_prefix(&mut arena, Some(earlier), Some(&mut accepted))
+        .expect("release before selected group base");
+    state.accept_checkpoint_candidate(&mut arena, accepted);
+
+    assert!(state.validates_cursor(earlier));
+    state.restore(&mut arena, earlier);
+    assert_eq!(current_region(&state, 35), Some(local_id));
+    state
+        .end_group(&mut arena, 2)
+        .expect("restored earlier group exits");
+    assert!(matches!(
+        arena
+            .durable_list(state.value(35).expect("restored outer value"))
+            .expect("restored outer list")
+            .get(0),
+        Some(Node::Penalty(157))
+    ));
+    assert!(!arena.durable_region_is_live(outer_id));
+    state.retire_all(&mut arena);
+}
