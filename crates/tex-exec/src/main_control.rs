@@ -6872,6 +6872,58 @@ impl<G> MainControl<G> {
             active.preamble_start_pending = false;
             active.align_peek_pending = true;
         }
+        let resident = frame.prepared(cold);
+        let reports_synchronous_auxiliary_error = matches!(
+            resident,
+            ColdOperation::IllegalPrevDepth { .. } | ColdOperation::IllegalSpaceFactor { .. }
+        ) || matches!(
+            resident,
+            ColdOperation::PrevGraf { value } if *value < 0
+        ) || matches!(
+            resident,
+            ColdOperation::SpaceFactor { value } if !(1..=32767).contains(value)
+        );
+        if reports_synchronous_auxiliary_error
+            || matches!(
+                resident,
+                ColdOperation::OffSave(_)
+                    | ColdOperation::AlignmentRecovery { .. }
+                    | ColdOperation::Message { .. }
+                    | ColdOperation::SetInteractionMode(_)
+                    | ColdOperation::SetInteractionModeValue { .. }
+            )
+        {
+            // TeX82 §§1030/1064: command tracing happens when the offending
+            // command is fetched, before `off_save`/`align_error` prints its
+            // balancing-token error. The trace is detached while scanning,
+            // whereas the legacy recovery report writes synchronously during
+            // apply. Publish that already-committed trace before admitting
+            // the one context which stays resident through ordinary semantic
+            // application, so the two mechanisms cannot invert their
+            // canonical order.
+            //
+            // §1279's `\message`/`\errmessage` and §1264's
+            // `new_interaction` are synchronous World-facing boundaries.
+            // Any macro trace produced while scanning the message must be
+            // visible before its expanded text is printed.
+            //
+            // `new_interaction` similarly requires the already-rendered
+            // §1030 command trace to reach the old selector before `print_ln`
+            // and the selector transition. Otherwise the unconditional
+            // `print_ln` overtakes the detached trace, moving TeX's blank line
+            // from after `\batchmode` to before it and routing later output
+            // from the wrong partial-line state.
+            //
+            // §§1243--1244's auxiliary-assignment rejection arms likewise
+            // call the synchronous error reporter after their operand scan.
+            // A conditional expanded as the integer terminator has already
+            // completed both its command and boolean-result traces at this
+            // point, so publish the whole scan program before `int_error` or
+            // `report_illegal_case` can overtake it.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+        }
         let context = stores.command_context().expect("cold operation admission");
         if let ColdOperation::ShowGroups { diagnostic } = frame.unavailable_mut(cold)
             && diagnostic.is_none()
@@ -6889,7 +6941,6 @@ impl<G> MainControl<G> {
         let reassigning_glue = self.local_glue_pointer_reassigned(&context, frame.prepared(cold));
         let redundant_glue =
             self.etex_redundant_local_glue_assignment(&context, frame.prepared(cold));
-        drop(context);
         match frame.unavailable_mut(cold) {
             ColdOperation::Skip {
                 redundant,
@@ -7008,62 +7059,7 @@ impl<G> MainControl<G> {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
-        let reports_synchronous_auxiliary_error = matches!(
-            &scanned,
-            ColdOperation::IllegalPrevDepth { .. } | ColdOperation::IllegalSpaceFactor { .. }
-        ) || matches!(
-            &scanned,
-            ColdOperation::PrevGraf { value } if *value < 0
-        ) || matches!(
-            &scanned,
-            ColdOperation::SpaceFactor { value } if !(1..=32767).contains(value)
-        );
-        if reports_synchronous_auxiliary_error
-            || matches!(
-                &scanned,
-                ColdOperation::OffSave(_)
-                    | ColdOperation::AlignmentRecovery { .. }
-                    | ColdOperation::Message { .. }
-                    | ColdOperation::SetInteractionMode(_)
-                    | ColdOperation::SetInteractionModeValue { .. }
-            )
-        {
-            // TeX82 §§1030/1064: command tracing happens when the offending
-            // command is fetched, before `off_save`/`align_error` prints its
-            // balancing-token error. The trace is detached while scanning,
-            // whereas the legacy recovery report writes synchronously during
-            // apply. Publish that
-            // already-committed trace at this admission boundary so the two
-            // mechanisms cannot invert their canonical order. This recovery
-            // operation requests no host resource and its error remains an
-            // observable result even when ErrorStop jumps out.
-            //
-            // §1279's `\message`/`\errmessage` and §1264's
-            // `new_interaction` are synchronous World-facing boundaries.
-            // Any macro trace produced while scanning the message must be
-            // visible before its expanded text is printed.
-            //
-            // `new_interaction` similarly requires the already-rendered
-            // §1030 command trace to reach the old selector before `print_ln`
-            // and the selector transition.
-            // Otherwise the unconditional `print_ln` overtakes the detached
-            // trace, moving TeX's blank line from after `\batchmode` to before
-            // it and routing later output from the wrong partial-line state.
-            //
-            // §§1243--1244's auxiliary-assignment rejection arms likewise
-            // call the synchronous error reporter after their operand scan.
-            // A conditional expanded as the integer terminator has already
-            // completed both its command and boolean-result traces at this
-            // point, so publish the whole scan program before `int_error` or
-            // `report_illegal_case` can overtake it.
-            stores
-                .world_mut()
-                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
-        }
-        let effect = {
-            let context = stores.command_context().expect("live generation");
-            applied_effect_observation(scanned, &context)
-        };
+        let effect = applied_effect_observation(scanned, &context);
         let output_routine_was_active = self.boxes.output_routine_active;
         let mut command = CommandMachine {
             state: &mut self.command,
@@ -7081,73 +7077,78 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let mut result = match frame.unavailable_mut(cold) {
-            ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
-                let provenance_demand = stores.provenance_demand();
-                let provenance_budget_bytes =
-                    stores.provenance_budgets().detached_artifact_recipe_bytes;
-                let (form, source_resolver) = {
-                    let mut context =
-                        stores
-                            .command_context()
-                            .map_err(|_| ExecError::MissingToken {
-                                context: "immediate form admission",
-                            })?;
-                    let form = apply_pdf_form_request(
-                        request,
-                        &mut context,
-                        &mut self.modes,
-                        &mut command,
-                        true,
-                    )?
-                    .expect("immediate form creation returns a publication record");
-                    let form_page = context
-                        .copy_pdf_form_to_page(form.object())
-                        .ok_or(ExecError::PdfXFormVoidBox)?;
-                    let source_resolver =
-                        DetachedArtifactSourceResolver::capture_page_list(form_page, &context);
-                    (form, source_resolver)
-                };
-                let mut geometry = DetachedShipoutGeometry::default();
-                publish_immediate_pdf_form(
-                    form,
-                    &mut command,
-                    stores,
-                    &source_resolver,
-                    provenance_demand,
-                    provenance_budget_bytes,
-                    &mut geometry,
-                )?;
-                if let Some(geometry) = geometry.0 {
-                    crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
-                        &mut command.shipout_geometry_sink(),
-                        geometry,
-                    );
+        let mut result = if matches!(
+            frame.prepared(cold),
+            ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(_))
+        ) {
+            // Immediate form creation crosses back to the aggregate Universe;
+            // only this uncommon host boundary releases the resident semantic
+            // context and admits the narrower form context below.
+            drop(context);
+            let request = match frame.unavailable_mut(cold) {
+                ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
+                    request
                 }
-                Ok(ReplayStep::Continue)
-            }
-            scanned => {
-                let context = stores
-                    .command_context()
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "cold operation admission",
-                    })?;
-                apply_cold_operation(
-                    scanned,
-                    context,
+                _ => unreachable!("immediate-form discriminant remains resident"),
+            };
+            let provenance_demand = stores.provenance_demand();
+            let provenance_budget_bytes =
+                stores.provenance_budgets().detached_artifact_recipe_bytes;
+            let (form, source_resolver) = {
+                let mut context =
+                    stores
+                        .command_context()
+                        .map_err(|_| ExecError::MissingToken {
+                            context: "immediate form admission",
+                        })?;
+                let form = apply_pdf_form_request(
+                    request,
+                    &mut context,
                     &mut self.modes,
-                    &mut self.next_alignment_identity,
-                    &mut self.active_alignment,
                     &mut command,
-                    &mut self.boxes,
-                    &self.active_discretionaries,
-                    &self.active_math_choices,
-                    &mut self.active_math_fields,
-                    &self.active_math_left_boundaries,
-                    &self.active_math_shifts,
-                    &mut self.prepared_dvi_pages,
-                )
+                    true,
+                )?
+                .expect("immediate form creation returns a publication record");
+                let form_page = context
+                    .copy_pdf_form_to_page(form.object())
+                    .ok_or(ExecError::PdfXFormVoidBox)?;
+                let source_resolver =
+                    DetachedArtifactSourceResolver::capture_page_list(form_page, &context);
+                (form, source_resolver)
+            };
+            let mut geometry = DetachedShipoutGeometry::default();
+            publish_immediate_pdf_form(
+                form,
+                &mut command,
+                stores,
+                &source_resolver,
+                provenance_demand,
+                provenance_budget_bytes,
+                &mut geometry,
+            )?;
+            if let Some(geometry) = geometry.0 {
+                crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
+                    &mut command.shipout_geometry_sink(),
+                    geometry,
+                );
             }
+            Ok(ReplayStep::Continue)
+        } else {
+            apply_cold_operation(
+                frame.unavailable_mut(cold),
+                context,
+                &mut self.modes,
+                &mut self.next_alignment_identity,
+                &mut self.active_alignment,
+                &mut command,
+                &mut self.boxes,
+                &self.active_discretionaries,
+                &self.active_math_choices,
+                &mut self.active_math_fields,
+                &self.active_math_left_boundaries,
+                &self.active_math_shifts,
+                &mut self.prepared_dvi_pages,
+            )
         };
         frame.clear_cold(cold);
         if result.is_ok()

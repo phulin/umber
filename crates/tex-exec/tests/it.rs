@@ -497,6 +497,22 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .expect("locate context-free cold preparation");
     assert!(!scanned_preparation.contains("command_context()"));
     assert!(!scanned_preparation.contains("command_processor("));
+    let prepared_application = control
+        .split_once("fn apply_prepared_operation(")
+        .and_then(|(_, tail)| tail.split_once("fn scan_startup_file_name("))
+        .map(|(body, _)| body)
+        .expect("locate resident prepared application");
+    let ordinary_application = prepared_application
+        .split_once("} else {\n            apply_cold_operation(")
+        .and_then(|(_, body)| body.split_once("\n        };"))
+        .map(|(body, _)| body)
+        .expect("locate ordinary resident cold application");
+    assert!(
+        ordinary_application.contains("frame.unavailable_mut(cold),\n                context,")
+    );
+    assert!(!ordinary_application.contains("command_context()"));
+    assert!(!prepared_application.contains("cold.operation.take()"));
+    assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
     let expansion_settlement = delivery
         .split_once("fn settle_preflight_step<")
         .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))

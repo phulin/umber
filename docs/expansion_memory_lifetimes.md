@@ -525,10 +525,12 @@ caller-owned typed slot and returns only a compact tag. The frame's singular
 payload field owns the hot value or a cold-occupancy tag, so the 264-byte cold
 leaf does not inflate every resident hot record. Preparation changes the cold
 leaf's small attempt-root fields to prepared-root fields in place; application
-consumes semantic leaves through a mutable borrow, then clears and immediately
-reuses both slots. Resource suspension moves that exact frame and occupied cold
-slot into the attempt instead of boxing a prepared operation or retaining
-completed operations in a generation-long lane. `MainControl` owns one
+admits one semantic `CommandContext`, consumes semantic leaves through a mutable
+borrow while that context stays resident, then clears and immediately reuses
+both slots. Only a genuine host boundary releases that context and admits the
+narrow host-specific continuation context. Resource suspension moves that exact
+frame and occupied cold slot into the attempt instead of boxing a prepared
+operation or retaining completed operations in a generation-long lane. `MainControl` owns one
 singular direct-retry slot: the same operation capability moves together with
 exactly one in-place operation frame or alignment destination. The operation
 frame owns its admitted `CurrentCommand`, parked expansion, scalar phase,
