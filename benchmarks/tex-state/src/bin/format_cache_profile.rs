@@ -86,7 +86,7 @@ fn main() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", format_path.display()));
     let image =
         DetachedFormatImage::try_from_bytes(format.clone()).expect("profile input format image");
-    materialize(&image);
+    materialize(image);
 
     let root =
         std::env::temp_dir().join(format!("umber-format-cache-profile-{}", std::process::id()));
@@ -122,7 +122,7 @@ fn main() {
     });
     let direct_decode = observe(21, || {
         let image = DetachedFormatImage::try_from_bytes(format.clone()).expect("direct decode");
-        materialize(&image);
+        materialize(image);
     });
 
     println!(
@@ -138,7 +138,7 @@ fn main() {
     std::fs::remove_dir_all(&root).expect("remove owned profile directory");
 }
 
-fn materialize(image: &DetachedFormatImage) {
+fn materialize(image: DetachedFormatImage) {
     let budget =
         InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("profile interner budget");
     with_materialized_format(budget, World::memory(), image, |universe| {
