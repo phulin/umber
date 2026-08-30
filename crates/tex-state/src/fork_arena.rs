@@ -78,6 +78,13 @@ struct ChunkStorage<T> {
     admitted_forward_chunk_crossings: core::cell::Cell<u64>,
 }
 
+/// One admitted final payload slot and the scalar facts needed to publish it.
+struct ReservedChunkSlot<'a, T> {
+    slot: &'a mut Option<T>,
+    offset: u32,
+    became_full: bool,
+}
+
 impl<T> ChunkStorage<T> {
     /// Creates a pool whose logical chunk capacity is derived from a byte
     /// budget. At least one value fits even when `T` exceeds that budget.
@@ -274,14 +281,17 @@ impl<T> ChunkStorage<T> {
         Ok((page, index))
     }
 
-    /// Invokes `construct` only after the reusable final slot is admitted.
-    fn append_with(
+    /// Admits and publishes one vacant final slot before returning its place.
+    ///
+    /// The caller must fill the returned slot immediately. This private seam
+    /// lets the semantic facade perform the sole payload write without
+    /// carrying `T` through generic arena return values or callbacks.
+    fn reserve(
         &mut self,
         key: RawChunkKey,
         arena: u32,
-        construct: impl FnOnce() -> T,
         item_identity: Option<u64>,
-    ) -> Result<u32, ForkArenaError> {
+    ) -> Result<ReservedChunkSlot<'_, T>, ForkArenaError> {
         let used = {
             let meta = self.validate(key, arena)?;
             if meta.sealed || meta.used as usize == self.slots_per_chunk {
@@ -294,16 +304,21 @@ impl<T> ChunkStorage<T> {
         };
         let (page, index) = self.slot_index(key, used as usize)?;
         debug_assert!(self.pages[page].slots[index].is_none());
-        self.pages[page].slots[index].get_or_insert_with(construct);
+        let became_full = used as usize + 1 == self.slots_per_chunk;
         let meta = self.validate_mut(key, arena)?;
         meta.used += 1;
+        meta.sealed = became_full;
         if let Some(item_identity) = item_identity {
             let summary = meta
                 .sequence_summary
                 .get_or_insert(SemanticSequenceIdentity::empty());
             summary.push_back(item_identity);
         }
-        Ok(used)
+        Ok(ReservedChunkSlot {
+            slot: &mut self.pages[page].slots[index],
+            offset: used,
+            became_full,
+        })
     }
 
     fn get(&self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&T> {
@@ -1354,23 +1369,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    fn append_payload(
+    /// Reserves the one final resident payload slot and publishes its root.
+    fn reserve_payload_slot<'pool>(
         &mut self,
-        pool: &mut ChunkPool<T>,
+        pool: &'pool mut ChunkPool<T>,
         root: &mut ArenaListId<Lane>,
-        value: T,
         item_identity: Option<u64>,
-    ) -> Result<(), ForkArenaError> {
-        self.append_payload_with(pool, root, || value, item_identity)
-    }
-
-    fn append_payload_with(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        root: &mut ArenaListId<Lane>,
-        construct: impl FnOnce() -> T,
-        item_identity: Option<u64>,
-    ) -> Result<(), ForkArenaError> {
+    ) -> Result<&'pool mut Option<T>, ForkArenaError> {
         if !root.is_empty() && root.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
@@ -1403,9 +1408,11 @@ impl<T, Lane> ForkArena<T, Lane> {
                 key
             }
         };
-        let offset = pool
-            .payload
-            .append_with(key, self.owner, construct, item_identity)?;
+        let ReservedChunkSlot {
+            slot,
+            offset,
+            became_full,
+        } = pool.payload.reserve(key, self.owner, item_identity)?;
         if root.is_empty() {
             *root = ArenaListId::from_root(
                 self.owner,
@@ -1420,13 +1427,24 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .checked_add(1)
                 .ok_or(ForkArenaError::CapacityOverflow)?;
         }
-        let became_full =
-            pool.payload.used(key, self.owner)? as usize == pool.payload.chunk_capacity();
         if became_full {
-            pool.payload.seal(key, self.owner)?;
             self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
         }
         self.counters.new_semantic_nodes += 1;
+        Ok(slot)
+    }
+
+    /// Writes one value already duplicated from an existing semantic node.
+    fn append_payload_copy(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &mut ArenaListId<Lane>,
+        value: T,
+        item_identity: Option<u64>,
+    ) -> Result<(), ForkArenaError> {
+        let slot = self.reserve_payload_slot(pool, root, item_identity)?;
+        assert!(slot.is_none(), "reserved copy destination is vacant");
+        *slot = Some(value);
         Ok(())
     }
 
@@ -1536,7 +1554,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 None => *identity_mode = Some(item_identity.is_some()),
                 _ => {}
             }
-            self.append_payload(pool, root, value, item_identity)?;
+            self.append_payload_copy(pool, root, value, item_identity)?;
         }
         Ok(())
     }
@@ -1724,21 +1742,23 @@ impl<T, Lane> ForkArena<T, Lane> {
         builder: &mut ActiveListBuilder<T, Lane>,
         value: T,
     ) -> Result<(), ForkArenaError> {
-        self.push_active_list_constructed(pool, builder, || value, None)
+        let slot = self.reserve_active_list_slot(pool, builder, None)?;
+        assert!(slot.is_none(), "reserved active-list destination is vacant");
+        *slot = Some(value);
+        Ok(())
     }
 
-    /// Constructs one new payload through its admitted reusable chunk slot.
-    pub(crate) fn push_active_list_constructed(
+    /// Returns the admitted final place for one newly created payload.
+    pub(crate) fn reserve_active_list_slot<'pool>(
         &mut self,
-        pool: &mut ChunkPool<T>,
+        pool: &'pool mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
-        construct: impl FnOnce() -> T,
         item_identity: Option<u64>,
-    ) -> Result<(), ForkArenaError> {
+    ) -> Result<&'pool mut Option<T>, ForkArenaError> {
         let mut root = self.active_list_open_mut(builder)?.root;
-        self.append_payload_with(pool, &mut root, construct, item_identity)?;
+        let slot = self.reserve_payload_slot(pool, &mut root, item_identity)?;
         self.active_list_open_mut(builder)?.root = root;
-        Ok(())
+        Ok(slot)
     }
 
     pub(crate) fn append_validated_active_list(
@@ -2151,7 +2171,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .cloned()
             .collect::<Vec<_>>();
         for value in reverse.into_iter().rev() {
-            self.append_payload(pool, &mut copy, value, None)?;
+            self.append_payload_copy(pool, &mut copy, value, None)?;
         }
         self.counters.new_semantic_nodes = self
             .counters
@@ -2190,7 +2210,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .collect::<Vec<_>>();
         let mut summary = SemanticSequenceIdentity::empty();
         for (value, identity) in reverse.into_iter().rev() {
-            self.append_payload(pool, &mut copy, value, Some(identity))?;
+            self.append_payload_copy(pool, &mut copy, value, Some(identity))?;
             summary.push_back(identity);
         }
         self.counters.new_semantic_nodes = self
@@ -3928,8 +3948,11 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         value: T,
         item_identity: Option<u64>,
     ) -> Result<(), ForkArenaError> {
-        self.arena
-            .append_payload(self.pool, &mut self.root, value, item_identity)?;
+        let slot = self
+            .arena
+            .reserve_payload_slot(self.pool, &mut self.root, item_identity)?;
+        assert!(slot.is_none(), "reserved builder destination is vacant");
+        *slot = Some(value);
         match (&mut self.sequence_summary, item_identity) {
             (Some(summary), Some(item_identity)) => summary.push_back(item_identity),
             (None, Some(item_identity)) if self.root.len == 1 => {

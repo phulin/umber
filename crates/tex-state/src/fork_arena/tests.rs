@@ -58,9 +58,7 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     let mut keys = Vec::new();
     for value in 0..17_u64 {
         let key = pool.payload.allocate(7).expect("chunk allocation");
-        pool.payload
-            .append_with(key, 7, || value, None)
-            .expect("chunk append");
+        *pool.payload.reserve(key, 7, None).expect("chunk slot").slot = Some(value);
         keys.push(key);
     }
     assert_eq!(pool.page_count(), 2);
@@ -80,19 +78,12 @@ fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
     let key = pool.payload.allocate(7).expect("chunk allocation");
     for value in 1..=3 {
-        pool.payload
-            .append_with(
-                key,
-                7,
-                || DropTracked {
-                    value,
-                    drops: Rc::clone(&drops),
-                    panic_on: 2,
-                    did_panic: Rc::clone(&did_panic),
-                },
-                None,
-            )
-            .expect("chunk append");
+        *pool.payload.reserve(key, 7, None).expect("chunk slot").slot = Some(DropTracked {
+            value,
+            drops: Rc::clone(&drops),
+            panic_on: 2,
+            did_panic: Rc::clone(&did_panic),
+        });
     }
 
     assert!(
@@ -1165,46 +1156,27 @@ fn detached_active_builder_rejects_foreign_lane_owner() {
 }
 
 #[test]
-fn direct_active_constructor_runs_only_after_destination_admission() {
+fn resident_active_slot_is_published_only_after_destination_admission() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut first = ForkArena::<u32, ActiveLane>::new();
     let mut second = ForkArena::<u32, ActiveLane>::new();
     let mut builder = ActiveListBuilder::vacant();
-    let constructions = Cell::new(0_u32);
     first
         .open_active_list(&pool, &mut builder)
         .expect("open active list");
 
     assert_eq!(
-        second.push_active_list_constructed(
-            &mut pool,
-            &mut builder,
-            || {
-                constructions.set(constructions.get() + 1);
-                41
-            },
-            None,
-        ),
+        second.reserve_active_list_slot(&mut pool, &mut builder, None),
         Err(ForkArenaError::InvalidActiveListBuilder)
     );
-    assert_eq!(constructions.get(), 0);
 
-    first
-        .push_active_list_constructed(
-            &mut pool,
-            &mut builder,
-            || {
-                constructions.set(constructions.get() + 1);
-                43
-            },
-            None,
-        )
-        .expect("construct directly in admitted destination");
+    *first
+        .reserve_active_list_slot(&mut pool, &mut builder, None)
+        .expect("reserve admitted resident destination") = Some(43);
     first
         .finalize_active_list(&mut pool, &mut builder)
         .expect("finalize direct construction");
     let list = builder.take_sealed().expect("take direct list");
-    assert_eq!(constructions.get(), 1);
     assert_eq!(
         first.list(&pool, list).expect("direct list").get(0),
         Some(&43)

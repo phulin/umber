@@ -6,6 +6,7 @@ use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_region::NodePool;
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::scaled::{GlueSetRatio, Scaled};
+use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};
 
 macro_rules! page_arena {
     ($arena:ident, $pool:ident, $state:ident, $bytes:expr) => {
@@ -46,6 +47,55 @@ fn boxed(children: PageListId) -> PageMaterialNode {
         glue_order: Order::Normal,
         children,
     }))
+}
+
+#[test]
+fn warmed_resident_slot_construction_is_allocation_free() {
+    const ALLOCATION_OWNER: usize = 15;
+    const NODES: usize = 4_096;
+
+    page_arena!(arena, pool, state, 512);
+    let empty = arena.operation_mark();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("warm builder");
+    for penalty in 0..NODES as i32 {
+        arena
+            .push_active_list(&mut builder, Node::Penalty(penalty))
+            .expect("warm resident slot");
+    }
+    let _ = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize warm list");
+    arena
+        .restore_operation(empty)
+        .expect("return warmed resident slots");
+
+    let before = thread_measurement(ALLOCATION_OWNER);
+    let list = {
+        let _scope = scope(ALLOCATION_OWNER);
+        arena
+            .open_active_list(&mut builder)
+            .expect("measured builder");
+        for penalty in 0..NODES as i32 {
+            arena
+                .push_active_list(&mut builder, Node::Penalty(penalty))
+                .expect("measured resident slot");
+        }
+        arena
+            .finalize_active_list(&mut builder)
+            .expect("finalize measured list")
+    };
+    let after = thread_measurement(ALLOCATION_OWNER);
+
+    assert_eq!(
+        AllocationMeasurement {
+            calls: after.calls.saturating_sub(before.calls),
+            requested_bytes: after.requested_bytes.saturating_sub(before.requested_bytes),
+        },
+        AllocationMeasurement::default()
+    );
+    assert_eq!(arena.list(list).expect("measured list view").len(), NODES);
+    assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
 #[test]

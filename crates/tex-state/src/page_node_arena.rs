@@ -934,28 +934,25 @@ impl<'a> PageMaterialArena<'a> {
         if !node_children_are_live(&self.region.pub_arena, &self.pool.chunks, &node) {
             return Err(ForkArenaError::InvalidRegion);
         }
-        if let Some(identity) = &mut builder.identity {
-            let item_identity = semantic_node_identity(&node);
-            identity.push_back(item_identity);
-            let result = self.region.pub_arena.push_active_list_constructed(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                move || node,
-                Some(item_identity),
-            );
-            if result.is_ok() {
-                builder.identity_work.hashed_values =
-                    builder.identity_work.hashed_values.saturating_add(1);
+        let item_identity = builder
+            .identity
+            .as_ref()
+            .map(|_| semantic_node_identity(&node));
+        let slot = self.region.pub_arena.reserve_active_list_slot(
+            &mut self.pool.chunks,
+            &mut builder.inner,
+            item_identity,
+        )?;
+        assert!(slot.is_none(), "reserved page-node destination is vacant");
+        *slot = Some(node);
+        if let Some(item_identity) = item_identity {
+            if let Some(identity) = &mut builder.identity {
+                identity.push_back(item_identity);
             }
-            result
-        } else {
-            self.region.pub_arena.push_active_list_constructed(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                move || node,
-                None,
-            )
+            builder.identity_work.hashed_values =
+                builder.identity_work.hashed_values.saturating_add(1);
         }
+        Ok(())
     }
 
     pub fn append_to_active_list(

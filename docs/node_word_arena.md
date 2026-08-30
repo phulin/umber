@@ -46,13 +46,15 @@ the pool and arena explicitly. Open builders cannot become retained marks and
 must be finalized or rolled back before a whole-chunk checkpoint boundary can
 be sealed.
 
-New page material crosses that boundary as a constructor. The arena first
-admits the current reusable chunk slot, then invokes the constructor through
-that final `Option<Node>` destination and publishes its used cursor and
-identity summary. A rejected foreign builder never invokes the constructor.
-This removes the intermediate whole-node append carrier without adding a
-payload owner, alternate node representation, allocation, or rollback state;
-explicit TeX/source-copy paths remain separately named value-copy boundaries.
+New page material crosses that boundary through one resident-slot reservation.
+The generic arena admits the current reusable chunk slot and publishes its used
+cursor and identity summary, then the page-material facade writes the node once
+into that final `Option<Node>` place. No constructor callback or whole-node
+return value crosses the generic arena layers. A rejected foreign builder never
+reserves a destination. This removes the intermediate whole-node carriers
+without adding a payload owner, alternate node representation, allocation, or
+rollback state; explicit TeX/source-copy paths remain separately named
+value-copy boundaries.
 
 The `TypesetState::page_nodes` contract returns this borrowed `NodeCursor`, not
 a contiguous slice. Existing row storage continues through the slice variant
