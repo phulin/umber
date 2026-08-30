@@ -515,7 +515,7 @@ struct HyphenationCandidate {
     language: u8,
     left: usize,
     right: usize,
-    word: Vec<WordChar>,
+    word: smallvec::SmallVec<[WordChar; 64]>,
 }
 
 /// Implements TeX82 §§891--895's bounded scan from the glue after which a
@@ -527,101 +527,141 @@ fn find_hyphenation_candidate<G>(
     context: (u8, usize, usize),
 ) -> Option<HyphenationCandidate> {
     let nodes = stores.page_node_span(source).ok()?;
+    if start > nodes.len() {
+        return None;
+    }
     let (mut language, mut left, mut right) = context;
-    let mut index = start;
-    let (word_start, font) = loop {
-        let node = nodes.owned_node(index)?;
-        match first_word_char(stores, language, node) {
-            Some((font, ch, lower)) => {
-                if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
-                    return None;
+    let mut word_start = None;
+    let mut font = None;
+    let mut minima = 0;
+    let mut word = smallvec::SmallVec::<[WordChar; 64]>::new();
+    let mut word_end = None;
+    // TeX describes seeking the first letter, collecting the bounded word,
+    // and checking its terminator as adjacent loops. Keep those phases in one
+    // forward arena traversal so a packed predecessor chain is descended
+    // once, while preserving the word-end coordinate from the middle phase.
+    let permitted = nodes.try_for_each_range(start..nodes.len(), |index, node| {
+        if word_start.is_none() {
+            match first_word_char(stores, language, node) {
+                Some((candidate_font, ch, lower)) => {
+                    if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
+                        return core::ops::ControlFlow::Break(false);
+                    }
+                    let Some(candidate_minima) = left.checked_add(right) else {
+                        return core::ops::ControlFlow::Break(false);
+                    };
+                    if candidate_minima > 63
+                        || !(0..=255).contains(&stores.font_hyphen_char(candidate_font))
+                    {
+                        return core::ops::ControlFlow::Break(false);
+                    }
+                    word_start = Some(index);
+                    font = Some(candidate_font);
+                    minima = candidate_minima;
                 }
-                break (index, font);
+                None if is_pre_word_skip(node) => {
+                    update_hyphenation_context(node, &mut language, &mut left, &mut right);
+                    return core::ops::ControlFlow::Continue(());
+                }
+                None => return core::ops::ControlFlow::Break(false),
             }
-            None if is_pre_word_skip(node) => {
-                update_hyphenation_context(node, &mut language, &mut left, &mut right);
-                index += 1;
-            }
-            None => return None,
         }
-    };
 
-    let minima = left.checked_add(right)?;
-    if minima > 63 {
-        return None;
-    }
-    let hyphen = stores.font_hyphen_char(font);
-    if !(0..=255).contains(&hyphen) {
-        return None;
-    }
-
-    let mut word = Vec::new();
-    index = word_start;
-    while let Some(node) = nodes.owned_node(index) {
-        match node {
-            Node::Char {
-                font: node_font,
-                ch,
-                origin,
-            } if *node_font == font && word.len() < 63 => {
-                let Some(lower) = normalized_hyphen_code(stores, language, *ch) else {
-                    break;
-                };
-                word.push(WordChar {
-                    font,
-                    ch: *ch,
-                    lower,
-                    origin: *origin,
-                });
-                index += 1;
-            }
-            Node::Lig {
-                font: node_font,
-                orig,
-                origins,
-                ..
-            } if *node_font == font => {
-                if word
-                    .len()
-                    .checked_add(orig.len())
-                    .is_none_or(|len| len > 63)
+        if word_end.is_none() {
+            let candidate_font = font.expect("word start establishes its font");
+            let continues_word = match node {
+                Node::Char {
+                    font: node_font,
+                    ch,
+                    origin,
+                } if *node_font == candidate_font && word.len() < 63 => {
+                    normalized_hyphen_code(stores, language, *ch).is_some_and(|lower| {
+                        word.push(WordChar {
+                            font: candidate_font,
+                            ch: *ch,
+                            lower,
+                            origin: *origin,
+                        });
+                        true
+                    })
+                }
+                Node::Lig {
+                    font: node_font,
+                    orig,
+                    origins,
+                    ..
+                } if *node_font == candidate_font
+                    && word
+                        .len()
+                        .checked_add(orig.len())
+                        .is_some_and(|len| len <= 63) =>
                 {
-                    break;
+                    let original_len = word.len();
+                    let mut valid = true;
+                    for (offset, &ch) in orig.iter().enumerate() {
+                        let Some(lower) = normalized_hyphen_code(stores, language, ch) else {
+                            valid = false;
+                            break;
+                        };
+                        if let Some(&origin) = origins.get(offset) {
+                            word.push(WordChar {
+                                font: candidate_font,
+                                ch,
+                                lower,
+                                origin,
+                            });
+                        }
+                    }
+                    if !valid {
+                        word.truncate(original_len);
+                    }
+                    valid
                 }
-                let Some(normalized) = orig
-                    .iter()
-                    .copied()
-                    .map(|ch| normalized_hyphen_code(stores, language, ch).map(|lower| (ch, lower)))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    break;
-                };
-                for ((ch, lower), origin) in normalized.into_iter().zip(origins.iter().cloned()) {
-                    word.push(WordChar {
-                        font,
-                        ch,
-                        lower,
-                        origin,
-                    });
-                }
-                index += 1;
+                Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                } => true,
+                _ => false,
+            };
+            if continues_word {
+                return core::ops::ControlFlow::Continue(());
             }
-            Node::Kern {
+            word_end = Some(index);
+        }
+
+        match node {
+            Node::Char { .. }
+            | Node::Lig { .. }
+            | Node::Kern {
                 kind: KernKind::Font,
                 ..
-            } => {
-                index += 1;
-            }
-            _ => break,
+            } => core::ops::ControlFlow::Continue(()),
+            Node::Glue { .. }
+            | Node::Penalty(_)
+            | Node::Ins { .. }
+            | Node::Adjust(_)
+            | Node::Mark { .. }
+            | Node::Whatsit(_)
+            | Node::Direction(
+                tex_state::node::Direction::BeginL
+                | tex_state::node::Direction::EndL
+                | tex_state::node::Direction::BeginR
+                | tex_state::node::Direction::EndR,
+            )
+            | Node::Kern { .. } => core::ops::ControlFlow::Break(true),
+            _ => core::ops::ControlFlow::Break(false),
         }
-    }
-
-    if word.len() < minima || !permitted_word_terminator(nodes, index) {
+    });
+    let permitted = match permitted {
+        core::ops::ControlFlow::Continue(()) => word_start.is_some(),
+        core::ops::ControlFlow::Break(permitted) => permitted,
+    };
+    if !permitted || word.len() < minima {
         return None;
     }
     Some(HyphenationCandidate {
-        word_start,
-        end: index,
+        word_start: word_start.expect("permitted candidate has a word start"),
+        end: word_end.unwrap_or(nodes.len()),
         language,
         left,
         right,
@@ -659,37 +699,6 @@ fn is_pre_word_skip(node: &Node) -> bool {
                     | tex_state::node::Direction::EndR
             )
     ) || matches!(node, Node::Char { .. } | Node::Lig { .. })
-}
-
-fn permitted_word_terminator(
-    nodes: tex_state::node_arena::NodeCursor<'_>,
-    mut index: usize,
-) -> bool {
-    while let Some(node) = nodes.owned_node(index) {
-        match node {
-            Node::Char { .. }
-            | Node::Lig { .. }
-            | Node::Kern {
-                kind: KernKind::Font,
-                ..
-            } => index += 1,
-            Node::Glue { .. }
-            | Node::Penalty(_)
-            | Node::Ins { .. }
-            | Node::Adjust(_)
-            | Node::Mark { .. }
-            | Node::Whatsit(_)
-            | Node::Direction(
-                tex_state::node::Direction::BeginL
-                | tex_state::node::Direction::EndL
-                | tex_state::node::Direction::BeginR
-                | tex_state::node::Direction::EndR,
-            )
-            | Node::Kern { .. } => return true,
-            _ => return false,
-        }
-    }
-    true
 }
 
 fn parse_exception_word<G>(
@@ -1582,5 +1591,83 @@ mod tests {
             let found = candidate(&mut stores, &sixty_four).expect("63-letter prefix at c64");
             assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
         });
+    }
+
+    #[test]
+    fn candidate_scan_is_linear_while_positional_probe_remains_explicit() {
+        fn delta(
+            after: tex_state::node_arena::NodeTraversalCounters,
+            before: tex_state::node_arena::NodeTraversalCounters,
+        ) -> tex_state::node_arena::NodeTraversalCounters {
+            tex_state::node_arena::NodeTraversalCounters {
+                index_resolutions: after
+                    .index_resolutions
+                    .saturating_sub(before.index_resolutions),
+                index_predecessor_steps: after
+                    .index_predecessor_steps
+                    .saturating_sub(before.index_predecessor_steps),
+                forward_chunk_crossings: after
+                    .forward_chunk_crossings
+                    .saturating_sub(before.forward_chunk_crossings),
+            }
+        }
+
+        for values in [1_usize, 4_096] {
+            crate::test_harness::with_nonstop_plain_universe(|universe| {
+                let mut stores = universe.command_context().expect("test state is admitted");
+                let font = stores.current_font();
+                stores
+                    .assign_int_param(
+                        IntParam::DEFAULT_HYPHEN_CHAR,
+                        i32::from(b'-'),
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("parameter");
+                let source = stores.publish_page_nodes(vec![character(font, 'a'); values]);
+                let source = stores
+                    .admit_page_node_span(source)
+                    .expect("test paragraph source remains live");
+                let nodes = stores
+                    .page_node_span(source)
+                    .expect("test paragraph span remains admitted");
+
+                let before = nodes.testing_traversal_counters();
+                let found = find_hyphenation_candidate(&stores, source, 0, (0, 0, 0))
+                    .expect("lowercase source is a candidate");
+                let candidate = delta(nodes.testing_traversal_counters(), before);
+                assert_eq!(candidate.index_resolutions, 0);
+                assert_eq!(candidate.index_predecessor_steps, 0);
+                assert!(
+                    !found.word.spilled(),
+                    "TeX's 63-letter word bound is inline"
+                );
+
+                let reference_before = nodes.testing_traversal_counters();
+                let mut visited = 0;
+                nodes.for_each_range(0..nodes.len(), |_, _| visited += 1);
+                let reference = delta(nodes.testing_traversal_counters(), reference_before);
+                assert_eq!(visited, values);
+                assert_eq!(
+                    candidate.forward_chunk_crossings,
+                    reference.forward_chunk_crossings
+                );
+
+                let probe_before = nodes.testing_traversal_counters();
+                assert!(nodes.owned_node(0).is_some());
+                let positional = delta(nodes.testing_traversal_counters(), probe_before);
+                assert_eq!(positional.index_resolutions, 1);
+                if values == 4_096 {
+                    assert!(positional.index_predecessor_steps > 0);
+                }
+                eprintln!(
+                    "HYPHENATION_TRAVERSAL_SCALE values={values} sequential_index_resolutions={} sequential_predecessor_steps={} sequential_block_crossings={} positional_index_resolutions={} positional_predecessor_steps={}",
+                    candidate.index_resolutions,
+                    candidate.index_predecessor_steps,
+                    candidate.forward_chunk_crossings,
+                    positional.index_resolutions,
+                    positional.index_predecessor_steps,
+                );
+            });
+        }
     }
 }

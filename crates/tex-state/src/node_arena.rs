@@ -2999,6 +2999,16 @@ pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
 }
 
+/// Test-only observations which distinguish positional node probes from
+/// linear predecessor-topology traversal.
+#[cfg(feature = "testing")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodeTraversalCounters {
+    pub index_resolutions: u64,
+    pub index_predecessor_steps: u64,
+    pub forward_chunk_crossings: u64,
+}
+
 impl core::fmt::Debug for NodeCursor<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_list().entries(self.iter()).finish()
@@ -3050,6 +3060,21 @@ impl<'a> NodeCursor<'a> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn testing_traversal_counters(&self) -> NodeTraversalCounters {
+        let (index_resolutions, index_predecessor_steps, forward_chunk_crossings) =
+            match self.source {
+                NodeCursorSource::Slice(_) => (0, 0, 0),
+                NodeCursorSource::Fork(view) => view.traversal_counters(),
+            };
+        NodeTraversalCounters {
+            index_resolutions,
+            index_predecessor_steps,
+            forward_chunk_crossings,
+        }
     }
     #[must_use]
     pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {

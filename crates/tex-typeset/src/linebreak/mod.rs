@@ -230,7 +230,6 @@ pub struct ArenaParagraphMaterialization {
 #[derive(Clone, Debug, PartialEq)]
 struct BreakSite {
     breakpoint: Breakpoint,
-    trace: TraceSpan,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -259,18 +258,7 @@ impl ParagraphTape<'static> {
         let nodes = sequence.semantic();
         let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer.collect_direct_with(|site| {
-            let display_end = trace_display_end(state, nodes, site);
-            BreakSite {
-                breakpoint: site,
-                trace: TraceSpan {
-                    display_end,
-                    next_start: trace_display_next_start(state, nodes, site, display_end),
-                    display_suffix: trace_display_suffix(nodes, site),
-                    breakpoint: trace_breakpoint(nodes, site),
-                },
-            }
-        });
+        let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::Owned(sequence),
@@ -330,18 +318,7 @@ impl ParagraphTape<'static> {
         };
         let nodes = view;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer.collect_direct_with(|site| {
-            let display_end = trace_display_end(state, nodes, site);
-            BreakSite {
-                breakpoint: site,
-                trace: TraceSpan {
-                    display_end,
-                    next_start: trace_display_next_start(state, nodes, site, display_end),
-                    display_suffix: trace_display_suffix(nodes, site),
-                    breakpoint: trace_breakpoint(nodes, site),
-                },
-            }
-        });
+        let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::ArenaId {
@@ -372,18 +349,7 @@ impl<'a> ParagraphTape<'a> {
         let source = nodes;
         let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer.collect_direct_with(|site| {
-            let display_end = trace_display_end(state, nodes, site);
-            BreakSite {
-                breakpoint: site,
-                trace: TraceSpan {
-                    display_end,
-                    next_start: trace_display_next_start(state, nodes, site, display_end),
-                    display_suffix: trace_display_suffix(nodes, site),
-                    breakpoint: trace_breakpoint(nodes, site),
-                },
-            }
-        });
+        let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::BorrowedMirrored(source),
@@ -403,18 +369,7 @@ impl<'a> ParagraphTape<'a> {
     ) -> Self {
         let nodes = sequence;
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer.collect_direct_with(|site| {
-            let display_end = trace_display_end(state, nodes, site);
-            BreakSite {
-                breakpoint: site,
-                trace: TraceSpan {
-                    display_end,
-                    next_start: trace_display_next_start(state, nodes, site, display_end),
-                    display_suffix: trace_display_suffix(nodes, site),
-                    breakpoint: trace_breakpoint(nodes, site),
-                },
-            }
-        });
+        let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
             source: ParagraphSource::BorrowedArena(sequence),
@@ -762,10 +717,7 @@ pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_
 
 #[cfg(test)]
 use widths::line_widths_nodes;
-use widths::{
-    Widths, add_node_width_source, add_node_width_value, line_badness, line_widths_cursor,
-    line_widths_view,
-};
+use widths::{Widths, add_node_width_value, line_badness, line_widths_cursor, line_widths_view};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -963,7 +915,7 @@ fn run_pass<S: TypesetState>(
     for (break_site, site) in tape.break_sites.iter().enumerate() {
         let break_site = u32::try_from(break_site).expect("paragraph break-site count exceeds u32");
         let bp = site.breakpoint;
-        let trace_span = &site.trace;
+        let mut trace_span = None;
         // Background and discretionary material depend only on this
         // breakpoint. Combine them once instead of once per active route.
         let mut breakpoint_width = bp.line_width;
@@ -1079,6 +1031,15 @@ fn run_pass<S: TypesetState>(
                     ),
                 };
                 if trace.is_some() {
+                    let trace_span = trace_span.get_or_insert_with(|| {
+                        let display_end = trace_display_end(state, nodes, bp);
+                        TraceSpan {
+                            display_end,
+                            next_start: trace_display_next_start(state, nodes, bp, display_end),
+                            display_suffix: trace_display_suffix(nodes, bp),
+                            breakpoint: trace_breakpoint(nodes, bp),
+                        }
+                    });
                     traced_feasible = true;
                     feasible_traces.push((
                         line_number_class(candidate.line, easy_line),
@@ -1222,7 +1183,9 @@ fn run_pass<S: TypesetState>(
             events.extend(active_traces.map(|(_, event)| event));
         }
         if traced_feasible {
-            displayed_through = trace_span.next_start;
+            displayed_through = trace_span
+                .expect("a feasible traced route computes its display span")
+                .next_start;
         }
         merge_active_candidates(
             &mut active,
@@ -1713,29 +1676,6 @@ fn line_shortfall_for_route(target: Scaled, natural: WideScaled) -> Scaled {
         .unwrap_or(Scaled::from_raw(0))
 }
 
-fn discretionary_post_is_nonempty(nodes: NodeCursor<'_>, position: usize) -> bool {
-    matches!(
-        position
-            .checked_sub(1)
-            .and_then(|index| nodes.owned_node(index)),
-        Some(Node::Disc { post, .. }) if !post.is_empty()
-    )
-}
-
-fn next_width_position(nodes: NodeCursor<'_>, position: usize) -> usize {
-    let mut position = position.min(nodes.len());
-    while position < nodes.len()
-        && is_discardable(
-            nodes
-                .owned_node(position)
-                .expect("width position belongs to paragraph"),
-        )
-    {
-        position += 1;
-    }
-    position
-}
-
 fn compute_demerits(
     params: &LineBreakParams,
     active: &Candidate,
@@ -1797,11 +1737,8 @@ struct LegalBreakpoints<'a, S> {
     state: &'a S,
     nodes: NodeCursor<'a>,
     params: &'a LineBreakParams,
-    index: usize,
     prefix: Widths,
     auto_breaking: bool,
-    last_position: Option<usize>,
-    terminal_emitted: bool,
     include_font_expansion: bool,
     materialization: Vec<MaterializationAction>,
 }
@@ -1812,94 +1749,102 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             state,
             nodes,
             params,
-            index: 0,
             prefix: Widths::zero(),
             auto_breaking: true,
-            last_position: None,
-            terminal_emitted: false,
             include_font_expansion: params.pdf_adjust_spacing > 1,
             materialization: Vec::with_capacity(nodes.len()),
         }
     }
 
-    fn breakpoint(
-        &self,
-        position: usize,
-        width_position: usize,
-        penalty: i32,
-        hyphenated: bool,
-        add_width: Widths,
-        line_width: Widths,
-    ) -> Breakpoint {
-        let next_position = if hyphenated && discretionary_post_is_nonempty(self.nodes, position) {
-            position
-        } else {
-            next_width_position(self.nodes, position)
-        };
-        let mut next_width = line_width;
-        for index in width_position..next_position {
-            add_node_width_source(
-                &mut next_width,
-                self.state,
-                self.nodes,
-                index,
-                self.include_font_expansion,
-            );
-        }
-        // TeX82 §822's break width removes the discretionary replacement
-        // already present in the paragraph prefix, then credits `post_break`
-        // to the next line by subtracting its width from the saved prefix.
-        if hyphenated
-            && let Some(Node::Disc { post, .. }) = position
-                .checked_sub(1)
-                .and_then(|index| self.nodes.owned_node(index))
-        {
-            next_width = next_width.sub(line_widths_view(
-                self.state,
-                post,
-                0,
-                self.state.page_nodes(*post).len(),
-                self.include_font_expansion,
-            ));
-        }
-        Breakpoint {
-            position,
-            penalty,
-            hyphenated,
-            add_width,
-            line_width,
-            next_position,
-            next_width,
-        }
-    }
-
-    fn collect_direct_with<R>(&mut self, mut map: impl FnMut(Breakpoint) -> R) -> Vec<R> {
+    fn collect_direct(&mut self) -> Vec<BreakSite> {
         let nodes = self.nodes;
         let mut output = Vec::new();
+        let mut pending_start = None;
         let mut previous = None;
         let mut pending = None;
         let mut index = 0_usize;
         nodes.for_each(|node| {
-            if let Some((pending_index, pending_node, pending_previous)) = pending.take()
-                && let Some(site) =
-                    self.observe_node(pending_index, pending_node, pending_previous, Some(node))
-            {
-                output.push(map(site));
+            if let Some((pending_index, pending_node, pending_previous)) = pending.take() {
+                self.observe_direct_node(
+                    pending_index,
+                    pending_node,
+                    pending_previous,
+                    Some(node),
+                    &mut output,
+                    &mut pending_start,
+                );
             }
             pending = Some((index, node, previous));
             previous = Some(node);
             index += 1;
         });
-        if let Some((pending_index, pending_node, pending_previous)) = pending
-            && let Some(site) =
-                self.observe_node(pending_index, pending_node, pending_previous, None)
-        {
-            output.push(map(site));
+        if let Some((pending_index, pending_node, pending_previous)) = pending {
+            self.observe_direct_node(
+                pending_index,
+                pending_node,
+                pending_previous,
+                None,
+                &mut output,
+                &mut pending_start,
+            );
         }
-        if let Some(terminal) = self.terminal_breakpoint() {
-            output.push(map(terminal));
+        Self::finalize_pending(&mut output, &mut pending_start, nodes.len(), self.prefix);
+        if output
+            .last()
+            .is_none_or(|site| site.breakpoint.position < nodes.len())
+        {
+            output.push(BreakSite {
+                breakpoint: Breakpoint {
+                    position: nodes.len(),
+                    penalty: EJECT_PENALTY,
+                    hyphenated: false,
+                    add_width: Widths::zero(),
+                    line_width: self.prefix,
+                    next_position: nodes.len(),
+                    next_width: self.prefix,
+                },
+            });
         }
         output
+    }
+
+    fn observe_direct_node(
+        &mut self,
+        index: usize,
+        node: &Node,
+        previous: Option<&Node>,
+        next: Option<&Node>,
+        output: &mut Vec<BreakSite>,
+        pending_start: &mut Option<usize>,
+    ) {
+        if !is_discardable(node) {
+            Self::finalize_pending(output, pending_start, index, self.prefix);
+        }
+        let Some((site, awaits_discardable_end)) = self.observe_node(index, node, previous, next)
+        else {
+            return;
+        };
+        if awaits_discardable_end {
+            pending_start.get_or_insert(output.len());
+        } else {
+            debug_assert!(pending_start.is_none());
+        }
+        output.push(site);
+    }
+
+    fn finalize_pending(
+        output: &mut [BreakSite],
+        pending_start: &mut Option<usize>,
+        next_position: usize,
+        next_width: Widths,
+    ) {
+        let Some(start) = pending_start.take() else {
+            return;
+        };
+        for site in &mut output[start..] {
+            site.breakpoint.next_position = next_position;
+            site.breakpoint.next_width = next_width;
+        }
     }
 
     fn observe_node(
@@ -1908,7 +1853,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         node: &Node,
         previous: Option<&Node>,
         next: Option<&Node>,
-    ) -> Option<Breakpoint> {
+    ) -> Option<(BreakSite, bool)> {
         let before = self.prefix;
         add_node_width_value(
             &mut self.prefix,
@@ -1918,33 +1863,30 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             next,
             self.include_font_expansion,
         );
-        self.index = index + 1;
-
         let definition = match node {
             Node::Glue { .. }
                 if self.auto_breaking
                     && index > 0
                     && previous.is_some_and(|node| !is_discardable(node)) =>
             {
-                Some((index + 1, index, 0, false, Widths::zero(), before))
+                Some((index + 1, 0, false, Widths::zero(), before, None))
             }
             Node::Kern {
                 kind: KernKind::Explicit,
                 ..
             } if self.auto_breaking && matches!(next, Some(Node::Glue { .. })) => {
-                Some((index + 1, index, 0, false, Widths::zero(), before))
+                Some((index + 1, 0, false, Widths::zero(), before, None))
             }
             Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
                 index + 1,
-                index,
                 (*penalty).max(EJECT_PENALTY),
                 false,
                 Widths::zero(),
                 before,
+                None,
             )),
-            Node::Disc { pre, .. } => Some((
+            Node::Disc { pre, post, .. } => Some((
                 index + 1,
-                index,
                 discretionary_penalty(pre.is_empty(), self.params),
                 true,
                 line_widths_view(
@@ -1955,10 +1897,11 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                     self.include_font_expansion,
                 ),
                 before,
+                Some(*post),
             )),
             Node::MathOff(_) if matches!(next, Some(Node::Glue { .. })) => {
                 self.auto_breaking = true;
-                Some((index + 1, index, 0, false, Widths::zero(), before))
+                Some((index + 1, 0, false, Widths::zero(), before, None))
             }
             Node::MathOn(_) => {
                 self.auto_breaking = false;
@@ -1977,59 +1920,39 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             _ => MaterializationAction::Copy,
         });
         definition.map(
-            |(position, width_position, penalty, hyphenated, add_width, line_width)| {
-                self.last_position = Some(position);
-                self.breakpoint(
-                    position,
-                    width_position,
-                    penalty,
-                    hyphenated,
-                    add_width,
-                    line_width,
+            |(position, penalty, hyphenated, add_width, line_width, post)| {
+                let (next_position, next_width, awaits_discardable_end) =
+                    if let Some(post) = post.filter(|post| !post.is_empty()) {
+                        (
+                            position,
+                            self.prefix.sub(line_widths_view(
+                                self.state,
+                                &post,
+                                0,
+                                self.state.page_nodes(post).len(),
+                                self.include_font_expansion,
+                            )),
+                            false,
+                        )
+                    } else {
+                        (position, self.prefix, true)
+                    };
+                (
+                    BreakSite {
+                        breakpoint: Breakpoint {
+                            position,
+                            penalty,
+                            hyphenated,
+                            add_width,
+                            line_width,
+                            next_position,
+                            next_width,
+                        },
+                    },
+                    awaits_discardable_end,
                 )
             },
         )
-    }
-
-    fn terminal_breakpoint(&mut self) -> Option<Breakpoint> {
-        if self.terminal_emitted
-            || self
-                .last_position
-                .is_some_and(|position| position >= self.nodes.len())
-        {
-            return None;
-        }
-        self.terminal_emitted = true;
-        Some(self.breakpoint(
-            self.nodes.len(),
-            self.nodes.len(),
-            EJECT_PENALTY,
-            false,
-            Widths::zero(),
-            self.prefix,
-        ))
-    }
-}
-
-impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
-    type Item = Breakpoint;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while self.index < self.nodes.len() {
-            let i = self.index;
-            let node = self
-                .nodes
-                .owned_node(i)
-                .expect("legal-break index belongs to paragraph");
-            let previous = i
-                .checked_sub(1)
-                .and_then(|index| self.nodes.owned_node(index));
-            let next = self.nodes.owned_node(i + 1);
-            if let Some(site) = self.observe_node(i, node, previous, next) {
-                return Some(site);
-            }
-        }
-        self.terminal_breakpoint()
     }
 }
 
@@ -2039,7 +1962,11 @@ fn legal_breakpoints<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Vec<Breakpoint> {
-    LegalBreakpoints::new(state, NodeCursor::owned(nodes), params).collect_direct_with(|site| site)
+    LegalBreakpoints::new(state, NodeCursor::owned(nodes), params)
+        .collect_direct()
+        .into_iter()
+        .map(|site| site.breakpoint)
+        .collect()
 }
 
 fn is_discardable(node: &Node) -> bool {

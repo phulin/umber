@@ -70,11 +70,11 @@ struct ChunkStorage<T> {
     validation_reads: core::cell::Cell<u64>,
     #[cfg(test)]
     previous_link_reads: core::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     admitted_index_resolutions: core::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     admitted_index_predecessor_steps: core::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     admitted_forward_chunk_crossings: core::cell::Cell<u64>,
 }
 
@@ -96,11 +96,11 @@ impl<T> ChunkStorage<T> {
             validation_reads: core::cell::Cell::new(0),
             #[cfg(test)]
             previous_link_reads: core::cell::Cell::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             admitted_index_resolutions: core::cell::Cell::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             admitted_index_predecessor_steps: core::cell::Cell::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             admitted_forward_chunk_crossings: core::cell::Cell::new(0),
         }
     }
@@ -115,17 +115,17 @@ impl<T> ChunkStorage<T> {
         self.previous_link_reads.get()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn admitted_index_resolutions(&self) -> u64 {
         self.admitted_index_resolutions.get()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn admitted_index_predecessor_steps(&self) -> u64 {
         self.admitted_index_predecessor_steps.get()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn admitted_forward_chunk_crossings(&self) -> u64 {
         self.admitted_forward_chunk_crossings.get()
     }
@@ -4083,6 +4083,15 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         self.list.is_empty()
     }
 
+    #[cfg(feature = "testing")]
+    pub(crate) fn traversal_counters(&self) -> (u64, u64, u64) {
+        (
+            self.pool.payload.admitted_index_resolutions(),
+            self.pool.payload.admitted_index_predecessor_steps(),
+            self.pool.payload.admitted_forward_chunk_crossings(),
+        )
+    }
+
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&'a T> {
         let cursor = self.cursor_at_node(index)?;
@@ -4145,7 +4154,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         if index >= self.len() || self.is_empty() {
             return None;
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         self.pool.payload.admitted_index_resolutions.set(
             self.pool
                 .payload
@@ -4171,7 +4180,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                 return Some((cursor, block_end));
             }
             remaining -= available;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             self.pool.payload.admitted_index_predecessor_steps.set(
                 self.pool
                     .payload
@@ -4242,7 +4251,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             let previous = self
                 .previous_cursor(cursor)
                 .ok_or(ForkArenaError::InvalidRange)?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             self.pool.payload.admitted_forward_chunk_crossings.set(
                 self.pool
                     .payload

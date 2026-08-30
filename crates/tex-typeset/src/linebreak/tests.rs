@@ -17,6 +17,11 @@ fn sp(raw: i32) -> Scaled {
 #[test]
 fn active_candidate_reuses_break_site_metrics_compactly() {
     assert_eq!(std::mem::size_of::<Candidate>(), 80);
+    assert_eq!(
+        std::mem::size_of::<BreakSite>(),
+        std::mem::size_of::<Breakpoint>(),
+        "ordinary break sites retain no eager diagnostic projection"
+    );
 
     let mut next_width = Widths::zero();
     next_width.natural = tex_arith::WideScaled::from_scaled(sp(37));
@@ -29,12 +34,6 @@ fn active_candidate_reuses_break_site_metrics_compactly() {
             line_width: Widths::zero(),
             next_position: 8,
             next_width,
-        },
-        trace: TraceSpan {
-            display_end: 5,
-            next_start: 8,
-            display_suffix: None,
-            breakpoint: TraceBreakpoint::Glue,
         },
     }];
     let candidate = Candidate {
@@ -91,7 +90,7 @@ fn params(width: i32) -> LineBreakParams {
 }
 
 #[test]
-fn direct_page_chunk_analysis_matches_explicit_indexed_layout_semantics() {
+fn direct_page_chunk_analysis_matches_slice_layout_semantics() {
     let mut universe = TestState::new();
     let mut nodes = Vec::new();
     for index in 0..128 {
@@ -114,13 +113,92 @@ fn direct_page_chunk_analysis_matches_explicit_indexed_layout_semantics() {
     let params = params(1_000);
 
     let mut direct = LegalBreakpoints::new(&universe, cursor, &params);
-    let direct_breakpoints = direct.collect_direct_with(|site| site);
+    let direct_breakpoints = direct.collect_direct();
     let direct_materialization = direct.materialization;
-    let mut indexed = LegalBreakpoints::new(&universe, cursor, &params);
-    let indexed_breakpoints = indexed.by_ref().collect::<Vec<_>>();
+    let mut slice = LegalBreakpoints::new(&universe, NodeCursor::owned(&nodes), &params);
+    let slice_breakpoints = slice.collect_direct();
 
-    assert_eq!(direct_breakpoints, indexed_breakpoints);
-    assert_eq!(direct_materialization, indexed.materialization);
+    assert_eq!(direct_breakpoints, slice_breakpoints);
+    assert_eq!(direct_materialization, slice.materialization);
+}
+
+#[test]
+fn ordinary_breakpoint_analysis_crosses_each_block_once_at_required_sizes() {
+    fn delta(
+        after: tex_state::node_arena::NodeTraversalCounters,
+        before: tex_state::node_arena::NodeTraversalCounters,
+    ) -> tex_state::node_arena::NodeTraversalCounters {
+        tex_state::node_arena::NodeTraversalCounters {
+            index_resolutions: after
+                .index_resolutions
+                .saturating_sub(before.index_resolutions),
+            index_predecessor_steps: after
+                .index_predecessor_steps
+                .saturating_sub(before.index_predecessor_steps),
+            forward_chunk_crossings: after
+                .forward_chunk_crossings
+                .saturating_sub(before.forward_chunk_crossings),
+        }
+    }
+
+    for values in [1_usize, 4_096] {
+        let mut universe = TestState::new();
+        let nodes = (0..values)
+            .map(|index| {
+                if index % 3 == 1 {
+                    Node::Glue {
+                        spec: GlueSpec {
+                            width: sp(1),
+                            ..GlueSpec::ZERO
+                        },
+                        kind: GlueKind::Normal,
+                        leader: None,
+                    }
+                } else if index % 3 == 2 {
+                    Node::Penalty(0)
+                } else {
+                    rule(1)
+                }
+            })
+            .collect::<Vec<_>>();
+        let list = universe.publish_page_nodes(&nodes);
+        let cursor = universe.page_nodes(list);
+        let parameters = params(1_000);
+
+        let before = cursor.testing_traversal_counters();
+        let mut analyzer = LegalBreakpoints::new(&universe, cursor, &parameters);
+        let breakpoints = analyzer.collect_direct();
+        let sequential = delta(cursor.testing_traversal_counters(), before);
+        assert!(!breakpoints.is_empty());
+        assert_eq!(sequential.index_resolutions, 0);
+        assert_eq!(sequential.index_predecessor_steps, 0);
+
+        let reference_before = cursor.testing_traversal_counters();
+        let mut visited = 0;
+        cursor.for_each_range(0..cursor.len(), |_, _| visited += 1);
+        let reference = delta(cursor.testing_traversal_counters(), reference_before);
+        assert_eq!(visited, values);
+        assert_eq!(
+            sequential.forward_chunk_crossings,
+            reference.forward_chunk_crossings
+        );
+
+        let positional_before = cursor.testing_traversal_counters();
+        assert!(cursor.owned_node(0).is_some());
+        let positional = delta(cursor.testing_traversal_counters(), positional_before);
+        assert_eq!(positional.index_resolutions, 1);
+        if values == 4_096 {
+            assert!(positional.index_predecessor_steps > 0);
+        }
+        eprintln!(
+            "LINEBREAK_TRAVERSAL_SCALE values={values} sequential_index_resolutions={} sequential_predecessor_steps={} sequential_block_crossings={} positional_index_resolutions={} positional_predecessor_steps={}",
+            sequential.index_resolutions,
+            sequential.index_predecessor_steps,
+            sequential.forward_chunk_crossings,
+            positional.index_resolutions,
+            positional.index_predecessor_steps,
+        );
+    }
 }
 
 #[test]
@@ -2419,12 +2497,19 @@ fn discretionary_penalty_depends_on_pre_break_text() {
 
 #[test]
 fn font_kern_is_not_discarded_at_start_of_next_line() {
-    let nodes = [Node::Kern {
-        amount: sp(1),
-        kind: KernKind::Font,
-    }];
+    let universe = TestState::new();
+    let nodes = [
+        Node::Penalty(0),
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Font,
+        },
+        rule(1),
+    ];
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params(100));
 
-    assert_eq!(next_width_position(NodeCursor::owned(&nodes), 0), 0);
+    assert_eq!(breakpoints[0].position, 1);
+    assert_eq!(breakpoints[0].next_position, 1);
 }
 
 #[test]

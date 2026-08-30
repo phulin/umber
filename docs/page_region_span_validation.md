@@ -79,7 +79,10 @@ an admitted owner-relative cursor inside a packed block, but consumers that
 need a long forward scan must use the callback boundary rather than repeatedly
 resolving the next block from the tail. Persistent checkpoint forks continue
 to use the sole predecessor topology. Genuinely indexed reads remain the
-explicit `owned_node` path. Shared and sliced transforms increment `source_nodes_copied`
+explicit `owned_node` path. Paragraph breakpoint analysis derives successor
+positions and widths from its one forward prefix walk; diagnostic breakpoint
+probes remain indexed but run only under explicit trace demand. Shared and
+sliced transforms increment `source_nodes_copied`
 exactly; they are not permitted to hide a whole-list copy behind generic
 concatenation. The counted fallback collects one reverse traversal and replays
 it once, so it visits and hashes every copied node exactly once and never

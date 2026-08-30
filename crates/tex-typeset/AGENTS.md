@@ -35,8 +35,10 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/vertical_break/tests/planned.rs`: direct TeX82 vertical-break depth, cost, forced-end, and tie-policy tests.
 - `src/linebreak/mod.rs`: line-breaking API, line-shape types, pass orchestration,
   breakpoint search, and demerit scoring. Arena-backed paragraph analysis
-  walks authoritative chunk slices once with delayed one-node lookahead;
-  genuine trace and break-site index reads remain explicit. Active routes keep
+  walks authoritative chunk slices once with delayed one-node lookahead,
+  settles discardable-run successor positions and widths from that same scalar
+  prefix walk, and performs positional trace reads only under explicit trace
+  demand. Active routes keep
   a compact stable break-site index and reuse the immutable tape's successor
   position and width metrics; production hands its arena coordinate, scalar
   materialization actions, and optional diagnostic projection to the executor's

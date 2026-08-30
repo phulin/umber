@@ -215,7 +215,11 @@ Ordinary list processing is packed-block movement plus append-only output:
   follows the sole predecessor chain once and retains its continuation on the
   Rust stack, compatibility iterators retain one admitted owner-relative cursor
   within each packed block, and genuinely positional semantic reads remain
-  explicit; and
+  explicit;
+- paragraph breakpoint analysis settles discardable-run successor positions
+  and prefix widths during that same forward callback; diagnostic breakpoint
+  coordinates perform positional reads only when paragraph tracing is
+  requested; and
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 
