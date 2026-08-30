@@ -260,6 +260,17 @@ enum PendingScanToksPhase<G> {
 }
 
 impl<G> PendingScanToksPhase<G> {
+    fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
+        match self {
+            Self::Opening { child } => child.take().map(|child| child.restore().0),
+            Self::Replacement { progress, .. } => progress
+                .pending_expansion
+                .as_mut()
+                .and_then(|pending| pending.child.take())
+                .map(|child| child.restore().0),
+        }
+    }
+
     fn retain_child(
         &mut self,
         baton: &mut Option<crate::execution_scratch::ScannerFrameKey<G>>,
@@ -323,46 +334,9 @@ enum CollectorExpansionRoute {
     Detokenize,
 }
 
-struct ScanToksFailure<G> {
-    error: CommandError,
-    continuation: PendingScanToksPhase<G>,
-}
-
-struct ReplacementFailure<G> {
-    error: CommandError,
-    progress: ReplacementProgress<G>,
-}
-
 #[inline(always)]
 fn clear_command_destination<G>(destination: &mut Option<crate::CurrentCommand<G>>) {
     *destination = None;
-}
-
-impl<G> From<CommandError> for ScanToksFailure<G> {
-    fn from(error: CommandError) -> Self {
-        Self {
-            error,
-            continuation: PendingScanToksPhase::Opening { child: None },
-        }
-    }
-}
-
-fn replacement_failure<G>(
-    error: CommandError,
-    output: ScanToksSink,
-    depth: u32,
-    pending_parameter: &mut Option<(TracedTokenWord, u8, Option<Symbol>)>,
-    pending_expansion: Option<PendingCollectorExpansion<G>>,
-) -> ReplacementFailure<G> {
-    ReplacementFailure {
-        error,
-        progress: ReplacementProgress {
-            output,
-            depth,
-            pending_parameter: pending_parameter.take(),
-            pending_expansion,
-        },
-    }
 }
 
 impl ScanToksConfig {
@@ -744,7 +718,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         mode: ScanToksMode,
     ) -> Result<ScannedToksBuffers, CommandError> {
         let config = ScanToksConfig::parse(mode);
-        let pending = match self.scanner_resume.take() {
+        let resumed = match self.scanner_resume.take() {
             Some(key) => Some(
                 self.command
                     .scratch
@@ -753,15 +727,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ),
             None => None,
         };
-        let (attempt_opening, scope, sinks, diagnostic_start, episode, phase) = match pending {
-            Some(pending) if pending.config == config => (
-                pending.attempt_opening,
-                pending.scope,
-                pending.sinks,
-                pending.diagnostic_start,
-                pending.episode,
-                pending.phase,
-            ),
+        let mut pending = match resumed {
+            Some(pending) if pending.config == config => pending,
             Some(pending) => {
                 self.settle_failed_scan_toks(pending)?;
                 return Err(CommandError::input_invariant());
@@ -815,32 +782,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command.transient.next_builder_identity =
                     self.command.transient.next_builder_identity.wrapping_add(1);
                 let warning = ScannerWarning(builder.0);
-                (
+                PendingScanToks {
                     attempt_opening,
                     scope,
                     sinks,
-                    self.command.semantic_diagnostics.len(),
-                    self.begin_scanner_episode(
+                    diagnostic_start: self.command.semantic_diagnostics.len(),
+                    config,
+                    episode: self.begin_scanner_episode(
                         config.scanner_status(builder, warning),
                         config.status_visibility,
                     ),
-                    PendingScanToksPhase::Opening { child: None },
-                )
+                    phase: PendingScanToksPhase::Opening { child: None },
+                }
             }
         };
-        let result = self.scan_toks_inner(config, sinks, &episode, phase);
+        let result = self.scan_toks_inner(
+            pending.config,
+            pending.sinks,
+            &pending.episode,
+            &mut pending.phase,
+        );
         let result = match result {
             Ok(result) => result,
-            Err(failure) if failure.error.is_resource_suspension() => {
-                let mut pending = PendingScanToks {
-                    attempt_opening,
-                    scope,
-                    sinks,
-                    diagnostic_start,
-                    config,
-                    episode,
-                    phase: failure.continuation,
-                };
+            Err(error) if error.is_resource_suspension() => {
                 if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
                     self.settle_failed_scan_toks(pending)?;
                     return Err(error);
@@ -882,51 +846,46 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.settle_failed_scan_toks(pending)?;
                     return Err(CommandError::input_invariant());
                 }
-                return Err(failure.error);
+                return Err(error);
             }
-            Err(mut failure) => {
-                if let Some(child) = match &mut failure.continuation {
-                    PendingScanToksPhase::Opening { child } => {
-                        child.take().map(|child| child.restore().0)
-                    }
-                    PendingScanToksPhase::Replacement { progress, .. } => progress
-                        .pending_expansion
-                        .as_mut()
-                        .and_then(|pending| pending.child.take())
-                        .map(|child| child.restore().0),
-                } {
+            Err(error) => {
+                if let Some(child) = pending.phase.take_child() {
                     self.abort_continuation(child)?;
                 }
-                self.finish_scanner_episode(episode);
+                self.finish_scanner_episode(pending.episode);
                 self.command
-                    .discard_attempt_scope_suffix(scope)
+                    .discard_attempt_scope_suffix(pending.scope)
                     .map_err(attempt_command_error)?;
                 self.command
                     .attempt
                     .arena_mut()
-                    .truncate(attempt_opening)
+                    .truncate(pending.attempt_opening)
                     .map_err(attempt_command_error)?;
-                return Err(failure.error);
+                return Err(error);
             }
         };
         if let Some(child) = self.scanner_resume.take() {
             self.abort_continuation(child)?;
-            self.finish_scanner_episode(episode);
+            self.finish_scanner_episode(pending.episode);
             self.command
-                .discard_attempt_scope_suffix(scope)
+                .discard_attempt_scope_suffix(pending.scope)
                 .map_err(attempt_command_error)?;
             self.command
                 .attempt
                 .arena_mut()
-                .truncate(attempt_opening)
+                .truncate(pending.attempt_opening)
                 .map_err(attempt_command_error)?;
             return Err(CommandError::input_invariant());
         }
-        self.render_scan_toks_runaway_if_recovered(config, diagnostic_start, &result)?;
-        self.finish_scanner_episode(episode);
+        self.render_scan_toks_runaway_if_recovered(
+            pending.config,
+            pending.diagnostic_start,
+            &result,
+        )?;
+        self.finish_scanner_episode(pending.episode);
         let completed_tokens = if !self.is_observed() {
             Vec::new()
-        } else if config.purpose.renders_detokenized_result() {
+        } else if pending.config.purpose.renders_detokenized_result() {
             let words = self.scanned_replacement_words(result.replacement_text)?;
             let semantic_tokens = (0..words.len())
                 .filter_map(|index| words.token(index))
@@ -958,12 +917,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             self,
             CommandObservation::TokenList(TokenListRecord {
                 transition: "complete",
-                purpose: config.purpose.canonical_name(),
+                purpose: pending.config.purpose.canonical_name(),
                 tokens: completed_tokens,
             }),
         );
         self.command
-            .defer_attempt_scope_retirement(scope)
+            .defer_attempt_scope_retirement(pending.scope)
             .map_err(attempt_command_error)?;
         Ok(result)
     }
@@ -1061,188 +1020,134 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    // The failure moves the inline continuation directly into reusable
-    // scratch; boxing it would add a hot-path allocation at suspension.
-    #[allow(clippy::result_large_err)]
+    // The stationary phase moves directly into reusable scratch only when a
+    // real resource suspension leaves this synchronous scanner invocation.
     fn scan_toks_inner(
         &mut self,
         config: ScanToksConfig,
         sinks: ScanToksSinks,
         episode: &ScannerEpisode,
-        phase: PendingScanToksPhase<G>,
-    ) -> Result<ScannedToksBuffers, ScanToksFailure<G>> {
+        phase: &mut PendingScanToksPhase<G>,
+    ) -> Result<ScannedToksBuffers, CommandError> {
         // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
-        let (
+        if let PendingScanToksPhase::Opening { child } = phase {
+            if let Some(child) = child.take() {
+                let (key, destination) = child.restore();
+                if destination != ScanToksChildDestination::Opening {
+                    return Err(CommandError::input_invariant());
+                }
+                self.install_scanner_resume(Some(key));
+            }
+            let (
+                parameter_text,
+                macro_parameters,
+                hash_brace,
+                primary,
+                malformed_parameter,
+                missing_left_brace,
+            ) = match (config.grammar, config.opening) {
+                (ScanToksGrammar::General, ScanToksOpening::Required) => {
+                    // TeX scans the required opening brace through the ordinary
+                    // expanded path even when the replacement text itself is
+                    // collected unexpanded.
+                    let opening = self.scan_left_brace(true)?;
+                    let primary = opening.origin();
+                    let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
+                    (parameter_text, None, None, primary, false, false)
+                }
+                (ScanToksGrammar::General, ScanToksOpening::Prevalidated { primary }) => {
+                    // The opening command was already classified through
+                    // `get_x_token` by §1227 and backed up solely so the
+                    // absorbing scanner status precedes its replay. Preserve
+                    // that semantic classification here: a `\let` alias for
+                    // `{` is spelled as a control sequence, but it is still
+                    // the one opening command this mode is required to
+                    // consume. Requiring a literal begin-group spelling
+                    // would mistake the following body token for a second
+                    // opening delimiter after the alias replay.
+                    let mut opening = None;
+                    let status = self.get_token_into(&mut opening)?;
+                    if status != crate::DeliveryStatus::Command {
+                        return Err(CommandError::input_invariant());
+                    }
+                    let opening = opening.expect("command status initializes destination");
+                    if !matches!(
+                        opening.meaning(),
+                        ResolvedMeaning::Static(Meaning::CharToken {
+                            cat: Catcode::BeginGroup,
+                            ..
+                        })
+                    ) {
+                        return Err(CommandError::input_invariant());
+                    }
+                    self.observe_expanded_delivery(&opening);
+                    let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
+                    (parameter_text, None, None, primary, false, false)
+                }
+                (ScanToksGrammar::MacroDefinition, ScanToksOpening::AfterParameterText) => {
+                    let parameters = self.scan_parameter_text(sinks.parameter_text)?;
+                    (
+                        parameters.tokens,
+                        Some((
+                            parameters.highest_parameter,
+                            match config.owner {
+                                ScanToksOwner::Definition(target) => target,
+                                ScanToksOwner::Absorbed(_) => unreachable!(),
+                            },
+                        )),
+                        parameters.hash_brace,
+                        parameters.primary,
+                        parameters.malformed_parameter,
+                        parameters.missing_left_brace,
+                    )
+                }
+                _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
+            };
+            if missing_left_brace {
+                return Ok(ScannedToksBuffers {
+                    parameter_text,
+                    replacement_text: self.finish_scan_toks_sink(sinks.replacement_text)?,
+                    primary,
+                    malformed_parameter,
+                });
+            }
+            *phase = PendingScanToksPhase::Replacement {
+                parameter_text,
+                macro_parameters,
+                hash_brace,
+                primary,
+                malformed_parameter,
+                progress: ReplacementProgress::new(sinks.replacement_text),
+            };
+        }
+        let PendingScanToksPhase::Replacement {
             parameter_text,
             macro_parameters,
             hash_brace,
             primary,
             malformed_parameter,
-            missing_left_brace,
-            replacement_progress,
-        ) = match phase {
-            PendingScanToksPhase::Replacement {
-                parameter_text,
-                macro_parameters,
-                hash_brace,
-                primary,
-                malformed_parameter,
-                progress,
-            } => (
-                parameter_text,
-                macro_parameters,
-                hash_brace,
-                primary,
-                malformed_parameter,
-                false,
-                progress,
-            ),
-            PendingScanToksPhase::Opening { mut child } => {
-                if let Some(child) = child.take() {
-                    let (key, destination) = child.restore();
-                    if destination != ScanToksChildDestination::Opening {
-                        return Err(ScanToksFailure::from(CommandError::input_invariant()));
-                    }
-                    self.install_scanner_resume(Some(key));
-                }
-                match (config.grammar, config.opening) {
-                    (ScanToksGrammar::General, ScanToksOpening::Required) => {
-                        // TeX scans the required opening brace through the ordinary
-                        // expanded path even when the replacement text itself is
-                        // collected unexpanded.
-                        let opening =
-                            self.scan_left_brace(true)
-                                .map_err(|error| ScanToksFailure {
-                                    error,
-                                    continuation: PendingScanToksPhase::Opening { child: None },
-                                })?;
-                        let primary = opening.origin();
-                        let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
-                        (
-                            parameter_text,
-                            None,
-                            None,
-                            primary,
-                            false,
-                            false,
-                            ReplacementProgress::new(sinks.replacement_text),
-                        )
-                    }
-                    (ScanToksGrammar::General, ScanToksOpening::Prevalidated { primary }) => {
-                        // The opening command was already classified through
-                        // `get_x_token` by §1227 and backed up solely so the
-                        // absorbing scanner status precedes its replay. Preserve
-                        // that semantic classification here: a `\let` alias for
-                        // `{` is spelled as a control sequence, but it is still
-                        // the one opening command this mode is required to
-                        // consume. Requiring a literal begin-group spelling
-                        // would mistake the following body token for a second
-                        // opening delimiter after the alias replay.
-                        let mut opening = None;
-                        let status =
-                            self.get_token_into(&mut opening)
-                                .map_err(|error| ScanToksFailure {
-                                    error,
-                                    continuation: PendingScanToksPhase::Opening { child: None },
-                                })?;
-                        if status != crate::DeliveryStatus::Command {
-                            return Err(ScanToksFailure {
-                                error: CommandError::input_invariant(),
-                                continuation: PendingScanToksPhase::Opening { child: None },
-                            });
-                        }
-                        let opening = opening.expect("command status initializes destination");
-                        if !matches!(
-                            opening.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::BeginGroup,
-                                ..
-                            })
-                        ) {
-                            return Err(ScanToksFailure {
-                                error: CommandError::input_invariant(),
-                                continuation: PendingScanToksPhase::Opening { child: None },
-                            });
-                        }
-                        self.observe_expanded_delivery(&opening);
-                        let parameter_text = self.finish_scan_toks_sink(sinks.parameter_text)?;
-                        (
-                            parameter_text,
-                            None,
-                            None,
-                            primary,
-                            false,
-                            false,
-                            ReplacementProgress::new(sinks.replacement_text),
-                        )
-                    }
-                    (ScanToksGrammar::MacroDefinition, ScanToksOpening::AfterParameterText) => {
-                        let parameters =
-                            self.scan_parameter_text(sinks.parameter_text)
-                                .map_err(|error| ScanToksFailure {
-                                    error,
-                                    continuation: PendingScanToksPhase::Opening { child: None },
-                                })?;
-                        (
-                            parameters.tokens,
-                            Some((
-                                parameters.highest_parameter,
-                                match config.owner {
-                                    ScanToksOwner::Definition(target) => target,
-                                    ScanToksOwner::Absorbed(_) => unreachable!(),
-                                },
-                            )),
-                            parameters.hash_brace,
-                            parameters.primary,
-                            parameters.malformed_parameter,
-                            parameters.missing_left_brace,
-                            ReplacementProgress::new(sinks.replacement_text),
-                        )
-                    }
-                    _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
-                }
-            }
+            progress,
+        } = phase
+        else {
+            unreachable!("opening phase is replaced before collection")
         };
-        let replacement = if missing_left_brace {
-            replacement_progress.output
-        } else {
-            match self.collect_replacement(
-                config.expansion,
-                macro_parameters,
-                episode,
-                replacement_progress,
-            ) {
-                Ok(replacement) => replacement,
-                Err(failure) => {
-                    return Err(ScanToksFailure {
-                        error: failure.error,
-                        continuation: PendingScanToksPhase::Replacement {
-                            parameter_text,
-                            macro_parameters,
-                            hash_brace,
-                            primary,
-                            malformed_parameter,
-                            progress: failure.progress,
-                        },
-                    });
-                }
-            }
-        };
+        let replacement =
+            self.collect_replacement(config.expansion, *macro_parameters, episode, progress)?;
         // TeX's `#{` parameter-text special case treats that left brace as a
         // delimiter and appends the same saved brace after the replacement
         // text (TeX.web §476).
-        if let Some(brace) = hash_brace {
+        if let Some(brace) = *hash_brace {
             self.push_scan_toks_word(replacement, brace)?;
         }
         let replacement_text = self.finish_scan_toks_sink(replacement)?;
         Ok(ScannedToksBuffers {
-            parameter_text,
+            parameter_text: *parameter_text,
             replacement_text,
-            primary,
-            malformed_parameter,
+            primary: *primary,
+            malformed_parameter: *malformed_parameter,
         })
     }
 
@@ -1473,19 +1378,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// parameter text declared, and so the largest one a `#<digit>` may name.
     /// A body scanned for any other purpose (`\message`, `\write`, `\toks`,
     /// `\mark`, ...) stores parameter characters verbatim.
-    #[allow(clippy::result_large_err)]
     fn collect_replacement(
         &mut self,
         expansion: ScanToksExpansion,
         macro_parameters: Option<(u8, Option<Symbol>)>,
         episode: &ScannerEpisode,
-        progress: ReplacementProgress<G>,
-    ) -> Result<ScanToksSink, ReplacementFailure<G>> {
+        progress: &mut ReplacementProgress<G>,
+    ) -> Result<ScanToksSink, CommandError> {
         let ReplacementProgress {
             output,
-            mut depth,
-            mut pending_parameter,
-            mut pending_expansion,
+            depth,
+            pending_parameter,
+            pending_expansion,
         } = progress;
         let mut destination = None;
         loop {
@@ -1499,13 +1403,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if let Some(child) = pending.child.take() {
                         let (key, child_destination) = child.restore();
                         if child_destination != pending.route {
-                            return Err(replacement_failure(
-                                CommandError::input_invariant(),
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                None,
-                            ));
+                            return Err(CommandError::input_invariant());
                         }
                         self.scanner_resume = Some(key);
                     }
@@ -1519,24 +1417,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     match delivery {
                         Ok(crate::DeliveryStatus::Command) => {}
                         Ok(crate::DeliveryStatus::End) => {
-                            return Err(replacement_failure(
-                                CommandError::input_invariant(),
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                None,
-                            ));
+                            return Err(CommandError::input_invariant());
                         }
                         Ok(_) => unreachable!("ordinary raw delivery has no side event"),
-                        Err(error) => {
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                None,
-                            ));
-                        }
+                        Err(error) => return Err(error),
                     }
                     (None, None)
                 };
@@ -1577,21 +1461,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                             continue;
                         }
                         Err(error) => {
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                Some(PendingCollectorExpansion {
-                                    command: destination.take(),
+                            *pending_expansion = Some(PendingCollectorExpansion {
+                                command: destination.take(),
+                                route,
+                                operand: None,
+                                child: crate::execution_scratch::ChildContinuation::capture(
+                                    &mut self.scanner_resume,
                                     route,
-                                    operand: None,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        route,
-                                    ),
-                                }),
-                            ));
+                                ),
+                            });
+                            return Err(error);
                         }
                     }
                 }
@@ -1604,7 +1483,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // expanded-fetch loop. It therefore has only the raw
                     // delivery produced by `get_next`; the resulting
                     // `the_toks` splice is the canonical expansion event.
-                    match self.append_direct_the_toks(output, &mut expansion_operand) {
+                    match self.append_direct_the_toks(*output, &mut expansion_operand) {
                         Ok(true) => {
                             clear_command_destination(&mut destination);
                             continue;
@@ -1614,26 +1493,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                             let command = destination
                                 .take()
                                 .expect("collector suspension retains its command");
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                Some(PendingCollectorExpansion {
-                                    command: Some(command),
+                            *pending_expansion = Some(PendingCollectorExpansion {
+                                command: Some(command),
+                                route,
+                                operand: expansion_operand,
+                                child: crate::execution_scratch::ChildContinuation::capture(
+                                    &mut self.scanner_resume,
                                     route,
-                                    operand: expansion_operand,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        route,
-                                    ),
-                                }),
-                            ));
+                                ),
+                            });
+                            return Err(error);
                         }
                     }
                 }
                 if route == CollectorExpansionRoute::Unexpanded {
-                    match self.append_unexpanded(output) {
+                    match self.append_unexpanded(*output) {
                         Ok(()) => {
                             clear_command_destination(&mut destination);
                             continue;
@@ -1642,26 +1516,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                             let command = destination
                                 .take()
                                 .expect("collector suspension retains its command");
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                Some(PendingCollectorExpansion {
-                                    command: Some(command),
+                            *pending_expansion = Some(PendingCollectorExpansion {
+                                command: Some(command),
+                                route,
+                                operand: None,
+                                child: crate::execution_scratch::ChildContinuation::capture(
+                                    &mut self.scanner_resume,
                                     route,
-                                    operand: None,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        route,
-                                    ),
-                                }),
-                            ));
+                                ),
+                            });
+                            return Err(error);
                         }
                     }
                 }
                 if route == CollectorExpansionRoute::Detokenize {
-                    match self.append_detokenize(output) {
+                    match self.append_detokenize(*output) {
                         Ok(()) => {
                             clear_command_destination(&mut destination);
                             continue;
@@ -1670,21 +1539,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                             let command = destination
                                 .take()
                                 .expect("collector suspension retains its command");
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                Some(PendingCollectorExpansion {
-                                    command: Some(command),
+                            *pending_expansion = Some(PendingCollectorExpansion {
+                                command: Some(command),
+                                route,
+                                operand: None,
+                                child: crate::execution_scratch::ChildContinuation::capture(
+                                    &mut self.scanner_resume,
                                     route,
-                                    operand: None,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        route,
-                                    ),
-                                }),
-                            ));
+                                ),
+                            });
+                            return Err(error);
                         }
                     }
                 }
@@ -1723,21 +1587,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                             continue;
                         }
                         Err(error) => {
-                            return Err(replacement_failure(
-                                error,
-                                output,
-                                depth,
-                                &mut pending_parameter,
-                                Some(PendingCollectorExpansion {
-                                    command: destination.take(),
+                            *pending_expansion = Some(PendingCollectorExpansion {
+                                command: destination.take(),
+                                route,
+                                operand: None,
+                                child: crate::execution_scratch::ChildContinuation::capture(
+                                    &mut self.scanner_resume,
                                     route,
-                                    operand: None,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        route,
-                                    ),
-                                }),
-                            ));
+                                ),
+                            });
+                            return Err(error);
                         }
                     }
                 }
@@ -1778,7 +1637,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // §479: a second parameter character stores that character
                 // once -- `##` is one parameter token in the body, not two.
                 if is_parameter(token) {
-                    self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
+                    self.push_replacement_token(*output, spelling)?;
                     clear_command_destination(&mut destination);
                     continue;
                 }
@@ -1786,7 +1645,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     && number <= highest_parameter
                 {
                     let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
-                    self.push_replacement_token(output, converted, depth, &mut pending_parameter)?;
+                    self.push_replacement_token(*output, converted)?;
                     observe!(
                         self,
                         CommandObservation::TokenList(TokenListRecord {
@@ -1803,63 +1662,43 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let delivered = destination
                     .take()
                     .expect("parameter recovery consumes the delivered command");
-                if let Err(error) = self.back_input(delivered) {
-                    return Err(replacement_failure(
-                        error,
-                        output,
-                        depth,
-                        &mut pending_parameter,
-                        None,
-                    ));
-                }
-                if let Err(error) = self.report_macro_parameter_diagnostic(
+                self.back_input(delivered)?;
+                self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },
-                ) {
-                    return Err(replacement_failure(
-                        error,
-                        output,
-                        depth,
-                        &mut pending_parameter,
-                        None,
-                    ));
-                }
-                self.push_replacement_token(output, hash, depth, &mut pending_parameter)?;
+                )?;
+                self.push_replacement_token(*output, hash)?;
                 continue;
             }
             if let Some((highest_parameter, target)) = macro_parameters
                 && is_parameter(token)
             {
-                pending_parameter = Some((spelling, highest_parameter, target));
+                *pending_parameter = Some((spelling, highest_parameter, target));
                 clear_command_destination(&mut destination);
                 continue;
             }
             if is_begin_group(token) {
-                depth = depth.saturating_add(1);
-                self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
+                *depth = depth.saturating_add(1);
+                self.push_replacement_token(*output, spelling)?;
             } else if is_end_group(token) {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
+                *depth = depth.saturating_sub(1);
+                if *depth == 0 {
                     clear_command_destination(&mut destination);
-                    return Ok(output);
+                    return Ok(*output);
                 }
-                self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
+                self.push_replacement_token(*output, spelling)?;
             } else {
-                self.push_replacement_token(output, spelling, depth, &mut pending_parameter)?;
+                self.push_replacement_token(*output, spelling)?;
             }
             clear_command_destination(&mut destination);
         }
     }
 
-    #[allow(clippy::result_large_err)]
     fn push_replacement_token(
         &mut self,
         output: ScanToksSink,
         word: TracedTokenWord,
-        depth: u32,
-        pending_parameter: &mut Option<(TracedTokenWord, u8, Option<Symbol>)>,
-    ) -> Result<(), ReplacementFailure<G>> {
+    ) -> Result<(), CommandError> {
         self.push_scan_toks_word(output, word)
-            .map_err(|error| replacement_failure(error, output, depth, pending_parameter, None))
     }
 
     fn report_macro_parameter_diagnostic(

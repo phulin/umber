@@ -100,6 +100,11 @@ fn main() {
         "destination_owned_macro_expansion",
         destination_owned_macro_expansion,
     );
+    run_row(
+        only,
+        "stationary_scan_toks_progress",
+        stationary_scan_toks_progress,
+    );
     if let Some(only) = only {
         assert!(
             BENCHMARK_ROWS.contains(&only),
@@ -128,6 +133,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "destination_directed_warm_delivery",
     "fused_raw_expanded_delivery",
     "destination_owned_macro_expansion",
+    "stationary_scan_toks_progress",
 ];
 
 fn run_row(only: Option<&str>, name: &str, row: fn()) {
@@ -893,6 +899,70 @@ fn stored_token_replay() {
         println!(
             "stored_token_replay throughput_ns_per_token={:.2}",
             elapsed.as_nanos() as f64 / DELIVERIES as f64
+        );
+    });
+}
+
+fn stationary_scan_toks_progress() {
+    const OPERATIONS: usize = 1_000_000;
+    const WARMUPS: usize = 64;
+    const BODY: &str = "{}";
+
+    with_universe(|universe| {
+        {
+            let mut context = universe.command_context().expect("command context");
+            for (character, catcode) in [('{', Catcode::BeginGroup), ('}', Catcode::EndGroup)] {
+                context
+                    .assign_code(
+                        tex_state::CodeTableKind::Catcode,
+                        character,
+                        i64::from(catcode as u8),
+                        AssignmentScope::Global,
+                    )
+                    .expect("scan_toks benchmark category code");
+            }
+        }
+        let source = BODY.repeat(OPERATIONS + WARMUPS);
+        let mut command = CommandState::default();
+        open_source(&mut command, &source);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut fuel = CommandFuelLedger::default();
+        let mut scan_one = || {
+            let operation = command.begin_attempt_operation();
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = processor(
+                    &mut context,
+                    &mut command,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                black_box(
+                    processor
+                        .scan_balanced_text(false)
+                        .expect("balanced text scan"),
+                );
+            }
+            command
+                .commit_attempt_operation(operation)
+                .expect("scan_toks operation commit");
+        };
+        for _ in 0..WARMUPS {
+            scan_one();
+        }
+        let mut elapsed = Duration::ZERO;
+        measure_zero("stationary_scan_toks_progress_1000000", || {
+            let start = Instant::now();
+            for _ in 0..OPERATIONS {
+                scan_one();
+            }
+            elapsed = start.elapsed();
+        });
+        println!(
+            "stationary_scan_toks_progress scans={OPERATIONS} ns_per_scan={:.2}",
+            elapsed.as_nanos() as f64 / OPERATIONS as f64,
         );
     });
 }

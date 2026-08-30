@@ -568,6 +568,24 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .expect("locate direct token-list splice");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
+    assert!(scanner.contains("let mut pending = match resumed"));
+    assert!(scanner.contains("phase: &mut PendingScanToksPhase<G>"));
+    assert!(collector.contains("progress: &mut ReplacementProgress<G>"));
+    for retired_carrier in [
+        "struct ScanToksFailure",
+        "struct ReplacementFailure",
+        "fn replacement_failure",
+    ] {
+        assert!(
+            !scanner.contains(retired_carrier),
+            "scan_toks must not rebuild the stationary phase through {retired_carrier}"
+        );
+    }
+    assert_eq!(
+        scanner.matches("progress: ReplacementProgress<G>").count(),
+        1,
+        "only the stationary phase row may own replacement progress"
+    );
     assert!(collector.contains("self.get_next_into(&mut destination)"));
     assert!(collector.contains(".as_mut()"));
     assert!(collector.contains("clear_command_destination(&mut destination)"));
@@ -575,7 +593,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("PendingCollectorExpansion"));
     assert!(collector.contains("self.expand_into(&mut destination, true)"));
     assert!(collector.contains("command: destination.take()"));
-    assert!(collector.contains("self.append_direct_the_toks(output, &mut expansion_operand)"));
+    assert!(collector.contains("self.append_direct_the_toks(*output, &mut expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"

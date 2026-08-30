@@ -2719,6 +2719,13 @@ Only TeX's real backup path or typed resource suspension consumes it. This
 keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.
 
+One scanner invocation likewise owns one stationary `PendingScanToks` row.
+Its opening phase installs `ReplacementProgress` once, and ordinary token
+delivery mutates the brace depth, parameter candidate, expansion operand, and
+typed child edge in place. Synchronous success and failure return only their
+small semantic result; only an immutable-resource suspension moves the row
+into the recyclable typed scanner lane, and resumption restores that exact row.
+
 The parameter and replacement sinks are also the only source for TeX82
 §306's partial runaway display. A scanner episode records the deferred-
 diagnostic cursor at entry and retains it with those sinks across resource

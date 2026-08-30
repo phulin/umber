@@ -424,6 +424,16 @@ collector continuation retains only the typed child edge; direct `\the`,
 because they do not enter generic expansion. The destination therefore does
 not retain commands across a generation or act as a hidden result cache.
 
+The same invocation keeps its complete `PendingScanToks` owner stationary in
+one local row. Opening installs `ReplacementProgress` into that row once;
+ordinary delivery, brace depth, parameter matching, direct-splice operands,
+and the child edge then mutate it through a borrow. A synchronous error returns
+only `CommandError` and cleanup borrows the same row. Only an immutable-resource
+suspension moves the complete row into the existing recyclable scanner lane;
+resumption takes that exact row back and continues through the same mutable
+phase. There is no replacement-progress failure carrier or per-token phase
+reconstruction.
+
 The same scanner frame retains the deferred-diagnostic cursor established
 when its parameter and replacement sink routes opened. For a macro definition,
 both routes name the same `AttemptDefinitionId` builder rather than separate
