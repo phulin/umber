@@ -6322,6 +6322,12 @@ fn operation_frame_phase_evidence(
             frame.clear_preflight();
             frame.assert_empty();
             scalar_transitions += 1;
+            frame.write_hot(hot_apply::HotOperation::end_ordinary_group());
+            frame.assert_hot_only();
+            scalar_transitions += 1;
+            let _ = frame.take_hot();
+            frame.assert_empty();
+            scalar_transitions += 1;
         }
     }
     let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -6336,7 +6342,7 @@ fn operation_frame_phase_evidence(
 
 #[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
+fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
     let (one_allocations, one_transitions) = operation_frame_phase_evidence(1);
     let (many_allocations, many_transitions) = operation_frame_phase_evidence(4_096);
 
@@ -6344,8 +6350,8 @@ fn one_and_4096_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
     assert_eq!(one_allocations.requested_bytes, 0);
     assert_eq!(many_allocations.calls, 0);
     assert_eq!(many_allocations.requested_bytes, 0);
-    assert_eq!(one_transitions, 2);
-    assert_eq!(many_transitions, 8_192);
+    assert_eq!(one_transitions, 4);
+    assert_eq!(many_transitions, 16_384);
 }
 
 #[test]

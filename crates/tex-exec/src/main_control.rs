@@ -774,7 +774,7 @@ type ObservationSlot = Option<ObservationBuffer>;
 ///
 /// Delivery selects only how the next completed command enters main control;
 /// preparation, application, publication, and evidence are shared.
-enum OperationDelivery<G> {
+enum OperationDelivery {
     Replay,
     /// The caller-owned operation frame contains the sole live command and
     /// its compact delivery/scanner coordinates.
@@ -794,7 +794,7 @@ enum OperationDelivery<G> {
     /// preflight processor borrow. The typed family operand is the real Rust
     /// borrow barrier before semantic state application; no command or
     /// universal scanned-step DTO crosses it.
-    Hot(hot_apply::HotOperation<G>),
+    Hot,
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the caller-owned frame contains the cold operation payload.
     Scanned,
@@ -1135,7 +1135,7 @@ fn own_alignment_retry_child<G>(
 }
 
 struct PreflightDelivery<G> {
-    delivery: OperationDelivery<G>,
+    delivery: OperationDelivery,
     capabilities: crate::transaction_protocol::CommandCapabilities,
     scanner: Option<tex_command::ScannerFrameKey<G>>,
     expansion: Option<tex_command::ExpansionWorkKey<G>>,
@@ -1177,7 +1177,7 @@ fn preflight_delivery_from_frame<G>(frame: &OperationFrame<G>) -> PreflightDeliv
     };
     PreflightDelivery::<G> {
         capabilities,
-        delivery: OperationDelivery::<G>::Command,
+        delivery: OperationDelivery::Command,
         scanner: None,
         expansion: None,
     }
@@ -1277,6 +1277,17 @@ struct PreparedAlignmentPreamble<G> {
     repeat_start: Option<usize>,
 }
 
+/// The one completed operation value awaiting its next semantic transition.
+///
+/// Scanning, resource preparation, and hot application are mutually exclusive
+/// phases. Keeping their values in one field makes that exclusivity physical
+/// and prevents the caller frame from reserving three separate large slots.
+enum OperationPayload<G> {
+    Unavailable(ColdOperation<G>),
+    Prepared(PreparedColdCommand<G>),
+    Hot(hot_apply::HotOperation<G>),
+}
+
 /// Compact result coordinate for the unified dispatch seam.
 ///
 /// Every payload lives in the caller-owned [`OperationFrame`]. Keeping this
@@ -1298,11 +1309,10 @@ enum OperationReadiness {
 /// singular continuation; it is never appended to generation-lived storage.
 struct OperationFrame<G> {
     applied: Option<Result<ReplayStep, ExecError>>,
-    prepared: Option<PreparedColdCommand<G>>,
+    payload: Option<OperationPayload<G>>,
     alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
     output_start: Option<OperationOutputStart>,
     error: Option<ExecError>,
-    unavailable: Option<ColdOperation<G>>,
     command: Option<tex_command::CurrentCommand<G>>,
     expansion: Option<tex_command::ExpansionWorkKey<G>>,
     phase: Option<PreflightCommandPhase>,
@@ -1317,11 +1327,10 @@ impl<G> Default for OperationFrame<G> {
     fn default() -> Self {
         Self {
             applied: None,
-            prepared: None,
+            payload: None,
             alignment_preamble: None,
             output_start: None,
             error: None,
-            unavailable: None,
             command: None,
             expansion: None,
             phase: None,
@@ -1505,11 +1514,10 @@ impl<G> OperationFrame<G> {
     fn assert_empty(&self) {
         assert!(
             self.applied.is_none()
-                && self.prepared.is_none()
                 && self.alignment_preamble.is_none()
                 && self.output_start.is_none()
                 && self.error.is_none()
-                && self.unavailable.is_none()
+                && self.payload.is_none()
                 && self.command.is_none()
                 && self.expansion.is_none()
                 && self.phase.is_none()
@@ -1540,14 +1548,32 @@ impl<G> OperationFrame<G> {
     fn assert_command_only(&self) {
         assert!(
             self.applied.is_none()
-                && self.prepared.is_none()
                 && self.alignment_preamble.is_none()
                 && self.output_start.is_none()
                 && self.error.is_none()
-                && self.unavailable.is_none()
+                && self.payload.is_none()
                 && self.phase.is_some()
                 && self.alignment_scanner.is_none(),
             "command delivery owns only its operation-local command frame"
+        );
+    }
+
+    fn assert_hot_only(&self) {
+        assert!(
+            self.applied.is_none()
+                && self.alignment_preamble.is_none()
+                && self.output_start.is_none()
+                && self.error.is_none()
+                && matches!(self.payload, Some(OperationPayload::Hot(_)))
+                && self.command.is_none()
+                && self.expansion.is_none()
+                && self.phase.is_none()
+                && self.cursor.is_none()
+                && self.scanner.is_none()
+                && self.scalar.is_empty()
+                && self.operation_scan.is_none()
+                && self.alignment_scanner.is_none(),
+            "pre-scanned hot delivery lives only in its operation frame"
         );
     }
 
@@ -1555,6 +1581,79 @@ impl<G> OperationFrame<G> {
         self.error
             .take()
             .expect("failed preparation writes its diagnostic into the frame")
+    }
+
+    fn has_unavailable(&self) -> bool {
+        matches!(self.payload, Some(OperationPayload::Unavailable(_)))
+    }
+
+    fn write_unavailable(&mut self, operation: ColdOperation<G>) {
+        assert!(
+            self.payload
+                .replace(OperationPayload::Unavailable(operation))
+                .is_none(),
+            "one operation frame owns one completed payload"
+        );
+    }
+
+    fn unavailable(&self) -> &ColdOperation<G> {
+        match self.payload.as_ref() {
+            Some(OperationPayload::Unavailable(operation)) => operation,
+            _ => panic!("operation frame does not own an unavailable operation"),
+        }
+    }
+
+    fn unavailable_mut(&mut self) -> &mut ColdOperation<G> {
+        match self.payload.as_mut() {
+            Some(OperationPayload::Unavailable(operation)) => operation,
+            _ => panic!("operation frame does not own an unavailable operation"),
+        }
+    }
+
+    fn take_unavailable(&mut self) -> ColdOperation<G> {
+        match self.payload.take() {
+            Some(OperationPayload::Unavailable(operation)) => operation,
+            _ => panic!("operation frame does not own an unavailable operation"),
+        }
+    }
+
+    fn write_prepared(&mut self, operation: PreparedColdCommand<G>) {
+        assert!(
+            self.payload
+                .replace(OperationPayload::Prepared(operation))
+                .is_none(),
+            "one operation frame owns one completed payload"
+        );
+    }
+
+    fn prepared(&self) -> &PreparedColdCommand<G> {
+        match self.payload.as_ref() {
+            Some(OperationPayload::Prepared(operation)) => operation,
+            _ => panic!("operation frame does not own a prepared operation"),
+        }
+    }
+
+    fn take_prepared(&mut self) -> PreparedColdCommand<G> {
+        match self.payload.take() {
+            Some(OperationPayload::Prepared(operation)) => operation,
+            _ => panic!("operation frame does not own a prepared operation"),
+        }
+    }
+
+    fn write_hot(&mut self, operation: hot_apply::HotOperation<G>) {
+        assert!(
+            self.payload
+                .replace(OperationPayload::Hot(operation))
+                .is_none(),
+            "one operation frame owns one completed payload"
+        );
+    }
+
+    fn take_hot(&mut self) -> hot_apply::HotOperation<G> {
+        match self.payload.take() {
+            Some(OperationPayload::Hot(operation)) => operation,
+            _ => panic!("operation frame does not own a hot operation"),
+        }
     }
 }
 
@@ -3893,7 +3992,7 @@ impl<G> MainControl<G> {
     ) -> Result<ReplayStep, ExecError> {
         match self.execute_operation(
             stores,
-            OperationDelivery::<G>::Alignment(alignment),
+            OperationDelivery::Alignment(alignment),
             OperationTransaction::Alignment,
             1,
             None,
@@ -4804,7 +4903,7 @@ impl<G> MainControl<G> {
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) -> Result<StepResult, ExecError> {
         assert!(
-            frame.unavailable.is_some(),
+            frame.has_unavailable(),
             "unavailable resource remains in its attempt-owned frame"
         );
         let error = frame.take_error();
@@ -4907,7 +5006,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         max_operations: usize,
-        mut initial_delivery: Option<OperationDelivery<G>>,
+        mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         if self.publish_pending_named_boundary(stores)?.is_some() {
@@ -5066,7 +5165,7 @@ impl<G> MainControl<G> {
             };
             let preflight = if let Some(capabilities) = resumed_resource {
                 PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared,
+                    delivery: OperationDelivery::Prepared,
                     capabilities,
                     scanner: None,
                     expansion: None,
@@ -5084,7 +5183,7 @@ impl<G> MainControl<G> {
             } else if let Some(destination) = pending_destination {
                 match destination {
                     PendingDirectDestination::Alignment(pending) => PreflightDelivery::<G> {
-                        delivery: OperationDelivery::<G>::AlignmentRetry {
+                        delivery: OperationDelivery::AlignmentRetry {
                             alignment: pending.alignment,
                             cursor: pending.cursor,
                         },
@@ -5152,9 +5251,9 @@ impl<G> MainControl<G> {
             };
 
             let alignment_delivery = match &preflight.delivery {
-                OperationDelivery::<G>::Alignment(alignment) => Some(Some(*alignment)),
-                OperationDelivery::<G>::AlignmentRetry { alignment, .. } => Some(*alignment),
-                OperationDelivery::<G>::Replay
+                OperationDelivery::Alignment(alignment) => Some(Some(*alignment)),
+                OperationDelivery::AlignmentRetry { alignment, .. } => Some(*alignment),
+                OperationDelivery::Replay
                     if self.active_alignment.is_some()
                         || (self.modes.current_mode() == Mode::DisplayMath
                             && self.modes.current_list().has_display_alignment()) =>
@@ -5166,7 +5265,7 @@ impl<G> MainControl<G> {
             if let crate::transaction_protocol::CommandPreflight::Resource(_) =
                 preflight.capabilities.preflight()
                 && !(stores.int_param(IntParam::PDF_OUTPUT) <= 0
-                    && matches!(&preflight.delivery, OperationDelivery::<G>::Command)
+                    && matches!(&preflight.delivery, OperationDelivery::Command)
                     && operation_frame.current_option().is_some_and(|command| {
                         matches!(
                             command.meaning(),
@@ -5201,7 +5300,7 @@ impl<G> MainControl<G> {
                     if let Some(mark) = tracked_mark {
                         let _ = stores.abandon_dependency_region(mark);
                     }
-                    if operation_frame.unavailable.is_some() {
+                    if operation_frame.has_unavailable() {
                         let result = self.finish_unavailable_prepared_resource_operation(
                             stores,
                             operation_mark,
@@ -5351,7 +5450,7 @@ impl<G> MainControl<G> {
                     if let Some(mark) = tracked_mark {
                         let _ = stores.abandon_dependency_region(mark);
                     }
-                    if operation_frame.unavailable.is_some() {
+                    if operation_frame.has_unavailable() {
                         let result = self.finish_unavailable_prepared_resource_operation(
                             stores,
                             operation_mark,
@@ -5401,17 +5500,11 @@ impl<G> MainControl<G> {
                     }
                 }
                 let immediate_pdf_retry = (prepared == OperationReadiness::Prepared)
-                    .then(|| {
-                        match operation_frame
-                            .prepared
-                            .as_ref()
-                            .expect("prepared readiness owns its operation payload")
-                        {
-                            ColdOperation::ImmediateExtension(
-                                RootedImmediateExtension::PdfExtensionInDviMode(primitive),
-                            ) => Some(*primitive),
-                            _ => None,
-                        }
+                    .then(|| match operation_frame.prepared() {
+                        ColdOperation::ImmediateExtension(
+                            RootedImmediateExtension::PdfExtensionInDviMode(primitive),
+                        ) => Some(*primitive),
+                        _ => None,
                     })
                     .flatten();
                 if let Some(primitive) = immediate_pdf_retry {
@@ -5529,7 +5622,7 @@ impl<G> MainControl<G> {
             }
             let tracked_mark = episode_tracked_mark.take();
             let preserves_undefined_for_executor_diagnostic =
-                matches!(&preflight.delivery, OperationDelivery::<G>::Command)
+                matches!(&preflight.delivery, OperationDelivery::Command)
                     && operation_frame.current_option().is_some_and(|command| {
                         matches!(
                             command.meaning(),
@@ -5562,7 +5655,7 @@ impl<G> MainControl<G> {
                 if let Some(mark) = tracked_mark {
                     let _ = stores.abandon_dependency_region(mark);
                 }
-                let result = if operation_frame.unavailable.is_some() {
+                let result = if operation_frame.has_unavailable() {
                     self.finish_unavailable_prepared_resource_operation(
                         stores,
                         operation_mark,
@@ -5695,7 +5788,7 @@ impl<G> MainControl<G> {
     fn execute_operation(
         &mut self,
         stores: &mut Universe<G>,
-        delivery: OperationDelivery<G>,
+        delivery: OperationDelivery,
         transaction: OperationTransaction,
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
@@ -5809,7 +5902,7 @@ impl<G> MainControl<G> {
         }
         self.execute_operation(
             stores,
-            OperationDelivery::<G>::Replay,
+            OperationDelivery::Replay,
             OperationTransaction::Advance,
             1,
             None,
@@ -5836,7 +5929,7 @@ impl<G> MainControl<G> {
         }
         self.execute_operation(
             stores,
-            OperationDelivery::<G>::Replay,
+            OperationDelivery::Replay,
             OperationTransaction::Advance,
             256,
             None,
@@ -5873,7 +5966,7 @@ impl<G> MainControl<G> {
         let mut region = None;
         let step = self.execute_operation(
             stores,
-            OperationDelivery::<G>::Replay,
+            OperationDelivery::Replay,
             OperationTransaction::Advance,
             1,
             Some(&mut region),
@@ -5895,13 +5988,10 @@ impl<G> MainControl<G> {
             Some(PendingDiagnosticOperation {
                 operation,
                 destination: PendingDiagnosticDestination::<G> { mut frame },
-            }) if frame.unavailable.is_some() => {
+            }) if frame.has_unavailable() => {
                 let _ = frame.error.take();
                 operation_frame = frame;
-                (
-                    Some(operation),
-                    Some((OperationDelivery::<G>::Prepared, None)),
-                )
+                (Some(operation), Some((OperationDelivery::Prepared, None)))
             }
             Some(PendingDiagnosticOperation {
                 operation,
@@ -5992,7 +6082,7 @@ impl<G> MainControl<G> {
                     return Ok(DiagnosticStepResult::Progress(step));
                 }
                 operation_frame.admit_settled(command, Some(cursor));
-                Some((OperationDelivery::<G>::Command, None))
+                Some((OperationDelivery::Command, None))
             }
         };
         let (delivery, scanner) = assignment.expect("diagnostic assignment continuation");
@@ -6010,7 +6100,7 @@ impl<G> MainControl<G> {
                 operation_frame.alignment_scanner.is_none(),
                 "diagnostic retry cannot own an alignment scanner destination"
             );
-            let unavailable = operation_frame.unavailable.is_some();
+            let unavailable = operation_frame.has_unavailable();
             let result =
                 self.finish_resource_preflight_failure(stores, operation_frame.take_error());
             self.modes
@@ -7972,7 +8062,7 @@ impl<G> MainControl<G> {
         }
         let stepped = self.execute_operation(
             stores,
-            OperationDelivery::<G>::Replay,
+            OperationDelivery::Replay,
             OperationTransaction::Advance,
             1,
             None,
@@ -8077,7 +8167,7 @@ impl<G> MainControl<G> {
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
         {
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Replay,
+                delivery: OperationDelivery::Replay,
                 capabilities: crate::transaction_protocol::canonical_static_command_capabilities(
                     Meaning::Relax,
                 ),
@@ -8103,7 +8193,7 @@ impl<G> MainControl<G> {
         let display_eq_no = self.modes.current_list().display_eq_no().is_some();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let (delivery_status, trace_reported, fused_scan, fused_error) = {
+        let (delivery_status, trace_reported, fused_delivery, fused_error) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -8157,7 +8247,7 @@ impl<G> MainControl<G> {
                 self.shown_mode = Some(mode);
             }
             let mut trace_reported = false;
-            let mut fused_scan = None;
+            let mut fused_delivery = None;
             let mut fused_error = None;
             // Diagnostics are a real reporting barrier: preserve their
             // established ordering before command tracing or operand work.
@@ -8226,13 +8316,19 @@ impl<G> MainControl<G> {
                             .map(PendingDiagnostic::Command),
                     );
                     match scanned {
-                        Ok(operation) => {
+                        Ok(ScannedOperation::Hot(operation)) => {
                             // The scanned operation now owns every durable
                             // result. Retire the delivery/scanner episode as a
                             // unit before handing that operation to execution;
                             // no preflight marker belongs to the next stage.
                             frame.clear_preflight();
-                            fused_scan = Some((operation, capabilities));
+                            frame.write_hot(operation);
+                            fused_delivery = Some((OperationDelivery::Hot, capabilities));
+                        }
+                        Ok(ScannedOperation::Cold(operation)) => {
+                            frame.clear_preflight();
+                            frame.write_unavailable(operation);
+                            fused_delivery = Some((OperationDelivery::Scanned, capabilities));
                         }
                         Err(error) => {
                             let cursor = processor.delivery_cursor();
@@ -8260,7 +8356,7 @@ impl<G> MainControl<G> {
                     }
                 }
             }
-            (delivery_status, trace_reported, fused_scan, fused_error)
+            (delivery_status, trace_reported, fused_delivery, fused_error)
         };
         drop(context);
         self.capture_first_reported_command_error_context(stores);
@@ -8269,20 +8365,9 @@ impl<G> MainControl<G> {
         if let Some(error) = fused_error {
             return Err(error);
         }
-        if let Some((operation, capabilities)) = fused_scan {
-            match operation {
-                ScannedOperation::Hot(operation) => {
-                    return Ok(Some(PreflightDelivery::<G> {
-                        delivery: OperationDelivery::<G>::Hot(operation),
-                        capabilities,
-                        scanner: None,
-                        expansion: None,
-                    }));
-                }
-                ScannedOperation::Cold(operation) => frame.unavailable = Some(operation),
-            }
+        if let Some((delivery, capabilities)) = fused_delivery {
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Scanned,
+                delivery,
                 capabilities,
                 scanner: None,
                 expansion: None,
@@ -8294,9 +8379,9 @@ impl<G> MainControl<G> {
         match delivery_status {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
-                frame.unavailable = Some(ColdOperation::<G>::EndOfInput);
+                frame.write_unavailable(ColdOperation::<G>::EndOfInput);
                 return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared,
+                    delivery: OperationDelivery::Prepared,
                     capabilities: passive(),
                     scanner: None,
                     expansion: None,
@@ -8304,9 +8389,9 @@ impl<G> MainControl<G> {
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                 debug_assert!(frame.command.is_none());
-                frame.unavailable = Some(ColdOperation::<G>::ReplayCompleted(episode));
+                frame.write_unavailable(ColdOperation::<G>::ReplayCompleted(episode));
                 return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::<G>::Prepared,
+                    delivery: OperationDelivery::Prepared,
                     capabilities: passive(),
                     scanner: None,
                     expansion: None,
@@ -8357,7 +8442,7 @@ impl<G> MainControl<G> {
             )
             && self.operation_observations.is_none()
         {
-            frame.unavailable = Some(ColdOperation::<G>::NoBoundary {
+            frame.write_unavailable(ColdOperation::<G>::NoBoundary {
                 suppress_right: true,
             });
             let capabilities = crate::transaction_protocol::canonical_command_capabilities(
@@ -8365,7 +8450,7 @@ impl<G> MainControl<G> {
             );
             frame.discard_resident_command();
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Prepared,
+                delivery: OperationDelivery::Prepared,
                 capabilities,
                 scanner: None,
                 expansion: None,
@@ -8379,7 +8464,7 @@ impl<G> MainControl<G> {
             frame.mark_resident_settled(None);
         }
         Ok(Some(PreflightDelivery::<G> {
-            delivery: OperationDelivery::<G>::Command,
+            delivery: OperationDelivery::Command,
             capabilities,
             scanner: None,
             expansion: None,
@@ -8401,9 +8486,9 @@ impl<G> MainControl<G> {
         let mut frame = OperationFrame::default();
         let delivery = if let Some(command) = command {
             frame.admit_settled(command, None);
-            OperationDelivery::<G>::Command
+            OperationDelivery::Command
         } else {
-            OperationDelivery::<G>::Replay
+            OperationDelivery::Replay
         };
         let mut preparation_scope = OperationPreparationScope;
         let host_preparation = {
@@ -8438,10 +8523,7 @@ impl<G> MainControl<G> {
                 .expect("applied preparation writes its result into the frame"),
             OperationReadiness::Prepared => self.apply_prepared_operation(
                 stores,
-                frame
-                    .prepared
-                    .take()
-                    .expect("cold preparation writes its operation into the frame"),
+                frame.take_prepared(),
                 frame.alignment_preamble.take(),
                 frame
                     .output_start
@@ -8493,7 +8575,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         host_preparation: OperationHostPreparation<'_>,
-        delivery: OperationDelivery<G>,
+        delivery: OperationDelivery,
         resume: (
             Option<tex_command::ScannerFrameKey<G>>,
             Option<tex_command::ExpansionWorkKey<G>>,
@@ -8504,20 +8586,21 @@ impl<G> MainControl<G> {
         let (scanner_resume, expansion_resume) = resume;
         if matches!(
             &delivery,
-            OperationDelivery::<G>::Prepared | OperationDelivery::<G>::Scanned
+            OperationDelivery::Prepared | OperationDelivery::Scanned
         ) {
             assert!(
-                frame.unavailable.is_some()
+                frame.has_unavailable()
                     && frame.applied.is_none()
-                    && frame.prepared.is_none()
                     && frame.alignment_preamble.is_none()
                     && frame.output_start.is_none()
                     && frame.error.is_none()
                     && frame.alignment_scanner.is_none(),
                 "prepared delivery resumes the exact occupied operation frame; its scalar retry phase may retain the command cursor"
             );
-        } else if matches!(&delivery, OperationDelivery::<G>::Command) {
+        } else if matches!(&delivery, OperationDelivery::Command) {
             frame.assert_command_only();
+        } else if matches!(&delivery, OperationDelivery::Hot) {
+            frame.assert_hot_only();
         } else {
             frame.assert_empty();
         }
@@ -8528,7 +8611,8 @@ impl<G> MainControl<G> {
         } = host_preparation;
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let root_main_file_origin = self.active_external_file_is_root_main();
-        if let OperationDelivery::<G>::Hot(operation) = delivery {
+        if matches!(delivery, OperationDelivery::Hot) {
+            let operation = frame.take_hot();
             frame.applied = Some(self.apply_hot_operation(
                 stores,
                 diagnostic_effects,
@@ -8543,11 +8627,8 @@ impl<G> MainControl<G> {
             ));
             return OperationReadiness::Applied;
         }
-        if matches!(delivery, OperationDelivery::<G>::Scanned) {
-            let scanned = frame
-                .unavailable
-                .take()
-                .expect("scanned delivery owns its cold operation payload");
+        if matches!(delivery, OperationDelivery::Scanned) {
+            let scanned = frame.take_unavailable();
             return self.prepare_scanned_cold_operation(
                 stores,
                 frame,
@@ -8607,9 +8688,7 @@ impl<G> MainControl<G> {
         // paragraph-start transition).
         self.ensure_primitive_handles(stores);
         let mut context = stores.command_context().expect("live generation");
-        if matches!(&delivery, OperationDelivery::<G>::Replay)
-            && self.enter_main_control(&mut context)
-        {
+        if matches!(&delivery, OperationDelivery::Replay) && self.enter_main_control(&mut context) {
             // §1030's prologue precedes `big_switch`, so its push is published
             // ahead of the first command this step delivers rather than with
             // the step's own applied records.
@@ -8644,7 +8723,7 @@ impl<G> MainControl<G> {
                 diagnostic_effects,
                 &mut context,
             );
-            let scanner_resume = if matches!(&delivery, OperationDelivery::<G>::Command) {
+            let scanner_resume = if matches!(&delivery, OperationDelivery::Command) {
                 frame.scanner.take()
             } else {
                 scanner_resume
@@ -8654,12 +8733,12 @@ impl<G> MainControl<G> {
                 processor.install_expansion_resume(expansion);
             }
             processor.set_output_routine_active(self.boxes.output_routine_active);
-            let display_alignment_tail = matches!(&delivery, OperationDelivery::<G>::Replay)
+            let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
             let scanned = (|| -> Result<ScannedOperation<G>, ExecError> {
                 Ok(match delivery {
-                    OperationDelivery::<G>::Command => scan_preflight_command(
+                    OperationDelivery::Command => scan_preflight_command(
                         &mut processor,
                         frame,
                         mode,
@@ -8670,7 +8749,7 @@ impl<G> MainControl<G> {
                         &mut self.shown_mode,
                         &mut diagnostics,
                     )?,
-                    OperationDelivery::<G>::Replay if display_alignment_tail => {
+                    OperationDelivery::Replay if display_alignment_tail => {
                         match processor
                             .next_do_assignments_command()
                             .map_err(command_error)?
@@ -8710,7 +8789,7 @@ impl<G> MainControl<G> {
                             None => ColdOperation::<G>::EndOfInput.into(),
                         }
                     }
-                    OperationDelivery::<G>::Replay => scan_replay_step(
+                    OperationDelivery::Replay => scan_replay_step(
                         &mut processor,
                         mode,
                         &self.boxes,
@@ -8723,7 +8802,7 @@ impl<G> MainControl<G> {
                         &mut diagnostics,
                         frame,
                     )?,
-                    OperationDelivery::<G>::Alignment(alignment) => scan_alignment_delivery_step(
+                    OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
                         &mut processor,
                         alignment,
                         &ReplayBoxes::default(),
@@ -8735,7 +8814,7 @@ impl<G> MainControl<G> {
                         &mut diagnostics,
                         frame,
                     )?,
-                    OperationDelivery::<G>::AlignmentRetry { alignment, cursor } => {
+                    OperationDelivery::AlignmentRetry { alignment, cursor } => {
                         processor.resume_delivery_cursor(cursor);
                         match alignment {
                             Some(alignment) => scan_alignment_delivery_step(
@@ -8765,17 +8844,13 @@ impl<G> MainControl<G> {
                             )?,
                         }
                     }
-                    OperationDelivery::<G>::Hot(_) => {
+                    OperationDelivery::Hot => {
                         unreachable!("pre-scanned hot delivery bypasses operation preparation")
                     }
-                    OperationDelivery::<G>::Scanned => {
+                    OperationDelivery::Scanned => {
                         unreachable!("pre-scanned cold delivery bypasses operation preparation")
                     }
-                    OperationDelivery::<G>::Prepared => frame
-                        .unavailable
-                        .take()
-                        .expect("prepared delivery owns its scanned frame payload")
-                        .into(),
+                    OperationDelivery::Prepared => frame.take_unavailable().into(),
                 })
             })();
             let cursor = processor.delivery_cursor();
@@ -8884,12 +8959,9 @@ impl<G> MainControl<G> {
         outer_paragraph_was_active: bool,
         root_main_file_origin: bool,
     ) -> OperationReadiness {
-        frame.unavailable = Some(scanned);
+        frame.write_unavailable(scanned);
         let resource_result = {
-            let scanned = frame
-                .unavailable
-                .as_mut()
-                .expect("scanned operation occupies its caller-owned frame");
+            let scanned = frame.unavailable_mut();
             self.resolve_font_resource(scanned, stores)
                 .and_then(|()| self.resolve_input_stream_resource(scanned, stores))
                 .and_then(|()| self.resolve_pdf_image_resource(scanned, stores))
@@ -8898,11 +8970,7 @@ impl<G> MainControl<G> {
             frame.error = Some(error);
             return OperationReadiness::Failed;
         }
-        let completed_preamble = match frame
-            .unavailable
-            .as_ref()
-            .expect("resolved operation remains in its caller-owned frame")
-        {
+        let completed_preamble = match frame.unavailable() {
             ColdOperation::AlignmentPreambleStart { alignment } => {
                 let alignment = *alignment;
                 let preamble = match self
@@ -8933,10 +9001,7 @@ impl<G> MainControl<G> {
                 roots
             })
             .unwrap_or_default();
-        let scanned = frame
-            .unavailable
-            .take()
-            .expect("resolved operation remains in its caller-owned frame");
+        let scanned = frame.take_unavailable();
         let (scanned, promoted_alignment_roots) = match prepare_cold_operation(
             scanned,
             self.command.state_mut(),
@@ -8976,7 +9041,7 @@ impl<G> MainControl<G> {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::PreparedOperation,
         );
-        frame.prepared = Some(scanned);
+        frame.write_prepared(scanned);
         frame.alignment_preamble = alignment_preamble;
         frame.output_start = Some(OperationOutputStart {
             outer_paragraph_was_active,

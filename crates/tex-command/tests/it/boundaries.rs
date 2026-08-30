@@ -630,6 +630,7 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
         .expect("locate singular in-place operation owner");
     assert!(operation_frame.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(operation_frame.contains("payload: Option<OperationPayload<G>>"));
     assert!(operation_frame.contains("phase: Option<PreflightCommandPhase>"));
     assert!(operation_frame.contains("scanner: Option<tex_command::ScannerFrameKey<G>>"));
     assert!(operation_frame.contains("operation_scan: Option<PendingOperationScanPhase>"));

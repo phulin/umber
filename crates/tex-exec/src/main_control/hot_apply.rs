@@ -3,9 +3,10 @@
 //! These handlers are the single semantic owner for TeX82 §§1211--1234's
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
-//! processor releases its borrow. `ColdOperation` and the caller-owned cold
-//! [`OperationFrame`] owns the reusable scalar destination but no cold
-//! operation payload is materialized on this path.
+//! processor releases its borrow. `ColdOperation` is not materialized on this
+//! path. The caller-owned [`OperationFrame`] moves the hot result through its
+//! one mutually exclusive operation-payload field, alongside its reusable
+//! scalar destination.
 
 use super::*;
 

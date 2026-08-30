@@ -30,18 +30,22 @@ Command operands are scanned by `tex-command` into typed request and result valu
   structurally absent: every retained root uses this same dispatcher loop.
 - `src/main_control.rs`: generation-typed sole production command delivery and execution driver, including one same-borrow raw-fetch/classification/expansion entry followed by the general ordinary scanner in that admitted context, with retry state retained only at a typed resource barrier, trace-mode continuity across that borrow, command-owned undefined recovery before stomach dispatch, typed alignment, diagnostic-assignment, and nested-immediate continuations, snapshot-free direct episodes, a singular caller-owned `OperationFrame` written by preparation and consumed fieldwise by application or moved intact into typed suspension, complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, attempt-owned macro operands across scanned assignment apply seams, the execution-owned memo capability, demand-selected convergence-root activation before execution, and direct tracked-region lifecycle and mode projection.
 - The `OperationFrame` owns the admitted current command, parked expansion,
-  scalar phase, delivery cursor, scanner child, and partial direct scan in its
-  own fields. Do not recreate a nested preflight-command projection or extract
-  those fields merely to cross prepare, retry, rollback, or resume.
+  scalar phase, delivery cursor, scanner child, partial direct scan, and the
+  completed hot operation awaiting application in its own fields. Preflight
+  returns only a compact delivery tag. Do not recreate a nested
+  preflight-command or scanned-operation projection, or extract those fields
+  merely to cross prepare, retry, rollback, or resume.
 - Each topology-stable operation prepares executor host capabilities once from
   the authoritative live list. A stack-branded preparation carries the mode
   and shared effective-tail result through delivery/scanning into application;
   mutation consumes it, while suspension and error re-entry recompute it.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
-  ordinary-group families. These commands bypass `ColdOperation` and
-  `OperationFrame` materialization; detached mutation values and macro-body
-  walks are demand-selected cold evidence.
+  ordinary-group families. These commands bypass `ColdOperation`; the scanner
+  writes the completed hot operation into the existing caller-owned
+  `OperationFrame`, and application consumes that field without a second
+  carrier. Detached mutation values and macro-body walks are demand-selected
+  cold evidence.
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
   values; `scan.rs` owns uncommon operand collection; `apply.rs` consumes the

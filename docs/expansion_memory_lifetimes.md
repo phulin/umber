@@ -510,7 +510,10 @@ tape, mailbox, heap owner, or second representation.
 
 One singular caller-owned preflight frame holds the sole current command,
 delivery cursor, compact dispatch phase, reusable scalar result destination,
-optional scalar child, and completed fixed-sequence operands. Initial raw delivery and resumed expansion write
+optional scalar child, completed fixed-sequence operands, and a completed hot
+operation awaiting application. Preflight returns only a compact delivery tag;
+it does not move that operation through a scanned-result tuple or delivery
+enum. Initial raw delivery and resumed expansion write
 directly into that frame's command field; settlement advances only its scalar
 phase instead of transferring the whole command through a temporary slot.
 Raw, settled, expanding, main-loop, prefix, leader, and direct-operation

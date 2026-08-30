@@ -391,6 +391,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
         .expect("locate authoritative operation frame");
     assert!(operation_frame.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(operation_frame.contains("payload: Option<OperationPayload<G>>"));
     assert!(operation_frame.contains("phase: Option<PreflightCommandPhase>"));
     assert!(!control.contains("struct PreflightCommand<G>"));
     assert!(!control.contains("command: Option<PreflightCommand<G>>"));
@@ -438,8 +439,9 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .and_then(|(_, tail)| tail.split_once("let tracked_region_is_active"))
         .map(|(body, _)| body)
         .expect("locate pre-scanned preparation bypass");
-    assert!(preparation_front.contains("OperationDelivery::<G>::Hot(operation)"));
-    assert!(preparation_front.contains("OperationDelivery::<G>::Scanned"));
+    assert!(preparation_front.contains("OperationDelivery::Hot"));
+    assert!(preparation_front.contains("frame.take_hot()"));
+    assert!(preparation_front.contains("OperationDelivery::Scanned"));
     assert_eq!(
         preparation_front
             .matches("prepare_scanned_cold_operation(")
