@@ -101,10 +101,14 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     }
     assert!(!levels.contains("source.slot.cursor.clone()"));
     assert!(levels.contains("struct SourceLexExecutionState"));
-    assert!(levels.contains("InputCapturedState::SourceLex"));
+    assert!(levels.contains("position: u32"));
     assert!(!levels.contains("LogicalStackElement for InputLevel"));
     assert!(history.contains("enum InputUndo"));
     assert!(history.contains("pub(crate) struct InputStack"));
+    assert!(history.contains("source_slots: PayloadSlab<SourceSlot<G>>"));
+    assert!(history.contains("mutate_top_source_lex"));
+    assert!(!history.contains("fn last_mut"));
+    assert!(!levels.contains("slot: Box<SourceSlot"));
     assert!(!history.contains("LogicalStack<InputLevel"));
 }
 

@@ -15,12 +15,12 @@ mod tests;
 
 pub(crate) use history::{InputStack, InputStackMark};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputCapturedState, InputLevel, InputLevelId,
-    InputLevelInlineState, MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership,
-    PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayLane, ReplayPayloadId,
-    ReplayTrace, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
-    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
-    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
+    MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership, PackedTokenSources,
+    PackedTokenSpanHandle, PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace,
+    RetirementBehavior, SourceLevel, SourceLevelExecutionState, SourceLexExecutionState,
+    SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey, StoredReplayReason,
+    TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -297,10 +297,11 @@ pub(crate) fn tracked_input_projection<G>(
         match level {
             InputLevel::Source(source) => {
                 stack.byte(0);
-                observe_immutable_source(state, source);
-                project_source(&mut stack, source);
-                if let Some(current) = &source.slot.cursor.line {
-                    project_line(&mut line, &source.slot.cursor, current);
+                let slot = input.levels.source_level_slot(source);
+                observe_immutable_source(state, source, slot);
+                project_source(&mut stack, source, slot);
+                if let Some(current) = &slot.cursor.line {
+                    project_line(&mut line, &slot.cursor, current);
                 }
             }
             InputLevel::Tokens(cursor) => {
@@ -325,15 +326,16 @@ pub(crate) fn tracked_input_projection<G>(
 
 pub(crate) fn observe_immutable_source<G>(
     state: &mut tex_state::CommandContext<'_, G>,
-    source: &SourceLevel<G>,
+    _source: &SourceLevel<G>,
+    slot: &SourceSlot<G>,
 ) {
-    let backing = source.slot.cursor.current_backing();
+    let backing = slot.cursor.current_backing();
     let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
     state.observe_command_projection(
         tex_state::DependencyKey::InputRecord(record),
         tex_state::DependencyValue::Content(record),
     );
-    let Some(line) = &source.slot.cursor.line else {
+    let Some(line) = &slot.cursor.line else {
         return;
     };
     let range = line.physical.content_range();
@@ -355,26 +357,23 @@ pub(crate) fn observe_immutable_source<G>(
     );
 }
 
-fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>) {
-    hash.bytes(&source.slot.cursor.backing.bytes);
-    hash.byte(source.slot.cursor.backing.mode as u8);
+fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>, slot: &SourceSlot<G>) {
+    hash.bytes(&slot.cursor.backing.bytes);
+    hash.byte(slot.cursor.backing.mode as u8);
     hash.bytes(
-        source
-            .slot
-            .cursor
+        slot.cursor
             .backing
             .name
             .as_deref()
             .unwrap_or_default()
             .as_bytes(),
     );
-    hash.u64(source.slot.cursor.next_physical_offset);
-    hash.u64(source.slot.cursor.next_line_number);
-    hash.byte(source.slot.cursor.pending_acquired_line.into());
-    hash.byte(source.slot.cursor.end_after_line.into());
+    hash.u64(slot.cursor.next_physical_offset);
+    hash.u64(slot.cursor.next_line_number);
+    hash.byte(slot.cursor.pending_acquired_line.into());
+    hash.byte(slot.cursor.end_after_line.into());
     hash.byte(
-        match source
-            .slot
+        match slot
             .cursor
             .line
             .as_ref()
@@ -568,8 +567,17 @@ impl<G> InputState<G> {
                 InputLevel::Source(source) => {
                     let bottom = index == 0
                         || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    if Self::source_context_level(source, index == 0, None, None, None, widths)
-                        .is_some()
+                    let slot = self.levels.source_level_slot(source);
+                    if Self::source_context_level(
+                        source,
+                        slot,
+                        index == 0,
+                        None,
+                        None,
+                        None,
+                        widths,
+                    )
+                    .is_some()
                         || bottom
                     {
                         return false;
@@ -644,8 +652,15 @@ impl<G> InputState<G> {
                 })
             )
         });
-        let levels = output_index.map_or(self.levels.as_slice(), |index| &self.levels[..index]);
-        self.render_context_for_levels(levels, None, stores, parameters, attempt, scratch)
+        let level_count = output_index.unwrap_or_else(|| self.levels.len());
+        self.render_context_for_levels(
+            &self.levels.as_slice()[..level_count],
+            None,
+            stores,
+            parameters,
+            attempt,
+            scratch,
+        )
     }
 
     fn render_context_for_levels(
@@ -673,10 +688,13 @@ impl<G> InputState<G> {
             InputLevel::Source(source) => {
                 let retiring =
                     retiring_source.filter(|retiring| retiring.identity() == source.identity());
+                let selected = retiring.unwrap_or(source);
+                let slot = self.levels.source_level_slot(selected);
                 Self::source_context_level(
-                    retiring.unwrap_or(source),
+                    selected,
+                    slot,
                     index == 0,
-                    retiring.map(|source| source.slot.cursor.next_line_number),
+                    retiring.map(|_| slot.cursor.next_line_number),
                     live_endlinechar,
                     newlinechar,
                     widths,
@@ -702,14 +720,19 @@ impl<G> InputState<G> {
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = index + 1 == input_levels.len();
             let visible = match level {
-                InputLevel::Source(source) => retiring_source
-                    .filter(|retiring| retiring.identity() == source.identity())
-                    .unwrap_or(source)
-                    .slot
-                    .cursor
-                    .line
-                    .is_some(),
-                InputLevel::Tokens(_) => Self::context_level_is_visible(level, parameters, current),
+                InputLevel::Source(source) => {
+                    let selected = retiring_source
+                        .filter(|retiring| retiring.identity() == source.identity())
+                        .unwrap_or(source);
+                    self.levels
+                        .source_level_slot(selected)
+                        .cursor
+                        .line
+                        .is_some()
+                }
+                InputLevel::Tokens(_) => {
+                    Self::context_level_is_visible(level, None, parameters, current)
+                }
                 InputLevel::MacroArgument(_) => true,
             };
             if let InputLevel::Source(source) = level {
@@ -761,11 +784,16 @@ impl<G> InputState<G> {
 
     fn context_level_is_visible(
         level: &InputLevel<G>,
+        source_slot: Option<&SourceSlot<G>>,
         parameters: &crate::macro_call::ParameterState<G>,
         current: bool,
     ) -> bool {
         match level {
-            InputLevel::Source(source) => source.slot.cursor.line.is_some(),
+            InputLevel::Source(_) => source_slot
+                .expect("source visibility receives its live slot")
+                .cursor
+                .line
+                .is_some(),
             InputLevel::Tokens(tokens) => {
                 if matches!(tokens.trace, ReplayTrace::BackedUp)
                     && tokens.position() >= tokens.span.frame_len()
@@ -819,6 +847,7 @@ impl<G> InputState<G> {
     /// §313's `<Print location of current line>` and `<Pseudoprint the line>`.
     fn source_context_level(
         source: &SourceLevel<G>,
+        slot: &SourceSlot<G>,
         bottom_of_stack: bool,
         physical_line_number: Option<u64>,
         live_endlinechar: Option<char>,
@@ -868,8 +897,8 @@ impl<G> InputState<G> {
             Some(())
         }
 
-        let line = source.slot.cursor.line.as_ref()?;
-        let bytes = &source.slot.cursor.current_backing().bytes;
+        let line = slot.cursor.line.as_ref()?;
+        let bytes = &slot.cursor.current_backing().bytes;
         let start = line.physical.content_range().start();
         let end = line.retained_end;
         let cursor = line.cursor.byte_cursor.clamp(start, end);
@@ -1315,7 +1344,13 @@ impl<G> InputState<G> {
                     SourceNameClass::Scantokens(_) | SourceNameClass::File
                 ) =>
             {
-                Some(source.slot.cursor.current_backing().id)
+                Some(
+                    self.levels
+                        .source_level_slot(source)
+                        .cursor
+                        .current_backing()
+                        .id,
+                )
             }
             InputLevel::Source(_) => None,
             InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,

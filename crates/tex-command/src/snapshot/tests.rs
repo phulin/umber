@@ -11,6 +11,25 @@ use crate::scalar_journal::PackedJournalMark;
 
 struct Brand;
 
+fn top_source_slot<G>(command: &crate::CommandState<G>) -> &crate::input::SourceSlot<G> {
+    command
+        .input
+        .levels
+        .top_source()
+        .expect("source row is live")
+        .1
+}
+
+fn top_source_key<G>(command: &crate::CommandState<G>) -> crate::input::SourceSlotKey {
+    command
+        .input
+        .levels
+        .top_source()
+        .expect("source row is live")
+        .0
+        .slot
+}
+
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
         Token::Char {
@@ -662,12 +681,7 @@ fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
         command
             .open_registered_source(source)
             .expect("source opening");
-        let slot = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => {
-                std::ptr::from_ref(source.slot.as_ref())
-            }
-            _ => panic!("source row is live"),
-        };
+        let slot = std::ptr::from_ref(top_source_slot(&command));
         let snapshot = command.snapshot(universe).expect("source checkpoint");
         let before = command.input.levels.counters();
         let mut capabilities = crate::CommandHostCapabilities::default();
@@ -705,14 +719,11 @@ fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
         command
             .rollback(&snapshot, universe)
             .expect("source owner and lexer restore");
-        let restored = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("restored source row is live"),
-        };
-        assert_eq!(std::ptr::from_ref(restored.slot.as_ref()), slot);
-        assert!(restored.slot.cursor.line.is_none());
-        assert_eq!(restored.slot.cursor.next_physical_offset, 0);
-        assert!(!restored.slot.cursor.backing_registered);
+        let restored = top_source_slot(&command);
+        assert_eq!(std::ptr::from_ref(restored), slot);
+        assert!(restored.cursor.line.is_none());
+        assert_eq!(restored.cursor.next_physical_offset, 0);
+        assert!(!restored.cursor.backing_registered);
     });
 }
 
@@ -759,12 +770,7 @@ fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current()
                 cat: Catcode::Letter,
             }
         );
-        let accepted_slot = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => {
-                std::ptr::from_ref(source.slot.as_ref())
-            }
-            _ => panic!("accepted source remains live"),
-        };
+        let accepted_slot = std::ptr::from_ref(top_source_slot(&command));
 
         let mut rejected = crate::CommandState::fork_summary(command, &early, universe, universe)
             .expect("source prefix forks");
@@ -776,21 +782,16 @@ fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current()
             }
         );
         rejected.reject_checkpoint_candidate();
-        let restored_slot = match rejected.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => {
-                assert_eq!(
-                    source
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .map(|line| line.cursor.byte_cursor),
-                    Some(1)
-                );
-                std::ptr::from_ref(source.slot.as_ref())
-            }
-            _ => panic!("rejected source remains live"),
-        };
+        let rejected_source = top_source_slot(&rejected);
+        assert_eq!(
+            rejected_source
+                .cursor
+                .line
+                .as_ref()
+                .map(|line| line.cursor.byte_cursor),
+            Some(1)
+        );
+        let restored_slot = std::ptr::from_ref(rejected_source);
         assert_eq!(restored_slot, accepted_slot);
         assert_eq!(
             deliver!(&mut rejected),
@@ -844,16 +845,9 @@ fn repeated_source_owner_swaps_coalesce_and_candidate_reject_redoes_the_final_ow
             command
                 .input
                 .levels
-                .mutate_top_source(|level| {
-                    let crate::input::InputLevel::Source(source) = level else {
-                        panic!("source remains live");
-                    };
-                    let stored = crate::input::SourceLevelExecutionState::cursor(source);
-                    let line = source
-                        .slot
-                        .cursor
-                        .load_next_line(13)
-                        .expect("next line loads");
+                .mutate_top_source(|source, slot| {
+                    let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+                    let line = slot.cursor.load_next_line(13).expect("next line loads");
                     assert_eq!(line.physical.number(), expected_line);
                     (stored, ())
                 })
@@ -866,20 +860,11 @@ fn repeated_source_owner_swaps_coalesce_and_candidate_reject_redoes_the_final_ow
 
         let mut candidate = crate::CommandState::fork_summary(command, &early, universe, universe)
             .expect("source prefix forks");
-        let restored = match candidate.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("source remains live at the early checkpoint"),
-        };
-        assert!(restored.slot.cursor.line.is_none());
+        assert!(top_source_slot(&candidate).cursor.line.is_none());
 
         candidate.reject_checkpoint_candidate();
-        let redone = match candidate.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("source remains live after candidate rejection"),
-        };
         assert_eq!(
-            redone
-                .slot
+            top_source_slot(&candidate)
                 .cursor
                 .line
                 .as_ref()
@@ -906,16 +891,9 @@ fn source_owner_swaps_on_an_interval_local_row_need_no_inverse() {
         let before = command.input.levels.counters();
 
         for _ in 0..2 {
-            command.input.levels.mutate_top_source(|level| {
-                let crate::input::InputLevel::Source(source) = level else {
-                    panic!("source remains live");
-                };
-                let stored = crate::input::SourceLevelExecutionState::cursor(source);
-                source
-                    .slot
-                    .cursor
-                    .load_next_line(13)
-                    .expect("next line loads");
+            command.input.levels.mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+                slot.cursor.load_next_line(13).expect("next line loads");
                 (stored, ())
             });
         }
@@ -943,34 +921,32 @@ fn compact_source_touch_then_token_row_reuse_restores_the_source_incarnation() {
         command
             .open_registered_source(source)
             .expect("source opening");
-        let source_slot = match command.input.levels.last_mut() {
-            Some(crate::input::InputLevel::Source(source)) => {
-                source
-                    .slot
-                    .cursor
-                    .load_next_line(13)
-                    .expect("fixture line loads");
-                source.slot.key()
-            }
-            _ => panic!("source row is live"),
-        };
-        let snapshot = command.snapshot(universe).expect("source checkpoint");
-
-        let Some(crate::input::InputLevel::Source(source)) = command.input.levels.last_mut() else {
-            panic!("source row remains live");
-        };
-        source
-            .slot
-            .cursor
-            .line
-            .as_mut()
-            .expect("line remains loaded")
-            .cursor
-            .byte_cursor = 1;
         command
             .input
             .levels
-            .pop_project(|_| ())
+            .mutate_top_source_lex(|_, slot| {
+                slot.cursor.load_next_line(13).expect("fixture line loads");
+            })
+            .expect("source row is live");
+        let source_slot = top_source_key(&command);
+        let snapshot = command.snapshot(universe).expect("source checkpoint");
+
+        command
+            .input
+            .levels
+            .mutate_top_source_lex(|_, slot| {
+                slot.cursor
+                    .line
+                    .as_mut()
+                    .expect("line remains loaded")
+                    .cursor
+                    .byte_cursor = 1;
+            })
+            .expect("source row remains live");
+        command
+            .input
+            .levels
+            .pop_project(|_, _| ())
             .expect("source pops");
 
         let words = [TokenWord::pack(Token::Char {
@@ -995,14 +971,9 @@ fn compact_source_touch_then_token_row_reuse_restores_the_source_incarnation() {
         command
             .rollback(&snapshot, universe)
             .expect("source incarnation restores before its compact inverse");
-        let restored = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("source row restores"),
-        };
-        assert_eq!(restored.slot.key(), source_slot);
+        assert_eq!(top_source_key(&command), source_slot);
         assert_eq!(
-            restored
-                .slot
+            top_source_slot(&command)
                 .cursor
                 .line
                 .as_ref()
@@ -1031,39 +1002,29 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .open_registered_source(original)
             .expect("original opening");
-        let original_slot = match command.input.levels.last_mut() {
-            Some(crate::input::InputLevel::Source(source)) => {
-                source
-                    .slot
-                    .cursor
-                    .load_next_line(13)
-                    .expect("first line loads");
-                source.slot.key()
-            }
-            _ => panic!("original source is live"),
-        };
+        command
+            .input
+            .levels
+            .mutate_top_source_lex(|_, slot| {
+                slot.cursor.load_next_line(13).expect("first line loads");
+            })
+            .expect("original source is live");
+        let original_slot = top_source_key(&command);
         let snapshot = command.snapshot(universe).expect("source checkpoint");
 
         command
             .input
             .levels
-            .mutate_top_source(|level| {
-                let crate::input::InputLevel::Source(source) = level else {
-                    panic!("original source remains live");
-                };
-                let stored = crate::input::SourceLevelExecutionState::cursor(source);
-                source
-                    .slot
-                    .cursor
-                    .load_next_line(13)
-                    .expect("second line loads");
+            .mutate_top_source(|source, slot| {
+                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+                slot.cursor.load_next_line(13).expect("second line loads");
                 (stored, ())
             })
             .expect("cold owner swap records");
         command
             .input
             .levels
-            .pop_project(|_| ())
+            .pop_project(|_, _| ())
             .expect("original source pops");
         command
             .open_registered_source(replacement)
@@ -1072,15 +1033,13 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .rollback(&snapshot, universe)
             .expect("replacement reverses before the cold owner inverse");
-        let restored = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("original source restores"),
-        };
-        assert_eq!(restored.slot.key(), original_slot);
-        assert_eq!(restored.slot.cursor.current_backing().id, original);
+        assert_eq!(top_source_key(&command), original_slot);
         assert_eq!(
-            restored
-                .slot
+            top_source_slot(&command).cursor.current_backing().id,
+            original
+        );
+        assert_eq!(
+            top_source_slot(&command)
                 .cursor
                 .line
                 .as_ref()
@@ -1117,7 +1076,7 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             .expect("root source opens");
         let root = command.publish_summary(universe).expect("root summary");
 
-        command.input.levels.pop_project(|_| ());
+        command.input.levels.pop_project(|_, _| ());
         command
             .open_registered_source(prior_source)
             .expect("prior source opens");
@@ -1125,26 +1084,16 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("prior source is live"),
         };
-        command.input.levels.mutate_top_source(|level| {
-            let crate::input::InputLevel::Source(source) = level else {
-                panic!("prior source is live");
-            };
-            let stored = crate::input::SourceLevelExecutionState::cursor(source);
-            source
-                .slot
-                .cursor
-                .load_next_line(13)
-                .expect("prior line loads");
+        command.input.levels.mutate_top_source(|source, slot| {
+            let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            slot.cursor.load_next_line(13).expect("prior line loads");
             (stored, ())
         });
-        let prior_slot = match command.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source.slot.key(),
-            _ => panic!("prior source remains live"),
-        };
+        let prior_slot = top_source_key(&command);
 
         let mut candidate = crate::CommandState::fork_summary(command, &root, universe, universe)
             .expect("source prefix forks");
-        candidate.input.levels.pop_project(|_| ());
+        candidate.input.levels.pop_project(|_, _| ());
         candidate
             .open_registered_source(candidate_source)
             .expect("candidate source opens");
@@ -1152,34 +1101,34 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("candidate source is live"),
         };
-        candidate.input.levels.mutate_top_source(|level| {
-            let crate::input::InputLevel::Source(source) = level else {
-                panic!("candidate source is live");
-            };
-            let stored = crate::input::SourceLevelExecutionState::cursor(source);
-            source
-                .slot
-                .cursor
+        candidate.input.levels.mutate_top_source(|source, slot| {
+            let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            slot.cursor
                 .load_next_line(13)
                 .expect("candidate line loads");
             (stored, ())
         });
-        let candidate_slot = match candidate.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source.slot.key(),
-            _ => panic!("candidate source remains live"),
-        };
+        let candidate_slot = top_source_key(&candidate);
         assert_eq!(candidate_identity, prior_identity);
         assert_ne!(candidate_slot, prior_slot);
 
         candidate.reject_checkpoint_candidate();
-        let restored = match candidate.input.levels.last() {
-            Some(crate::input::InputLevel::Source(source)) => source,
-            _ => panic!("prior source redoes"),
-        };
-        assert_eq!(restored.identity(), prior_identity);
-        assert_eq!(restored.slot.key(), prior_slot);
-        assert_eq!(restored.slot.cursor.current_backing().id, prior_source);
-        assert!(restored.slot.cursor.line.is_some());
+        assert_eq!(
+            candidate
+                .input
+                .levels
+                .top_source()
+                .expect("prior source redoes")
+                .0
+                .identity(),
+            prior_identity
+        );
+        assert_eq!(top_source_key(&candidate), prior_slot);
+        assert_eq!(
+            top_source_slot(&candidate).cursor.current_backing().id,
+            prior_source
+        );
+        assert!(top_source_slot(&candidate).cursor.line.is_some());
     });
 }
 
@@ -1213,13 +1162,13 @@ fn source_accept_and_prefix_release_drop_each_obsolete_backing_owner() {
             .expect("root source opens");
         let root = command.publish_summary(universe).expect("root summary");
 
-        command.input.levels.pop_project(|_| ());
+        command.input.levels.pop_project(|_, _| ());
         command
             .open_registered_source(prior_source)
             .expect("prior source opens");
         let mut candidate = crate::CommandState::fork_summary(command, &root, universe, universe)
             .expect("source prefix forks");
-        candidate.input.levels.pop_project(|_| ());
+        candidate.input.levels.pop_project(|_, _| ());
         candidate
             .open_registered_source(current_source)
             .expect("current source opens");
@@ -1261,16 +1210,18 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
         let before = command.input.levels.counters();
 
         for _ in 0..1_024 {
-            let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last_mut()
-            else {
-                panic!("fixture token frame remains live");
-            };
-            cursor.retirement = match cursor.retirement {
-                crate::input::RetirementBehavior::Pop => {
-                    crate::input::RetirementBehavior::StopAtEnd
-                }
-                _ => crate::input::RetirementBehavior::Pop,
-            };
+            command
+                .input
+                .levels
+                .mutate_top_tokens(|cursor| {
+                    cursor.retirement = match cursor.retirement {
+                        crate::input::RetirementBehavior::Pop => {
+                            crate::input::RetirementBehavior::StopAtEnd
+                        }
+                        _ => crate::input::RetirementBehavior::Pop,
+                    };
+                })
+                .expect("fixture token frame remains live");
         }
 
         let after = command.input.levels.counters();

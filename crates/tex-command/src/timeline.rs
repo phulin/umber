@@ -98,6 +98,10 @@ impl<T> PayloadSlab<T> {
         std::mem::swap(stored, value);
     }
 
+    pub(crate) fn value(&self, handle: PayloadHandle) -> Option<&T> {
+        self.slot(handle).and_then(|slot| slot.value.as_ref())
+    }
+
     pub(crate) fn release(&mut self, handle: PayloadHandle) {
         let free_head = self.free_head;
         let slot = self
@@ -149,6 +153,16 @@ impl<T> PayloadSlab<T> {
 
     pub(crate) fn value_mut(&mut self, handle: PayloadHandle) -> Option<&mut T> {
         self.slot_mut(handle).and_then(|slot| slot.value.as_mut())
+    }
+
+    fn slot(&self, handle: PayloadHandle) -> Option<&PayloadSlot<T>> {
+        let slot = handle.slot as usize;
+        let slot = self
+            .pages
+            .get(slot / PAYLOAD_SLOTS_PER_PAGE)?
+            .slots
+            .get(slot % PAYLOAD_SLOTS_PER_PAGE)?;
+        (slot.generation == handle.generation && slot.value.is_some()).then_some(slot)
     }
 
     fn slot_mut(&mut self, handle: PayloadHandle) -> Option<&mut PayloadSlot<T>> {

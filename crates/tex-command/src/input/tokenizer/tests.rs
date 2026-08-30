@@ -355,9 +355,8 @@ fn rejected_control_word_superscript_probe_does_not_publish_or_retain_an_edit() 
         control(command.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
         (b"a".to_vec(), SourceControlSequenceKind::Word, 0, 2)
     );
-    let line = match command.input.levels.last() {
-        Some(crate::input::InputLevel::Source(source)) => source
-            .slot
+    let line = match command.input.levels.top_source() {
+        Some((_, source)) => source
             .cursor
             .line
             .as_ref()

@@ -106,14 +106,21 @@ enum RetiredInputLevel<G> {
 }
 
 impl<G> RetiredInputLevel<G> {
-    fn borrowed(level: &InputLevel<G>) -> Self {
+    fn borrowed(level: &InputLevel<G>, source_slot: Option<&super::SourceSlot<G>>) -> Self {
         match level {
             InputLevel::Source(source) => Self::Source {
                 identity: source.identity(),
                 name_class: source.name_class,
-                source: source.slot.cursor.current_backing().id,
+                source: source_slot
+                    .expect("source retirement projection receives its live slot")
+                    .cursor
+                    .current_backing()
+                    .id,
                 retirement: source.retirement,
-                framed: source_level_is_framed(source),
+                framed: source_level_is_framed(
+                    source,
+                    source_slot.expect("source retirement projection receives its live slot"),
+                ),
             },
             InputLevel::Tokens(cursor) => Self::Tokens {
                 identity: cursor.identity(),
@@ -125,41 +132,6 @@ impl<G> RetiredInputLevel<G> {
                     _ => None,
                 },
             },
-            InputLevel::MacroArgument(cursor) => Self::Tokens {
-                identity: cursor.identity(),
-                behavior: TokenBehavior::Parameter,
-                retirement: RetirementBehavior::Pop,
-                reason: InputRetirementReason::Parameter,
-                replay: None,
-            },
-        }
-    }
-
-    fn owned(level: InputLevel<G>) -> Self {
-        match level {
-            InputLevel::Source(source) => {
-                let framed = source_level_is_framed(&source);
-                Self::Source {
-                    identity: source.identity(),
-                    name_class: source.name_class,
-                    source: source.slot.cursor.current_backing().id,
-                    retirement: source.retirement,
-                    framed,
-                }
-            }
-            InputLevel::Tokens(cursor) => {
-                let reason = input_retirement_reason(&cursor.behavior, &cursor.trace);
-                Self::Tokens {
-                    identity: cursor.identity(),
-                    behavior: cursor.behavior,
-                    retirement: cursor.retirement,
-                    reason,
-                    replay: match cursor.span {
-                        PackedTokenSpanHandle::Replay { replay, .. } => Some(replay),
-                        _ => None,
-                    },
-                }
-            }
             InputLevel::MacroArgument(cursor) => Self::Tokens {
                 identity: cursor.identity(),
                 behavior: TokenBehavior::Parameter,
@@ -270,30 +242,50 @@ impl<G> CommandState<G> {
             let scratch = &self.scratch;
             let roots = &mut self.roots;
             let replay_lane = &roots.input.replay;
-            let Some(level) = roots.input.levels.last_mut() else {
+            let Some(level) = roots.input.levels.last() else {
                 return Ok(InputTopTransition::Empty);
             };
             match level {
-                InputLevel::Source(source) => {
-                    let identity = source.identity();
-                    let position = source.slot.cursor.next_physical_offset;
+                InputLevel::Source(_) => {
                     if state.tracked_region_is_active() {
-                        super::observe_immutable_source(state, source);
+                        let (source, slot) = roots
+                            .input
+                            .levels
+                            .top_source()
+                            .expect("the inspected source remains on top");
+                        super::observe_immutable_source(state, source, slot);
                     }
                     let mut queries = LiveSourceQueries {
                         state,
                         create_control_sequences,
                     };
-                    let step = match profile.character_mode() {
-                        crate::CharacterMode::EightBitExact => source
-                            .slot
-                            .cursor
-                            .next_compact_exact_byte_step(force_eof, &mut queries),
-                        crate::CharacterMode::UnicodeExtended => source
-                            .slot
-                            .cursor
-                            .next_compact_unicode_step(force_eof, &mut queries),
-                    };
+                    let (identity, position, direct_source_line, step, frame_advanced) = roots
+                        .input
+                        .levels
+                        .mutate_top_source_lex(|source, slot| {
+                            let identity = source.identity();
+                            let position = slot.cursor.next_physical_offset;
+                            let step = match profile.character_mode() {
+                                crate::CharacterMode::EightBitExact => slot
+                                    .cursor
+                                    .next_compact_exact_byte_step(force_eof, &mut queries),
+                                crate::CharacterMode::UnicodeExtended => slot
+                                    .cursor
+                                    .next_compact_unicode_step(force_eof, &mut queries),
+                            };
+                            let direct_source_line = slot.cursor.line.as_ref().map(|line| {
+                                u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
+                            });
+                            let frame_advanced =
+                                !matches!(&step, CompactSourceTokenizationStep::Token(_))
+                                    || (source.frame.identity() == identity.0
+                                        && source.frame.advance().is_some());
+                            (identity, position, direct_source_line, step, frame_advanced)
+                        })
+                        .expect("the inspected source remains on top");
+                    if !frame_advanced {
+                        return Err(());
+                    }
                     match step {
                         CompactSourceTokenizationStep::Token(token) => {
                             let range = token.provenance.range();
@@ -310,14 +302,6 @@ impl<G> CommandState<G> {
                                     range.end(),
                                 )
                             };
-                            let direct_source_line = source.slot.cursor.line.as_ref().map(|line| {
-                                u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
-                            });
-                            if source.frame.identity() != identity.0
-                                || source.frame.advance().is_none()
-                            {
-                                return Err(());
-                            }
                             let raw = destination.write_raw_delivery(
                                 TracedTokenWord::from_parts(token.word, origin),
                                 identity.0,
@@ -340,22 +324,36 @@ impl<G> CommandState<G> {
                         }
                     }
                 }
-                InputLevel::Tokens(cursor) => {
-                    let identity = cursor.identity();
-                    let raw = cursor
-                        .deliver_into(PackedTokenSources::new(replay_lane, attempt), destination)?;
+                InputLevel::Tokens(_) => {
+                    let result = roots
+                        .input
+                        .levels
+                        .mutate_top_tokens(|cursor| {
+                            let identity = cursor.identity();
+                            let raw = cursor.deliver_into(
+                                PackedTokenSources::new(replay_lane, attempt),
+                                destination,
+                            )?;
+                            Ok::<_, ()>((identity, cursor.behavior, raw))
+                        })
+                        .expect("the inspected token row remains on top")?;
+                    let (identity, behavior, raw) = result;
                     let Some(raw) = raw else {
                         return Ok(InputTopTransition::TokenExhausted(identity));
                     };
-                    (
-                        raw,
-                        matches!(cursor.behavior, TokenBehavior::Parameter),
-                        identity,
-                    )
+                    (raw, matches!(behavior, TokenBehavior::Parameter), identity)
                 }
-                InputLevel::MacroArgument(cursor) => {
-                    let identity = cursor.identity();
-                    let Some(raw) = cursor.deliver_into(scratch, destination)? else {
+                InputLevel::MacroArgument(_) => {
+                    let result = roots
+                        .input
+                        .levels
+                        .mutate_top_macro_argument(|cursor| {
+                            let identity = cursor.identity();
+                            Ok::<_, ()>((identity, cursor.deliver_into(scratch, destination)?))
+                        })
+                        .expect("the inspected macro row remains on top")?;
+                    let (identity, raw) = result;
+                    let Some(raw) = raw else {
                         return Ok(InputTopTransition::TokenExhausted(identity));
                     };
                     (raw, true, identity)
@@ -390,11 +388,13 @@ impl<G> CommandState<G> {
         firm: bool,
         pending_acquired_line: bool,
     ) -> Result<Option<super::PhysicalLine>, ()> {
-        if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_pending_source_backings(state, &mut source.slot.cursor);
-            if state.tracked_region_is_active() {
-                super::observe_immutable_source(state, source);
-            }
+        let _ = self.input.levels.mutate_top_source_lex(|_, slot| {
+            register_pending_source_backings(state, &mut slot.cursor)
+        });
+        if state.tracked_region_is_active()
+            && let Some((source, slot)) = self.input.levels.top_source()
+        {
+            super::observe_immutable_source(state, source, slot);
         }
         let physical = {
             let mut queries = LiveSourceQueries {
@@ -408,11 +408,13 @@ impl<G> CommandState<G> {
                 &mut queries,
             )?
         };
-        if let Some(InputLevel::Source(source)) = self.input.levels.last_mut() {
-            register_pending_source_backings(state, &mut source.slot.cursor);
-            if state.tracked_region_is_active() {
-                super::observe_immutable_source(state, source);
-            }
+        let _ = self.input.levels.mutate_top_source_lex(|_, slot| {
+            register_pending_source_backings(state, &mut slot.cursor)
+        });
+        if state.tracked_region_is_active()
+            && let Some((source, slot)) = self.input.levels.top_source()
+        {
+            super::observe_immutable_source(state, source, slot);
         }
         Ok(physical)
     }
@@ -431,7 +433,10 @@ impl<G> CommandState<G> {
                 .rev()
                 .skip(1)
                 .fold(0_usize, |total, level| {
-                    let Some((len, endline)) = crate::state::source_buffer_line(level) else {
+                    let Some((len, endline)) = crate::state::source_buffer_line(
+                        level,
+                        self.input.levels.source_slot_for_level(level),
+                    ) else {
                         return total;
                     };
                     total
@@ -447,15 +452,12 @@ impl<G> CommandState<G> {
         let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
-            let Some(result) = input.levels.mutate_top_source(|level| {
-                let InputLevel::Source(source) = level else {
-                    unreachable!("physical acquisition requires a source top");
-                };
+            let Some(result) = input.levels.mutate_top_source(|source, slot| {
                 let identity = source.identity();
                 let name_class = source.name_class;
-                let stored = super::SourceLevelExecutionState::cursor(source);
+                let stored = super::SourceLevelExecutionState::cursor(source, slot);
                 if pending_acquired_line {
-                    source.slot.cursor.pending_acquired_line = true;
+                    slot.cursor.pending_acquired_line = true;
                 }
                 let mut lines = super::LineBackingRegistry {
                     profile,
@@ -464,23 +466,19 @@ impl<G> CommandState<G> {
                     buffer_start,
                     name_class: Some(name_class),
                 };
-                let result = source
-                    .slot
+                let result = slot
                     .cursor
                     .load_next_line(endlinechar)
                     .map(|line| line.physical)
                     .map(|physical| {
-                        lines.record_line_usage(&source.slot.cursor);
+                        lines.record_line_usage(&slot.cursor);
                         if firm {
-                            source
-                                .slot
-                                .cursor
+                            slot.cursor
                                 .firm_up_the_line(endlinechar, queries, &mut lines);
-                            lines.record_line_usage(&source.slot.cursor);
+                            lines.record_line_usage(&slot.cursor);
                         }
                         let retained_line = match name_class {
-                            SourceNameClass::File | SourceNameClass::Scantokens(_) => source
-                                .slot
+                            SourceNameClass::File | SourceNameClass::Scantokens(_) => slot
                                 .cursor
                                 .line
                                 .as_ref()
@@ -520,14 +518,16 @@ impl<G> CommandState<G> {
         state: &mut tex_state::CommandContext<'_, G>,
         identity: InputLevelId,
     ) -> Result<(), ()> {
-        let Some(InputLevel::Source(source)) = self.input.levels.last_mut() else {
-            return Err(());
-        };
-        if source.identity() != identity {
-            return Err(());
-        }
-        register_pending_source_backings(state, &mut source.slot.cursor);
-        Ok(())
+        self.input
+            .levels
+            .mutate_top_source_lex(|source, slot| {
+                if source.identity() != identity {
+                    return Err(());
+                }
+                register_pending_source_backings(state, &mut slot.cursor);
+                Ok(())
+            })
+            .unwrap_or(Err(()))
     }
 
     pub(crate) fn set_retained_file_line_number(&mut self, line: i32) {
@@ -540,9 +540,6 @@ impl<G> CommandState<G> {
     }
 
     fn pop_retired_input_level(&mut self) -> Option<RetiredInputLevel<G>> {
-        if !self.input.levels.records_history() {
-            return self.input.levels.pop_owned().map(RetiredInputLevel::owned);
-        }
         self.input.levels.pop_project(RetiredInputLevel::borrowed)
     }
 
@@ -892,18 +889,15 @@ impl<G> CommandState<G> {
                 return Err(InputRetirementError::NotRetainedVTemplate);
             }
             let reason = input_retirement_reason(&cursor.behavior, &cursor.trace);
-            let InputLevel::Tokens(cursor) = self
-                .input
+            self.input
                 .levels
-                .last_mut()
-                .expect("the inspected top level remains live")
-            else {
-                unreachable!("the inspected top level was a token cursor");
-            };
-            cursor.retirement = RetirementBehavior::AwaitingVTemplateRetirement;
-            cursor
-                .frame
-                .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
+                .mutate_top_tokens(|cursor| {
+                    cursor.retirement = RetirementBehavior::AwaitingVTemplateRetirement;
+                    cursor
+                        .frame
+                        .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
+                })
+                .expect("the inspected top level remains live");
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
@@ -1082,20 +1076,22 @@ impl<G> CommandState<G> {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
-                InputLevel::Source(source) => Some(match source.name_class {
-                    SourceNameClass::File | SourceNameClass::Scantokens(_) => source
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .map_or_else(
-                            || source.slot.cursor.next_line_number.saturating_sub(1),
-                            |line| line.physical.number(),
-                        )
-                        .min(i32::MAX as u64)
-                        as i32,
-                    SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
-                }),
+                InputLevel::Source(source) => {
+                    let slot = self.input.levels.source_level_slot(source);
+                    Some(match source.name_class {
+                        SourceNameClass::File | SourceNameClass::Scantokens(_) => {
+                            slot.cursor
+                                .line
+                                .as_ref()
+                                .map_or_else(
+                                    || slot.cursor.next_line_number.saturating_sub(1),
+                                    |line| line.physical.number(),
+                                )
+                                .min(i32::MAX as u64) as i32
+                        }
+                        SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
+                    })
+                }
             })
             .unwrap_or(0);
         self.set_retained_file_line_number(line);
@@ -1130,11 +1126,11 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
     }
 }
 
-fn source_level_is_framed<G>(source: &super::SourceLevel<G>) -> bool {
+fn source_level_is_framed<G>(source: &super::SourceLevel<G>, slot: &super::SourceSlot<G>) -> bool {
     match source.name_class {
         SourceNameClass::File => {
-            source.slot.cursor.backing.name.is_some()
-                && source.slot.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
+            slot.cursor.backing.name.is_some()
+                && slot.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
         }
         SourceNameClass::Scantokens(19) => true,
         SourceNameClass::Terminal

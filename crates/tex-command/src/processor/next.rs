@@ -1002,10 +1002,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             };
             debug_assert_eq!(admitted, prepended);
-            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
-                unreachable!("back_input above installed a token-list level");
-            };
-            if cursor.frame.extend_limit(prepended).is_none() {
+            let extended = self
+                .command
+                .input
+                .levels
+                .mutate_top_tokens(|cursor| cursor.frame.extend_limit(prepended).is_some())
+                .expect("back_input above installed a token-list level");
+            if !extended {
                 return Err(CommandError::input_invariant());
             }
         } else {

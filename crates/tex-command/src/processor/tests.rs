@@ -2,8 +2,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::input::{
-    InputLevel, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason,
-    TokenBehavior,
+    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
 use crate::{
     AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
@@ -534,16 +533,18 @@ fn forced_eof_before_production_acquisition_registers_source_before_retirement()
         command
             .open_registered_source(source)
             .expect("source opening");
-        let Some(InputLevel::Source(active)) = command.input.levels.last_mut() else {
-            panic!("source is active");
-        };
-        let line = active
-            .slot
-            .cursor
-            .load_next_line(13)
-            .expect("line is acquired outside production delivery");
-        line.cursor.byte_cursor = line.retained_end;
-        line.cursor.endline_delivered = true;
+        command
+            .input
+            .levels
+            .mutate_top_source_lex(|_, slot| {
+                let line = slot
+                    .cursor
+                    .load_next_line(13)
+                    .expect("line is acquired outside production delivery");
+                line.cursor.byte_cursor = line.retained_end;
+                line.cursor.endline_delivered = true;
+            })
+            .expect("source is active");
         assert!(command.end_current_source_after_current_line());
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -634,10 +635,12 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
         }
         let after_acquisition = crate::input::source_registration_counters();
         assert_eq!(after_acquisition.calls - before.calls, 2);
-        let Some(InputLevel::Source(source)) = command.input.levels.last() else {
-            panic!("source remains live after its first token");
-        };
-        assert!(!source.slot.cursor.backing_registered);
+        let (_, source) = command
+            .input
+            .levels
+            .top_source()
+            .expect("source remains live after its first token");
+        assert!(!source.cursor.backing_registered);
 
         {
             let mut processor = crate::test_harness::processor(
@@ -840,9 +843,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         );
         assert_eq!(first.direct_source_line_number(), Some(1));
         assert_eq!(processor.command.input.current_file_line_number(), 1);
-        let first_line_number = match processor.command.input.levels.last() {
-            Some(InputLevel::Source(source)) => source
-                .slot
+        let first_line_number = match processor.command.input.levels.top_source() {
+            Some((_, source)) => source
                 .cursor
                 .line
                 .as_ref()
@@ -866,9 +868,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         let second_provenance = second.source_provenance();
         assert_eq!(second.direct_source_line_number(), Some(1));
         assert_eq!(processor.command.input.current_file_line_number(), 1);
-        let second_line_number = match processor.command.input.levels.last() {
-            Some(InputLevel::Source(source)) => source
-                .slot
+        let second_line_number = match processor.command.input.levels.top_source() {
+            Some((_, source)) => source
                 .cursor
                 .line
                 .as_ref()

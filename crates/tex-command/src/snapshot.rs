@@ -1958,7 +1958,13 @@ impl<G> CommandState<G> {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
             };
-            Some(source.slot.cursor.next_physical_offset)
+            Some(
+                self.input
+                    .levels
+                    .source_level_slot(source)
+                    .cursor
+                    .next_physical_offset,
+            )
         });
         let retained_owner_bytes = self
             .roots

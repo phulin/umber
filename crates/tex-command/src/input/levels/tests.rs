@@ -176,7 +176,7 @@ fn replay_coordinates_keep_input_frames_compact() {
     assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 56);
     assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
-    assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 4);
+    assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert!(std::mem::size_of::<super::SourceLevel<()>>() <= 48);
     assert!(
         std::mem::size_of::<super::SourceLexExecutionState>() <= 64,

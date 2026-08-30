@@ -104,6 +104,14 @@ impl InputFrame {
         self.position
     }
 
+    /// Swaps only the hot delivery position with one ordered undo value.
+    ///
+    /// Input identity, source, limit, kind, and flags are immutable for a
+    /// stable source row and therefore do not belong in its lexical history.
+    pub const fn swap_position(&mut self, position: &mut u32) {
+        core::mem::swap(&mut self.position, position);
+    }
+
     #[must_use]
     pub const fn kind(self) -> InputFrameKind {
         self.kind
