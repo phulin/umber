@@ -1600,23 +1600,19 @@ pub(crate) struct CommandAttemptMark {
 
 /// Move-only caller capability for one active command operation.
 ///
-/// Command state retains the matching non-owning coordinate for validation,
-/// while the executor must move this value into the exact continuation that
-/// can resume, commit, or roll the operation back.  It cannot reconstruct an
-/// owner from command state after discarding the caller edge.
-#[derive(Debug, Eq, PartialEq)]
+/// Command state is the sole ordinary-path coordinate owner. The executor
+/// must move this opaque lifecycle edge into the exact continuation that can
+/// resume, commit, or roll the operation back, but the edge carries no copied
+/// coordinate. It cannot reconstruct a capability after discarding that edge.
+#[derive(Debug)]
 #[must_use = "an active command operation must be finished or moved into its continuation"]
 pub struct CommandAttemptOperation {
-    mark: CommandAttemptMark,
+    _private: (),
 }
 
 impl CommandAttemptOperation {
-    pub(crate) const fn new(mark: CommandAttemptMark) -> Self {
-        Self { mark }
-    }
-
-    pub(crate) const fn coordinate(&self) -> CommandAttemptMark {
-        self.mark
+    pub(crate) const fn new() -> Self {
+        Self { _private: () }
     }
 }
 
@@ -1844,6 +1840,7 @@ pub struct AttemptResumePoint {
 pub struct PendingCommandAttempt<G, R> {
     attempt: Box<CommandAttempt<G>>,
     generation: GenerationOwner<G>,
+    opening: CommandAttemptMark,
     operation: CommandAttemptOperation,
     resume: AttemptResumePoint,
     pending: R,
@@ -1851,7 +1848,7 @@ pub struct PendingCommandAttempt<G, R> {
 
 impl<G, R> PendingCommandAttempt<G, R> {
     pub(crate) const fn operation_coordinate(&self) -> CommandAttemptMark {
-        self.operation.coordinate()
+        self.opening
     }
 
     #[must_use]
@@ -1870,7 +1867,8 @@ impl<G, R> PendingCommandAttempt<G, R> {
         Self {
             attempt: Box::new(attempt),
             generation,
-            operation: CommandAttemptOperation::new(opening),
+            opening,
+            operation: CommandAttemptOperation::new(),
             resume,
             pending,
         }
@@ -1879,11 +1877,11 @@ impl<G, R> PendingCommandAttempt<G, R> {
     pub(crate) fn new_at_validated_mark(
         attempt: CommandAttempt<G>,
         generation: GenerationOwner<G>,
+        opening: CommandAttemptMark,
         operation: CommandAttemptOperation,
         resume: AttemptResumePoint,
         pending: R,
     ) -> Self {
-        let opening = operation.coordinate();
         debug_assert!(
             attempt
                 .arena()
@@ -1895,6 +1893,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         Self {
             attempt: Box::new(attempt),
             generation,
+            opening,
             operation,
             resume,
             pending,
@@ -1917,7 +1916,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         ),
         Self,
     > {
-        let opening = self.operation.coordinate();
+        let opening = self.opening;
         if !universe.owns_generation(&self.generation)
             || self
                 .attempt
@@ -1931,6 +1930,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         let Self {
             attempt,
             generation,
+            opening: _,
             operation,
             resume,
             pending,

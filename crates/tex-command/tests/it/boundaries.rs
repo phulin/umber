@@ -1028,6 +1028,22 @@ fn lexical_attempt_ids_cannot_escape_their_scope() {
 }
 
 #[test]
+fn command_attempt_operation_cannot_be_forged() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];
+
+    assert_compile_fail(
+        "attempt-operation-forgery",
+        &manifest_dir.join("tests/ui/attempt_operation_forgery.rs"),
+        &dependencies,
+        &[
+            "E0451",
+            "field `_private` of struct `CommandAttemptOperation` is private",
+        ],
+    );
+}
+
+#[test]
 fn semantic_and_runtime_fields_are_opaque() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];

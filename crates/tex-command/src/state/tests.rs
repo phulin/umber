@@ -768,11 +768,43 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
 }
 
 #[test]
+fn operation_rollback_restores_the_opening_macro_depth() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty macro definition");
+        let name = universe
+            .intern("rollbackmacro")
+            .expect("macro name")
+            .symbol();
+        let mut state = CommandState::default();
+        let operation = state.begin_attempt_operation();
+        let matching = state.scratch.begin_macro_match().expect("macro match");
+        let frame = state
+            .scratch
+            .commit_macro_match(matching)
+            .expect("sealed empty frame");
+        state.parameters.push_activation(
+            name,
+            definition,
+            crate::macro_call::MacroArguments::new(frame),
+            OriginId::UNKNOWN,
+        );
+        assert_eq!(state.parameters.activations.len(), 1);
+
+        state
+            .rollback_attempt_operation(operation)
+            .expect("rollback retires operation-local macro frames");
+        assert!(state.parameters.activations.is_empty());
+        assert!(state.scratch.is_quiescent());
+    });
+}
+
+#[test]
 fn successful_scope_commit_reclaims_promoted_operation_rows() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
-        let coordinate = operation.coordinate();
         let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
         let durable = state
             .promote_attempt_definition(universe, definition)
@@ -781,10 +813,6 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
         state
             .commit_attempt_operation(operation)
             .expect("operation scope commits");
-        assert!(matches!(
-            state.rollback_attempt_operation(crate::CommandAttemptOperation::new(coordinate)),
-            Err(AttemptError::InvalidCoordinate)
-        ));
         assert!(state.attempt.is_empty());
         assert_eq!(
             universe
@@ -795,6 +823,50 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
             &[word('x').token_word()]
         );
     });
+}
+
+#[test]
+fn ordinary_attempt_lifecycle_has_one_coordinate_owner_and_a_coordinate_free_edge() {
+    assert!(core::mem::size_of::<crate::CommandAttemptMark>() > 0);
+    assert_eq!(
+        core::mem::size_of::<crate::CommandAttemptOperation>(),
+        0,
+        "the move-only executor edge must carry no ordinary coordinate"
+    );
+
+    let mut state = CommandState::<()>::default();
+    let operation = state.begin_attempt_operation();
+    assert!(state.active_attempt_operation.is_some());
+    state
+        .commit_attempt_operation(operation)
+        .expect("the state-owned coordinate commits");
+    assert!(state.active_attempt_operation.is_none());
+}
+
+#[test]
+#[cfg(feature = "profiling")]
+fn warmed_attempt_lifecycle_allocates_nothing() {
+    let mut state = CommandState::<()>::default();
+    let warm = state.begin_attempt_operation();
+    state
+        .commit_attempt_operation(warm)
+        .expect("warm operation commits");
+
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        for _ in 0..4_096 {
+            let operation = state.begin_attempt_operation();
+            std::hint::black_box(&state.active_attempt_operation);
+            state
+                .commit_attempt_operation(operation)
+                .expect("measured operation commits");
+        }
+    }
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
 #[test]
@@ -809,7 +881,6 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .symbol();
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
-        let coordinate = operation.coordinate();
         let matching = state.scratch.begin_macro_match().expect("macro match");
         let frame = state
             .scratch
@@ -837,7 +908,6 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .resume_attempt(universe, pending)
             .ok()
             .expect("attempt resumption");
-        assert_eq!(resumed.coordinate(), coordinate);
         assert_eq!(request, "resource");
         state
             .retire_exhausted_input(level)
@@ -859,7 +929,6 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .allocate_token_list([word('a')])
             .expect("pre-operation attempt value");
         let opening = state.begin_attempt_operation();
-        let opening_coordinate = opening.coordinate();
         let rejected = state
             .attempt
             .arena_mut()
@@ -887,7 +956,6 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .resume_attempt(universe, pending)
             .ok()
             .expect("same admitted generation");
-        assert_eq!(restored_opening.coordinate(), opening_coordinate);
         assert_eq!(restored_resume, resume);
         assert_eq!(request, "font request");
         state
@@ -906,7 +974,6 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
-        let coordinate = operation.coordinate();
         let scanner = state.begin_attempt_scanner_scope().expect("scanner scope");
         let scanner_child = state.begin_attempt_scanner_scope().expect("scanner child");
         let child_value = state
@@ -927,7 +994,6 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
             .resume_attempt(universe, pending)
             .ok()
             .expect("nested scopes resume into the same state");
-        assert_eq!(resumed.coordinate(), coordinate);
         assert_eq!(
             state.attempt_token_words(child_value).expect("child words"),
             &[word('x')]
@@ -942,10 +1008,6 @@ fn nested_scanner_scopes_survive_resource_suspension_and_resume_once() {
             .commit_attempt_operation(resumed)
             .expect("commit consumes each owner exactly once");
         assert!(state.attempt.is_empty());
-        assert!(matches!(
-            state.commit_attempt_operation(crate::CommandAttemptOperation::new(coordinate)),
-            Err(AttemptError::InvalidCoordinate)
-        ));
     });
 }
 
@@ -983,7 +1045,7 @@ fn failed_resource_suspension_keeps_the_live_attempt_installed() {
 }
 
 #[test]
-fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
+fn suspension_requires_a_live_state_owned_coordinate() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let retained = state
@@ -991,27 +1053,19 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             .arena_mut()
             .allocate_token_list([word('x')])
             .expect("retained attempt value");
-        let live = state.begin_attempt_operation();
-        let live_coordinate = live.coordinate();
-        state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('y')])
-            .expect("discarded attempt value");
-        state
-            .rollback_attempt_operation(live)
-            .expect("operation rolls back");
+        let mut foreign = CommandState::<()>::default();
+        let foreign_operation = foreign.begin_attempt_operation();
 
         let failure = match state.suspend_attempt(
             universe,
-            crate::CommandAttemptOperation::new(live_coordinate),
+            foreign_operation,
             crate::AttemptResumePoint::default(),
             "input request",
         ) {
-            Ok(_) => panic!("truncated opening mark must be stale"),
+            Ok(_) => panic!("a capability cannot supply another state's missing coordinate"),
             Err(failure) => failure,
         };
-        let (_, error) = failure.into_parts();
+        let (foreign_operation, error) = failure.into_parts();
         assert!(matches!(
             error,
             crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate)
@@ -1020,6 +1074,10 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             state.attempt_token_words(retained).expect("retained words"),
             &[word('x')]
         );
+
+        foreign
+            .rollback_attempt_operation(foreign_operation)
+            .expect("rejected suspension returns the foreign lifecycle edge");
     });
 }
 
@@ -1056,6 +1114,40 @@ fn resource_resume_rejects_a_nonempty_live_attempt_without_mutation() {
             .ok()
             .expect("unchanged pending attempt remains resumable");
         assert_eq!(request, "font request");
+    });
+}
+
+#[test]
+fn resource_resume_rejects_a_wrong_pending_coordinate_without_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut source = CommandState::default();
+        let operation = source.begin_attempt_operation();
+        let pending = source
+            .suspend_attempt(
+                universe,
+                operation,
+                crate::AttemptResumePoint::default(),
+                "input request",
+            )
+            .expect("source attempt suspends");
+
+        let mut destination = CommandState::default();
+        let destination_operation = destination.begin_attempt_operation();
+        destination.attempt = crate::CommandAttempt::default();
+        let pending = destination
+            .resume_attempt(universe, pending)
+            .expect_err("the cold coordinate rejects another command state's admission");
+        assert!(destination.attempt.is_empty());
+
+        let (resumed, _, request) = source
+            .resume_attempt(universe, pending)
+            .ok()
+            .expect("rejected pending continuation remains resumable by its owner");
+        assert_eq!(request, "input request");
+        source
+            .commit_attempt_operation(resumed)
+            .expect("source operation commits");
+        drop(destination_operation);
     });
 }
 

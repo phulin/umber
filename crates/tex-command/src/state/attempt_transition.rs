@@ -15,7 +15,7 @@ impl<G> CommandState<G> {
             .begin_operation(self.parameters.activations.len())
             .expect("command operation scope capacity is bounded");
         self.active_attempt_operation = Some(mark);
-        crate::CommandAttemptOperation::new(mark)
+        crate::CommandAttemptOperation::new()
     }
 
     /// Opens one move-only synchronous child of the active direct operation.
@@ -27,8 +27,9 @@ impl<G> CommandState<G> {
     pub fn begin_attempt_child_scope(
         &mut self,
     ) -> Result<crate::CommandAttemptChildScope, crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        if self.active_attempt_operation.is_none() {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
         let owner = self.attempt.begin_child_scope()?;
         Ok(crate::CommandAttemptChildScope::new(owner))
     }
@@ -51,8 +52,9 @@ impl<G> CommandState<G> {
         &mut self,
         scope: crate::attempt::OwnedAttemptScope,
     ) -> Result<(), crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        if self.active_attempt_operation.is_none() {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
         self.attempt.validate_child_retirement(&scope)?;
         if self.attempt.child_scope_is_direct_operation_child(&scope) {
             self.attempt.defer_child_to_operation(scope)
@@ -65,8 +67,9 @@ impl<G> CommandState<G> {
         &self,
         scope: &crate::attempt::OwnedAttemptScope,
     ) -> Result<(), crate::AttemptError> {
-        self.active_attempt_operation
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        if self.active_attempt_operation.is_none() {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
         self.attempt.validate_child_retirement(scope)
     }
 
@@ -77,45 +80,51 @@ impl<G> CommandState<G> {
         self.attempt.close_child_scope(scope)
     }
 
-    /// Rejects the attempt-local suffix created after `mark`.
+    /// Rejects the attempt-local suffix created by the active operation.
     ///
     /// Executor aggregate rollback restores semantic roots before invoking
     /// this method, so no surviving command coordinate can name the suffix.
     pub fn rollback_attempt_operation(
         &mut self,
-        operation: crate::CommandAttemptOperation,
+        _operation: crate::CommandAttemptOperation,
     ) -> Result<(), crate::AttemptError> {
-        let mark = operation.coordinate();
-        if self.active_attempt_operation != Some(mark) {
-            return Err(crate::AttemptError::InvalidCoordinate);
+        let mark = self
+            .active_attempt_operation
+            .take()
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        let result = (|| {
+            while self.parameters.activations.len() > mark.macro_depth() {
+                let arguments = self
+                    .parameters
+                    .retire_last_activation()
+                    .ok_or(crate::AttemptError::InvalidCoordinate)?;
+                self.scratch
+                    .pop_macro_frame(arguments.frame())
+                    .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
+            }
+            self.attempt.rollback_operation(mark)
+        })();
+        if result.is_err() {
+            self.active_attempt_operation = Some(mark);
         }
-        while self.parameters.activations.len() > mark.macro_depth() {
-            let arguments = self
-                .parameters
-                .retire_last_activation()
-                .ok_or(crate::AttemptError::InvalidCoordinate)?;
-            self.scratch
-                .pop_macro_frame(arguments.frame())
-                .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
-        }
-        self.attempt.rollback_operation(mark)?;
-        self.active_attempt_operation = None;
-        Ok(())
+        result
     }
 
     /// Commits the exact direct-operation/scanner scope. Macro frames live in
     /// the disjoint generation-owned scratch lanes until input retirement.
     pub fn commit_attempt_operation(
         &mut self,
-        operation: crate::CommandAttemptOperation,
+        _operation: crate::CommandAttemptOperation,
     ) -> Result<(), crate::AttemptError> {
-        let mark = operation.coordinate();
-        if self.active_attempt_operation != Some(mark) {
-            return Err(crate::AttemptError::InvalidCoordinate);
+        let mark = self
+            .active_attempt_operation
+            .take()
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        let result = self.attempt.commit_operation(mark);
+        if result.is_err() {
+            self.active_attempt_operation = Some(mark);
         }
-        self.attempt.commit_operation(mark)?;
-        self.active_attempt_operation = None;
-        Ok(())
+        result
     }
 
     /// Moves the complete operation arena into a resource continuation.
@@ -126,13 +135,12 @@ impl<G> CommandState<G> {
         resume: crate::AttemptResumePoint,
         pending: R,
     ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendFailure> {
-        let opening = operation.coordinate();
-        if self.active_attempt_operation != Some(opening) {
+        let Some(opening) = self.active_attempt_operation else {
             return Err(crate::AttemptSuspendFailure::new(
                 operation,
                 crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate),
             ));
-        }
+        };
         if let Err(error) = self.attempt.arena().validate_mark(opening.attempt_mark()) {
             return Err(crate::AttemptSuspendFailure::new(
                 operation,
@@ -156,7 +164,7 @@ impl<G> CommandState<G> {
         };
         let attempt = core::mem::take(&mut self.attempt);
         Ok(crate::PendingCommandAttempt::new_at_validated_mark(
-            attempt, generation, operation, resume, pending,
+            attempt, generation, opening, operation, resume, pending,
         ))
     }
 
