@@ -31,8 +31,33 @@ pub struct CommandWorkCounters {
 }
 
 impl CommandWorkCounters {
+    const fn with_fuel_charges(fuel_charges: u64, detail: CommandWorkDetail) -> Self {
+        Self {
+            fuel_charges,
+            token_frame_steps: detail.token_frame_steps,
+            expanded_deliveries: detail.expanded_deliveries,
+            meaning_lookups: detail.meaning_lookups,
+            scanner_tokens: detail.scanner_tokens,
+            write_expansions: detail.write_expansions,
+        }
+    }
+}
+
+/// Work telemetry that is independent of the command-fuel countdown.
+///
+/// Fuel consumption has no second stored representation: publication derives
+/// it from the immutable admitted limit and the one mutable remaining count.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CommandWorkDetail {
+    token_frame_steps: u64,
+    expanded_deliveries: u64,
+    meaning_lookups: u64,
+    scanner_tokens: u64,
+    write_expansions: u64,
+}
+
+impl CommandWorkDetail {
     const ZERO: Self = Self {
-        fuel_charges: 0,
         token_frame_steps: 0,
         expanded_deliveries: 0,
         meaning_lookups: 0,
@@ -74,7 +99,8 @@ impl std::error::Error for CommandFuelLimitError {}
 #[derive(Debug, Eq, PartialEq)]
 pub struct CommandFuel {
     limit: u64,
-    work: CommandWorkCounters,
+    remaining: u64,
+    work: CommandWorkDetail,
 }
 
 impl CommandFuel {
@@ -84,7 +110,8 @@ impl CommandFuel {
         }
         Ok(Self {
             limit,
-            work: CommandWorkCounters::ZERO,
+            remaining: limit,
+            work: CommandWorkDetail::ZERO,
         })
     }
 
@@ -95,12 +122,12 @@ impl CommandFuel {
 
     #[must_use]
     pub const fn burned(&self) -> u64 {
-        self.work.fuel_charges
+        self.limit - self.remaining
     }
 
     #[must_use]
     pub const fn work(&self) -> CommandWorkCounters {
-        self.work
+        CommandWorkCounters::with_fuel_charges(self.burned(), self.work)
     }
 
     /// Charges one bounded command-machine transition.
@@ -108,45 +135,22 @@ impl CommandFuel {
     /// Execution-layer state machines use the same monotonic ledger as token
     /// delivery so rollback cannot refund work performed below the scanner.
     pub fn charge(&mut self) -> Result<(), crate::CommandError> {
-        let attempted =
-            self.work
-                .fuel_charges
-                .checked_add(1)
-                .ok_or(crate::CommandError::FuelExhausted {
-                    limit: self.limit,
-                    burned: self.work.fuel_charges,
-                    work: self.work,
-                })?;
-        if attempted > self.limit {
-            return Err(crate::CommandError::FuelExhausted {
-                limit: self.limit,
-                burned: self.work.fuel_charges,
-                work: self.work,
-            });
+        if self.remaining == 0 {
+            return Err(self.exhausted_error());
         }
-        self.work.fuel_charges = attempted;
+        self.remaining -= 1;
         Ok(())
     }
 
-    /// Charges a proven packed episode without replaying one counter update
-    /// per canonical transition.
-    ///
-    /// The packed command processor computes the exact transition count in
-    /// its admitted vocabulary. Fuel remains monotonic and a rejected charge
-    /// burns the remaining budget, exactly as repeated scalar charges would
-    /// before reporting exhaustion.
-    pub fn charge_many(&mut self, amount: u64) -> Result<(), crate::CommandError> {
-        let remaining = self.limit.saturating_sub(self.work.fuel_charges);
-        if amount > remaining {
-            self.work.fuel_charges = self.limit;
-            return Err(crate::CommandError::FuelExhausted {
-                limit: self.limit,
-                burned: self.work.fuel_charges,
-                work: self.work,
-            });
+    #[cold]
+    #[inline(never)]
+    fn exhausted_error(&self) -> crate::CommandError {
+        let work = self.work();
+        crate::CommandError::FuelExhausted {
+            limit: self.limit,
+            burned: work.fuel_charges,
+            work,
         }
-        self.work.fuel_charges = self.work.fuel_charges.saturating_add(amount);
-        Ok(())
     }
 
     /// Commits the exact work produced by one resolved raw delivery.
@@ -219,64 +223,12 @@ impl Default for CommandFuelLedger {
         Self {
             fuel: CommandFuel {
                 limit: DEFAULT_COMMAND_FUEL_LIMIT,
-                work: CommandWorkCounters::default(),
+                remaining: DEFAULT_COMMAND_FUEL_LIMIT,
+                work: CommandWorkDetail::ZERO,
             },
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exact_limit_funds_exactly_that_many_actions() {
-        let mut fuel = CommandFuel::new(3).expect("valid test limit");
-        assert!(fuel.charge().is_ok());
-        assert!(fuel.charge().is_ok());
-        assert!(fuel.charge().is_ok());
-        assert_eq!(
-            fuel.charge(),
-            Err(crate::CommandError::FuelExhausted {
-                limit: 3,
-                burned: 3,
-                work: CommandWorkCounters {
-                    fuel_charges: 3,
-                    ..CommandWorkCounters::default()
-                },
-            })
-        );
-        assert_eq!(fuel.burned(), 3);
-    }
-
-    #[test]
-    fn invalid_limits_are_rejected_instead_of_becoming_unlimited() {
-        assert_eq!(MAX_COMMAND_FUEL_LIMIT, 100_000_000_000);
-        for requested in [0, MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
-            let error = CommandFuel::new(requested).expect_err("invalid limit");
-            assert_eq!(error, CommandFuelLimitError { requested });
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "canonical command fuel limit {requested} is outside 1..={MAX_COMMAND_FUEL_LIMIT}"
-                )
-            );
-        }
-        assert_eq!(CommandFuel::new(1).expect("minimum").limit(), 1);
-        assert_eq!(
-            CommandFuel::new(MAX_COMMAND_FUEL_LIMIT)
-                .expect("maximum")
-                .limit(),
-            MAX_COMMAND_FUEL_LIMIT
-        );
-    }
-
-    #[test]
-    fn default_is_positive_finite_and_within_the_hard_maximum() {
-        let fuel = CommandFuelLedger::default();
-        assert_eq!(fuel.limit(), DEFAULT_COMMAND_FUEL_LIMIT);
-        assert!(fuel.limit() > 0);
-        assert!(fuel.limit() <= MAX_COMMAND_FUEL_LIMIT);
-        assert_ne!(fuel.limit(), u64::MAX);
-    }
-}
+mod tests;

@@ -1687,6 +1687,33 @@ fn execute_plan<G>(
     cancellation: &Cancellation,
     failed_attempt_fuel: &mut u64,
 ) -> Result<PlanExecution, SessionError> {
+    let result = execute_plan_inner(
+        universe,
+        ledger,
+        checkpoints,
+        control,
+        runtime,
+        candidate,
+        host,
+        cancellation,
+    );
+    if result.is_err() {
+        *failed_attempt_fuel = control.fuel_burned();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)] // Candidate execution keeps each mutable subsystem owner explicit.
+fn execute_plan_inner<G>(
+    universe: &mut Universe<G>,
+    ledger: &mut OutputLedger,
+    checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
+    control: &mut MainControl<G>,
+    runtime: &mut CandidateRuntime,
+    candidate: &RevisionCandidate<'_>,
+    host: &mut dyn ResourceHost,
+    cancellation: &Cancellation,
+) -> Result<PlanExecution, SessionError> {
     let CandidateRuntime {
         history,
         delivered_commands,
@@ -1749,7 +1776,6 @@ fn execute_plan<G>(
         // publish its diagnostic effects without publishing the revision.
         let step =
             CanonicalStepRunner::new(control, universe, ledger).step(&mut sink, cancellation);
-        *failed_attempt_fuel = control.fuel_burned();
         match step {
             CanonicalStepResult::Progress(step)
             | CanonicalStepResult::Committed(step)

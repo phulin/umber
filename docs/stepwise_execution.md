@@ -412,8 +412,12 @@ text-span token, builder unit, shipped node/event, and finalization unit. Work
 performed by a candidate that later rolls back remains charged. This prevents
 a document from resetting its budget by causing
 resource misses. Canonical execution charges the shared
-`tex_command::CommandFuel` ledger before raw delivery. Crossing a hard limit detaches
-a typed error, rolls back the current step, and terminally fails that candidate.
+`tex_command::CommandFuel` ledger before raw delivery. The ledger owns one
+exact remaining-budget countdown; each charge checks exhaustion once and then
+decrements it once. Consumed fuel is derived from the immutable admitted limit
+only at reporting boundaries, so ordinary executor steps do not publish or
+maintain a second consumed representation. Crossing a hard limit detaches a
+typed error, rolls back the current step, and terminally fails that candidate.
 It is not `AwaitingResources` and cannot be retried by increasing a limit.
 
 Diagnostic provenance is append-only work owned by the candidate `Universe`,

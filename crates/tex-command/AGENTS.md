@@ -140,11 +140,13 @@ collector (see `src/conditionals.rs`).
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
-- `src/fuel.rs`: checked finite command-work limits, monotonic scalar command
-  work counters, the constructor-free borrow-only `CommandFuel` capability
-  used by leaf operations, and the top-level `CommandFuelLedger` session owner
-  shared by every canonical processor episode. Fuel and work counters are
-  operational evidence outside semantic state; rollback never refunds them.
+- `src/fuel.rs` and `src/fuel/tests.rs`: checked finite command-work limits,
+  one exact remaining-budget countdown, separately stored non-fuel work
+  counters, terminal/publication-time consumed-fuel derivation, the
+  constructor-free borrow-only `CommandFuel` capability used by leaf
+  operations, and the top-level `CommandFuelLedger` session owner shared by
+  every canonical processor episode. Fuel and work counters are operational
+  evidence outside semantic state; rollback never refunds them.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every

@@ -30,7 +30,10 @@ long-lived editor-session strategy over executor-named checkpoints.
   ownership whose runtime coordinates remain inside generic admission,
   publication-time history-budget release propagated synchronously to every
   private checkpoint owner, plus the independently charged frozen JobStart
-  image and its explicit profile/compatibility/job-clock binding. One
+  image and its explicit profile/compatibility/job-clock binding. Command fuel
+  consumption is read only when a candidate completes or exits with an error;
+  ordinary executor steps and retained resource suspension keep the singular
+  command ledger without cross-layer consumed-fuel publication. One
   external session reachability store owns the fixed prior/current physical
   slots across rejection, acceptance, and suspension; the admitted generation
   sidecar, not the revision runtime or retained checkpoint, owns the singular
