@@ -3902,12 +3902,15 @@ compiled in every build.
 ## 33. Main-control integration
 
 `tex-exec` owns main control. Each bounded episode repeatedly gives
-`CommandProcessor` its operation-local `Option<CurrentCommand>` destination,
-dispatches the unexpandable command written there, and performs stomach
-semantics under one aggregate rollback root. Raw preflight, ordinary expanded
-delivery, main-loop lookahead, alignment delivery, prefix scanning, leader
-handoff, and in-place reswitch all use that same caller-owned destination
-shape; the returned status carries no command.
+`CommandProcessor` the `Option<CurrentCommand>` destination inside its singular
+operation frame, dispatches the unexpandable command written there, and
+performs stomach semantics under one aggregate rollback root. Main-control
+preflight enters one raw-fetch/classification driver: an unexpandable command
+publishes its canonical expanded observation directly, while a macro,
+expandable primitive, or undefined command continues through expansion in that
+same driver and destination. Main-loop lookahead, alignment delivery, prefix
+scanning, leader handoff, and in-place reswitch use the same caller-owned
+destination shape; the returned status carries no command.
 
 Execution may call narrow processor APIs to:
 
@@ -3942,12 +3945,17 @@ exact caller rather than fetching past a settled command or reconstructing an
 owner coordinate from command state.
 
 The call-local destination is empty on initial delivery, is cleared only while
-a canonical filler loop continues, and never crosses a resource barrier.
-Preflight settlement accepts that already-occupied destination and advances it
-in place; the executor does not take the command merely for the command core to
-write it back. It does not back up or redeliver the command. Replay completion
-and alignment events remain compact status variants and leave no
-command-bearing return envelope.
+a canonical filler or expansion loop continues, and never crosses a resource
+barrier. Raw delivery, expansion classification, and any required expansion
+advance that destination inside one driver entry; the executor does not take
+the command merely for the command core to write it back. For an ordinary
+non-barrier command, tracing, capability classification, prefix handling, and
+the general operand scanner continue in the same `CommandProcessor` and
+admitted `CommandContext`. There is no hand-picked command-family scanner at
+this boundary. Resource, transaction, diagnostic, alignment, and tracked-region
+boundaries retain the existing explicit preparation path. No path backs up or
+redelivers a settled preflight command. Replay completion and alignment events
+remain compact status variants and leave no command-bearing return envelope.
 
 The executor's caller-loop `OperationFrame` owns those command, parked
 expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase

@@ -101,11 +101,12 @@ collector (see `src/conditionals.rs`).
   the executor borrows the one caller-owned value through preflight and
   scanning, and moves it only into an actual retry or another semantic owner;
   it never enters a durable snapshot or format boundary.
-- `src/processor/expand.rs`: canonical expanded delivery, including the
-  same-borrow preflight settlement that advances the caller's already-occupied
-  destination in place and reports and discards undefined commands before
-  returning the following command to the executor. The
-  ordinary driver owns one live
+- `src/processor/expand.rs`: canonical expanded delivery, including one
+  main-control preflight entry that raw-fetches into the caller's destination,
+  classifies that resident command once, publishes an ordinary unexpandable
+  result directly, and continues through expansion in place only when needed.
+  Undefined commands are reported and discarded before the following command
+  returns to the executor. The ordinary driver owns one live
   current command and lends it through macro and ranked primitive expansion;
   it moves that value into continuation state only after a typed immutable-host
   suspension, and a resumed primitive retains §367's already-emitted trace
@@ -221,8 +222,9 @@ collector (see `src/conditionals.rs`).
   one request-local cold error slot carries a real error to the public boundary.
   Expanded delivery classifies each resolved meaning once as return, expand, or
   end-template handling.
-  The facade also resumes an executor-retained settled delivery and settles a
-  raw preflight command without backing it up or delivering it twice.
+  The facade also resumes an executor-retained settled delivery. Main-control
+  preflight performs raw fetch, expansion classification, and any required
+  expansion in one driver entry without backing up or redelivering the command.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.

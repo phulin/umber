@@ -619,13 +619,18 @@ before the operation commits. The world error channel owns prompting and
 rendering only, while the command machine remains the sole input-stack owner.
 
 Main control likewise owns one call-local `Option<CurrentCommand>` final slot
-for raw preflight, ordinary expansion, main-loop lookahead, alignment bodies,
-prefixes, leader handoff, and `goto reswitch`. Delivery writes the completed
-command there and returns only a compact status. Filler loops and the ordinary
-expanded-delivery loop overwrite and reuse that slot; only the final consumer,
-an explicit backup, or an exact typed suspension moves the settled owner out.
-No command is cloned merely to cross the delivery API, and no settled command
-is backed up or redelivered across preflight.
+for preflight, ordinary expansion, main-loop lookahead, alignment bodies,
+prefixes, leader handoff, and `goto reswitch`. Preflight raw-fetches into that
+slot, classifies it once, publishes an unexpandable result directly, and
+continues through expansion in place only when classification requires it.
+The general ordinary scanner then borrows the same slot in the same admitted
+command context. A resource, transaction, diagnostic, alignment, or tracked
+observation boundary stops before that scan and retains only the exact frame
+state required by its established path. Delivery returns only a compact status;
+filler loops overwrite and reuse the slot, and only the final consumer, an
+explicit backup, or an exact typed suspension moves the settled owner out. No
+command is cloned merely to cross the delivery API, and no settled command is
+backed up or redelivered across preflight.
 
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered

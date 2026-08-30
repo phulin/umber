@@ -231,7 +231,6 @@ fn migrated_production_delivery_callers_own_their_command_destinations() {
         ".get_x_alignment_delivery(",
         ".next_non_blank_x_token()",
         ".next_non_blank_non_relax_x_token()",
-        ".settle_current_command(",
     ];
     let inferred_or_redispatched = [
         "infer_command_destination",

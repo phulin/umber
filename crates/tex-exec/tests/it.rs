@@ -416,11 +416,22 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .and_then(|(_, tail)| tail.split_once("pub const fn job_body_effect_end"))
         .map(|(body, _)| body)
         .expect("locate direct preflight delivery");
-    assert!(preflight.contains(".get_next_with_replay_completion_into(&mut frame.command)"));
-    assert!(
-        preflight
-            .contains(".settle_preflight_command_into(self.main_loop_active, &mut frame.command)")
+    assert!(preflight.contains("processor.main_loop_lookahead_into(&mut frame.command)"));
+    assert!(preflight.contains("processor.preflight_command_into(&mut frame.command)"));
+    let admitted_episode = preflight
+        .split_once("let mut context = stores.command_context()")
+        .and_then(|(_, tail)| tail.split_once("drop(context);"))
+        .map(|(body, _)| body)
+        .expect("locate one admitted preflight context episode");
+    assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
+    assert!(!admitted_episode.contains("stores.command_context()"));
+    assert_eq!(
+        preflight.matches("dispatch_main_control_command(").count(),
+        1
     );
+    assert!(!preflight.contains("settle_preflight_command_into"));
+    assert!(!control.contains("fn direct_hot_candidate"));
+    assert!(!control.contains("fn scan_direct_hot_command"));
     assert!(!preflight.contains("let mut destination = None"));
     let expansion_settlement = control
         .split_once("fn settle_preflight_step<")

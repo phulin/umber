@@ -158,8 +158,8 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             );
             assert_eq!(
                 processor
-                    .get_x_token_into(&mut destination)
-                    .expect("ordinary expanded delivery"),
+                    .preflight_command_into(&mut destination)
+                    .expect("preflight expansion delivery"),
                 crate::DeliveryStatus::Command
             );
         }
@@ -197,7 +197,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
 }
 
 #[test]
-fn one_and_4096_ordinary_expansions_reuse_one_slot_with_exact_linear_work() {
+fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     let one = empty_macro_delivery_evidence(1);
     let many = empty_macro_delivery_evidence(4_096);
 
@@ -227,7 +227,7 @@ fn internal_delivery_result_does_not_carry_the_rich_error_envelope() {
 }
 
 #[test]
-fn preflight_settlement_advances_the_occupied_command_slot_in_place() {
+fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {
             ch: 'A',
@@ -258,27 +258,16 @@ fn preflight_settlement_advances_the_occupied_command_slot_in_place() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        assert_eq!(
-            processor
-                .get_next_with_replay_completion_into(&mut destination)
-                .expect("raw macro delivery"),
-            crate::DeliveryStatus::Command
-        );
-        let address = destination
-            .as_ref()
-            .map(std::ptr::from_ref)
-            .expect("raw delivery occupies the destination");
         let ownership_before = crate::command::command_ownership_counters();
         assert_eq!(
             processor
-                .settle_preflight_command_into(false, &mut destination)
-                .expect("in-place settlement"),
+                .preflight_command_into(&mut destination)
+                .expect("preflight delivery"),
             crate::DeliveryStatus::Command
         );
         let settled = destination
             .as_ref()
-            .expect("settlement preserves the occupied destination");
-        assert_eq!(std::ptr::from_ref(settled), address);
+            .expect("expanded delivery occupies the caller destination");
         assert_eq!(settled.spelling().semantic_token(), replacement);
         assert_eq!(
             settled.meaning(),
@@ -288,6 +277,63 @@ fn preflight_settlement_advances_the_occupied_command_slot_in_place() {
             }
         );
         let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(ownership_after.clones - ownership_before.clones, 0);
+    });
+}
+
+#[test]
+fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let work_before = fuel.work();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let ownership_before = crate::command::command_ownership_counters();
+        let classifications_before = super::expanded_classifications();
+        assert_eq!(
+            processor
+                .preflight_command_into(&mut destination)
+                .expect("preflight delivery"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("raw delivery occupies the caller destination")
+                .spelling()
+                .semantic_token(),
+            token
+        );
+        drop(processor);
+        let work_after = fuel.work();
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(
+            super::expanded_classifications() - classifications_before,
+            1
+        );
+        assert_eq!(
+            work_after.expanded_deliveries - work_before.expanded_deliveries,
+            0
+        );
+        assert_eq!(
+            ownership_after.slot_initializations - ownership_before.slot_initializations,
+            1
+        );
         assert_eq!(ownership_after.clones - ownership_before.clones, 0);
     });
 }

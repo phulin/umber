@@ -6286,19 +6286,16 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
         assert!(matches!(
             control.pending_direct_operation.as_ref(),
             Some(PendingDirectOperation::Retained {
-                destination: PendingDirectDestination::Frame(OperationFrame {
-                    command: Some(command),
-                    phase: Some(PreflightCommandPhase::Settled),
-                    scanner: Some(_),
-                    ..
-                }),
+                destination: PendingDirectDestination::Frame(frame),
                 ..
-            }) if matches!(
-                command.meaning(),
-                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::Edef
-                ))
-            )
+            }) if frame.scanner.is_some()
+                && frame.is_command_scan()
+                && matches!(
+                    frame.current().meaning(),
+                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Edef
+                    ))
+                )
         ));
     });
 }

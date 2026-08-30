@@ -75,6 +75,7 @@ pub(super) enum ExpandedObservationPolicy {
 pub(super) enum FirstCommandPolicy {
     Ordinary,
     MainLoopCharacter,
+    PreflightRaw,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

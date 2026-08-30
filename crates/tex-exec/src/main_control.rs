@@ -780,8 +780,6 @@ enum OperationDelivery<G> {
 
 #[derive(Clone, Copy, Debug)]
 enum PreflightCommandPhase {
-    /// Ordinary expanded delivery has not yet published its observation.
-    Replay,
     Settled,
     Raw,
     Expanding {
@@ -1159,6 +1157,83 @@ fn preflight_delivery_from_frame<G>(frame: &OperationFrame<G>) -> PreflightDeliv
     }
 }
 
+/// Whether operand scanning must wait for a resource/transaction boundary.
+///
+/// These are the complete live facts consulted by the decision.  Passing
+/// them through the already-admitted command episode lets ordinary delivery
+/// continue directly into its scanner without opening a second context merely
+/// to ask the same mode, group, and `\pdfoutput` questions again.
+fn command_requires_transaction_from_facts<G>(
+    mode: Mode,
+    boxes: &ReplayBoxes<G>,
+    capabilities: crate::transaction_protocol::CommandCapabilities,
+    frame: &OperationFrame<G>,
+    pdf_output: i32,
+    innermost_group: Option<GroupKind>,
+) -> bool {
+    if !matches!(
+        capabilities.preflight(),
+        crate::transaction_protocol::CommandPreflight::Ordinary(_)
+    ) {
+        return true;
+    }
+    // pdfTeX's `check_pdfoutput` fails before operand scanning. ErrorStop can
+    // change `\pdfoutput` and retry that untouched command, so DVI mode keeps
+    // the retry transaction.
+    if capabilities
+        .mutation()
+        .contains(crate::transaction_protocol::StateOwners::PDF)
+        && pdf_output <= 0
+    {
+        return true;
+    }
+    if matches!(mode, Mode::Vertical | Mode::InternalVertical)
+        && frame.current_option().is_some_and(|command| {
+            matches!(
+                command.meaning(),
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::PdfStartLink
+                ))
+            )
+        })
+    {
+        return true;
+    }
+    if matches!(frame.phase, Some(PreflightCommandPhase::Expanding { .. })) {
+        return true;
+    }
+    // A brace packaging an active box can enter page or shipout work. Braces
+    // inside the box remain ordinary because their save-stack group differs.
+    if frame.current_option().is_some_and(|command| {
+        matches!(
+            command.meaning(),
+            ResolvedMeaning::Static(Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            })
+        )
+    }) && boxes
+        .active_boxes
+        .last()
+        .is_some_and(|active| innermost_group == Some(active.group_kind))
+    {
+        return true;
+    }
+    frame.current_option().is_some_and(|command| {
+        matches!(
+            command.meaning(),
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Global
+                    | UnexpandablePrimitive::Long
+                    | UnexpandablePrimitive::Outer
+                    | UnexpandablePrimitive::Protected
+                    | UnexpandablePrimitive::IgnoreSpaces
+                    | UnexpandablePrimitive::NoBoundary
+            ))
+        )
+    })
+}
+
 #[derive(Clone, Copy)]
 struct OperationOutputStart {
     outer_paragraph_was_active: bool,
@@ -1281,10 +1356,6 @@ impl<G> OperationFrame<G> {
         self.mark_resident_command(PreflightCommandPhase::Raw, cursor);
     }
 
-    fn mark_resident_replay(&mut self) {
-        self.mark_resident_command(PreflightCommandPhase::Replay, None);
-    }
-
     fn admit_expanding(
         &mut self,
         expansion: tex_command::ExpansionWorkKey<G>,
@@ -1301,21 +1372,6 @@ impl<G> OperationFrame<G> {
         self.cursor = Some(cursor);
         self.scanner = None;
         self.operation_scan = None;
-    }
-
-    fn retain_resident_operation_scan(
-        &mut self,
-        cursor: tex_command::CommandDeliveryCursor,
-        phase: PendingOperationScanPhase,
-        scanner: tex_command::ScannerFrameKey<G>,
-    ) {
-        assert!(self.command.is_some());
-        assert!(self.expansion.is_none());
-        assert!(self.phase.is_none());
-        self.phase = Some(PreflightCommandPhase::OperationScan);
-        self.cursor = Some(cursor);
-        self.scanner = Some(scanner);
-        self.operation_scan = Some(phase);
     }
 
     fn admit_immediate_pdf(&mut self, primitive: UnexpandablePrimitive) {
@@ -4558,81 +4614,15 @@ impl<G> MainControl<G> {
         capabilities: crate::transaction_protocol::CommandCapabilities,
         frame: &OperationFrame<G>,
     ) -> bool {
-        if !matches!(
-            capabilities.preflight(),
-            crate::transaction_protocol::CommandPreflight::Ordinary(_)
-        ) {
-            return true;
-        }
-        // pdfTeX's `check_pdfoutput` fails before operand scanning. ErrorStop
-        // can change `\pdfoutput` and retry that untouched command, so DVI
-        // mode retains the retry transaction; an enabled ordinary PDF
-        // command cannot take that recovery edge and commits directly.
-        if capabilities
-            .mutation()
-            .contains(crate::transaction_protocol::StateOwners::PDF)
-            && stores
-                .command_context()
-                .expect("live generation")
-                .int_param(IntParam::PDF_OUTPUT)
-                <= 0
-        {
-            return true;
-        }
-        if matches!(
+        let context = stores.command_context().expect("live generation");
+        command_requires_transaction_from_facts(
             self.modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        ) && frame.current_option().is_some_and(|command| {
-            matches!(
-                command.meaning(),
-                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::PdfStartLink
-                ))
-            )
-        }) {
-            return true;
-        }
-        if matches!(frame.phase, Some(PreflightCommandPhase::Expanding { .. })) {
-            return true;
-        }
-        // A right brace normally owns only the save stack and group state,
-        // but the brace that packages an active box can also run the page or
-        // explicit-shipout pipeline. Route that dynamic continuation through
-        // typed preparation so its PDF, effect, and output capabilities are
-        // known before direct semantic apply. Braces inside the box remain
-        // ordinary because their innermost save-stack group does not name the
-        // box body.
-        if let Some(command) = frame.current_option()
-            && matches!(
-                command.meaning(),
-                ResolvedMeaning::Static(Meaning::CharToken {
-                    cat: Catcode::EndGroup,
-                    ..
-                })
-            )
-            && self.boxes.active_boxes.last().is_some_and(|active| {
-                stores
-                    .command_context()
-                    .expect("live generation")
-                    .innermost_group_kind()
-                    == Some(active.group_kind)
-            })
-        {
-            return true;
-        }
-        frame.current_option().is_some_and(|command| {
-            matches!(
-                command.meaning(),
-                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::Global
-                        | UnexpandablePrimitive::Long
-                        | UnexpandablePrimitive::Outer
-                        | UnexpandablePrimitive::Protected
-                        | UnexpandablePrimitive::IgnoreSpaces
-                        | UnexpandablePrimitive::NoBoundary
-                ))
-            )
-        })
+            &self.boxes,
+            capabilities,
+            frame,
+            context.int_param(IntParam::PDF_OUTPUT),
+            context.innermost_group_kind(),
+        )
     }
 
     fn record_direct_episode_commit(
@@ -8060,9 +8050,12 @@ impl<G> MainControl<G> {
             self.observe_committed(entry_records);
         }
         let innermost_group = context.innermost_group_kind();
+        let tracked_region_is_active = context.tracked_region_is_active();
+        let job_is_all_over = crate::page_output::job_is_all_over(&context);
+        let display_eq_no = self.modes.current_list().display_eq_no().is_some();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let (delivery_status, settled_in_preflight, trace_reported, fused_hot, fused_error) = {
+        let (delivery_status, trace_reported, fused_scan, fused_error) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -8072,43 +8065,35 @@ impl<G> MainControl<G> {
                 &mut context,
             );
             processor.set_output_routine_active(self.boxes.output_routine_active);
-            let mut delivery_status = processor
-                .get_next_with_replay_completion_into(&mut frame.command)
-                .map_err(command_error)?;
-            let mut settled_in_preflight = false;
-            if delivery_status == tex_command::DeliveryStatus::Command
-                && matches!(
-                    frame.current().meaning(),
-                    ResolvedMeaning::Macro { .. }
-                        | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
-                        | ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
-                )
-            {
-                prepare_command_trace(&mut processor, mode, self.shown_mode);
-                match processor
-                    .settle_preflight_command_into(self.main_loop_active, &mut frame.command)
-                {
-                    Ok(status) => {
-                        settled_in_preflight = true;
-                        delivery_status = status;
+            prepare_command_trace(&mut processor, mode, self.shown_mode);
+            // TeX82 has one raw-fetch/classification loop. Enter it once with
+            // §1038's first-command policy when the character loop is active;
+            // otherwise ordinary preflight publishes the unexpandable
+            // command's expanded observation directly and continues in place
+            // only when expansion is actually required.
+            let delivery = if raw_main_loop_delivery {
+                processor.main_loop_lookahead_into(&mut frame.command)
+            } else {
+                processor.preflight_command_into(&mut frame.command)
+            };
+            let delivery_status = match delivery {
+                Ok(status) => status,
+                Err(error) => {
+                    // The expansion driver moves its live command into
+                    // command state only after an actual immutable-host
+                    // suspension. Fuel and semantic failures have no retry
+                    // command and must not clone one speculatively.
+                    if let Some(expansion) = processor.take_pending_expansion_work() {
+                        frame.admit_expanding(
+                            expansion,
+                            self.main_loop_active,
+                            processor.delivery_cursor(),
+                        );
                     }
-                    Err(error) => {
-                        // The expansion driver moves its live command into
-                        // command state only after an actual immutable-host
-                        // suspension. Fuel and semantic failures have no
-                        // retry command and must not clone one speculatively.
-                        if let Some(expansion) = processor.take_pending_expansion_work() {
-                            frame.admit_expanding(
-                                expansion,
-                                self.main_loop_active,
-                                processor.delivery_cursor(),
-                            );
-                        }
-                        drop(processor);
-                        return Err(command_error(error));
-                    }
+                    drop(processor);
+                    return Err(command_error(error));
                 }
-            }
+            };
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -8124,7 +8109,7 @@ impl<G> MainControl<G> {
                 self.shown_mode = Some(mode);
             }
             let mut trace_reported = false;
-            let mut fused_hot = None;
+            let mut fused_scan = None;
             let mut fused_error = None;
             // Diagnostics are a real reporting barrier: preserve their
             // established ordering before command tracing or operand work.
@@ -8152,10 +8137,19 @@ impl<G> MainControl<G> {
                     );
                     trace_reported = true;
                 }
-                if direct_hot_candidate(mode, &self.boxes, innermost_group, frame.current()) {
-                    if !settled_in_preflight {
-                        processor.observe_expanded_delivery(frame.current());
-                    }
+                let capabilities = crate::transaction_protocol::canonical_command_capabilities(
+                    frame.current().meaning(),
+                );
+                let needs_barrier = tracked_region_is_active
+                    || command_requires_transaction_from_facts(
+                        mode,
+                        &self.boxes,
+                        capabilities,
+                        frame,
+                        processor.int_param(IntParam::PDF_OUTPUT),
+                        innermost_group,
+                    );
+                if !needs_barrier {
                     #[cfg(feature = "profiling")]
                     tex_state::measurement::record_hot_core_phase(
                         tex_state::measurement::HotCorePhase::DeliveryAndScan,
@@ -8164,36 +8158,37 @@ impl<G> MainControl<G> {
                     let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
                         tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
                     );
-                    let mut suspended_operation_scan = None;
-                    match scan_direct_hot_command(
+                    match dispatch_main_control_command(
                         &mut processor,
-                        frame.current(),
+                        frame,
+                        mode,
+                        &self.boxes,
                         innermost_group,
-                        &mut suspended_operation_scan,
+                        job_is_all_over,
+                        display_eq_no,
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                        None,
+                        true,
                     ) {
                         Ok(operation) => {
-                            let meaning = frame.current().meaning();
                             diagnostics.extend(
                                 processor
                                     .take_semantic_diagnostics()
                                     .into_iter()
                                     .map(PendingDiagnostic::Command),
                             );
-                            frame.discard_resident_command();
-                            fused_hot = Some((operation, meaning));
+                            // The scanned operation now owns every durable
+                            // result. Retire the delivery/scanner episode as a
+                            // unit before handing that operation to execution;
+                            // no preflight marker belongs to the next stage.
+                            frame.clear_preflight();
+                            fused_scan = Some((operation, capabilities));
                         }
                         Err(error) => {
                             let cursor = processor.delivery_cursor();
                             if execution_error_needs_command_retry(&error) {
-                                if let Some(phase) = suspended_operation_scan {
-                                    frame.retain_resident_operation_scan(
-                                        cursor,
-                                        phase,
-                                        processor.take_scanner_resume().expect(
-                                            "a suspended hot scalar scan retains its exact child",
-                                        ),
-                                    );
-                                } else {
+                                if !frame.has_preflight() {
                                     let retry_expansion = processor.take_pending_expansion_work();
                                     let scanner = processor.take_scanner_resume();
                                     if let Some(expansion) = retry_expansion {
@@ -8216,13 +8211,7 @@ impl<G> MainControl<G> {
                     }
                 }
             }
-            (
-                delivery_status,
-                settled_in_preflight,
-                trace_reported,
-                fused_hot,
-                fused_error,
-            )
+            (delivery_status, trace_reported, fused_scan, fused_error)
         };
         drop(context);
         if let Some(error) = fused_error {
@@ -8230,10 +8219,21 @@ impl<G> MainControl<G> {
         }
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
-        if let Some((operation, meaning)) = fused_hot {
+        if let Some((operation, capabilities)) = fused_scan {
+            match operation {
+                ScannedOperation::Hot(operation) => {
+                    return Ok(Some(PreflightDelivery::<G> {
+                        delivery: OperationDelivery::<G>::Hot(operation),
+                        capabilities,
+                        scanner: None,
+                        expansion: None,
+                    }));
+                }
+                ScannedOperation::Cold(operation) => frame.unavailable = Some(operation),
+            }
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Hot(operation),
-                capabilities: crate::transaction_protocol::canonical_command_capabilities(meaning),
+                delivery: OperationDelivery::<G>::Prepared,
+                capabilities,
                 scanner: None,
                 expansion: None,
             }));
@@ -8323,12 +8323,10 @@ impl<G> MainControl<G> {
         }
         let capabilities =
             crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning());
-        if settled_in_preflight {
-            frame.mark_resident_settled(None);
-        } else if raw_main_loop_delivery && continues_main_loop {
+        if raw_main_loop_delivery && continues_main_loop {
             frame.mark_resident_raw(None);
         } else {
-            frame.mark_resident_replay();
+            frame.mark_resident_settled(None);
         }
         Ok(Some(PreflightDelivery::<G> {
             delivery: OperationDelivery::<G>::Command,
@@ -8475,6 +8473,23 @@ impl<G> MainControl<G> {
             last_node_type,
             _scope: _,
         } = host_preparation;
+        let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
+        let root_main_file_origin = self.active_external_file_is_root_main();
+        if let OperationDelivery::<G>::Hot(operation) = delivery {
+            frame.applied = Some(self.apply_hot_operation(
+                stores,
+                diagnostic_effects,
+                operation,
+                OperationOutputStart {
+                    outer_paragraph_was_active,
+                    root_main_file_origin,
+                    artifact_count: stores.world().artifact_commits().len(),
+                    effect_count: stores.world().effect_records().len(),
+                    prepared_page_count: self.prepared_dvi_pages.len(),
+                },
+            ));
+            return OperationReadiness::Applied;
+        }
         let tracked_region_is_active = stores
             .command_context()
             .is_ok_and(|context| context.tracked_region_is_active());
@@ -8540,17 +8555,13 @@ impl<G> MainControl<G> {
                 .collect();
             self.observe_committed(entry_records);
         }
-        let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let root_main_file_origin = self.active_external_file_is_root_main();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let (innermost_group, job_is_all_over) = (
             context.innermost_group_kind(),
             crate::page_output::job_is_all_over(&context),
         );
         let mut diagnostics = Vec::new();
-        let scanned = if let OperationDelivery::<G>::Hot(operation) = delivery {
-            ScannedOperation::<G>::Hot(operation)
-        } else {
+        let scanned = {
             #[cfg(feature = "profiling")]
             tex_state::measurement::record_hot_core_phase(
                 tex_state::measurement::HotCorePhase::DeliveryAndScan,
@@ -8689,7 +8700,7 @@ impl<G> MainControl<G> {
                         }
                     }
                     OperationDelivery::<G>::Hot(_) => {
-                        unreachable!("pre-scanned hot delivery bypasses processor construction")
+                        unreachable!("pre-scanned hot delivery bypasses operation preparation")
                     }
                     OperationDelivery::<G>::Prepared => frame
                         .unavailable
@@ -11088,23 +11099,6 @@ fn scan_preflight_command<G>(
         .phase
         .expect("operation frame owns its scalar phase")
     {
-        PreflightCommandPhase::Replay => {
-            processor.resume_current_command(command.current());
-            processor.observe_expanded_delivery(command.current());
-            dispatch_main_control_command(
-                processor,
-                command,
-                mode,
-                boxes,
-                innermost_group,
-                job_is_all_over,
-                display_eq_no,
-                shown_mode,
-                diagnostics,
-                None,
-                true,
-            )
-        }
         PreflightCommandPhase::Settled | PreflightCommandPhase::Raw => {
             processor.resume_current_command(command.current());
             dispatch_main_control_command(
@@ -12562,107 +12556,6 @@ fn resume_pending_operation_scan<G>(
         }
     }?;
     Ok(cold.into())
-}
-
-/// Whether a settled command can reach the ranked hot scanner without first
-/// crossing a transaction, resource, diagnostic, or contextual dispatcher
-/// barrier. Prefixes deliberately do not qualify: their substantive command
-/// is not known until the transactional prefix loop has run.
-fn direct_hot_candidate<G>(
-    mode: Mode,
-    boxes: &ReplayBoxes<G>,
-    innermost_group: Option<GroupKind>,
-    command: &tex_command::CurrentCommand<G>,
-) -> bool {
-    if boxes.pending_leader.is_some() {
-        return false;
-    }
-    match command.meaning() {
-        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::Def
-            | UnexpandablePrimitive::Edef
-            | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef
-            | UnexpandablePrimitive::Let
-            | UnexpandablePrimitive::FutureLet
-            | UnexpandablePrimitive::CatCode
-            | UnexpandablePrimitive::BeginGroup,
-        )) => true,
-        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::EndGroup,
-        )) => innermost_group == Some(GroupKind::SemiSimple),
-        ResolvedMeaning::Static(Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        }) => {
-            !matches!(mode, Mode::Math | Mode::DisplayMath)
-                && !boxes.output_routine_opening_pending
-                && !boxes.recovery_simple_group_pending
-        }
-        ResolvedMeaning::Static(Meaning::CharToken {
-            cat: Catcode::EndGroup,
-            ..
-        }) => innermost_group == Some(GroupKind::Simple) && !boxes.recovery_simple_group_open,
-        _ => false,
-    }
-}
-
-/// Scans a command proven by [`direct_hot_candidate`] to have no contextual
-/// dispatcher work before the ranked hot family. The command remains borrowed
-/// so an actual immutable-resource suspension can move it into the exact retry
-/// continuation without a speculative clone.
-fn scan_direct_hot_command<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    command: &tex_command::CurrentCommand<G>,
-    innermost_group: Option<GroupKind>,
-    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
-) -> Result<hot_apply::HotOperation<G>, ExecError> {
-    #[cfg(feature = "profiling")]
-    {
-        tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
-            command.meaning(),
-        ));
-        if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
-            command.meaning()
-        {
-            tex_state::measurement::record_hot_core_unexpandable_opcode(
-                usize::try_from(primitive.operand())
-                    .expect("unexpandable primitive operand fits usize"),
-            );
-        }
-    }
-    if innermost_group == Some(GroupKind::Simple)
-        && matches!(
-            command.meaning(),
-            ResolvedMeaning::Static(Meaning::CharToken {
-                cat: Catcode::EndGroup,
-                ..
-            })
-        )
-    {
-        return Ok(hot_apply::HotOperation::<G>::end_ordinary_group());
-    }
-    let global = effective_global(
-        processor.int_param(IntParam::GLOBAL_DEFS),
-        matches!(
-            command.meaning(),
-            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-            ))
-        ),
-    );
-    match hot_apply::scan(
-        processor,
-        command,
-        global,
-        MeaningFlags::EMPTY,
-        innermost_group,
-        suspended_operation_scan,
-    ) {
-        Ok(Some(operation)) => Ok(operation),
-        Ok(None) => unreachable!("direct hot candidate reaches the ranked hot scanner"),
-        Err(error) => Err(error.capture_command_origin(command.origin())),
-    }
 }
 
 /// Dispatches one already-fetched command through TeX82 §1030's `reswitch:`

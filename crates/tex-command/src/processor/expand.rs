@@ -377,37 +377,6 @@ fn is_ranked_fused_expansion<G>(meaning: &ResolvedMeaning<G>) -> bool {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Settles one raw command already delivered by the same processor
-    /// episode. This is the capability-preflight seam: macro/expandable
-    /// nesting, undefined-command recovery, and ordered raw/expanded
-    /// observations remain in one borrow.
-    #[doc(hidden)]
-    pub fn settle_current_command(
-        &mut self,
-        command: CurrentCommand<G>,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = Some(command);
-        let result = self.delivery_driver(
-            DeliveryPolicy {
-                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
-                    fetch: ExpandedFetch::XToken,
-                    protected_macros: ProtectedMacroHandling::Expand,
-                    undefined: UndefinedHandling::Diagnose,
-                    observation: ExpandedObservationPolicy::Commit,
-                    first_command: FirstCommandPolicy::Ordinary,
-                }),
-                replay_completion: ReplayCompletionPolicy::Consume,
-                alignment_interception: AlignmentInterceptionPolicy::Scalar,
-            },
-            &mut destination,
-        )?;
-        match result {
-            DeliveryStatus::End => Ok(None),
-            DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("preflight settlement returns one command"),
-        }
-    }
-
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
     /// This thin canonical entry point selects the ordinary policy of the
@@ -797,49 +766,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
-    /// Settles a raw command retained by the executor's capability preflight.
-    ///
-    /// This is TeX82's `x_token` entry with `cur_cmd` already set. It neither
-    /// backs up nor redelivers the retained token. `main_loop` selects §1038's
-    /// character fast-path policy for the first command only.
-    pub fn settle_preflight_command(
+    /// Delivers main-control preflight through one raw-fetch/classification
+    /// loop. An ordinary unexpandable command publishes its canonical expanded
+    /// observation directly, without completing a second expanded-driver
+    /// episode; a macro, expandable primitive, or undefined command continues
+    /// in place through the canonical expanded loop.
+    pub fn preflight_command_into(
         &mut self,
-        command: CurrentCommand<G>,
-        main_loop: bool,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = Some(command);
-        let result = self.settle_preflight_command_into(main_loop, &mut destination)?;
-        Ok(match result {
-            DeliveryStatus::End => None,
-            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("preflight settlement has no alignment event"),
-        })
-    }
-
-    /// Settles a preflight command into caller-provided final storage.
-    pub fn settle_preflight_command_into(
-        &mut self,
-        main_loop: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_some());
         let result = self.delivery_driver(
             DeliveryPolicy {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
-                    fetch: ExpandedFetch::XToken,
+                    fetch: ExpandedFetch::GetXToken,
                     protected_macros: ProtectedMacroHandling::Expand,
                     undefined: UndefinedHandling::Diagnose,
                     observation: ExpandedObservationPolicy::Commit,
-                    first_command: if main_loop {
-                        FirstCommandPolicy::MainLoopCharacter
-                    } else {
-                        FirstCommandPolicy::Ordinary
-                    },
+                    first_command: FirstCommandPolicy::PreflightRaw,
                 }),
                 replay_completion: ReplayCompletionPolicy::Surface,
                 alignment_interception: AlignmentInterceptionPolicy::Scalar,
@@ -1127,14 +1070,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .expect("expanded destination contains a command");
 
-            if std::mem::take(&mut first)
+            let first = std::mem::take(&mut first);
+            let action =
+                classify_expanded_command(command, expanded.protected_macros, expanded.undefined);
+            if first
                 && expanded.first_command == FirstCommandPolicy::MainLoopCharacter
                 && is_main_loop_character(command.meaning_ref())
             {
                 return Ok(DeliveryStatus::Command);
             }
-            match classify_expanded_command(command, expanded.protected_macros, expanded.undefined)
+            if first
+                && expanded.first_command == FirstCommandPolicy::PreflightRaw
+                && action == ExpandedCommandAction::Return
             {
+                debug_assert_eq!(expanded.observation, ExpandedObservationPolicy::Commit);
+                self.observe_expanded_delivery(command);
+                return Ok(DeliveryStatus::Command);
+            }
+            match action {
                 ExpandedCommandAction::EndTemplate => {
                     if policy.alignment_interception == AlignmentInterceptionPolicy::Surface
                         && matches!(
