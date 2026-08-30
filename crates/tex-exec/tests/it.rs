@@ -433,6 +433,26 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!control.contains("fn direct_hot_candidate"));
     assert!(!control.contains("fn scan_direct_hot_command"));
     assert!(!preflight.contains("let mut destination = None"));
+    let preparation_front = control
+        .split_once("fn prepare_operation(")
+        .and_then(|(_, tail)| tail.split_once("let tracked_region_is_active"))
+        .map(|(body, _)| body)
+        .expect("locate pre-scanned preparation bypass");
+    assert!(preparation_front.contains("OperationDelivery::<G>::Hot(operation)"));
+    assert!(preparation_front.contains("OperationDelivery::<G>::Scanned"));
+    assert_eq!(
+        preparation_front
+            .matches("prepare_scanned_cold_operation(")
+            .count(),
+        1
+    );
+    let scanned_preparation = control
+        .split_once("fn prepare_scanned_cold_operation(")
+        .and_then(|(_, tail)| tail.split_once("fn apply_hot_operation("))
+        .map(|(body, _)| body)
+        .expect("locate context-free cold preparation");
+    assert!(!scanned_preparation.contains("command_context()"));
+    assert!(!scanned_preparation.contains("command_processor("));
     let expansion_settlement = control
         .split_once("fn settle_preflight_step<")
         .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))

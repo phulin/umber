@@ -627,10 +627,12 @@ The general ordinary scanner then borrows the same slot in the same admitted
 command context. A resource, transaction, diagnostic, alignment, or tracked
 observation boundary stops before that scan and retains only the exact frame
 state required by its established path. Delivery returns only a compact status;
-filler loops overwrite and reuse the slot, and only the final consumer, an
-explicit backup, or an exact typed suspension moves the settled owner out. No
-command is cloned merely to cross the delivery API, and no settled command is
-backed up or redelivered across preflight.
+an already-scanned hot or cold operation bypasses the command-context front of
+operation preparation, and cold resource rooting consumes the frame payload
+without another command processor. Filler loops overwrite and reuse the slot,
+and only the final consumer, an explicit backup, or an exact typed suspension
+moves the settled owner out. No command is cloned merely to cross the delivery
+API, and no settled command is backed up or redelivered across preflight.
 
 An exhausted alignment V-template is intentionally retained until TeX's
 semantic `endv` transition; it is not stale merely because it has delivered

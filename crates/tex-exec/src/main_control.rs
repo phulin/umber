@@ -767,11 +767,14 @@ enum OperationDelivery<G> {
         alignment: Option<AlignmentIdentity>,
         cursor: tex_command::CommandDeliveryCursor,
     },
-    /// Ordinary ranked delivery and operand scanning completed inside the
+    /// Ordinary delivery and operand scanning completed inside the
     /// preflight processor borrow. The typed family operand is the real Rust
     /// borrow barrier before semantic state application; no command or
     /// universal scanned-step DTO crosses it.
     Hot(hot_apply::HotOperation<G>),
+    /// Ordinary preflight completed delivery and scanning in its admitted
+    /// context; the caller-owned frame contains the cold operation payload.
+    Scanned,
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
     /// The caller-owned operation frame already contains the scanned payload.
@@ -8232,7 +8235,7 @@ impl<G> MainControl<G> {
                 ScannedOperation::Cold(operation) => frame.unavailable = Some(operation),
             }
             return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::<G>::Prepared,
+                delivery: OperationDelivery::<G>::Scanned,
                 capabilities,
                 scanner: None,
                 expansion: None,
@@ -8452,7 +8455,10 @@ impl<G> MainControl<G> {
         frame: &mut OperationFrame<G>,
     ) -> OperationReadiness {
         let (scanner_resume, expansion_resume) = resume;
-        if matches!(&delivery, OperationDelivery::<G>::Prepared) {
+        if matches!(
+            &delivery,
+            OperationDelivery::<G>::Prepared | OperationDelivery::<G>::Scanned
+        ) {
             assert!(
                 frame.unavailable.is_some()
                     && frame.applied.is_none()
@@ -8489,6 +8495,19 @@ impl<G> MainControl<G> {
                 },
             ));
             return OperationReadiness::Applied;
+        }
+        if matches!(delivery, OperationDelivery::<G>::Scanned) {
+            let scanned = frame
+                .unavailable
+                .take()
+                .expect("scanned delivery owns its cold operation payload");
+            return self.prepare_scanned_cold_operation(
+                stores,
+                frame,
+                scanned,
+                outer_paragraph_was_active,
+                root_main_file_origin,
+            );
         }
         let tracked_region_is_active = stores
             .command_context()
@@ -8702,6 +8721,9 @@ impl<G> MainControl<G> {
                     OperationDelivery::<G>::Hot(_) => {
                         unreachable!("pre-scanned hot delivery bypasses operation preparation")
                     }
+                    OperationDelivery::<G>::Scanned => {
+                        unreachable!("pre-scanned cold delivery bypasses operation preparation")
+                    }
                     OperationDelivery::<G>::Prepared => frame
                         .unavailable
                         .take()
@@ -8802,6 +8824,26 @@ impl<G> MainControl<G> {
                 return OperationReadiness::Applied;
             }
         };
+        self.prepare_scanned_cold_operation(
+            stores,
+            frame,
+            scanned,
+            outer_paragraph_was_active,
+            root_main_file_origin,
+        )
+    }
+
+    /// Resolves and roots an operation whose command/input scanning is already
+    /// complete. This stage owns no command processor or command context; it
+    /// consumes the cold payload from the caller's singular operation frame.
+    fn prepare_scanned_cold_operation(
+        &mut self,
+        stores: &mut Universe<G>,
+        frame: &mut OperationFrame<G>,
+        scanned: ColdOperation<G>,
+        outer_paragraph_was_active: bool,
+        root_main_file_origin: bool,
+    ) -> OperationReadiness {
         frame.unavailable = Some(scanned);
         let resource_result = {
             let scanned = frame

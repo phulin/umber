@@ -3952,10 +3952,13 @@ the command merely for the command core to write it back. For an ordinary
 non-barrier command, tracing, capability classification, prefix handling, and
 the general operand scanner continue in the same `CommandProcessor` and
 admitted `CommandContext`. There is no hand-picked command-family scanner at
-this boundary. Resource, transaction, diagnostic, alignment, and tracked-region
-boundaries retain the existing explicit preparation path. No path backs up or
-redelivers a settled preflight command. Replay completion and alignment events
-remain compact status variants and leave no command-bearing return envelope.
+this boundary. Its scanned hot or cold operand then bypasses operation
+preparation's command-context front; cold resource resolution and rooting own
+no command processor or command context. Resource, transaction, diagnostic,
+alignment, and tracked-region boundaries retain the existing explicit
+preparation path. No path backs up or redelivers a settled preflight command.
+Replay completion and alignment events remain compact status variants and
+leave no command-bearing return envelope.
 
 The executor's caller-loop `OperationFrame` owns those command, parked
 expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase
