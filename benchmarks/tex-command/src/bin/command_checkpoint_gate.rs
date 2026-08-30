@@ -58,6 +58,18 @@ struct SourceHistoryCounts {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SourceDepthCounts {
+    mutations: usize,
+    allocations: Counts,
+    records: u64,
+    record_bytes: u64,
+    stored_state_captures: u64,
+    coalesced_mutations: u64,
+    owner_swaps: u64,
+    full_frame_history_clones: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SettlementWork {
     selected_rewind_records: u64,
     candidate_reject_records: u64,
@@ -86,6 +98,8 @@ fn main() {
     let shallow = run_fixture(1);
     let accumulated = run_fixture(64);
     let source_history = run_source_history_fixture();
+    let source_depth_one = run_source_depth_fixture(1);
+    let source_depth_many = run_source_depth_fixture(4_096);
     assert_eq!(
         shallow, accumulated,
         "command checkpoint costs must be independent of accumulated state"
@@ -117,6 +131,14 @@ fn main() {
     assert_eq!(source_history.cold_owner_swap, Counts::ZERO);
     assert_eq!(source_history.lex_ordered_row_reuse, Counts::ZERO);
     assert_eq!(source_history.cold_ordered_row_reuse, Counts::ZERO);
+    assert_eq!(source_depth_one, source_depth_many);
+    assert_eq!(source_depth_one.allocations, Counts::ZERO);
+    assert_eq!(source_depth_one.records, 1);
+    assert!(source_depth_one.record_bytes <= 48);
+    assert_eq!(source_depth_one.stored_state_captures, 1);
+    assert_eq!(source_depth_one.coalesced_mutations, 4_095);
+    assert_eq!(source_depth_one.owner_swaps, 0);
+    assert_eq!(source_depth_one.full_frame_history_clones, 0);
     let rejected = run_settlement_work(73, 5, false);
     assert_eq!(rejected.selected_rewind_records, 73);
     assert_eq!(rejected.candidate_reject_records, 5);
@@ -162,7 +184,7 @@ fn main() {
         prefix_plateau.boundaries
     );
     println!(
-        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} rejected_settlement={:?} accepted_settlement={:?} rejected_frame_discard={:?} accepted_frame_discard={:?} prefix_plateau={:?}",
+        "COMMAND_CHECKPOINT_GATE capture={:?} clone={:?} restore={:?} first_mutation={:?} fork={:?} fork_first_mutation={:?} release={:?} repeated_scalar_mutations={:?} repeated_input_frame_mutations={:?} repeated_input_level_reuse={:?} logical_history={:?} source_history={:?} source_depth={:?} rejected_settlement={:?} accepted_settlement={:?} rejected_frame_discard={:?} accepted_frame_discard={:?} prefix_plateau={:?}",
         shallow.capture,
         shallow.clone,
         shallow.restore,
@@ -175,12 +197,65 @@ fn main() {
         shallow.repeated_input_level_reuse,
         shallow.logical_history,
         source_history,
+        source_depth_one,
         rejected,
         accepted,
         rejected_one,
         accepted_one,
         prefix_plateau,
     );
+}
+
+fn run_source_depth_fixture(depth: usize) -> SourceDepthCounts {
+    tex_state::with_universe(budget(), |universe| {
+        let bytes = Arc::<[u8]>::from(&b"a"[..]);
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        for _ in 0..depth {
+            let source = command
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::clone(&bytes),
+                ))
+                .expect("source-depth fixture source");
+            command
+                .open_registered_source(source)
+                .expect("source-depth fixture opens");
+        }
+        command.profile_prepare_source_line(13);
+        let summary = command
+            .publish_summary(universe)
+            .expect("source-depth checkpoint");
+
+        command.profile_repeated_source_lex_mutations(1);
+        command
+            .restore_summary(&summary, universe)
+            .expect("source-depth warmup restores");
+        let before = command.profile_timeline_counters();
+        let (_, allocations) = measure(|| command.profile_repeated_source_lex_mutations(4_096));
+        let after = command.profile_timeline_counters();
+
+        SourceDepthCounts {
+            mutations: 4_096,
+            allocations,
+            records: after.logical_records.saturating_sub(before.logical_records),
+            record_bytes: after
+                .logical_record_bytes
+                .saturating_sub(before.logical_record_bytes),
+            stored_state_captures: after
+                .logical_stored_state_captures
+                .saturating_sub(before.logical_stored_state_captures),
+            coalesced_mutations: after
+                .logical_coalesced_mutations
+                .saturating_sub(before.logical_coalesced_mutations),
+            owner_swaps: after
+                .logical_owner_swaps
+                .saturating_sub(before.logical_owner_swaps),
+            full_frame_history_clones: after
+                .full_frame_history_clones
+                .saturating_sub(before.full_frame_history_clones),
+        }
+    })
+    .expect("source-depth gate universe")
 }
 
 fn run_settlement_work(

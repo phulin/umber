@@ -99,12 +99,6 @@ pub(crate) struct SourceLevel<G> {
     /// one pointer to this authoritative owner; checkpoint execution state
     /// contains only its checked key and reversible cursor/owner values.
     pub(crate) slot: SourceSlotKey,
-    /// tex.web §303's `name` classification for this level. A token-list
-    /// level has no counterpart: §307 reuses `name` there as the eqtb address
-    /// of the macro being expanded, which is why this lives on `SourceLevel`
-    /// and not on [`InputLevel`].
-    pub(crate) name_class: SourceNameClass,
-    pub(crate) retirement: SourceRetirement,
     pub(crate) generation: PhantomData<fn() -> G>,
 }
 
@@ -131,6 +125,10 @@ pub(crate) struct SourceSlot<G> {
     pub(crate) every_eof: Option<tex_state::TokenListId<G>>,
     /// e-TeX 2.6 [23.328]'s source-opening group/conditional ancestry.
     pub(crate) open_depths: Option<SourceOpenDepths>,
+    /// tex.web §303's `name` classification and §360 retirement rule belong
+    /// to the same sole owner as the backing they classify.
+    pub(crate) name_class: SourceNameClass,
+    pub(crate) retirement: SourceRetirement,
 }
 
 impl<G> SourceSlot<G> {
@@ -138,11 +136,15 @@ impl<G> SourceSlot<G> {
         cursor: SourceCursor,
         every_eof: Option<tex_state::TokenListId<G>>,
         open_depths: Option<SourceOpenDepths>,
+        name_class: SourceNameClass,
+        retirement: SourceRetirement,
     ) -> Self {
         Self {
             cursor,
             every_eof,
             open_depths,
+            name_class,
+            retirement,
         }
     }
 }
@@ -533,7 +535,7 @@ impl<G> SourceLevelExecutionState<G> {
             position: source.frame.position(),
             cursor: slot.cursor.take_execution_state(),
             backing,
-            name_class: source.name_class,
+            name_class: slot.name_class,
         }
     }
 }
@@ -616,7 +618,7 @@ impl<G> SourceLevel<G> {
                 self.frame.swap_position(position);
                 owner.cursor.swap_execution_state(cursor);
                 std::mem::swap(&mut owner.cursor.backing, backing);
-                std::mem::swap(&mut self.name_class, name_class);
+                std::mem::swap(&mut owner.name_class, name_class);
             }
         }
     }

@@ -554,16 +554,19 @@ migration allowance because runtime detachment adapters are not installed.
 It is therefore a real cold ownership boundary under construction, not a
 claim that every live suspension can already detach across a revision.
 
-An input level owns either one stable pointer to an authoritative `SourceSlot`
-or a classified token cursor. The source slot owns its move-only
+An input row owns either one eight-byte ABA-checked key to an authoritative
+`SourceSlot` or a classified token cursor. `InputStack` owns source slots in
+fixed reusable pages; opening a source consumes the pending backing into one
+slot without allocating a per-source box. The source slot owns its move-only
 `SourceCursor`, registered/replacement backing, reduced-spelling arena,
-`everyeof`, and optional boxed open-depth snapshot until EOF retirement. A
-runtime-only monotonic slot incarnation is independent of rollback-reused
-semantic `InputLevelId`; every compact and cold inverse validates it before
-mutation. If a partially captured source occupant is popped and its physical
-row reused in the same interval, the ordered history preserves a row
+`everyeof`, opening ancestry, name classification, and retirement rule until
+EOF retirement. The key's runtime-only slot generation is independent of
+rollback-reused semantic `InputLevelId`; every compact and cold inverse
+validates it before mutation. If a partially captured source occupant is
+popped and its physical row reused in the same interval, the ordered history preserves a row
 replacement before the new occupant becomes eligible for direct reuse. A
-24-byte copy-only lexer cursor is the only ordinary source execution state;
+24-byte copy-only lexer cursor plus the four-byte input position is the only
+ordinary source execution state;
 control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
 The generation-tied `InputStack` owns stable source, stored-token, and direct
 macro-argument rows. Its one compact `InputUndo` history orders copy-small
@@ -576,6 +579,12 @@ owner from that same swap. An interval-local row retains no owner inverse.
 Alternate owners exist only as generation-checked inverse payloads, so
 candidate redo restores the exact authoritative row without a second live
 input representation or the generic logical-stack stored-state machinery.
+The source first-touch inverse is at most 48 bytes. Ordinary source delivery
+lends the semantic top row and checked slot together, writes the caller's
+final command once, and advances the compact position in the same borrow. The
+stack exposes no raw mutable top or mutable index. Its allocation gate proves
+that 4,096 warmed lexer mutations perform zero allocations and one inverse at
+both one and 4,096 live source rows.
 Nested source opening installs ancestry as part of the same frame transition
 which updates the singular session-owned TeX82 input-stack maximum; before
 retirement the processor borrows it and returns only copy-small common-prefix

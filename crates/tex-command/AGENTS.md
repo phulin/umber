@@ -178,7 +178,10 @@ collector (see `src/conditionals.rs`).
   `RawCommand` phase proof and advances only the packed frame scalar. A
   parameter candidate overwrites the same unresolved value before meaning
   resolution; there is no raw command envelope or second delivery slot. A
-  source row points to one stable checked owner slot. Ordinary history stores
+  source row contains only its common frame and one eight-byte ABA-checked key
+  into the `InputStack`'s fixed reusable source-slot pages. The slot solely
+  owns backing, replacement, `everyeof`, ancestry, source classification, and
+  retirement state. Ordinary history stores
   only its copy-small lexer cursor; cold line, backing, and everyeof changes
   move prior owners into the same logical-stack journal. The slot's runtime-only
   incarnation never rolls back with its semantic `InputLevelId`, so stale or
@@ -197,6 +200,10 @@ collector (see `src/conditionals.rs`).
   per checkpoint-visible row and interval; rows admitted in the interval need
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
+  Typed source, stored-token, and macro-argument top operations are the only
+  mutable access; no raw mutable top or mutable index survives. The focused
+  depth gate proves identical one-record, zero-allocation hot mutation at one
+  and 4,096 source rows.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the one destination-directed `next_raw_into` source/token top transition,
   whose cold results retain no command-slot borrow, the singular

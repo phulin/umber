@@ -106,6 +106,10 @@ and cold-owner source inverses followed by pop, physical-row token replacement,
 and replacement-frame mutation. Both ordered-reuse rows require zero allocation,
 zero full source/frame clones, and exactly the required inverse plus replacement
 records; the cold row must add exactly one ordered owner swap.
+An independent source-depth row compares one and 4,096 live source slots. In
+both cases, 4,096 warmed lexical mutations must allocate zero bytes, append one
+inverse of at most 48 bytes, coalesce the other 4,095 mutations, perform no
+source-owner swap, and clone no whole input frame.
 The gate also rejects a candidate mutation, releases one obsolete prefix, and
 forks the surviving accepted mark again to prove exact rollback, lineage
 isolation, and prefix-floor validity. Finally it measures 10,000,000 successive

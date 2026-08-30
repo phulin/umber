@@ -299,7 +299,7 @@ pub(crate) fn tracked_input_projection<G>(
                 stack.byte(0);
                 let slot = input.levels.source_level_slot(source);
                 observe_immutable_source(state, source, slot);
-                project_source(&mut stack, source, slot);
+                project_source(&mut stack, slot);
                 if let Some(current) = &slot.cursor.line {
                     project_line(&mut line, &slot.cursor, current);
                 }
@@ -357,7 +357,7 @@ pub(crate) fn observe_immutable_source<G>(
     );
 }
 
-fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>, slot: &SourceSlot<G>) {
+fn project_source<G>(hash: &mut ProjectionHasher, slot: &SourceSlot<G>) {
     hash.bytes(&slot.cursor.backing.bytes);
     hash.byte(slot.cursor.backing.mode as u8);
     hash.bytes(
@@ -384,7 +384,7 @@ fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>, slot:
             LexerState::NewLine => 2,
         },
     );
-    hash.byte(match source.retirement {
+    hash.byte(match slot.retirement {
         SourceRetirement::Pop => 0,
         SourceRetirement::EndReadLine => 1,
     });
@@ -565,19 +565,11 @@ impl<G> InputState<G> {
             let current = index + 1 == self.levels.len();
             match level {
                 InputLevel::Source(source) => {
-                    let bottom = index == 0
-                        || matches!(source.name_class, crate::input::SourceNameClass::File);
                     let slot = self.levels.source_level_slot(source);
-                    if Self::source_context_level(
-                        source,
-                        slot,
-                        index == 0,
-                        None,
-                        None,
-                        None,
-                        widths,
-                    )
-                    .is_some()
+                    let bottom = index == 0
+                        || matches!(slot.name_class, crate::input::SourceNameClass::File);
+                    if Self::source_context_level(slot, index == 0, None, None, None, widths)
+                        .is_some()
                         || bottom
                     {
                         return false;
@@ -691,7 +683,6 @@ impl<G> InputState<G> {
                 let selected = retiring.unwrap_or(source);
                 let slot = self.levels.source_level_slot(selected);
                 Self::source_context_level(
-                    selected,
                     slot,
                     index == 0,
                     retiring.map(|_| slot.cursor.next_line_number),
@@ -739,8 +730,9 @@ impl<G> InputState<G> {
                 let source = retiring_source
                     .filter(|retiring| retiring.identity() == source.identity())
                     .unwrap_or(source);
+                let slot = self.levels.source_level_slot(source);
                 reached_bottom_source =
-                    index == 0 || matches!(source.name_class, crate::input::SourceNameClass::File);
+                    index == 0 || matches!(slot.name_class, crate::input::SourceNameClass::File);
             }
             if visible {
                 if selection.display_immediately() {
@@ -846,7 +838,6 @@ impl<G> InputState<G> {
 
     /// §313's `<Print location of current line>` and `<Pseudoprint the line>`.
     fn source_context_level(
-        source: &SourceLevel<G>,
         slot: &SourceSlot<G>,
         bottom_of_stack: bool,
         physical_line_number: Option<u64>,
@@ -911,7 +902,7 @@ impl<G> InputState<G> {
         };
         // §313 ends every one of its branches with the same `print_char(" ")`,
         // including the `<insert> ` arm that already carries a space.
-        let label = match source.name_class {
+        let label = match slot.name_class {
             SourceNameClass::Terminal if bottom_of_stack => "<*> ".to_owned(),
             SourceNameClass::Terminal => "<insert>  ".to_owned(),
             // §303's stream 16 is the invalid stream number `\read` reads from
@@ -1340,7 +1331,7 @@ impl<G> InputState<G> {
         self.levels.iter().rev().find_map(|level| match level {
             InputLevel::Source(source)
                 if matches!(
-                    source.name_class,
+                    self.levels.source_level_slot(source).name_class,
                     SourceNameClass::Scantokens(_) | SourceNameClass::File
                 ) =>
             {

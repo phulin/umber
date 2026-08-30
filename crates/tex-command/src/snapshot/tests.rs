@@ -728,6 +728,47 @@ fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
 }
 
 #[test]
+fn retired_source_slot_releases_owners_and_rejects_its_stale_generation() {
+    crate::test_harness::with_universe(|_| {
+        let first_bytes = Arc::<[u8]>::from(&b"first"[..]);
+        let second_bytes = Arc::<[u8]>::from(&b"second"[..]);
+        let mut command = crate::CommandState::<Brand>::default();
+        let first = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                Arc::clone(&first_bytes),
+            ))
+            .expect("first source registers");
+        command
+            .open_registered_source(first)
+            .expect("first source opens");
+        let stale = top_source_key(&command);
+
+        command
+            .pop_input_level_at_end_of_job()
+            .expect("unmarked source retires");
+        assert_eq!(Arc::strong_count(&first_bytes), 1);
+
+        let second = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                Arc::clone(&second_bytes),
+            ))
+            .expect("second source registers");
+        command
+            .open_registered_source(second)
+            .expect("second source opens");
+        let current = top_source_key(&command);
+        assert_eq!(current.0.slot, stale.0.slot);
+        assert_ne!(current.0.generation, stale.0.generation);
+        assert_eq!(
+            top_source_slot(&command).cursor.current_backing().id,
+            second
+        );
+    });
+}
+
+#[test]
 fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

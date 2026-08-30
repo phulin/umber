@@ -110,15 +110,18 @@ impl<G> RetiredInputLevel<G> {
         match level {
             InputLevel::Source(source) => Self::Source {
                 identity: source.identity(),
-                name_class: source.name_class,
+                name_class: source_slot
+                    .expect("source retirement projection receives its live slot")
+                    .name_class,
                 source: source_slot
                     .expect("source retirement projection receives its live slot")
                     .cursor
                     .current_backing()
                     .id,
-                retirement: source.retirement,
+                retirement: source_slot
+                    .expect("source retirement projection receives its live slot")
+                    .retirement,
                 framed: source_level_is_framed(
-                    source,
                     source_slot.expect("source retirement projection receives its live slot"),
                 ),
             },
@@ -454,7 +457,7 @@ impl<G> CommandState<G> {
             let input = &mut self.roots.input;
             let Some(result) = input.levels.mutate_top_source(|source, slot| {
                 let identity = source.identity();
-                let name_class = source.name_class;
+                let name_class = slot.name_class;
                 let stored = super::SourceLevelExecutionState::cursor(source, slot);
                 if pending_acquired_line {
                     slot.cursor.pending_acquired_line = true;
@@ -1078,7 +1081,7 @@ impl<G> CommandState<G> {
                 InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
                 InputLevel::Source(source) => {
                     let slot = self.input.levels.source_level_slot(source);
-                    Some(match source.name_class {
+                    Some(match slot.name_class {
                         SourceNameClass::File | SourceNameClass::Scantokens(_) => {
                             slot.cursor
                                 .line
@@ -1126,8 +1129,8 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
     }
 }
 
-fn source_level_is_framed<G>(source: &super::SourceLevel<G>, slot: &super::SourceSlot<G>) -> bool {
-    match source.name_class {
+fn source_level_is_framed<G>(slot: &super::SourceSlot<G>) -> bool {
+    match slot.name_class {
         SourceNameClass::File => {
             slot.cursor.backing.name.is_some()
                 && slot.cursor.backing.framing == crate::SourceFramingPolicy::Canonical

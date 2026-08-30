@@ -1664,7 +1664,7 @@ No `CurrentCommand` is live at a durable named checkpoint.
 
 ## 12. Input levels
 
-Input is a dense stack:
+Input is one generation-owned semantic stack:
 
 ```rust
 enum InputLevel {
@@ -1689,18 +1689,26 @@ struct SourceCursor {
 
 struct SourceLevel {
     frame: PackedInputFrame,
-    slot: Box<SourceSlot>,
-    // copy-only source classification and retirement state
+    slot: SourceSlotKey,
 }
 
 struct SourceSlot {
-    // runtime-only incarnation, independent of rollback-reused InputLevelId
-    key: SourceSlotKey,
     cursor: SourceCursor,
     every_eof: Option<TokenListId>,
-    open_depths: Option<Box<SourceOpenDepths>>,
+    open_depths: Option<SourceOpenDepths>,
+    name_class: SourceNameClass,
+    retirement: SourceRetirement,
 }
 ```
+
+`InputStack` owns fixed source-slot pages and their free list. A source row's
+eight-byte key contains the physical slot and its ABA generation; lookup
+validates both before lending the sole owner. Opening a source consumes its
+registered backing into one reusable slot rather than allocating a source
+box. Retirement prepares its copy-small receipt while that slot is borrowed,
+then returns the slot to the free list as soon as neither a current row nor an
+ordered inverse can reach it. Reuse increments the generation, so a stale row
+or inverse cannot name the new source.
 
 `RegisteredBacking` refers to World input, generated immutable bytes, a
 registered editor fragment layout, or an explicitly typed read-line source.
@@ -1708,8 +1716,9 @@ Ordinary line refill does not call host file search. Dynamic dispatch, if
 retained, is confined to cold source acquisition or physical-line refill and
 does not enter character delivery.
 
-`SourceLineState` is the one variable line owner: it stores physical geometry
-and the reusable reduced-spelling arena. Its separate 24-byte
+`SourceLineState`, owned transitively by that sole source slot, is the one
+variable line owner: it stores physical geometry and the reduced-spelling
+arena. Its separate 24-byte
 `SourceLexCursor` stores byte/scalar positions, lexer state, endline phase, and
 a copy-only reduction head. Control-word and exact/Unicode `^^` lookahead copy
 only that cursor through `LineProbe`; no probe clones a source backing, line
@@ -1717,6 +1726,23 @@ state, spelling vector, or ancestry. Accepted reductions append one immutable
 node and update the head. Rejected probes restore the copied head, so the
 authoritative line remains singular and there is no parallel mutable
 character-index representation.
+
+Ordinary delivery selects the semantic top once. Source delivery lends its row
+and checked slot together, tokenizes into the caller's final command slot, and
+advances the row's compact position before ending that borrow. Stored-token and
+macro-argument delivery use corresponding typed top operations. `InputStack`
+exposes no raw mutable top, mutable index, shadow stack, or alternate token
+representation.
+
+The first source mutation after an observable mark stores only the eight-byte
+slot key, four-byte input position, 24-byte lexical cursor, and registration
+flags. The resulting packed inverse is at most 48 bytes. Cold line, backing,
+replacement, and `everyeof` transitions move their old owners to checked
+reusable payload slots. Both kinds append to the same ordered `InputUndo`
+lane, so reverse rollback and forward redo preserve their real interleaving.
+At depths 1 and 4,096, 4,096 warmed lexical changes produce the same one
+48-byte inverse, 4,095 coalesced changes, zero owner swaps, zero whole-frame
+clones, and zero heap allocations.
 
 The implemented registration boundary accepts only complete, already acquired
 immutable bytes and records whether they came from World, generated input, an

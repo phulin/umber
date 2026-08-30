@@ -9,7 +9,7 @@ use crate::timeline::{PayloadHandle, PayloadSlab};
 
 use super::{
     InputLevel, InputLevelInlineState, SourceLevel, SourceLevelExecutionState,
-    SourceLexExecutionState, SourceNameClass, SourceRetirement, SourceSlot, SourceSlotKey,
+    SourceLexExecutionState, SourceSlot, SourceSlotKey,
 };
 
 const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
@@ -174,20 +174,12 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
-    pub(crate) fn push_source(
-        &mut self,
-        frame: super::PackedInputFrame,
-        slot: SourceSlot<G>,
-        name_class: SourceNameClass,
-        retirement: SourceRetirement,
-    ) {
+    pub(crate) fn push_source(&mut self, frame: super::PackedInputFrame, slot: SourceSlot<G>) {
         self.source_slots.warm_first_page();
         let slot = SourceSlotKey::new(self.source_slots.insert(slot));
         self.push_row(InputLevel::Source(SourceLevel {
             frame,
             slot,
-            name_class,
-            retirement,
             generation: core::marker::PhantomData,
         }));
     }

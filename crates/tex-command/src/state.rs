@@ -2503,7 +2503,7 @@ impl<G> CommandState<G> {
                 .cursor
                 .current_backing();
             (backing.id == source
-                && level.name_class == SourceNameClass::File
+                && self.input.levels.source_level_slot(level).name_class == SourceNameClass::File
                 && backing.framing == crate::SourceFramingPolicy::Canonical)
                 .then(|| backing.framing_name.as_deref().or(backing.name.as_deref()))
                 .flatten()
@@ -2535,7 +2535,7 @@ impl<G> CommandState<G> {
                 );
                 let stored =
                     crate::input::SourceLevelExecutionState::backing(active, slot, registered);
-                active.name_class = name_class;
+                slot.name_class = name_class;
                 slot.cursor.pending_acquired_line = true;
                 (stored, ())
             })
@@ -2591,7 +2591,7 @@ impl<G> CommandState<G> {
             .levels
             .mutate_top_source(|level, slot| {
                 let stored = crate::input::SourceLevelExecutionState::every_eof(level, slot);
-                if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
+                if matches!(slot.name_class, SourceNameClass::Scantokens(_)) {
                     slot.cursor.install_scantokens_eof_context_line();
                 }
                 let retained_line = slot
@@ -2631,9 +2631,13 @@ impl<G> CommandState<G> {
         self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
         self.input.levels.push_source(
             crate::input::PackedInputFrame::source(identity.0, registered.id),
-            crate::input::SourceSlot::new(SourceCursor::new(registered), every_eof, open_depths),
-            name_class,
-            retirement,
+            crate::input::SourceSlot::new(
+                SourceCursor::new(registered),
+                every_eof,
+                open_depths,
+                name_class,
+                retirement,
+            ),
         );
         self.set_retained_file_line_number(0);
         identity
@@ -2919,7 +2923,10 @@ impl<G> CommandState<G> {
                 .iter()
                 .rev()
                 .find_map(|level| match level {
-                    InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
+                    InputLevel::Source(source) => Some(
+                        self.input.levels.source_level_slot(source).name_class
+                            == SourceNameClass::File,
+                    ),
                     InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
                 })
                 == Some(true)
