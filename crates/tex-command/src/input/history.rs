@@ -596,8 +596,26 @@ impl<G> crate::CommandState<G> {
                     resident_index,
                 });
             };
-            self.settle_input_retirement(retirement, observer, immediate_write_retirement);
+            self.settle_resident_ordinary_retirement(
+                retirement,
+                observer,
+                immediate_write_retirement,
+            );
         }
+    }
+
+    #[inline(always)]
+    fn settle_resident_ordinary_retirement(
+        &mut self,
+        retirement: super::InputRetirement,
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
+    ) {
+        debug_assert!(matches!(
+            retirement.action,
+            super::InputRetirementAction::TokenListPopped
+        ));
+        self.settle_input_retirement(retirement, observer, immediate_write_retirement);
     }
 
     fn advance_resident_top_into(
