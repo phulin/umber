@@ -1,6 +1,8 @@
 use super::{ActiveListBuilder, ChunkPool, ForkArena, ForkArenaError};
 use crate::node::Node;
 use crate::node_arena::NodeCursor;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};
 
 static DIRECT_CLONE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -17,6 +19,22 @@ impl Clone for CloneTracked {
 
 enum ActiveLane {}
 enum PageLane {}
+
+struct DropTracked {
+    value: u32,
+    drops: Rc<RefCell<Vec<u32>>>,
+    panic_on: u32,
+    did_panic: Rc<Cell<bool>>,
+}
+
+impl Drop for DropTracked {
+    fn drop(&mut self) {
+        self.drops.borrow_mut().push(self.value);
+        if self.value == self.panic_on && !self.did_panic.replace(true) {
+            panic!("requested drop panic");
+        }
+    }
+}
 
 impl super::RegionValue<ActiveLane> for u32 {
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
@@ -53,6 +71,44 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     assert_eq!(replacement.slot, stale.slot);
     assert_ne!(replacement.generation, stale.generation);
     assert_eq!(pool.payload.get(stale, 7, 0), None);
+}
+
+#[test]
+fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
+    let drops = Rc::new(RefCell::new(Vec::new()));
+    let did_panic = Rc::new(Cell::new(false));
+    let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
+    let key = pool.payload.allocate(7).expect("chunk allocation");
+    for value in 1..=3 {
+        pool.payload
+            .append(
+                key,
+                7,
+                DropTracked {
+                    value,
+                    drops: Rc::clone(&drops),
+                    panic_on: 2,
+                    did_panic: Rc::clone(&did_panic),
+                },
+                None,
+            )
+            .expect("chunk append");
+    }
+
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = pool.payload.release(key, 7);
+        }))
+        .is_err()
+    );
+    assert_eq!(*drops.borrow(), vec![1, 2]);
+    assert_eq!(pool.payload.release(key, 7), Ok(3));
+    assert_eq!(*drops.borrow(), vec![1, 2, 3]);
+
+    let replacement = pool.payload.allocate(7).expect("reused chunk");
+    assert_eq!(replacement.slot, key.slot);
+    assert_ne!(replacement.generation, key.generation);
+    assert!(pool.payload.get(key, 7, 0).is_none());
 }
 
 #[test]

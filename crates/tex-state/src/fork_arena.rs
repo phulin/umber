@@ -385,7 +385,9 @@ impl<T> ChunkStorage<T> {
         let used = self.validate(key, arena)?.used;
         for offset in 0..used {
             let (page, index) = self.slot_index(key, offset as usize)?;
-            drop(self.pages[page].slots[index].take());
+            // Assignment drops `T` on the slot place and clears the option on
+            // both the normal and unwind paths; `take` first moves `T` out.
+            self.pages[page].slots[index] = None;
         }
         let meta = self.validate_mut(key, arena)?;
         meta.live = false;
