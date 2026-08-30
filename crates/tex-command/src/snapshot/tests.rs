@@ -1251,18 +1251,8 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
         let before = command.input.levels.counters();
 
         for _ in 0..1_024 {
-            command
-                .input
-                .levels
-                .mutate_top_tokens(|cursor| {
-                    cursor.retirement = match cursor.retirement {
-                        crate::input::RetirementBehavior::Pop => {
-                            crate::input::RetirementBehavior::StopAtEnd
-                        }
-                        _ => crate::input::RetirementBehavior::Pop,
-                    };
-                })
-                .expect("fixture token frame remains live");
+            let mutated = command.input.levels.toggle_top_token_retirement();
+            assert!(mutated, "fixture token frame remains live");
         }
 
         let after = command.input.levels.counters();

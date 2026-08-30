@@ -343,38 +343,34 @@ impl<G> CommandState<G> {
                     }
                 }
                 InputLevel::Tokens(_) => {
-                    let result = roots
+                    let delivery = roots
                         .input
                         .levels
-                        .mutate_top_tokens(|cursor| {
-                            let identity = cursor.identity();
-                            let raw = cursor.deliver_into(
-                                PackedTokenSources::new(replay_lane, attempt),
-                                destination,
-                            )?;
-                            Ok::<_, ()>((identity, cursor.behavior, raw))
-                        })
+                        .deliver_top_cursor_into(
+                            PackedTokenSources::new(replay_lane, attempt),
+                            scratch,
+                            destination,
+                        )
                         .expect("the inspected token row remains on top")?;
-                    let (identity, behavior, raw) = result;
-                    let Some(raw) = raw else {
-                        return Ok(InputTopTransition::TokenExhausted(identity));
+                    let Some(raw) = delivery.raw else {
+                        return Ok(InputTopTransition::TokenExhausted(delivery.identity));
                     };
-                    (raw, matches!(behavior, TokenBehavior::Parameter), identity)
+                    (raw, delivery.delivered_by_parameter, delivery.identity)
                 }
                 InputLevel::MacroArgument(_) => {
-                    let result = roots
+                    let delivery = roots
                         .input
                         .levels
-                        .mutate_top_macro_argument(|cursor| {
-                            let identity = cursor.identity();
-                            Ok::<_, ()>((identity, cursor.deliver_into(scratch, destination)?))
-                        })
+                        .deliver_top_cursor_into(
+                            PackedTokenSources::new(replay_lane, attempt),
+                            scratch,
+                            destination,
+                        )
                         .expect("the inspected macro row remains on top")?;
-                    let (identity, raw) = result;
-                    let Some(raw) = raw else {
-                        return Ok(InputTopTransition::TokenExhausted(identity));
+                    let Some(raw) = delivery.raw else {
+                        return Ok(InputTopTransition::TokenExhausted(delivery.identity));
                     };
-                    (raw, true, identity)
+                    (raw, delivery.delivered_by_parameter, delivery.identity)
                 }
             }
         };
@@ -909,15 +905,8 @@ impl<G> CommandState<G> {
                 return Err(InputRetirementError::NotRetainedVTemplate);
             }
             let reason = input_retirement_reason(&cursor.behavior, &cursor.trace);
-            self.input
-                .levels
-                .mutate_top_tokens(|cursor| {
-                    cursor.retirement = RetirementBehavior::AwaitingVTemplateRetirement;
-                    cursor
-                        .frame
-                        .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
-                })
-                .expect("the inspected top level remains live");
+            let retained = self.input.levels.retain_top_v_template();
+            assert!(retained, "the inspected top level remains live");
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,

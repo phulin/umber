@@ -48,6 +48,46 @@ fn diagnostic_coordinate_allocates_only_when_published_and_rejects_stale_input()
     });
 }
 
+#[test]
+fn stored_token_advance_invalidates_a_diagnostic_coordinate() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [tex_state::token::Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            }],
+        );
+        let coordinate = command.diagnostic_context_coordinate();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_into(&mut destination)
+                .expect("stored token delivers"),
+            crate::DeliveryStatus::Command
+        );
+        drop(processor);
+        drop(context);
+        let stores = universe.command_context().expect("diagnostic context");
+        assert_eq!(
+            command.render_diagnostic_context(coordinate, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+    });
+}
+
 fn selected_context_levels(level_count: usize, error_context_lines: i32) -> Vec<Option<usize>> {
     let mut selection = ErrorContextSelection::new(error_context_lines);
     let mut selected = Vec::new();

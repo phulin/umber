@@ -214,7 +214,7 @@ collector (see `src/conditionals.rs`).
   opening installs it before the frame becomes visible; retirement borrows it
   before pop and carries only copy-small boundary facts afterward. See
   `src/tracing_nesting.rs`.
-- `src/input/history.rs`: the authoritative generation-tied `InputStack`.
+- `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
   Stable source, stored-token, and macro-argument rows share one ordered
   `InputUndo` journal for first-touch advances, cold source-owner swaps,
   replacement/reuse, retirement, rollback/redo, candidate settlement, and
@@ -222,10 +222,11 @@ collector (see `src/conditionals.rs`).
   per checkpoint-visible row and interval; rows admitted in the interval need
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
-  Typed source, stored-token, and macro-argument top operations are the only
-  mutable access; no raw mutable top or mutable index survives. The focused
-  depth gate proves identical one-record, zero-allocation hot mutation at one
-  and 4,096 source rows.
+  Typed source operations and one direct stored-token top delivery mutation
+  are the only mutable access; token-list and macro-argument cursors share its
+  single top access, first-touch transition, and diagnostic revision without
+  callback dispatch. No raw mutable top or mutable index survives. Focused
+  gates prove exact coalescing and zero-allocation hot mutation.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   the one destination-directed `next_raw_into` source/token top transition,
   whose cold results retain no command-slot borrow, the singular

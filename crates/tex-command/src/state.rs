@@ -863,17 +863,8 @@ impl<G> CommandState<G> {
     #[cfg(feature = "profiling")]
     pub fn profile_repeated_input_frame_mutations(&mut self, mutations: usize) {
         for _ in 0..mutations {
-            self.input
-                .levels
-                .mutate_top_tokens(|cursor| {
-                    cursor.retirement = match cursor.retirement {
-                        crate::input::RetirementBehavior::Pop => {
-                            crate::input::RetirementBehavior::StopAtEnd
-                        }
-                        _ => crate::input::RetirementBehavior::Pop,
-                    };
-                })
-                .expect("profiling fixture keeps a token frame on top");
+            let mutated = self.input.levels.toggle_top_token_retirement();
+            assert!(mutated, "profiling fixture keeps a token frame on top");
         }
     }
 
@@ -978,12 +969,11 @@ impl<G> CommandState<G> {
             crate::input::RetirementBehavior::Pop,
             crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
         );
-        self.input
+        let mutated = self
+            .input
             .levels
-            .mutate_top_tokens(|tokens| {
-                tokens.retirement = crate::input::RetirementBehavior::StopAtEnd;
-            })
-            .expect("profiling ordered reuse installs a token frame");
+            .set_top_token_retirement(crate::input::RetirementBehavior::StopAtEnd);
+        assert!(mutated, "profiling ordered reuse installs a token frame");
     }
 
     /// Reuses one physical input-stack row repeatedly after its current
@@ -1110,6 +1100,28 @@ impl<G> CommandState<G> {
             counters.ancestry_rows,
             counters.owner_slot_lookups,
             counters.source_lex_slot_borrows,
+        )
+    }
+
+    /// Resets the focused stored-token cursor mutation counters.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_reset_input_cursor_mutation_counters(&mut self) {
+        self.input.levels.reset_cursor_mutation_counters();
+    }
+
+    /// Returns `(typed top accesses, first touches, coalesced transitions,
+    /// closure dispatches)` for the direct stored-token mutation boundary.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_input_cursor_mutation_counters(&self) -> (u64, u64, u64, u64) {
+        let counters = self.input.levels.cursor_mutation_counters();
+        (
+            counters.typed_top_accesses,
+            counters.first_touch_transitions,
+            counters.coalesced_transitions,
+            counters.closure_dispatches,
         )
     }
 

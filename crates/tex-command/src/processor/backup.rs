@@ -236,7 +236,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .command
                 .input
                 .levels
-                .mutate_top_tokens(|cursor| cursor.frame.extend_limit(prepended).is_some())
+                .extend_top_token_limit(prepended)
                 .expect("back_input above installed a token-list level");
             if !extended {
                 return Err(CommandError::input_invariant());

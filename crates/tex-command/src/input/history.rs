@@ -1,5 +1,8 @@
 //! Generation-owned authoritative input rows and ordered inverse history.
 
+#[cfg(test)]
+mod tests;
+
 use core::hash::{Hash, Hasher};
 use core::ops::{Deref, Index};
 use core::slice::SliceIndex;
@@ -23,6 +26,68 @@ pub(crate) struct InputSourceContextCounters {
     pub(crate) ancestry_rows: u64,
     pub(crate) owner_slot_lookups: u64,
     pub(crate) source_lex_slot_borrows: u64,
+}
+
+/// Profiling proof for the unified stored-token cursor mutation boundary.
+///
+/// One call performs one typed top-row access. The first call in a checkpoint
+/// interval appends one inverse; later calls coalesce against it. The retired
+/// callback entry points have no dispatch counter to increment.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct InputCursorMutationCounters {
+    pub(crate) typed_top_accesses: u64,
+    pub(crate) first_touch_transitions: u64,
+    pub(crate) coalesced_transitions: u64,
+    pub(crate) closure_dispatches: u64,
+}
+
+/// Copy-small facts produced by one direct stored-token cursor mutation.
+pub(crate) struct InputCursorDelivery<'slot, G> {
+    pub(crate) identity: super::InputLevelId,
+    pub(crate) delivered_by_parameter: bool,
+    pub(crate) raw: Option<crate::command::RawCommand<'slot, G>>,
+}
+
+struct InlineCursorRecorder<'a, G> {
+    recording: bool,
+    interval: u64,
+    index: usize,
+    touched: &'a mut [u64],
+    partially_captured: &'a mut [u64],
+    undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
+    coalesced_mutations: &'a mut u64,
+    #[cfg(any(test, feature = "profiling"))]
+    counters: &'a mut InputCursorMutationCounters,
+}
+
+impl<G> InlineCursorRecorder<'_, G> {
+    #[inline(always)]
+    fn record(&mut self, state: InputLevelInlineState) {
+        if !self.recording {
+            return;
+        }
+        if self.touched[self.index] == self.interval {
+            *self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                self.counters.coalesced_transitions =
+                    self.counters.coalesced_transitions.saturating_add(1);
+            }
+            return;
+        }
+        self.touched[self.index] = self.interval;
+        self.partially_captured[self.index] = self.interval;
+        self.undo.append(InputUndo::Inline {
+            index: u32::try_from(self.index).expect("input row index fits u32"),
+            state,
+        });
+        #[cfg(any(test, feature = "profiling"))]
+        {
+            self.counters.first_touch_transitions =
+                self.counters.first_touch_transitions.saturating_add(1);
+        }
+    }
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -142,6 +207,8 @@ pub(crate) struct InputStack<G> {
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
+    #[cfg(any(test, feature = "profiling"))]
+    cursor_mutations: InputCursorMutationCounters,
     /// Monotonic runtime incarnation of the live diagnostic projection.
     /// Compact publication coordinates validate this before reading rows.
     context_revision: u64,
@@ -167,6 +234,8 @@ impl<G> Default for InputStack<G> {
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
+            #[cfg(any(test, feature = "profiling"))]
+            cursor_mutations: InputCursorMutationCounters::default(),
             context_revision: 1,
         }
     }
@@ -461,38 +530,144 @@ impl<G> InputStack<G> {
         Some(result)
     }
 
-    pub(crate) fn mutate_top_tokens<R>(
+    /// Delivers and advances the exact stored-token cursor at the semantic top.
+    ///
+    /// Token-list and direct macro-argument rows enter this one typed path.
+    /// It indexes and discriminates the top once, performs the ordered inline
+    /// first-touch transition directly, and publishes one diagnostic-context
+    /// incarnation around the in-place advance. No callback or borrowed cursor
+    /// representation crosses this boundary.
+    pub(crate) fn deliver_top_cursor_into<'slot>(
         &mut self,
-        mutate: impl FnOnce(&mut super::TokenCursor<G>) -> R,
-    ) -> Option<R> {
+        sources: super::PackedTokenSources<'_, G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+        destination: crate::command::EmptyCommand<'slot, G>,
+    ) -> Option<Result<InputCursorDelivery<'slot, G>, ()>> {
         let index = self.top.checked_sub(1)?;
-        if !matches!(self.rows[index], InputLevel::Tokens(_)) {
-            return None;
+        #[cfg(any(test, feature = "profiling"))]
+        {
+            self.cursor_mutations.typed_top_accesses =
+                self.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
-        self.record(index);
-        let InputLevel::Tokens(tokens) = &mut self.rows[index] else {
-            unreachable!()
+        let mut recorder = InlineCursorRecorder {
+            recording: self.recording,
+            interval: self.interval,
+            index,
+            touched: &mut self.touched,
+            partially_captured: &mut self.partially_captured,
+            undo: &mut self.undo,
+            coalesced_mutations: &mut self.coalesced_mutations,
+            #[cfg(any(test, feature = "profiling"))]
+            counters: &mut self.cursor_mutations,
         };
-        let result = mutate(tokens);
+        let delivery = match &mut self.rows[index] {
+            InputLevel::Tokens(cursor) => {
+                recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
+                let identity = cursor.identity();
+                let behavior = cursor.behavior;
+                match cursor.deliver_into(sources, destination) {
+                    Ok(raw) => Ok(InputCursorDelivery {
+                        identity,
+                        delivered_by_parameter: matches!(behavior, super::TokenBehavior::Parameter),
+                        raw,
+                    }),
+                    Err(()) => Err(()),
+                }
+            }
+            InputLevel::MacroArgument(cursor) => {
+                recorder.record(InputLevelInlineState::new(
+                    cursor.frame,
+                    super::RetirementBehavior::Pop,
+                ));
+                let identity = cursor.identity();
+                match cursor.deliver_into(scratch, destination) {
+                    Ok(raw) => Ok(InputCursorDelivery {
+                        identity,
+                        delivered_by_parameter: true,
+                        raw,
+                    }),
+                    Err(()) => Err(()),
+                }
+            }
+            InputLevel::Source(_) => return None,
+        };
         self.note_context_mutation();
-        Some(result)
+        Some(delivery)
     }
 
-    pub(crate) fn mutate_top_macro_argument<R>(
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn set_top_token_retirement(
         &mut self,
-        mutate: impl FnOnce(&mut super::MacroArgumentCursor<G>) -> R,
-    ) -> Option<R> {
-        let index = self.top.checked_sub(1)?;
-        if !matches!(self.rows[index], InputLevel::MacroArgument(_)) {
-            return None;
-        }
-        self.record(index);
-        let InputLevel::MacroArgument(argument) = &mut self.rows[index] else {
+        retirement: super::RetirementBehavior,
+    ) -> bool {
+        let index = match self.top.checked_sub(1) {
+            Some(index) => index,
+            None => return false,
+        };
+        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+            return false;
+        };
+        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
+        self.record_inline(index, state);
+        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
-        let result = mutate(argument);
+        cursor.retirement = retirement;
         self.note_context_mutation();
-        Some(result)
+        true
+    }
+
+    pub(crate) fn retain_top_v_template(&mut self) -> bool {
+        let index = match self.top.checked_sub(1) {
+            Some(index) => index,
+            None => return false,
+        };
+        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+            return false;
+        };
+        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
+        self.record_inline(index, state);
+        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
+            unreachable!()
+        };
+        cursor.retirement = super::RetirementBehavior::AwaitingVTemplateRetirement;
+        cursor
+            .frame
+            .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
+        self.note_context_mutation();
+        true
+    }
+
+    pub(crate) fn extend_top_token_limit(&mut self, additional: u32) -> Option<bool> {
+        let index = self.top.checked_sub(1)?;
+        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+            return None;
+        };
+        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
+        self.record_inline(index, state);
+        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
+            unreachable!()
+        };
+        let extended = cursor.frame.extend_limit(additional).is_some();
+        self.note_context_mutation();
+        Some(extended)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn toggle_top_token_retirement(&mut self) -> bool {
+        let Some(current) = self.rows.get(self.top.saturating_sub(1)).and_then(|row| {
+            let InputLevel::Tokens(cursor) = row else {
+                return None;
+            };
+            Some(cursor.retirement)
+        }) else {
+            return false;
+        };
+        let retirement = match current {
+            super::RetirementBehavior::Pop => super::RetirementBehavior::StopAtEnd,
+            _ => super::RetirementBehavior::Pop,
+        };
+        self.set_top_token_retirement(retirement)
     }
 
     pub(crate) fn push(&mut self, value: InputLevel<G>) {
@@ -821,7 +996,17 @@ impl<G> InputStack<G> {
         }
     }
 
-    fn record(&mut self, index: usize) {
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) const fn cursor_mutation_counters(&self) -> InputCursorMutationCounters {
+        self.cursor_mutations
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn reset_cursor_mutation_counters(&mut self) {
+        self.cursor_mutations = InputCursorMutationCounters::default();
+    }
+
+    fn record_inline(&mut self, index: usize, state: InputLevelInlineState) {
         if !self.recording || self.touched[index] == self.interval {
             if self.recording {
                 self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
@@ -830,19 +1015,10 @@ impl<G> InputStack<G> {
         }
         self.touched[index] = self.interval;
         self.partially_captured[index] = self.interval;
-        let index = u32::try_from(index).expect("input row index fits u32");
-        match &self.rows[index as usize] {
-            InputLevel::Tokens(tokens) => {
-                let state = InputLevelInlineState::new(tokens.frame, tokens.retirement);
-                self.undo.append(InputUndo::Inline { index, state });
-            }
-            InputLevel::MacroArgument(argument) => {
-                let state =
-                    InputLevelInlineState::new(argument.frame, super::RetirementBehavior::Pop);
-                self.undo.append(InputUndo::Inline { index, state });
-            }
-            InputLevel::Source(_) => unreachable!("source lexer mutations record in one borrow"),
-        }
+        self.undo.append(InputUndo::Inline {
+            index: u32::try_from(index).expect("input row index fits u32"),
+            state,
+        });
     }
 
     fn next_interval(&mut self) {
