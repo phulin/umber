@@ -333,8 +333,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
   mutation and allocation facade, exclusive retained-checkpoint state/node
   bank loans, immutable primitive-registry sharing, owner-checked journal
-  cursors, admitted command/execution views, borrow-only pure-memo capability,
-  root-before-suffix shipout transactions, and whole-session retirement.
+  cursors, admitted command/execution views, callback-scoped hot command
+  admission that constructs and consumes the reference aggregate in its callee
+  slot, borrow-only pure-memo capability, root-before-suffix shipout
+  transactions, and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream

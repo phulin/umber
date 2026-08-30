@@ -437,6 +437,8 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(operation_frame_definition.contains("phase: Option<PreflightCommandPhase>"));
     assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
     assert!(!ownership_surface.contains("command: Option<PreflightCommand<G>>"));
+    assert!(!ownership_surface.contains("struct PreflightDelivery<G>"));
+    assert!(executor_facts.contains("fn fill_preflight("));
     for retired in [
         "PendingPreflightCommand",
         "struct PendingOperationScan",
@@ -462,12 +464,16 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(preflight.contains("processor.main_loop_lookahead_into(&mut frame.command)"));
     assert!(preflight.contains("processor.preflight_command_into(&mut frame.command)"));
     let admitted_episode = preflight
-        .split_once("let mut context = stores.command_context()")
-        .and_then(|(_, tail)| tail.split_once("drop(context);"))
+        .split_once(".with_command_context(|context|")
+        .and_then(|(_, tail)| tail.split_once(".expect(\"live generation\");"))
         .map(|(body, _)| body)
-        .expect("locate one admitted preflight context episode");
+        .expect("locate one destination-directed preflight context episode");
     assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
     assert!(!admitted_episode.contains("stores.command_context()"));
+    assert!(preflight.contains("host_preparation.fill_preflight("));
+    assert!(cold_scan.contains("cold.operation = Some("));
+    assert!(cold_scan.contains("(match meaning {"));
+    assert!(delivery.contains("command.mark_resident_cold(cold)"));
     assert_eq!(
         preflight.matches("dispatch_main_control_command(").count(),
         1

@@ -2,13 +2,6 @@
 
 use super::*;
 
-pub(super) struct PreflightDelivery<G> {
-    pub(super) delivery: OperationDelivery,
-    pub(super) capabilities: crate::transaction_protocol::CommandCapabilities,
-    pub(super) scanner: Option<tex_command::ScannerFrameKey<G>>,
-    pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
-}
-
 pub(super) struct PreparedAlignmentPreamble<G> {
     pub(super) alignment: AlignmentIdentity,
     pub(super) columns: Vec<PreparedAlignmentCellTemplates<G>>,
@@ -17,7 +10,10 @@ pub(super) struct PreparedAlignmentPreamble<G> {
     pub(super) repeat_start: Option<usize>,
 }
 
-pub(super) fn preflight_delivery_from_frame<G>(frame: &OperationFrame<G>) -> PreflightDelivery<G> {
+pub(super) fn fill_preflight_delivery_from_frame<G>(
+    frame: &OperationFrame<G>,
+    preparation: &mut OperationHostPreparation<'_, G>,
+) {
     let capabilities = match frame.phase.expect("retry frame owns its scalar phase") {
         PreflightCommandPhase::ImmediatePdfRetry(primitive) => {
             crate::transaction_protocol::canonical_static_command_capabilities(
@@ -29,12 +25,13 @@ pub(super) fn preflight_delivery_from_frame<G>(frame: &OperationFrame<G>) -> Pre
         }
         _ => crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning()),
     };
-    PreflightDelivery::<G> {
-        capabilities,
-        delivery: OperationDelivery::Command,
-        scanner: None,
-        expansion: None,
-    }
+    preparation.fill_preflight(OperationDelivery::Command, capabilities, None, None);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PreflightReadiness {
+    Ready,
+    Failed,
 }
 
 /// Whether operand scanning must wait for a resource/transaction boundary.
@@ -118,233 +115,258 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_>,
+        host_preparation: &mut OperationHostPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut OperationFrame<G>,
         cold: &mut ColdOperationSlot<G>,
-    ) -> Result<Option<PreflightDelivery<G>>, ExecError> {
+    ) -> PreflightReadiness {
         frame.assert_empty();
         self.ensure_primitive_handles(stores);
-        let mut context = stores.command_context().expect("live generation");
-        self.prepare_host_capabilities(&context, host_preparation);
-        let mode = host_preparation.mode();
-        if self.active_alignment.is_some()
-            || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
-        {
-            return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::Replay,
-                capabilities: crate::transaction_protocol::canonical_static_command_capabilities(
-                    Meaning::Relax,
-                ),
-                scanner: None,
-                expansion: None,
-            }));
-        }
-
-        if self.enter_main_control(&mut context) {
-            let entry_records: Vec<CommandObservation> = self
-                .command
-                .publish_named_token_list_pushes(&mut context, diagnostic_effects)
-                .into_iter()
-                .map(CommandObservation::Input)
-                .collect();
-            self.observe_committed(entry_records);
-        }
-        let innermost_group = context.innermost_group_kind();
-        let tracked_region_is_active = context.tracked_region_is_active();
-        let job_is_all_over = crate::page_output::job_is_all_over(&context);
-        let display_eq_no = self.modes.current_list().display_eq_no().is_some();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
         let root_main_source = self.root_main_source;
-        let (delivery_status, trace_reported, fused_delivery, fused_error) = {
-            let mut processor = command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            );
-            processor.set_output_routine_active(self.boxes.output_routine_active);
-            prepare_command_trace(&mut processor, mode, self.shown_mode);
-            // TeX82 has one raw-fetch/classification loop. Enter it once with
-            // §1038's first-command policy when the character loop is active;
-            // otherwise ordinary preflight publishes the unexpandable
-            // command's expanded observation directly and continues in place
-            // only when expansion is actually required.
-            let delivery = if raw_main_loop_delivery {
-                processor.main_loop_lookahead_into(&mut frame.command)
-            } else {
-                processor.preflight_command_into(&mut frame.command)
-            };
-            let delivery_status = match delivery {
-                Ok(status) => status,
-                Err(error) => {
-                    // The expansion driver moves its live command into
-                    // command state only after an actual immutable-host
-                    // suspension. Fuel and semantic failures have no retry
-                    // command and must not clone one speculatively.
-                    if let Some(expansion) = processor.take_pending_expansion_work() {
-                        frame.admit_expanding(
-                            expansion,
-                            self.main_loop_active,
-                            processor.delivery_cursor(),
-                        );
-                    }
-                    drop(processor);
-                    return Err(command_error(error));
-                }
-            };
-            diagnostics.extend(
-                processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command),
-            );
-            // TeX82 §§299/367 advance `shown_mode` as soon as expansion
-            // prints a command trace. A recoverable expansion diagnostic is a
-            // reporting barrier below, but it does not undo that trace-state
-            // transition: the following settled command must not print the
-            // same mode prefix again in a fresh processor facade.
-            if processor.command_trace_printed() {
-                self.shown_mode = Some(mode);
-            }
-            let mut trace_reported = false;
-            let mut fused_delivery = None;
-            let mut fused_error = None;
-            // Diagnostics are a real reporting barrier: preserve their
-            // established ordering before command tracing or operand work.
-            // The common diagnostic-free path continues in this same borrow.
-            if diagnostics.is_empty() && delivery_status == tex_command::DeliveryStatus::Command {
-                let continues_main_loop = self.main_loop_active
-                    && matches!(
-                        frame.current().meaning(),
-                        ResolvedMeaning::Static(
-                            Meaning::CharToken {
-                                cat: Catcode::Letter | Catcode::Other,
-                                ..
-                            } | Meaning::CharGiven(_)
-                                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
-                        )
-                    );
-                if !continues_main_loop {
-                    prepare_command_trace(&mut processor, mode, self.shown_mode);
-                    report_main_control_command_trace(
-                        &mut processor,
-                        mode,
-                        frame.current(),
-                        &self.boxes,
-                        &mut self.shown_mode,
-                    );
-                    trace_reported = true;
-                }
-                let capabilities = crate::transaction_protocol::canonical_command_capabilities(
-                    frame.current().meaning(),
-                );
-                let needs_barrier = tracked_region_is_active
-                    || command_requires_transaction_from_facts(
-                        mode,
-                        &self.boxes,
-                        capabilities,
-                        frame,
-                        processor.int_param(IntParam::PDF_OUTPUT),
-                        innermost_group,
-                    );
-                if !needs_barrier {
-                    #[cfg(feature = "profiling")]
-                    tex_state::measurement::record_hot_core_phase(
-                        tex_state::measurement::HotCorePhase::DeliveryAndScan,
-                    );
-                    #[cfg(feature = "profiling")]
-                    let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                        tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
-                    );
-                    let scanned = dispatch_main_control_command(
-                        &mut processor,
-                        frame,
-                        cold,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        display_eq_no,
-                        &mut self.shown_mode,
-                        &mut diagnostics,
+        let context_readiness = stores
+            .with_command_context(|context| {
+                self.prepare_host_capabilities(context, host_preparation);
+                let mode = host_preparation.mode();
+                if self.active_alignment.is_some()
+                    || (mode == Mode::DisplayMath
+                        && self.modes.current_list().has_display_alignment())
+                {
+                    host_preparation.fill_preflight(
+                        OperationDelivery::Replay,
+                        crate::transaction_protocol::canonical_static_command_capabilities(
+                            Meaning::Relax,
+                        ),
                         None,
-                        true,
+                        None,
                     );
+                    return PreflightReadiness::Ready;
+                }
+
+                if self.enter_main_control(context) {
+                    let entry_records: Vec<CommandObservation> = self
+                        .command
+                        .publish_named_token_list_pushes(context, diagnostic_effects)
+                        .into_iter()
+                        .map(CommandObservation::Input)
+                        .collect();
+                    self.observe_committed(entry_records);
+                }
+                let innermost_group = context.innermost_group_kind();
+                let tracked_region_is_active = context.tracked_region_is_active();
+                let job_is_all_over = crate::page_output::job_is_all_over(context);
+                let display_eq_no = self.modes.current_list().display_eq_no().is_some();
+                {
+                    let mut processor = command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    );
+                    processor.set_output_routine_active(self.boxes.output_routine_active);
+                    prepare_command_trace(&mut processor, mode, self.shown_mode);
+                    // TeX82 has one raw-fetch/classification loop. Enter it once with
+                    // §1038's first-command policy when the character loop is active;
+                    // otherwise ordinary preflight publishes the unexpandable
+                    // command's expanded observation directly and continues in place
+                    // only when expansion is actually required.
+                    let delivery = if raw_main_loop_delivery {
+                        processor.main_loop_lookahead_into(&mut frame.command)
+                    } else {
+                        processor.preflight_command_into(&mut frame.command)
+                    };
+                    let status = match delivery {
+                        Ok(status) => status,
+                        Err(error) => {
+                            // The expansion driver moves its live command into
+                            // command state only after an actual immutable-host
+                            // suspension. Fuel and semantic failures have no retry
+                            // command and must not clone one speculatively.
+                            if let Some(expansion) = processor.take_pending_expansion_work() {
+                                frame.admit_expanding(
+                                    expansion,
+                                    self.main_loop_active,
+                                    processor.delivery_cursor(),
+                                );
+                            }
+                            drop(processor);
+                            frame.error = Some(command_error(error));
+                            return PreflightReadiness::Failed;
+                        }
+                    };
                     diagnostics.extend(
                         processor
                             .take_semantic_diagnostics()
                             .into_iter()
                             .map(PendingDiagnostic::Command),
                     );
-                    match scanned {
-                        Ok(ScannedOperation::Hot) => {
-                            // The scanned operation now owns every durable
-                            // result. Retire the delivery/scanner episode as a
-                            // unit before handing that operation to execution;
-                            // no preflight marker belongs to the next stage.
-                            frame.retain_root_main_file_origin(root_main_source);
-                            frame.clear_preflight();
-                            fused_delivery = Some((OperationDelivery::Hot, capabilities));
+                    // TeX82 §§299/367 advance `shown_mode` as soon as expansion
+                    // prints a command trace. A recoverable expansion diagnostic is a
+                    // reporting barrier below, but it does not undo that trace-state
+                    // transition: the following settled command must not print the
+                    // same mode prefix again in a fresh processor facade.
+                    if processor.command_trace_printed() {
+                        self.shown_mode = Some(mode);
+                    }
+                    let mut reported = false;
+                    // Diagnostics are a real reporting barrier: preserve their
+                    // established ordering before command tracing or operand work.
+                    // The common diagnostic-free path continues in this same borrow.
+                    if diagnostics.is_empty() && status == tex_command::DeliveryStatus::Command {
+                        let continues_main_loop = self.main_loop_active
+                            && matches!(
+                                frame.current().meaning(),
+                                ResolvedMeaning::Static(
+                                    Meaning::CharToken {
+                                        cat: Catcode::Letter | Catcode::Other,
+                                        ..
+                                    } | Meaning::CharGiven(_)
+                                        | Meaning::UnexpandablePrimitive(
+                                            UnexpandablePrimitive::Char
+                                        )
+                                )
+                            );
+                        if !continues_main_loop {
+                            prepare_command_trace(&mut processor, mode, self.shown_mode);
+                            report_main_control_command_trace(
+                                &mut processor,
+                                mode,
+                                frame.current(),
+                                &self.boxes,
+                                &mut self.shown_mode,
+                            );
+                            reported = true;
                         }
-                        Ok(ScannedOperation::Cold) => {
-                            frame.retain_root_main_file_origin(root_main_source);
-                            frame.clear_preflight();
-                            fused_delivery = Some((OperationDelivery::Scanned, capabilities));
-                        }
-                        Err(error) => {
-                            let cursor = processor.delivery_cursor();
-                            if execution_error_needs_command_retry(&error) {
-                                if !frame.has_preflight() {
-                                    let retry_expansion = processor.take_pending_expansion_work();
-                                    let scanner = processor.take_scanner_resume();
-                                    if let Some(expansion) = retry_expansion {
-                                        frame.discard_resident_command();
-                                        frame.admit_expanding(
-                                            expansion,
-                                            self.main_loop_active,
-                                            cursor,
-                                        );
-                                    } else {
-                                        frame.mark_resident_settled(Some(cursor));
-                                        frame.scanner = scanner;
-                                    }
+                        let capabilities =
+                            crate::transaction_protocol::canonical_command_capabilities(
+                                frame.current().meaning(),
+                            );
+                        let needs_barrier = tracked_region_is_active
+                            || command_requires_transaction_from_facts(
+                                mode,
+                                &self.boxes,
+                                capabilities,
+                                frame,
+                                processor.int_param(IntParam::PDF_OUTPUT),
+                                innermost_group,
+                            );
+                        if !needs_barrier {
+                            #[cfg(feature = "profiling")]
+                            tex_state::measurement::record_hot_core_phase(
+                                tex_state::measurement::HotCorePhase::DeliveryAndScan,
+                            );
+                            #[cfg(feature = "profiling")]
+                            let _allocation_scope =
+                                tex_state::measurement::hot_core_allocation_scope(
+                                    tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+                                );
+                            let scanned = dispatch_main_control_command(
+                                &mut processor,
+                                frame,
+                                cold,
+                                mode,
+                                &self.boxes,
+                                innermost_group,
+                                job_is_all_over,
+                                display_eq_no,
+                                &mut self.shown_mode,
+                                &mut diagnostics,
+                                None,
+                                true,
+                            );
+                            diagnostics.extend(
+                                processor
+                                    .take_semantic_diagnostics()
+                                    .into_iter()
+                                    .map(PendingDiagnostic::Command),
+                            );
+                            match scanned {
+                                Ok(ScannedOperation::Hot) => {
+                                    // The scanned operation now owns every durable
+                                    // result. Retire the delivery/scanner episode as a
+                                    // unit before handing that operation to execution;
+                                    // no preflight marker belongs to the next stage.
+                                    frame.retain_root_main_file_origin(root_main_source);
+                                    frame.clear_preflight();
+                                    host_preparation.fill_preflight(
+                                        OperationDelivery::Hot,
+                                        capabilities,
+                                        None,
+                                        None,
+                                    );
                                 }
-                            } else {
-                                frame.discard_resident_command();
+                                Ok(ScannedOperation::Cold) => {
+                                    frame.retain_root_main_file_origin(root_main_source);
+                                    frame.clear_preflight();
+                                    host_preparation.fill_preflight(
+                                        OperationDelivery::Scanned,
+                                        capabilities,
+                                        None,
+                                        None,
+                                    );
+                                }
+                                Err(error) => {
+                                    let cursor = processor.delivery_cursor();
+                                    if execution_error_needs_command_retry(&error) {
+                                        if !frame.has_preflight() {
+                                            let retry_expansion =
+                                                processor.take_pending_expansion_work();
+                                            let scanner = processor.take_scanner_resume();
+                                            if let Some(expansion) = retry_expansion {
+                                                frame.discard_resident_command();
+                                                frame.admit_expanding(
+                                                    expansion,
+                                                    self.main_loop_active,
+                                                    cursor,
+                                                );
+                                            } else {
+                                                frame.mark_resident_settled(Some(cursor));
+                                                frame.scanner = scanner;
+                                            }
+                                        }
+                                    } else {
+                                        frame.discard_resident_command();
+                                    }
+                                    frame.error = Some(error);
+                                }
                             }
-                            fused_error = Some(error);
                         }
                     }
-                }
-            }
-            (delivery_status, trace_reported, fused_delivery, fused_error)
-        };
-        drop(context);
+                    host_preparation.record_delivery_status(status, reported);
+                };
+                PreflightReadiness::Ready
+            })
+            .expect("live generation");
+        if context_readiness == PreflightReadiness::Failed {
+            return PreflightReadiness::Failed;
+        }
+        let mode = host_preparation.mode();
         let refresh_transaction_facts = !diagnostics.is_empty();
         self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
+        if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
+            frame.error = Some(error);
+            return PreflightReadiness::Failed;
+        }
         if refresh_transaction_facts {
             let context = stores
                 .command_context()
                 .expect("diagnostic retry admission");
             host_preparation.refresh_transaction_facts(&context);
         }
-        if let Some(error) = fused_error {
-            return Err(error);
+        if frame.error.is_some() {
+            return PreflightReadiness::Failed;
         }
-        if let Some((delivery, capabilities)) = fused_delivery {
-            return Ok(Some(PreflightDelivery::<G> {
-                delivery,
-                capabilities,
-                scanner: None,
-                expansion: None,
-            }));
+        if host_preparation.has_preflight() {
+            host_preparation.discard_delivery_status();
+            return PreflightReadiness::Ready;
         }
+
+        let delivery_status = host_preparation.take_delivery_status();
+        let trace_reported = host_preparation.take_trace_reported();
 
         let passive =
             || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
@@ -352,22 +374,14 @@ impl<G> MainControl<G> {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::EndOfInput);
-                return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::Prepared,
-                    capabilities: passive(),
-                    scanner: None,
-                    expansion: None,
-                }));
+                host_preparation.fill_preflight(OperationDelivery::Prepared, passive(), None, None);
+                return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::ReplayCompleted(episode));
-                return Ok(Some(PreflightDelivery::<G> {
-                    delivery: OperationDelivery::Prepared,
-                    capabilities: passive(),
-                    scanner: None,
-                    expansion: None,
-                }));
+                host_preparation.fill_preflight(OperationDelivery::Prepared, passive(), None, None);
+                return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::Command => {}
             _ => unreachable!("raw preflight delivery has no alignment event"),
@@ -425,12 +439,8 @@ impl<G> MainControl<G> {
             );
             frame.retain_root_main_file_origin(root_main_source);
             frame.discard_resident_command();
-            return Ok(Some(PreflightDelivery::<G> {
-                delivery: OperationDelivery::Prepared,
-                capabilities,
-                scanner: None,
-                expansion: None,
-            }));
+            host_preparation.fill_preflight(OperationDelivery::Prepared, capabilities, None, None);
+            return PreflightReadiness::Ready;
         }
         let capabilities =
             crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning());
@@ -439,12 +449,8 @@ impl<G> MainControl<G> {
         } else {
             frame.mark_resident_settled(None);
         }
-        Ok(Some(PreflightDelivery::<G> {
-            delivery: OperationDelivery::Command,
-            capabilities,
-            scanner: None,
-            expansion: None,
-        }))
+        host_preparation.fill_preflight(OperationDelivery::Command, capabilities, None, None);
+        PreflightReadiness::Ready
     }
 }
 
@@ -3926,9 +3932,10 @@ pub(super) fn scan_command<G>(
     )? {
         return Ok(ScannedOperation::Hot);
     }
-    let operation = scan_cold_operation(
+    scan_cold_operation(
         processor,
         command,
+        cold,
         global,
         mode,
         boxes,
@@ -3939,5 +3946,6 @@ pub(super) fn scan_command<G>(
         shown_mode,
         suspended_operation_scan,
     )?;
-    Ok(retain_cold_operation(command, cold, operation))
+    command.mark_resident_cold(cold);
+    Ok(ScannedOperation::Cold)
 }

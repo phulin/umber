@@ -45,9 +45,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   begin/commit/rollback, resource and diagnostic retry settlement, and ordered
   semantic/effect/artifact/boundary publication.
 - `src/main_control/executor_facts.rs`: the one stack-branded stationary mode,
-  effective-tail, transaction, and checked-save preparation. Live executor
-  owners fill or drain individual scalar fields through borrow-scoped views;
-  no admitted context or preparation survives the operation loan.
+  effective-tail, transaction, checked-save, and delivery preparation. The
+  caller-owned preparation slot is filled and drained fieldwise across
+  admitted delivery, availability checks, scanning, and application; no
+  by-value preflight aggregate crosses those stages. Live executor owners fill
+  or drain individual fields through borrow-scoped views; no admitted context
+  or preparation survives the operation loan.
 - The `OperationFrame` owns the admitted current command, parked expansion,
   scalar phase, delivery cursor, scanner child, partial direct scan, and one
   mutually exclusive compact operation payload in its own fields. The payload
@@ -62,8 +65,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   or extract those fields merely to cross prepare, retry, rollback, or resume.
 - Each topology-stable operation prepares executor host capabilities once from
   the authoritative live list. A stack-branded preparation carries the mode
-  and shared effective-tail result through delivery/scanning into application;
-  mutation consumes it, while suspension and error re-entry recompute it.
+  and shared effective-tail result plus the compact delivery/retry fields
+  through scanning into application. Application drains those fields in the
+  same caller slot; suspension and error re-entry recompute host facts while
+  moving only the genuine typed continuation.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; the scanner

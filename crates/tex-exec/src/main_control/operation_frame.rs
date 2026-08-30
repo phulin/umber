@@ -757,6 +757,18 @@ impl<G> OperationFrame<G> {
         self.payload = Some(OperationPayload::Cold);
     }
 
+    pub(super) fn mark_resident_cold(&mut self, cold: &ColdOperationSlot<G>) {
+        assert!(
+            self.payload.is_none(),
+            "one operation frame owns one completed payload"
+        );
+        assert!(
+            cold.operation.is_some(),
+            "cold scanning fills the resident leaf before publishing its tag"
+        );
+        self.payload = Some(OperationPayload::Cold);
+    }
+
     pub(super) fn unavailable<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a ColdOperation<G> {
         assert!(matches!(self.payload, Some(OperationPayload::Cold)));
         cold.operation

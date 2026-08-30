@@ -2977,6 +2977,44 @@ impl<G> Universe<G> {
         }))
     }
 
+    /// Admits one command context directly in the callee's stack slot.
+    ///
+    /// The callback form is for hot boundaries that consume the admitted
+    /// facade locally and must not return its large reference aggregate by
+    /// value. The borrow cannot escape the callback.
+    pub fn with_command_context<R>(
+        &mut self,
+        visit: impl FnOnce(&mut CommandContext<'_, G>) -> R,
+    ) -> Result<R, UniverseError> {
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        let (page_nodes, page) = self.page_region.parts_mut();
+        let mut context = CommandContext::new(CommandContextParts {
+            interner: self
+                .interner
+                .as_mut()
+                .expect("live Universe has an admitted session epoch"),
+            admitted: core.admit_mut()?,
+            primitive_names: &self.primitive_registry.names,
+            primitive_meanings: &self.primitive_registry.meanings,
+            world: &mut self.world,
+            dependencies: &mut self.dependencies,
+            fonts: &mut self.fonts,
+            page_nodes,
+            durable_boxes: &mut self.durable_boxes,
+            durable_forms: &mut self.durable_forms,
+            shipout_scratch: &mut self.shipout_scratch,
+            page,
+            pdf: &mut self.pdf,
+            sources: &mut self.sources,
+            hyphenation: &mut self.hyphenation,
+            interaction_mode: &mut self.interaction_mode,
+            prepared_mag: &mut self.prepared_mag,
+            error_context_widths: self.error_context_widths,
+            engine_usage: &mut self.engine_usage,
+        });
+        Ok(visit(&mut context))
+    }
+
     /// Prepares §1012's page-owner transition from the complete page owner.
     ///
     /// Durable box and form closures already own independent regions. The

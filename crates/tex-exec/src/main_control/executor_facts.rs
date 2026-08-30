@@ -10,16 +10,22 @@ use super::*;
 pub(super) struct OperationPreparationScope;
 
 /// Copy-free executor facts sampled once for one topology-stable operation.
-pub(super) struct OperationHostPreparation<'operation> {
+pub(super) struct OperationHostPreparation<'operation, G> {
     mode: Option<Mode>,
     last_node_type: i32,
     pdf_output: i32,
     innermost_group: Option<GroupKind>,
     checked_save_stack_words: Option<usize>,
+    delivery: Option<OperationDelivery>,
+    capabilities: Option<crate::transaction_protocol::CommandCapabilities>,
+    scanner: Option<tex_command::ScannerFrameKey<G>>,
+    expansion: Option<tex_command::ExpansionWorkKey<G>>,
+    delivery_status: Option<tex_command::DeliveryStatus>,
+    trace_reported: bool,
     pub(super) _scope: PhantomData<&'operation mut OperationPreparationScope>,
 }
 
-impl<'operation> OperationHostPreparation<'operation> {
+impl<'operation, G> OperationHostPreparation<'operation, G> {
     pub(super) fn new(_scope: &'operation mut OperationPreparationScope) -> Self {
         Self {
             mode: None,
@@ -27,8 +33,96 @@ impl<'operation> OperationHostPreparation<'operation> {
             pdf_output: 0,
             innermost_group: None,
             checked_save_stack_words: None,
+            delivery: None,
+            capabilities: None,
+            scanner: None,
+            expansion: None,
+            delivery_status: None,
+            trace_reported: false,
             _scope: PhantomData,
         }
+    }
+
+    pub(super) fn fill_preflight(
+        &mut self,
+        delivery: OperationDelivery,
+        capabilities: crate::transaction_protocol::CommandCapabilities,
+        scanner: Option<tex_command::ScannerFrameKey<G>>,
+        expansion: Option<tex_command::ExpansionWorkKey<G>>,
+    ) {
+        assert!(
+            self.delivery.is_none()
+                && self.capabilities.is_none()
+                && self.scanner.is_none()
+                && self.expansion.is_none(),
+            "one host preparation owns one preflight result"
+        );
+        self.delivery = Some(delivery);
+        self.capabilities = Some(capabilities);
+        self.scanner = scanner;
+        self.expansion = expansion;
+    }
+
+    pub(super) fn has_preflight(&self) -> bool {
+        self.delivery.is_some()
+    }
+
+    pub(super) fn delivery(&self) -> &OperationDelivery {
+        self.delivery
+            .as_ref()
+            .expect("prepared host facts own one delivery")
+    }
+
+    pub(super) fn capabilities(&self) -> crate::transaction_protocol::CommandCapabilities {
+        self.capabilities
+            .expect("prepared host facts own one capability record")
+    }
+
+    pub(super) fn take_capabilities(&mut self) -> crate::transaction_protocol::CommandCapabilities {
+        self.capabilities
+            .take()
+            .expect("operation preparation drains one capability record")
+    }
+
+    pub(super) fn take_delivery(&mut self) -> OperationDelivery {
+        self.delivery
+            .take()
+            .expect("operation preparation drains one delivery")
+    }
+
+    pub(super) fn take_scanner(&mut self) -> Option<tex_command::ScannerFrameKey<G>> {
+        self.scanner.take()
+    }
+
+    pub(super) fn take_expansion(&mut self) -> Option<tex_command::ExpansionWorkKey<G>> {
+        self.expansion.take()
+    }
+
+    pub(super) fn record_delivery_status(
+        &mut self,
+        status: tex_command::DeliveryStatus,
+        trace_reported: bool,
+    ) {
+        assert!(
+            self.delivery_status.replace(status).is_none(),
+            "one host preparation owns one raw delivery status"
+        );
+        self.trace_reported = trace_reported;
+    }
+
+    pub(super) fn take_delivery_status(&mut self) -> tex_command::DeliveryStatus {
+        self.delivery_status
+            .take()
+            .expect("raw preflight fills one delivery status")
+    }
+
+    pub(super) fn take_trace_reported(&mut self) -> bool {
+        std::mem::take(&mut self.trace_reported)
+    }
+
+    pub(super) fn discard_delivery_status(&mut self) {
+        self.delivery_status = None;
+        self.trace_reported = false;
     }
 
     pub(super) fn mode(&self) -> Mode {
@@ -67,7 +161,7 @@ impl<'operation> OperationHostPreparation<'operation> {
         self.checked_save_stack_words.take()
     }
 
-    pub(super) fn refresh_transaction_facts<G>(&mut self, stores: &CommandContext<'_, G>) {
+    pub(super) fn refresh_transaction_facts(&mut self, stores: &CommandContext<'_, G>) {
         assert!(
             self.mode.is_some(),
             "operation host facts are prepared once"
@@ -88,7 +182,7 @@ impl<G> MainControl<G> {
     pub(super) fn prepare_host_capabilities(
         &mut self,
         stores: &CommandContext<'_, G>,
-        preparation: &mut OperationHostPreparation<'_>,
+        preparation: &mut OperationHostPreparation<'_, G>,
     ) {
         let mode = self.modes.current_mode();
         let tail = self.effective_tail_facts(stores);
