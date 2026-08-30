@@ -124,12 +124,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
   first-write journal integration, stale rejection, nested rollback, and
   plateau controls.
 - `src/hyphenation.rs`: Liang-style position lookup with one coarse immutable
-  owner for the initialized pattern trie and separately checkpointed bounded
-  runtime exception and saved-code maps.
-- `src/hyphenation/storage.rs`: Coarse initialized-trie owner, separately
-  cloneable mutable runtime value, and cold format wire decomposition.
+  owner for the initialized pattern trie and one reversible direct-state
+  journal for mutable exceptions, saved codes, and capacity scalars.
+- `src/hyphenation/storage.rs`: Coarse initialized-trie owner, fixed checkpoint
+  mark, move-only accepted/candidate settlement for the mutable runtime, and
+  cold format wire decomposition.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions,
-  bounds, overlapping matches, and frozen-owner snapshot semantics.
+  bounds, overlapping matches, frozen-owner semantics, and exact mutable
+  checkpoint settlement.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
 - `src/generation.rs`: Fresh invariant generation brands, private publisher
   construction, episode-level guarded admission, cloneable coarse generation

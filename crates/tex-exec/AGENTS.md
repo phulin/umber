@@ -113,8 +113,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   no-prototype packing coverage.
 - `src/checkpoint.rs` and `src/checkpoint/tests.rs`: command-only named
   boundaries, editor forks with post-restore root-source registration,
-  aggregate checkpoint restore, budgets, rooted command/mode summaries, and
-  retained token/glue-root restoration coverage.
+  move-only aggregate checkpoint restore, budgets, bounded command/mode roots,
+  profiling-only aggregate lifecycle probes, and retained token/glue-root
+  restoration coverage.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
 - `src/execution_receipt.rs` and `src/execution_receipt/tests.rs`: crate-private
   typed operation receipts assembled, consumed, and reset in place by the
