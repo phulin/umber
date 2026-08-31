@@ -325,7 +325,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     pub(super) const fn current_delivery_sequence(&self) -> u64 {
-        debug_assert!(self.immediate_delivery_stamp.is_some());
+        // Outer-validity recovery can consume backup freshness before raw
+        // observation publishes the offending command. No later delivery has
+        // occurred, so observation order is still exactly the cursor's
+        // preceding position and does not depend on freshness ownership.
         self.next_delivery_sequence.wrapping_sub(1)
     }
 
