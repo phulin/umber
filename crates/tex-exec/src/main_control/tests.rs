@@ -7830,6 +7830,7 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
 fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\end");
         control
             .pending_named_boundaries
             .push_back(PendingNamedBoundary {
@@ -7867,6 +7868,27 @@ fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
             ],
             "approved document roles retain paragraph and shipout restart boundaries"
         );
+    });
+}
+
+#[test]
+fn terminal_named_boundary_without_a_live_root_is_not_restartable() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control
+            .pending_named_boundaries
+            .push_back(PendingNamedBoundary {
+                boundary: crate::EngineBoundary::ShipoutComplete,
+                source_role: Some(tex_command::SourceRole::RootDocument),
+            });
+
+        control
+            .publish_terminal_named_boundaries(stores)
+            .expect("terminal output evidence remains publishable");
+
+        assert!(control.pending_named_boundaries.is_empty());
+        assert!(control.take_completed_boundaries().is_empty());
+        assert!(control.take_checkpoint_eligibilities().is_empty());
     });
 }
 

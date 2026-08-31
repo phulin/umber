@@ -634,7 +634,9 @@ impl<G> MainControl<G> {
                 .pop_front()
                 .expect("inspected named-boundary intent remains queued");
             debug_assert_eq!(published, pending);
-            if !checkpoint_role_is_retained(published.source_role) {
+            if !checkpoint_role_is_retained(published.source_role)
+                || !self.root_source_is_live_for_restart()
+            {
                 continue;
             }
             if published.boundary == crate::EngineBoundary::ShipoutComplete {
@@ -668,6 +670,16 @@ impl<G> MainControl<G> {
 }
 
 impl<G> MainControl<G> {
+    /// A named root can restart an editor only while command input still owns
+    /// the physical root row that rebinds the replacement bytes. Delayed
+    /// terminal shipout intents may retain their originating document role
+    /// after that row has retired; they remain valid output evidence but must
+    /// not become anchor-zero restart roots.
+    fn root_source_is_live_for_restart(&self) -> bool {
+        self.root_main_source
+            .is_some_and(|root| self.command.current_file_source_id() == Some(root))
+    }
+
     pub(super) fn observe_committed(
         &mut self,
         records: impl IntoIterator<Item = CommandObservation>,
