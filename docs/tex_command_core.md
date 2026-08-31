@@ -1668,6 +1668,21 @@ alignment/recovery flags. It does not repeat a decoded physical source range,
 active source identity, or diagnostic ancestry. There is no per-command box,
 allocation, provenance sidecar, or alternate fast representation.
 
+The deterministic layout gates record the canonical cutover from the
+pre-coordinate kernel at `ac3ba1b85`:
+
+| Resident carrier              | Before | Coordinate kernel | Reduction |
+| ----------------------------- | -----: | ----------------: | --------: |
+| `CurrentCommand<()>`          |    112 |                72 |        40 |
+| `MatchedKeywordPrefix<()>`    |    536 |               120 |       416 |
+| `PendingScalarFrame<()>`      |    592 |               208 |       384 |
+| executor `CommandEpisode<()>` |    672 |               632 |        40 |
+
+The focused optimized destination-delivery gate performs 24,576 warmed raw,
+token, and expanded deliveries through the one reusable command destination
+with zero allocations or requested bytes. These are state-movement and owner
+shape gates, not a competing fast path.
+
 The spelling's four-byte `OriginId` is the stable provenance coordinate. A
 direct source origin encodes its immutable registered-source position; a
 derived origin indexes the generation provenance rows; one macro activation

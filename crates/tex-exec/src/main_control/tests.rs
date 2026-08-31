@@ -6732,7 +6732,7 @@ fn resident_cold_scan_evidence(
 fn command_episode_and_suspension_frame_have_separate_lifetimes() {
     assert_eq!(std::mem::size_of::<hot_apply::HotOperation<()>>(), 32);
     assert_eq!(std::mem::size_of::<ColdOperationSlot<()>>(), 264);
-    assert_eq!(std::mem::size_of::<CommandEpisode<()>>(), 640);
+    assert_eq!(std::mem::size_of::<CommandEpisode<()>>(), 632);
     assert_eq!(
         std::mem::size_of::<OperationFrame<()>>(),
         std::mem::size_of::<Option<CommandEpisode<()>>>()
