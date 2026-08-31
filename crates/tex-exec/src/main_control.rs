@@ -3347,9 +3347,9 @@ impl<G> MainControl<G> {
                                 None,
                                 None,
                             ),
-                            PendingFrameResume::ColdExecution => {
+                            PendingFrameResume::ColdExecution(barrier) => {
                                 host_preparation.fill_delivery(
-                                    OperationDelivery::SuspendedCold,
+                                    OperationDelivery::SuspendedCold { barrier },
                                     None,
                                     None,
                                 );
@@ -3366,7 +3366,13 @@ impl<G> MainControl<G> {
                 Some((operation, pending)) => {
                     (command_episode, cold_operation) = pending.frame.into_parts();
                     let _ = command_episode.error.take();
-                    host_preparation.fill_delivery(OperationDelivery::SuspendedCold, None, None);
+                    host_preparation.fill_delivery(
+                        OperationDelivery::SuspendedCold {
+                            barrier: pending.barrier,
+                        },
+                        None,
+                        None,
+                    );
                     Some(operation)
                 }
                 None => retained_operation,
@@ -3551,6 +3557,7 @@ impl<G> MainControl<G> {
                                 operation_mark,
                                 command_episode,
                                 cold_operation,
+                                barrier,
                             );
                             if matches!(result, Ok(StepResult::Suspended(_))) {
                                 self.advance_telemetry.rollbacks += 1;
@@ -3699,6 +3706,7 @@ impl<G> MainControl<G> {
                                 operation_mark,
                                 command_episode,
                                 cold_operation,
+                                barrier,
                             );
                             return result;
                         }
@@ -3911,6 +3919,7 @@ impl<G> MainControl<G> {
                             operation_mark,
                             command_episode,
                             cold_operation,
+                            barrier,
                         )
                     } else {
                         let result = self.finish_resource_preflight_failure(
@@ -4003,7 +4012,7 @@ impl<G> MainControl<G> {
                                 destination: PendingDirectDestination::Frame(
                                     PendingFrameDestination {
                                         frame: OperationFrame::new(command_episode, cold_operation),
-                                        resume: PendingFrameResume::ColdExecution,
+                                        resume: PendingFrameResume::ColdExecution(barrier),
                                     },
                                 ),
                             });
@@ -4201,12 +4210,16 @@ impl<G> MainControl<G> {
         let retained_attempt = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
-                destination: PendingDiagnosticDestination::<G> { frame },
+                destination: PendingDiagnosticDestination::<G> { frame, barrier },
             }) => {
                 (command_episode, cold_operation) = frame.into_parts();
                 let _ = command_episode.error.take();
                 if command_episode.has_unavailable(&cold_operation) {
-                    host_preparation.fill_delivery(OperationDelivery::SuspendedCold, None, None);
+                    host_preparation.fill_delivery(
+                        OperationDelivery::SuspendedCold { barrier },
+                        None,
+                        None,
+                    );
                 } else {
                     host_preparation.fill_delivery(OperationDelivery::Command, None, None);
                 }
@@ -4264,6 +4277,7 @@ impl<G> MainControl<G> {
                             operation,
                             destination: PendingDiagnosticDestination {
                                 frame: OperationFrame::new(frame, ColdOperationSlot::default()),
+                                barrier: None,
                             },
                         });
                     } else {
@@ -4295,6 +4309,7 @@ impl<G> MainControl<G> {
             host_preparation.fill_delivery(OperationDelivery::Command, None, None);
         }
         let mode_mark = self.modes.begin_journal();
+        let barrier = operation_barrier(host_preparation.delivery(), &command_episode);
         let applied = match self.execute_typed_operation(
             stores,
             &mut host_preparation,
@@ -4321,6 +4336,7 @@ impl<G> MainControl<G> {
                     );
                     let destination = PendingDiagnosticDestination {
                         frame: OperationFrame::new(command_episode, cold_operation),
+                        barrier,
                     };
                     let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
                     self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
@@ -6491,7 +6507,7 @@ impl<G> MainControl<G> {
         let expansion_resume = host_preparation.take_expansion();
         if matches!(
             &delivery,
-            OperationDelivery::SuspendedCold | OperationDelivery::ResidentCold
+            OperationDelivery::SuspendedCold { .. } | OperationDelivery::ResidentCold
         ) {
             assert!(
                 frame.has_unavailable(cold)
@@ -6528,7 +6544,7 @@ impl<G> MainControl<G> {
         }
         if matches!(
             delivery,
-            OperationDelivery::ResidentCold | OperationDelivery::SuspendedCold
+            OperationDelivery::ResidentCold | OperationDelivery::SuspendedCold { .. }
         ) {
             return self.execute_scanned_cold_episode(
                 stores,
@@ -6782,7 +6798,7 @@ impl<G> MainControl<G> {
                     OperationDelivery::ResidentCold => {
                         unreachable!("pre-scanned cold delivery bypasses operation preparation")
                     }
-                    OperationDelivery::SuspendedCold => {
+                    OperationDelivery::SuspendedCold { .. } => {
                         unreachable!("prepared cold operations bypass operand scanning")
                     }
                 })

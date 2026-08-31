@@ -4482,6 +4482,32 @@ fn unavailable_font_and_tfm_answers_use_tex_missing_font_semantics() {
 }
 
 #[test]
+fn nested_classic_tfm_file_retry_resumes_the_enclosing_operation() {
+    let mut session =
+        session("\\font\\body=cmr10 \\body $\\mathchoice{\\font\\nested=cmti8 A}{B}{C}{D}$\\end");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("body TFM");
+    let requested = requests(session.compile_attempt());
+    let [tfm] = requested.as_slice() else {
+        panic!("expected one TFM request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: tfm.key().clone(),
+            virtual_path: "/texlive/cmti8.tfm".to_owned(),
+            expected_digest: None,
+            bytes: CMR10.to_vec(),
+        })])
+        .expect("TFM response");
+    let attempt = session.compile_attempt();
+    assert!(
+        matches!(attempt, CompileAttemptResult::Complete(_)),
+        "the admitted §§1172/1257 definition should resume its enclosing operation after the TFM arrives: {attempt:?}"
+    );
+}
+
+#[test]
 fn active_font_definition_uses_tex82_synthetic_recorded_identifier() {
     // TeX82 §1257 synthesizes `FONT<char>` for an active font target and
     // records it at §1257's `common_ending`; §267's font rendering must use

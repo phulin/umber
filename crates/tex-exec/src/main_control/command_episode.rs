@@ -32,8 +32,12 @@ pub(super) enum OperationDelivery {
     ResidentCold,
     /// Delivery completed before a cold semantic step. The semantic step still
     /// runs through the sole executor below.
-    /// The suspension frame has restored the resident typed cold branch.
-    SuspendedCold,
+    /// The suspension frame has restored the resident typed cold branch. Its
+    /// compact barrier belongs to the enclosing command, which may differ
+    /// from a nested operation that requested a resource.
+    SuspendedCold {
+        barrier: Option<crate::transaction_protocol::CommandBarrier>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -864,6 +868,7 @@ pub(super) struct PendingResourceOperation<G> {
 
 pub(super) struct SuspendedResourceResume<G> {
     pub(super) frame: OperationFrame<G>,
+    pub(super) barrier: Option<crate::transaction_protocol::CommandBarrier>,
 }
 
 pub(super) const SUSPENDED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
@@ -898,7 +903,7 @@ pub(super) struct PendingFrameDestination<G> {
 #[derive(Clone, Copy)]
 pub(super) enum PendingFrameResume {
     Delivery,
-    ColdExecution,
+    ColdExecution(Option<crate::transaction_protocol::CommandBarrier>),
 }
 
 pub(super) enum PendingDirectState {
@@ -942,6 +947,7 @@ pub(super) struct PendingDiagnosticOperation<G> {
 
 pub(super) struct PendingDiagnosticDestination<G> {
     pub(super) frame: OperationFrame<G>,
+    pub(super) barrier: Option<crate::transaction_protocol::CommandBarrier>,
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {

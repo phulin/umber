@@ -20,9 +20,7 @@ pub(super) fn operation_barrier<G>(
     frame: &CommandEpisode<G>,
 ) -> Option<crate::transaction_protocol::CommandBarrier> {
     match delivery {
-        OperationDelivery::SuspendedCold => {
-            Some(crate::transaction_protocol::CommandBarrier::Resource)
-        }
+        OperationDelivery::SuspendedCold { barrier } => *barrier,
         OperationDelivery::Command => match frame.phase {
             Some(PreflightCommandPhase::ImmediatePdfRetry(primitive)) => {
                 crate::transaction_protocol::canonical_static_command_barrier(
