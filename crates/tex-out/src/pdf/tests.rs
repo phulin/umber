@@ -73,6 +73,7 @@ fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
             baseline: 40.0,
             font_name: b"F1".to_vec(),
             font_size: 10.0,
+            horizontal_scale: 1.0,
             bytes: b"A".to_vec(),
         }),
         PdfContentOperation::Rectangle(PdfContentRectangle {
@@ -121,6 +122,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
             baseline: 0.0,
             font_name: b"F1".to_vec(),
             font_size: 10.0,
+            horizontal_scale: 1.0,
             bytes: bytes.to_vec(),
         })
     };
@@ -154,6 +156,7 @@ fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
         baseline: 0.0,
         font_name: b"F1".to_vec(),
         font_size: 10.0,
+        horizontal_scale: 1.0,
         bytes: payload.clone(),
     })]);
 
@@ -166,6 +169,33 @@ fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
     assert!(
         bytes.windows(encoded.len()).any(|window| window == encoded),
         "all binary text bytes use one exact PDF hex string"
+    );
+}
+
+#[test]
+fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
+    // pdftex.web §690: auto-expanded fonts share the base PDF font resource,
+    // and `pdf_set_text_pos` writes `(1000 + ratio) / 1000` as Tm's a value.
+    let construction = crate::FontResourceConstruction::Expanded {
+        source_font_id: 1,
+        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        ratio: -20,
+    };
+    assert_eq!(super::finalize::font_horizontal_scale(&construction), 0.98);
+
+    let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
+        x: 12.0,
+        baseline: 34.0,
+        font_name: b"F1".to_vec(),
+        font_size: 10.0,
+        horizontal_scale: super::finalize::font_horizontal_scale(&construction),
+        bytes: b"proprietary,".to_vec(),
+    })]);
+    assert!(
+        String::from_utf8(bytes)
+            .expect("ASCII content")
+            .contains("0.98 0 0 1 12 34 Tm"),
+        "expanded text must carry the canonical horizontal scale"
     );
 }
 

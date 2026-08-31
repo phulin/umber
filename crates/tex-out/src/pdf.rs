@@ -53,6 +53,9 @@ pub struct PdfContentTextRun {
     pub baseline: f32,
     pub font_name: Vec<u8>,
     pub font_size: f32,
+    /// Horizontal text-matrix scale. pdfTeX uses `(1000 + ratio) / 1000`
+    /// for an auto-expanded font while sharing its base PDF font resource.
+    pub horizontal_scale: f32,
     pub bytes: Vec<u8>,
 }
 

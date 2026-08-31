@@ -137,7 +137,7 @@ impl PdfPainter {
         let (x, baseline) = self.relative_position(run.x, run.baseline);
         self.content
             .set_font(Name(&run.font_name), run.font_size)
-            .set_text_matrix([1.0, 0.0, 0.0, 1.0, x, baseline])
+            .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline])
             .show(Str(&run.bytes));
     }
 

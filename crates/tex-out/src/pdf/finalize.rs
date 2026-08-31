@@ -614,6 +614,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         parameters.decimal_digits,
                     );
                     let font_size = scaled_to_bp_f32(font.at_size, parameters.decimal_digits);
+                    let horizontal_scale = font_horizontal_scale(&font.construction);
                     let explicit_space = font_has_explicit_space(resource);
                     let mut segment = Vec::new();
                     let mut segment_x = None;
@@ -645,23 +646,25 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                             baseline,
                                             font_name: resource_name.clone(),
                                             font_size,
+                                            horizontal_scale,
                                             bytes: std::mem::take(&mut segment),
                                         },
                                     ));
                                 }
                                 if interword_space_enabled {
-                                    let (font_name, space_size) = if explicit_space {
-                                        (resource_name.clone(), font_size)
-                                    } else {
-                                        ensure_fallback_space_font(
-                                            &record.space_font_name,
-                                            &mut next_object,
-                                            &mut objects,
-                                            &mut fallback_space_font,
-                                        )?;
-                                        fallback_space_on_page = true;
-                                        (b"UmberSpace".to_vec(), 10.0)
-                                    };
+                                    let (font_name, space_size, space_horizontal_scale) =
+                                        if explicit_space {
+                                            (resource_name.clone(), font_size, horizontal_scale)
+                                        } else {
+                                            ensure_fallback_space_font(
+                                                &record.space_font_name,
+                                                &mut next_object,
+                                                &mut objects,
+                                                &mut fallback_space_font,
+                                            )?;
+                                            fallback_space_on_page = true;
+                                            (b"UmberSpace".to_vec(), 10.0, 1.0)
+                                        };
                                     content_operations.push(PdfContentOperation::Text(
                                         PdfContentTextRun {
                                             x: scaled_to_bp_f32(
@@ -673,6 +676,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                             baseline,
                                             font_name,
                                             font_size: space_size,
+                                            horizontal_scale: space_horizontal_scale,
                                             bytes: vec![b' '],
                                         },
                                     ));
@@ -692,6 +696,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             baseline,
                             font_name: resource_name,
                             font_size,
+                            horizontal_scale,
                             bytes: segment,
                         }));
                     }
@@ -728,6 +733,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             ),
                             font_name: b"UmberSpace".to_vec(),
                             font_size: 10.0,
+                            horizontal_scale: 1.0,
                             bytes: vec![b' '],
                         }));
                     }
@@ -1185,6 +1191,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         ),
                         font_name: resource_name,
                         font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
+                        horizontal_scale: font_horizontal_scale(&font.construction),
                         bytes,
                     }));
                 }
@@ -2850,6 +2857,17 @@ fn font_has_explicit_space(font: &PdfFontInput) -> bool {
     font.encoding
         .as_ref()
         .is_some_and(|encoding| encoding.glyph_names()[32] == b"space")
+}
+
+pub(super) fn font_horizontal_scale(construction: &crate::FontResourceConstruction) -> f32 {
+    match construction {
+        crate::FontResourceConstruction::Expanded { ratio, .. } => {
+            (1000.0 + f32::from(*ratio)) / 1000.0
+        }
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => 1.0,
+    }
 }
 
 fn pdf_font_objects(
