@@ -223,14 +223,16 @@ Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
 whole packed frame before that advance.
 The frame also carries the active external-source identity inherited when the
-row is pushed. Delivery therefore emits spelling provenance and execution
-source context together without searching lower input rows. Main control
-retains the resulting root-main-file fact only when it retires the command
-slot into a scanned operation. A resident source token and a literal macro
-argument return directly from that transition. A stored-token access projects
-its packed out-parameter slot while the word is already resident; only that
-present fact enters macro-parameter replay, so ordinary input does not decode
-the spelling once for interception and again for meaning resolution.
+row is pushed, paired with the host/VFS-selected source role in one compact
+source context. An explicit nested role overrides the enclosing role; an
+unclassified nested source inherits it. Delivery therefore emits spelling
+provenance and execution source context together without searching lower input
+rows. Main control freezes the resulting role when it retires the command slot
+into a scanned operation. A resident source token and a literal macro argument
+return directly from that transition. A stored-token access projects its
+packed out-parameter slot while the word is already resident; only that present
+fact enters macro-parameter replay, so ordinary input does not decode the
+spelling once for interception and again for meaning resolution.
 A macro parameter candidate pushes its argument range and overwrites the same
 unresolved value on the next iteration. No raw command envelope is created or
 copied, and only a resolved command may enter a scanner or resource

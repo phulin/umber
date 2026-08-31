@@ -597,11 +597,12 @@ identity contracts and are merely framed as inputs where needed.
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost
 `ShipoutComplete`. A checkpoint structurally owns every root needed for later
-validation and restoration. The current conservative schedule retains
-paragraph and shipout checkpoints only when the boundary-forming operation's
-active external file frame is the registered root main input; the decision is
-frozen before queued publication and does not inspect token provenance or file
-names. General source-role policy is deferred to Bead `umber2-66p0.11`.
+validation and restoration. The schedule retains paragraph and shipout
+checkpoints for `RootDocument` and `UserDocumentInclude` sources, and filters
+`ProjectPackageClass`, `DistributionPackageClass`, `GeneratedInput`, and
+`FormatInitialization`. The boundary-forming operation freezes the active role
+before queued publication. Mechanical safety remains a separate proof and
+does not derive a role from group depth, token provenance, or macro names.
 Its command summary directly owns one aggregate command root cloned explicitly
 at publication; the command timeline owns only a monotonic identity serial.
 The live command root remains exclusively mutable. Retained command roots use

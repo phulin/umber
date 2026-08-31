@@ -378,12 +378,11 @@ The implementation and tests must preserve all of these invariants:
 6. A named checkpoint is captured only at the existing `JobStart`, eligible
    `OuterParagraphEnd`, and eligible outermost `ShipoutComplete` schedule. Step
    savepoints are private, unhashed, unretained after commit, and never offered
-   for incremental restart. Under the temporary conservative source policy,
-   paragraph and shipout eligibility is frozen when the forming operation sees
-   the active external file frame: only the registered root main file is
-   retained. Later input retirement or resource resumption cannot change that
-   scalar decision. General source roles remain deferred to Bead
-   `umber2-66p0.11`.
+   for incremental restart. Paragraph and shipout eligibility freezes the
+   active source role when the boundary forms. Root documents and user-document
+   includes are retained; project and distribution packages/classes, generated
+   inputs, and format initialization are not. Later input retirement or
+   resource resumption cannot change that scalar decision.
 7. Resource suspension cannot bypass a TeX group, shipout transaction, output
    routine, or hard limit.
 8. Successful stepwise output, statistics, checkpoint schedule, effects,

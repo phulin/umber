@@ -870,10 +870,12 @@ page history into a publication or settlement scan.
 
 Named execution evidence is not itself checkpoint authority. A fresh command
 processor owns one move-only job-start eligibility receipt, consumed before
-execution begins. Live execution can produce another receipt only after a
-root-main-file outer paragraph reaches the quiescent publication barrier.
-Shipout completion remains detached evidence for hosts and telemetry but has no
-receipt constructor, so it cannot enter retained restart history.
+execution begins. Live execution can produce another receipt only after an
+outer paragraph or outermost shipout reaches the quiescent publication barrier
+with a frozen `RootDocument` or `UserDocumentInclude` source role. Package,
+class, generated-input, and format-initialization boundaries retain their
+ordinary semantic effects but cannot produce a receipt. The mechanical barrier
+is proved independently before that role policy is applied.
 
 Restore is atomic and follows this order:
 

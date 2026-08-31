@@ -59,15 +59,17 @@ fallback to a paragraph-specific path.
 V1 has exactly three executor-named boundary kinds:
 
 - `JobStart`;
-- eligible root-main-file `OuterParagraphEnd`; and
-- eligible root-main-file outermost `ShipoutComplete`.
+- eligible user-document `OuterParagraphEnd`; and
+- eligible user-document outermost `ShipoutComplete`.
 
-The root-main-file restriction is a temporary conservative source policy.
-`JobStart` remains available, but paragraph and shipout boundaries formed while
-any nested external input is active are not retained, including user includes,
-class/package inputs, and distribution inputs. General source-role
-classification and broader eligibility are deferred to Bead
-`umber2-66p0.11`; v1 does not infer a role from a file name or extension.
+The host or VFS classifies every external source with one of six explicit
+roles. `RootDocument` and `UserDocumentInclude` retain eligible boundaries.
+`ProjectPackageClass`, `DistributionPackageClass`, `GeneratedInput`, and
+`FormatInitialization` do not. Root registration defaults to `RootDocument`;
+a nested registration without an explicit override inherits its enclosing
+external source role. Generated and format inputs select their roles
+explicitly. The executor never infers a role from TeX group depth or a macro
+name.
 
 Every record retained by the incremental session owns a complete,
 schema-versioned `EngineCheckpoint`. There are no observation-only records and
@@ -104,16 +106,22 @@ meaning of its `state_hash`; it is lineage telemetry rather than semantic
 state equality. Canonical live-state equality is the separate optional identity
 captured from current reachable roots.
 
-For paragraph and shipout boundaries, `tex-exec` freezes source eligibility at
-the operation that forms the boundary. It compares the active external file
-frame's compact source identity with the one root main source registered by
-the host. Token-list and macro frames do not replace that external frame: a
-macro defined by a package but invoked while the root document is active is
-root-originated, while commands being read from the package file are not.
-Token provenance, definition sites, paths, names, and extensions do not enter
-the decision. A queued nested-input boundary remains ineligible if input
+For paragraph and shipout boundaries, `tex-exec` freezes the active external
+source role at the operation that forms the boundary. Source identity and role
+travel together as one compact source context through input delivery and
+rollback. Token-list and macro frames inherit that context rather than
+reclassifying execution: a macro defined by a package but invoked while a user
+document is active is document-originated, while commands read from a package
+source are not. A queued package boundary remains ineligible if input
 retirement, structural unwinding, or resource resumption later exposes the
-root frame before checkpoint publication.
+document frame before checkpoint publication.
+
+Mechanical checkpoint safety is independent of this retention policy. The
+executor first proves the mode, group, continuation, scanner, expansion,
+resource, output-routine, token-retirement, and operation barriers. It then
+applies the frozen role policy. An excluded package boundary therefore changes
+neither ordinary execution nor the safety barrier; after package loading
+returns, the next eligible boundary formed in the user document can publish.
 
 ### `JobStart`
 
@@ -161,10 +169,11 @@ Paragraphs built inside `\vbox`, `\hbox`, insertions, alignments, math, output
 routines, or another nested main-control invocation are not outer paragraphs
 and never publish this boundary.
 
-An otherwise eligible paragraph is retained only when its frozen active
-external file frame is the root main input. A paragraph read from any nested
-input is omitted from incremental history without changing ordinary paragraph
-execution, input retirement, rollback, or resource suspension.
+An otherwise eligible paragraph is retained when its frozen role is
+`RootDocument` or `UserDocumentInclude`. Paragraphs from package, class,
+generated, and format-initialization sources are omitted from incremental
+history without changing ordinary paragraph execution, input retirement,
+rollback, or resource suspension.
 
 ### `ShipoutComplete`
 
@@ -194,11 +203,11 @@ both paragraph and shipout eligibility. That rollout must be expressed as an
 aggregate state-layer capability and tested before `tex-exec` loosens the
 depth-zero rule; executor-side inspection of group shape is not sufficient.
 
-The shipout boundary also requires the frozen root-main-file origin described
-above. A nested-file shipout still commits its artifact and effects normally;
-only its named incremental checkpoint is filtered. This source restriction is
-independent of the existing outermost-output, mode, output-routine, and group
-safety checks.
+The shipout boundary also requires one of the two retained document roles. A
+package, class, generated-input, or format-initialization shipout still commits
+its artifact and effects normally; only its named incremental checkpoint is
+filtered. This source policy is independent of the existing outermost-output,
+mode, output-routine, and group safety checks.
 
 When one outer dispatch makes both a shipout and an outer paragraph eligible,
 the order is `ShipoutComplete` followed by `OuterParagraphEnd`. This is the
@@ -680,11 +689,12 @@ Implementation is not complete until tests prove all of the following:
 - no publication from scanners, alignments, boxes, math, output routines, or
   nested shipouts;
 - group-depth-zero eligibility for both paragraph and shipout checkpoints;
-- `JobStart` retention plus root-main-file-only paragraph and shipout
-  retention, using the active external file frame rather than token
-  provenance;
-- frozen rejection across nested-input retirement and resource suspension,
-  followed by ordinary retention of later root-file boundaries;
+- `JobStart` retention plus paragraph and shipout retention for root documents
+  and user-document includes, with rejection for project and distribution
+  packages/classes, generated inputs, and format initialization;
+- deterministic nested role inheritance and explicit override, frozen across
+  input retirement and resource suspension, followed by ordinary retention of
+  later user-document boundaries;
 - rollback across logical shipout restores effects, streams, artifacts, nodes,
   input, modes, groups, and semantic state atomically;
 - at most one generation substrate is retained at rest and two while an edit

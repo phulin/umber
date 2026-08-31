@@ -99,22 +99,24 @@ historical owners that TeX82 does not have. A semantic move must therefore copy
 only when moving the live closure would invalidate one of those historical
 owners.
 
-## Restart eligibility is unchanged
+## Restart eligibility
 
-There are exactly two retained restart kinds:
+There are exactly three retained restart kinds:
 
 1. one `JobStart` bootstrap produced before job execution; and
-2. a root-main-file outer paragraph end, after horizontal depth returns to the
-   sole outer vertical mode, at TeX group level zero, with command delivery,
-   scanner, expansion, resource, diagnostic, alignment, mode, and operation
-   state quiescent.
+2. an outer paragraph end from a root document or user-document include, after
+   horizontal depth returns to the sole outer vertical mode, at TeX group level
+   zero, with command delivery, scanner, expansion, resource, diagnostic,
+   alignment, mode, and operation state quiescent; and
+3. an outermost shipout completion from either retained document role, after
+   artifact and effect commit and the same quiescent publication proof.
 
-An included-file paragraph, a paragraph inside a group, a live alignment, a
-nested mode, shipout completion, and arbitrary page boundaries remain
-ineligible. The eligibility receipt must still prove the complete barrier
-before a node-region checkpoint can be sealed. This design does not add or
-remove boundaries and never replays from a page boundary instead of the
-selected paragraph boundary.
+A package/class, generated-input, or format-initialization boundary, a
+paragraph inside a group, a live alignment, a nested mode, a nested shipout,
+and arbitrary page boundaries remain ineligible. The eligibility receipt must
+still prove the complete barrier before a node-region checkpoint can be sealed.
+Source retention is applied after that mechanical proof and cannot make an
+unsafe boundary eligible.
 
 ## Coarse owners
 
@@ -598,9 +600,9 @@ deterministic gates.
 
 The implementation must add or adapt these exact test families:
 
-1. `restart_eligibility_is_unchanged` proves only `JobStart` and quiescent
-   root-main-file group-level-zero outer paragraph ends can produce a region
-   checkpoint.
+1. Source-role schedule coverage proves only `JobStart` and quiescent,
+   group-level-zero paragraph/shipout boundaries from root documents and user
+   includes can produce a region checkpoint.
 2. `paragraph_checkpoints_share_one_page_region` publishes many boundaries in
    one page and proves one payload/descriptor owner and no node copy.
 3. `checkpoint_restores_all_four_page_roots` mutates every PageBuilder list,
