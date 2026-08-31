@@ -1572,7 +1572,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // A resumed generic expansion restores its sole parked command
             // into this destination itself. Every outcome either advances the
             // collector or returns its failure.
-            return match self.expand_into(destination, true) {
+            return match self.expand_into(destination, None, true) {
                 Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
                     clear_command_destination(destination);
                     Ok(CollectorExpansionOutcome::Expanded)
@@ -1699,7 +1699,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // TeX82 §394 returns from a failed macro call after either an ordinary
         // non-`\long` `\par` or §23's outer-validity recovery. Both return to
         // §380's get_x_token loop, which this collector owns while active.
-        match self.expand_into(destination, true) {
+        match self.expand_into(destination, None, true) {
             Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
                 clear_command_destination(destination);
                 Ok(CollectorExpansionOutcome::Expanded)

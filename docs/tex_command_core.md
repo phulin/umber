@@ -285,11 +285,13 @@ brace mutation only, and writes its exact `AlignmentDeliveryAdjustment` into
 the same command before raw observation. Ordinary commands and delimiters do
 not probe the delivery-owned scalar journal; backup later consumes the recorded
 adjustment rather than reclassifying the spelling. Expanded delivery then
-matches the resolved meaning once to choose return, expansion, or
-`end_template` handling; protected and undefined policies are branches of that
-same classification. Internal ErrorStop deletion, math-shift lookahead, and
-recovery-list draining likewise provide their discard-or-backup slot directly
-to the driver.
+matches the resolved meaning once to choose return, `end_template` handling,
+macro activation, undefined recovery, or one exact primitive dispatch;
+protected and undefined policies are branches of that same classification.
+The borrowed decision drives tracing, work accounting, and expansion without
+another meaning or opcode match. Internal ErrorStop deletion, math-shift
+lookahead, and recovery-list draining likewise provide their discard-or-backup
+slot directly to the driver.
 
 The value-returning entry points are conveniences over the same destination
 driver; the executor hot loop and destination-aware callers use
@@ -2650,8 +2652,9 @@ remain isolated functions outside the token-delivery loop.
 
 The physical implementation follows that semantic boundary without creating
 new runtime owners. `processor/expand.rs` owns the destination-directed driver,
-classification, static dispatch, fuel and trace order, and typed continuation
-transitions. Structural, source, TeX/e-TeX conversion, pdfTeX state/object,
+one borrowed classification that selects the exact static dispatch, fuel and
+trace order, and typed continuation transitions. Structural, source,
+TeX/e-TeX conversion, pdfTeX state/object,
 pdfTeX string/regular-expression, and immutable-file enquiry handlers are
 ordinary sibling modules implemented directly on the same borrowed
 `CommandProcessor`. Expansion-result replay and append-oriented rendering are

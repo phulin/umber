@@ -128,7 +128,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             (first, second)
         };
         if second.as_ref().is_none_or(is_expandable_command) {
-            if let Err(error) = self.expand_into(&mut second, true) {
+            if let Err(error) = self.expand_into(&mut second, None, true) {
                 if error.is_resource_suspension() {
                     let key = self
                         .command

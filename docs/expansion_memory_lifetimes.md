@@ -379,8 +379,10 @@ spelling decode precedes resolution. A macro row acquires one `DefinitionId<G>`
 owner in the final owned `CurrentCommand`; borrowing the row itself acquires
 none. Trace eligibility and expanded-loop classification likewise borrow that
 resolved meaning instead of retaining and releasing another definition owner.
-The expanded loop classifies that meaning once into return, expand, or
-`end_template`; policy handling does not repeat meaning matches.
+The expanded loop classifies that meaning once into return, `end_template`,
+macro activation, undefined recovery, or the exact primitive dispatch. That
+borrowed decision drives the expansion call, tracing, and work accounting;
+policy and primitive dispatch do not repeat the meaning match.
 The temporary bank borrow ends before any command-driven mutation, while the
 final owner survives later assignment, group restoration, operation rollback,
 replay, retry, suspension, and generation retirement. A macro call borrows

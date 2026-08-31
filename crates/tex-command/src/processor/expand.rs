@@ -79,8 +79,19 @@ fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExpandedCommandAction {
     Return,
-    Expand,
     EndTemplate,
+    Expand(ExpansionDispatch),
+}
+
+/// The exact TeX.web §366 branch selected by expanded-command
+/// classification. This is call-local control flow, not a retained meaning
+/// representation: a resource suspension continues to own only its one
+/// `CurrentCommand` and re-borrows that meaning when the operation resumes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExpansionDispatch {
+    Macro,
+    Primitive(ExpandablePrimitive),
+    Undefined,
 }
 
 #[cfg(test)]
@@ -109,19 +120,21 @@ fn classify_expanded_command<G>(
         {
             ExpandedCommandAction::Return
         }
-        ResolvedMeaning::Macro { .. } => ExpandedCommandAction::Expand,
+        ResolvedMeaning::Macro { .. } => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
         ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)) => {
             ExpandedCommandAction::EndTemplate
         }
         ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)) => {
             ExpandedCommandAction::Return
         }
-        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_)) => ExpandedCommandAction::Expand,
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
+            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(*primitive))
+        }
         ResolvedMeaning::Static(Meaning::Undefined)
             if undefined == UndefinedHandling::Diagnose
                 && !matches!(command.spelling().semantic_token(), Token::Param(_)) =>
         {
-            ExpandedCommandAction::Expand
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
         }
         ResolvedMeaning::Static(_) => ExpandedCommandAction::Return,
     }
@@ -135,11 +148,11 @@ fn classify_expanded_command<G>(
 /// explicit fallback boundary.
 #[inline(always)]
 #[cfg(feature = "profiling")]
-fn is_ranked_fused_expansion<G>(meaning: &ResolvedMeaning<G>) -> bool {
+fn is_ranked_fused_expansion(dispatch: ExpansionDispatch) -> bool {
     matches!(
-        meaning,
-        ResolvedMeaning::Macro { .. }
-            | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+        dispatch,
+        ExpansionDispatch::Macro
+            | ExpansionDispatch::Primitive(
                 ExpandablePrimitive::ExpandAfter
                     | ExpandablePrimitive::Fi
                     | ExpandablePrimitive::IfX
@@ -156,7 +169,7 @@ fn is_ranked_fused_expansion<G>(meaning: &ResolvedMeaning<G>) -> bool {
                     | ExpandablePrimitive::IfCsName
                     | ExpandablePrimitive::Number
                     | ExpandablePrimitive::The
-            ))
+            )
     )
 }
 
@@ -1160,29 +1173,34 @@ impl<G> CommandProcessor<'_, '_, G> {
                         policy.alignment_interception,
                     ));
                 }
-                ExpandedCommandAction::Expand => {}
-            }
-            // TeX82 §394 aborts a non-`\long` macro call after its recovery
-            // bookkeeping, then resumes the enclosing expanded-token loop.
-            // A user paragraph has been backed up for that loop; an EOF
-            // recovery paragraph was consumed by the failed match instead.
-            let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-            let failure = match self.expand_into(destination, report_trace) {
-                Ok(()) => {
-                    fetch = true;
-                    continue;
+                ExpandedCommandAction::Expand(dispatch) => {
+                    // TeX82 §394 aborts a non-`\long` macro call after its
+                    // recovery bookkeeping, then resumes the enclosing
+                    // expanded-token loop. A user paragraph has been backed
+                    // up for that loop; an EOF recovery paragraph was consumed
+                    // by the failed match instead.
+                    let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
+                    let failure = match self.expand_into(destination, Some(dispatch), report_trace)
+                    {
+                        Ok(()) => {
+                            fetch = true;
+                            continue;
+                        }
+                        Err(failure) => failure,
+                    };
+                    // TeX82 §394 resumes expanded delivery after both an
+                    // ordinary runaway paragraph and §23's outer-validity
+                    // recovery has aborted a macro match. The latter leaves
+                    // the recovered outer token in backup input for its
+                    // normal reread.
+                    match failure {
+                        CommandError::ParagraphInMacroArgument
+                        | CommandError::OuterInMacroArgument => {
+                            fetch = true;
+                        }
+                        failure => return error.fail(failure),
+                    }
                 }
-                Err(failure) => failure,
-            };
-            // TeX82 §394 resumes expanded delivery after both an ordinary
-            // runaway paragraph and §23's outer-validity recovery has aborted
-            // a macro match. The latter leaves the recovered outer token in
-            // backup input for its normal reread.
-            match failure {
-                CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => {
-                    fetch = true;
-                }
-                failure => return error.fail(failure),
             }
         }
     }
@@ -1274,6 +1292,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn expand_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
+        classified: Option<ExpansionDispatch>,
         mut report_trace: bool,
     ) -> Result<(), CommandError> {
         let resumed_here = self.resumed_expansion.is_some();
@@ -1335,25 +1354,42 @@ impl<G> CommandProcessor<'_, '_, G> {
         let command = destination
             .as_mut()
             .ok_or_else(CommandError::input_invariant)?;
+        let dispatch = if let Some(dispatch) = classified {
+            dispatch
+        } else {
+            match classify_expanded_command(
+                command,
+                ProtectedMacroHandling::Expand,
+                UndefinedHandling::Diagnose,
+            ) {
+                ExpandedCommandAction::Expand(dispatch) => dispatch,
+                // Direct callers implement TeX82 §366 `expand`, where the
+                // `end_template` branch inserts frozen `endv`; only §380's
+                // expanded-delivery classifier handles it inline.
+                ExpandedCommandAction::EndTemplate => {
+                    ExpansionDispatch::Primitive(ExpandablePrimitive::EndTemplate)
+                }
+                ExpandedCommandAction::Return => return Err(CommandError::input_invariant()),
+            }
+        };
         #[cfg(feature = "profiling")]
         {
-            if !is_ranked_fused_expansion(command.meaning_ref()) {
+            if !is_ranked_fused_expansion(dispatch) {
                 tex_state::measurement::record_hot_core_materialization(
                     tex_state::measurement::HotCoreMaterialization::ExpansionCommand,
                 );
             }
-            match command.meaning_ref() {
-                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
+            match dispatch {
+                ExpansionDispatch::Primitive(primitive) => {
                     tex_state::measurement::record_hot_core_expandable_opcode(
                         usize::try_from(primitive.operand())
                             .expect("expandable primitive operand fits usize"),
                     );
                 }
-                ResolvedMeaning::Macro { .. } => {
+                ExpansionDispatch::Macro => {
                     tex_state::measurement::record_hot_core_macro_expansion();
                 }
-                ResolvedMeaning::Static(Meaning::Undefined) => {}
-                _ => unreachable!("expand receives only expandable meanings"),
+                ExpansionDispatch::Undefined => {}
             }
         }
         if self.write_expansion_depth != 0 {
@@ -1373,13 +1409,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Macros and `end_template` take §366's other two branches and do not
         // cross this diagnostic boundary.
         let traceable = matches!(
-            static_meaning(command.meaning_ref()),
-            Some(Meaning::ExpandablePrimitive(primitive))
+            dispatch,
+            ExpansionDispatch::Primitive(primitive)
                 if primitive != ExpandablePrimitive::EndTemplate
-        ) || matches!(
-            static_meaning(command.meaning_ref()),
-            Some(Meaning::Undefined)
-        );
+        ) || dispatch == ExpansionDispatch::Undefined;
         if report_trace
             && traceable
             && self
@@ -1391,18 +1424,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let mut suspended_resume = None;
         let result = (|| {
-            let meaning = match command.meaning_ref() {
-                ResolvedMeaning::Static(meaning) => *meaning,
-                ResolvedMeaning::Macro { .. } => {
+            match dispatch {
+                ExpansionDispatch::Macro => {
                     match self.macro_call(command)? {
                         crate::macro_call::MacroCallOutcome::Activated => {}
                         crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
                     }
-                    return Ok(());
+                    Ok(())
                 }
-            };
-            match meaning {
-                Meaning::ExpandablePrimitive(primitive)
+                ExpansionDispatch::Undefined => {
+                    let context = self.command.output_open_context(self.state);
+                    self.command.semantic_diagnostics.push(
+                        crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
+                    );
+                    if !self.command.profile().capabilities().supports_etex() {
+                        // TeX82 §370 still owns the recoverable user-visible
+                        // error above. The pinned e-TeX 2.6 observer has no
+                        // diagnostic seam at that error site, so its detached
+                        // event stream advances directly to the next input
+                        // transition.
+                        self.observe_command_diagnostic("undefined_control_sequence", command);
+                    }
+                    Ok(())
+                }
+                ExpansionDispatch::Primitive(primitive)
                     if crate::conditionals::ConditionalKind::from_primitive(primitive)
                         .is_some() =>
                 {
@@ -1413,10 +1458,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         &mut suspended_resume,
                     )
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => {
                     self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(
+                ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::Else
                     | ExpandablePrimitive::Or
                     | ExpandablePrimitive::Fi),
@@ -1425,46 +1470,46 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // sentinel that ended a v-template with the distinct frozen
                 // `endv` token. Neither sentinel is a user-installable primitive;
                 // §780 gives them only frozen control-sequence slots.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::EndTemplate) => {
                     self.insert_frozen_endv()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::NoExpand) => {
                     self.expand_noexpand()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::ExpandAfter) => {
                     self.expand_expandafter()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::CsName) => {
                     self.expand_csname(command, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::String) => {
                     self.expand_string(command)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Meaning) => {
                     self.expand_meaning(command)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Number) => {
                     self.expand_number(command, false, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::RomanNumeral) => {
                     self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::The) => {
                     self.expand_the(command, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Unexpanded) => {
                     self.expand_unexpanded()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Expanded) => {
                     self.expand_expanded()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Detokenize) => {
                     self.expand_detokenize(command)
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Scantokens) => {
                     self.expand_scantokens()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::FontName) => self
                     .expand_fontname(
                         command.copy_for_backup(),
                         &mut expansion_resume,
@@ -1472,7 +1517,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ),
                 // pdftex.web §470's `pdf_font_size_code` conversion prints the
                 // selected font size as an ordinary scaled dimension.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFontSize) => self
                     .expand_pdf_font_size(
                         command.copy_for_backup(),
                         &mut expansion_resume,
@@ -1481,7 +1526,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // pdftex.web §470 scans e-TeX's extended box-register domain,
                 // then queries typed hlist state for the first non-skipable node
                 // at the requested edge.
-                Meaning::ExpandablePrimitive(
+                ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::LeftMarginKern
                     | ExpandablePrimitive::RightMarginKern),
                 ) => self.expand_margin_kern(
@@ -1490,13 +1535,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     &mut expansion_resume,
                     &mut suspended_resume,
                 ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Input) => {
                     self.expand_input(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::EndInput) => {
                     self.expand_endinput()
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::JobName) => {
                     self.state.unsupported_host_capability();
                     let job_name = self.host.job_name().to_owned();
                     self.push_rendered_text(&job_name, command.origin());
@@ -1505,13 +1550,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
                 // `convert` command; §1387 prints the immutable revision string
                 // through TeX82 §470's ordinary conversion-token path.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::ETeXRevision) => {
                     self.push_rendered_text(".6", command.origin());
                     Ok(())
                 }
                 // pdfTeX §57.4 exposes the revision suffix independently of the
                 // integer `\pdftexversion` parameter.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfTeXRevision) => {
                     self.push_rendered_text("27", command.origin());
                     Ok(())
                 }
@@ -1520,7 +1565,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // then returns it through the ordinary `str_toks`/`ins_list`
                 // conversion path. `utils.c::makepdftexbanner` appends the pinned
                 // TeX Live and kpathsea identities to pdftex.web §2's banner.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfTeXBanner) => {
                     self.push_rendered_text(
                     "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
                     command.origin(),
@@ -1531,13 +1576,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // the signed uniform bound, then advance the single checkpointed
                 // MetaPost-derived stream shared with the operand-free normal
                 // deviate conversion.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfUniformDeviate) => self
                     .expand_pdf_uniform_deviate(
                         command,
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfNormalDeviate) => {
                     let value = self.state.pdf_normal_deviate();
                     self.push_rendered_text(&value.to_string(), command.origin());
                     Ok(())
@@ -1547,7 +1592,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // through the ordinary `str_toks`/`ins_list` conversion path.
                 // Both the LaTeX-compatible `\creationdate` spelling and
                 // pdfTeX's `\pdfcreationdate` spelling share this meaning.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::CreationDate) => {
                     let clock = self.state.job_clock();
                     self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
                     Ok(())
@@ -1556,7 +1601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // 0 (disabled), 1 (unrestricted), or 2 (restricted). Umber's
                 // LaTeX compatibility spelling is an expandable alias over the
                 // same tracked World policy used by `\pdfshellescape`.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::ShellEscape) => {
                     let status = self
                         .state
                         .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
@@ -1564,61 +1609,61 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.push_rendered_text(&status.to_string(), command.origin());
                     Ok(())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::StringCompare) => {
                     self.expand_string_compare(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfEscapeString) => {
                     self.expand_pdf_escape_string(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfEscapeHex) => {
                     self.expand_pdf_escape_hex(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfUnescapeHex) => {
                     self.expand_pdf_unescape_hex(command.copy_for_backup())
                 }
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfColorStackInit) => self
                     .expand_pdf_color_stack_init(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMatch) => self
                     .expand_pdf_match(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfLastMatch) => self
                     .expand_pdf_last_match(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileDump) => self
                     .expand_pdf_file_dump(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::FileSize) => self
                     .expand_pdf_file_size(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileModificationDate) => self
                     .expand_pdf_file_modification_date(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMdFiveSum) => self
                     .expand_pdf_md_five_sum(
                         command.copy_for_backup(),
                         &mut expansion_resume,
                         &mut suspended_resume,
                     ),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfInsertHeight) => self
                     .expand_pdf_insert_height(
                         command.copy_for_backup(),
                         &mut expansion_resume,
@@ -1628,27 +1673,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // existing image object before its one-based page-box coordinate.
                 // The enquiry reads detached metadata only; it never reserves an
                 // image or writer object while expanding.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXImageBBox) => self
                     .expand_pdf_ximage_bbox(command, &mut expansion_resume, &mut suspended_resume),
                 // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
                 // form object number and prints its independent resource identity.
                 // Unknown object numbers produce zero, matching the other PDF
                 // object enquiries rather than manufacturing ledger state.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => self
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXFormName) => self
                     .expand_pdf_xform_name(command, &mut expansion_resume, &mut suspended_resume),
                 // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
                 // shipped-page number and prints its page-object identity. Pages
                 // that do not exist yet expand to zero without reserving
                 // speculative writer state; nonpositive operands are rejected by
                 // the conversion's `pdf_error` guard.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfPageRef) => {
                     self.expand_pdf_page_ref(command, &mut expansion_resume, &mut suspended_resume)
                 }
                 // pdfTeX §57.1 consumes one raw token and, only for a registered
                 // primitive spelling, replays the immutable frozen primitive.
                 // The ordinary expanded loop then dispatches that original
                 // meaning without consulting the shadowable live cell.
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfPrimitive) => {
                     let mut destination = None;
                     match self.get_next_into(&mut destination)? {
                         DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -1667,14 +1712,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     };
                     self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
                 }
-                Meaning::ExpandablePrimitive(
+                ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::TopMark
                     | ExpandablePrimitive::FirstMark
                     | ExpandablePrimitive::BotMark
                     | ExpandablePrimitive::SplitFirstMark
                     | ExpandablePrimitive::SplitBotMark),
                 ) => self.expand_mark(primitive),
-                Meaning::ExpandablePrimitive(
+                ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::TopMarks
                     | ExpandablePrimitive::FirstMarks
                     | ExpandablePrimitive::BotMarks
@@ -1683,30 +1728,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ) => {
                     self.expand_mark_class(primitive, &mut expansion_resume, &mut suspended_resume)
                 }
-                Meaning::ExpandablePrimitive(primitive) => {
+                ExpansionDispatch::Primitive(primitive) => {
                     Err(CommandError::UnsupportedExpandablePrimitive(primitive))
                 }
-                // TeX82 §207 puts `undefined_cs` immediately above
-                // `max_command`, so it reaches §366's `expand` and §367's
-                // `othercases`. §370 reports the error and returns without
-                // inserting a replacement token; §380 then restarts its one
-                // expanded-fetch loop at the following input token.
-                Meaning::Undefined => {
-                    let context = self.command.output_open_context(self.state);
-                    self.command.semantic_diagnostics.push(
-                        crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
-                    );
-                    if !self.command.profile().capabilities().supports_etex() {
-                        // TeX82 §370 still owns the recoverable user-visible
-                        // error above. The pinned e-TeX 2.6 observer has no
-                        // diagnostic seam at that error site, so its detached
-                        // event stream advances directly to the next input
-                        // transition.
-                        self.observe_command_diagnostic("undefined_control_sequence", command);
-                    }
-                    Ok(())
-                }
-                _ => Err(CommandError::input_invariant()),
             }
         })();
         if result

@@ -8020,7 +8020,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 self.scanner_resume = Some(key);
             }
-            if let Err(error) = self.expand_into(destination, true) {
+            if let Err(error) = self.expand_into(destination, None, true) {
                 if error.is_resource_suspension() {
                     *pending = Some(PendingPreambleSpanExpansion {
                         child: crate::execution_scratch::ChildContinuation::capture(
@@ -8057,7 +8057,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .is_some_and(crate::processor::expand::is_expandable_command)
             {
-                if let Err(error) = self.expand_into(destination, true) {
+                if let Err(error) = self.expand_into(destination, None, true) {
                     if error.is_resource_suspension() {
                         *pending = Some(PendingPreambleSpanExpansion {
                             child: crate::execution_scratch::ChildContinuation::capture(

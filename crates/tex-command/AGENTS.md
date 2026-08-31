@@ -307,8 +307,10 @@ collector (see `src/conditionals.rs`).
   delivery policy. The loops do not test a raw-versus-expanded mode on every
   token. Internal steps return a compact status or zero-sized failure marker;
   one request-local cold error slot carries a real error to the public boundary.
-  Expanded delivery classifies each resolved meaning once as return, expand, or
-  end-template handling.
+  Expanded delivery classifies each resolved meaning once as return,
+  end-template handling, macro activation, undefined recovery, or one exact
+  primitive dispatch. That borrowed decision directly drives expansion;
+  expansion does not match the resident meaning or primitive opcode again.
   The facade also resumes an executor-retained settled delivery. Main-control
   preflight performs raw fetch, expansion classification, and any required
   expansion in one driver entry without backing up or redelivering the command.

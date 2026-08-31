@@ -548,10 +548,44 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     );
     assert!(expansion.contains("pub(crate) fn expand_into("));
     assert!(expansion.contains("destination: &mut Option<CurrentCommand<G>>"));
+    let classification = expansion
+        .split("fn classify_expanded_command<G>(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// The finite expansion set").next())
+        .expect("locate expanded-command classification");
+    assert_eq!(
+        classification
+            .matches("match command.meaning_ref()")
+            .count(),
+        1
+    );
+    for exact_action in [
+        "ExpansionDispatch::Macro",
+        "ExpansionDispatch::Undefined",
+        "ExpansionDispatch::Primitive(*primitive)",
+    ] {
+        assert!(
+            classification.contains(exact_action),
+            "classification must select {exact_action} directly"
+        );
+    }
+    let expansion_dispatch = expansion
+        .split("pub(crate) fn expand_into(")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
+        .expect("locate exact expansion dispatch");
+    assert!(expansion.contains("self.expand_into(destination, Some(dispatch), report_trace)"));
+    assert!(
+        !expansion_dispatch.contains("command.meaning_ref()"),
+        "the selected macro/undefined/primitive dispatch must not reread the resident meaning"
+    );
+    assert!(
+        expansion_dispatch.contains("match dispatch"),
+        "the borrowed classification must drive exact expansion dispatch"
+    );
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
-    assert!(expansion.contains("match self.expand_into(destination, report_trace)"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
     assert!(expansion.contains("let mut fetch = destination.is_none();"));
@@ -672,7 +706,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert_eq!(scanner.matches("fn drive_collector_expansion(").count(), 1);
     assert!(expansion.contains("PendingCollectorExpansion"));
     assert!(expansion.contains("error.is_resource_suspension()"));
-    assert!(expansion.contains("self.expand_into(destination, true)"));
+    assert!(expansion.contains("self.expand_into(destination, None, true)"));
     assert!(expansion.contains("command: destination.take()"));
     assert!(expansion.contains("self.append_direct_the_toks(collector, expansion_operand)"));
     assert!(
