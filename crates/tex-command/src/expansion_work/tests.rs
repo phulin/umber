@@ -448,7 +448,7 @@ fn parking_and_consuming_macro_command_clones_no_command_or_definition_owner() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -488,7 +488,6 @@ fn parking_and_consuming_macro_command_clones_no_command_or_definition_owner() {
             command.meaning_ref(),
             ResolvedMeaning::Macro { .. }
         ));
-        drop(command);
     });
 }
 

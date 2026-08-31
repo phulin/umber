@@ -539,8 +539,7 @@ impl<G> Universe<G> {
         let mut definitions = [DefinitionPromotion::new(builder)];
         let id = self
             .promote_values(&mut definitions, &[], &[], &[])?
-            .definitions[0]
-            .clone();
+            .definitions[0];
         Ok(MeaningWord::macro_definition(flags, id))
     }
 

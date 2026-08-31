@@ -166,7 +166,7 @@ impl<G> AttemptPromotionDestination<G> for ResidentPromotion<G> {
         let mut matched = 0;
         for root in &mut self.definitions {
             if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
-                *root = ResidentRoot::Durable(definition.clone());
+                *root = ResidentRoot::Durable(definition);
                 matched += 1;
             }
         }
@@ -633,7 +633,7 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
         assert_eq!(admitted.glue(destination.glue(0)), glue(42));
         assert_eq!(
             admitted
-                .definition(destination.definition(0).clone())
+                .definition(*destination.definition(0))
                 .replacement_text(),
             &[word('x').token_word()]
         );
@@ -751,7 +751,7 @@ fn one_and_4096_warmed_resident_promotions_allocate_zero_and_keep_owners_station
             let admitted = universe.command_context().expect("definition context");
             let mut checksum = 0_u64;
             for index in 0..repetitions {
-                let definition = admitted.definition(destination.definition(index).clone());
+                let definition = admitted.definition(*destination.definition(index));
                 assert_eq!(definition.replacement_text(), [word('x').token_word()]);
                 checksum ^= (definition.replacement_text().as_ptr() as usize as u64)
                     .rotate_left((index & 63) as u32);
@@ -1043,7 +1043,7 @@ fn warmed_macro_activations_copy_only_compact_definition_keys() {
                     .expect("sealed empty frame");
                 let level = state.push_macro_activation(
                     name,
-                    definition.clone(),
+                    definition,
                     context.definition_region_lease(definition),
                     crate::macro_call::MacroArguments::new(frame),
                     OriginId::UNKNOWN,

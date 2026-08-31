@@ -212,7 +212,7 @@ pub enum GroupRestorationValue<G> {
 impl<G> Clone for GroupRestorationValue<G> {
     fn clone(&self) -> Self {
         match self {
-            Self::Meaning(value) => Self::Meaning(value.clone()),
+            Self::Meaning(value) => Self::Meaning(*value),
             Self::Integer(value) => Self::Integer(*value),
             Self::Dimension(value) => Self::Dimension(*value),
             Self::TokenList(value) => Self::TokenList(value.clone()),
@@ -393,7 +393,7 @@ pub(crate) enum StateWord<G> {
 impl<G> Clone for StateWord<G> {
     fn clone(&self) -> Self {
         match self {
-            Self::Meaning(value) => Self::Meaning(value.clone()),
+            Self::Meaning(value) => Self::Meaning(*value),
             Self::Integer(value) => Self::Integer(*value),
             Self::Dimension(value) => Self::Dimension(*value),
             Self::TokenList(value) => Self::TokenList(value.clone()),

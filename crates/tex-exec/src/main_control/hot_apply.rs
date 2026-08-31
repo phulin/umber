@@ -245,7 +245,7 @@ fn apply_macro_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let observed_definition = command.observes_mutations().then(|| definition.clone());
+    let observed_definition = command.observes_mutations().then_some(definition);
     assignment_tracing::trace_meaning_write(
         stores,
         command.diagnostic_effects,
@@ -324,7 +324,7 @@ fn apply_let<G>(
         false
     };
     let committed = !redundant;
-    let observed_meaning = (committed && command.observes_mutations()).then(|| meaning.clone());
+    let observed_meaning = (committed && command.observes_mutations()).then_some(meaning);
     assignment_tracing::trace_meaning_write(
         stores,
         command.diagnostic_effects,

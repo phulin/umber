@@ -1940,7 +1940,7 @@ pub(in crate::main_control) fn observed_read_body<G>(
     let mut tokens = vec![ObservedToken::MacroEndMatch];
     tokens.extend(
         stores
-            .definition(definition.clone())
+            .definition(*definition)
             .replacement_text()
             .iter()
             .copied()

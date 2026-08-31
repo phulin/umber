@@ -76,7 +76,7 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
         state
             .assign_meaning(
                 selector.symbol(),
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
                 AssignmentScope::Global,
             )
             .expect("assign macro");
@@ -121,7 +121,7 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_meaning(
                 selector.symbol(),
-                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
                 AssignmentScope::Global,
             )
             .expect("assign macro");

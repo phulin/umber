@@ -914,7 +914,7 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
     let mut name = String::new();
     stores.append_token_show_text(token, &mut name);
     let escape_char = stores.untracked_int_param(IntParam::ESCAPE_CHAR);
-    let old_text = meaning_value_text_at(stores, old.clone(), escape_char);
+    let old_text = meaning_value_text_at(stores, old, escape_char);
     let new_text = meaning_value_text_at(stores, ResolvedMeaning::Static(new), escape_char);
     trace_scalar(
         stores,

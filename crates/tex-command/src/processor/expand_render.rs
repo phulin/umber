@@ -369,14 +369,14 @@ impl<G> PrintCommand<G> {
 
     #[must_use]
     pub(crate) fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning.clone()
+        self.meaning
     }
 }
 
 impl<G> Clone for PrintCommand<G> {
     fn clone(&self) -> Self {
         Self {
-            meaning: self.meaning.clone(),
+            meaning: self.meaning,
             control_sequence: self.control_sequence,
         }
     }

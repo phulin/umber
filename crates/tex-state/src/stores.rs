@@ -57,6 +57,13 @@ pub(crate) struct AcceptedStateCoreTail<G> {
     generation: AcceptedGenerationTail<G>,
 }
 
+type CapturedFormatValues<G> = (
+    Vec<crate::format::schema::FormatDefinition>,
+    Vec<(DefinitionId<G>, u32)>,
+    Vec<Vec<u32>>,
+    Vec<crate::format::schema::FormatGlue>,
+);
+
 impl<G> StateCore<G> {
     /// Selects semantic identities for immutable format payloads before the
     /// destination publishes them. Dense cells are deliberately enabled only
@@ -105,12 +112,7 @@ impl<G> StateCore<G> {
     pub(crate) fn capture_format_values(
         &self,
         extra_roots: impl IntoIterator<Item = DynamicMemoryRoot<G>>,
-    ) -> (
-        Vec<crate::format::schema::FormatDefinition>,
-        Vec<(DefinitionId<G>, u32)>,
-        Vec<Vec<u32>>,
-        Vec<crate::format::schema::FormatGlue>,
-    ) {
+    ) -> CapturedFormatValues<G> {
         let generation = self.generation.generation();
         let mut definitions = Vec::new();
         let mut definition_rows = Vec::new();

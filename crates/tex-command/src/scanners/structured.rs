@@ -2134,7 +2134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::CharacterDefinitionEquals {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                     class,
                 },
             )?;
@@ -2148,7 +2148,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             value,
             PendingStructuredScalarPhase::CharacterDefinitionValue {
                 target,
-                provisional_old: provisional_old.clone(),
+                provisional_old,
                 class,
             },
         )?;
@@ -2226,7 +2226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 equals,
                 PendingStructuredScalarPhase::RegisterDefinitionEquals {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?;
         }
@@ -2244,7 +2244,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?
         } else {
@@ -2253,7 +2253,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 result,
                 PendingStructuredScalarPhase::RegisterDefinitionIndex {
                     target,
-                    provisional_old: provisional_old.clone(),
+                    provisional_old,
                 },
             )?
         };
@@ -8111,7 +8111,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.scanner_resume.is_some() {
             return Err(CommandError::input_invariant());
         }
-        drop(destination.take().ok_or(CommandError::input_invariant())?);
+        destination.take().ok_or(CommandError::input_invariant())?;
         self.get_token_into(destination)
     }
 

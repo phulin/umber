@@ -6694,7 +6694,7 @@ impl<G> MainControl<G> {
                             Some(command) => match command.meaning() {
                                 meaning
                                     if tex_command::exceeds_max_non_prefixed_command(
-                                        static_meaning(meaning.clone()),
+                                        static_meaning(meaning),
                                     ) || matches!(
                                         meaning,
                                         ResolvedMeaning::Static(Meaning::CharToken {

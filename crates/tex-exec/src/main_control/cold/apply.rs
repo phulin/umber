@@ -2064,7 +2064,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 Token::Cs(*target),
-                provisional_old.clone(),
+                *provisional_old,
                 Meaning::Relax,
                 *global,
             );
@@ -2111,7 +2111,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 Token::Cs(*target),
-                provisional_old.clone(),
+                *provisional_old,
                 Meaning::Relax,
                 *global,
             );

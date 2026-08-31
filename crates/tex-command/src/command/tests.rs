@@ -194,7 +194,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -248,7 +248,7 @@ fn packed_input_resolution_copies_only_the_definition_key() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -435,11 +435,11 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
             ),
             (
                 macro_name,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
             ),
             (
                 macro_alias,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
             ),
         ] {
             universe

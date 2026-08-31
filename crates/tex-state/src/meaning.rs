@@ -172,18 +172,7 @@ pub(crate) fn record_dense_meaning_row_access() {
 
 impl<G> Clone for MeaningWord<G> {
     fn clone(&self) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
-        update_direct_command_delivery_counters(|counters| {
-            counters.meaning_word_clones = counters.meaning_word_clones.saturating_add(1);
-        });
-        match self {
-            Self::Static(word) => Self::Static(*word),
-            Self::Font(font) => Self::Font(*font),
-            Self::Macro { flags, definition } => Self::Macro {
-                flags: *flags,
-                definition: definition.clone(),
-            },
-        }
+        *self
     }
 }
 
@@ -250,7 +239,7 @@ impl<G> MeaningWord<G> {
             Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(*font)),
             Self::Macro { flags, definition } => ResolvedMeaning::Macro {
                 flags: *flags,
-                definition: definition.clone(),
+                definition: *definition,
             },
         }
     }
@@ -328,7 +317,7 @@ impl<G> MeaningWord<G> {
                     counters.macro_owner_acquisitions =
                         counters.macro_owner_acquisitions.saturating_add(1);
                 });
-                target.write_macro_meaning(*flags, definition.clone());
+                target.write_macro_meaning(*flags, *definition);
             }
         }
     }
@@ -345,17 +334,7 @@ pub enum ResolvedMeaning<G> {
 
 impl<G> Clone for ResolvedMeaning<G> {
     fn clone(&self) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
-        update_direct_command_delivery_counters(|counters| {
-            counters.resolved_meaning_clones = counters.resolved_meaning_clones.saturating_add(1);
-        });
-        match self {
-            Self::Static(meaning) => Self::Static(*meaning),
-            Self::Macro { flags, definition } => Self::Macro {
-                flags: *flags,
-                definition: definition.clone(),
-            },
-        }
+        *self
     }
 }
 

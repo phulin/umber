@@ -63,7 +63,7 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition.clone()),
+                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
                 AssignmentScope::Global,
             )
             .expect("assign macro");

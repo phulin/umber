@@ -870,7 +870,7 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
             .expect("definition");
         let meaning = MeaningWord::macro_definition(MeaningFlags::LONG, definition);
         universe
-            .assign_meaning(alpha, meaning.clone(), AssignmentScope::Global)
+            .assign_meaning(alpha, meaning, AssignmentScope::Global)
             .expect("alpha meaning");
         universe
             .assign_meaning(alias, meaning, AssignmentScope::Global)

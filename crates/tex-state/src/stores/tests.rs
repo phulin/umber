@@ -58,7 +58,7 @@ fn generation_ids_install_in_dense_state_without_per_value_owners() {
                 .state()
                 .assign_meaning(
                     symbol.symbol(),
-                    MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+                    MeaningWord::macro_definition(MeaningFlags::LONG, definition),
                     AssignmentScope::Global,
                 )
                 .expect("meaning assignment");

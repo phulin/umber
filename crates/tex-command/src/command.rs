@@ -134,7 +134,7 @@ impl<G> Clone for CurrentCommand<G> {
         });
         Self {
             spelling: self.spelling,
-            meaning: self.meaning.clone(),
+            meaning: self.meaning,
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
@@ -552,7 +552,7 @@ impl<G> CurrentCommand<G> {
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
     pub fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning.clone()
+        self.meaning
     }
 
     /// Borrows the effective meaning without creating a transient alias.
@@ -644,7 +644,7 @@ impl<G> CurrentCommand<G> {
         });
         Self {
             spelling: self.spelling,
-            meaning: self.meaning.clone(),
+            meaning: self.meaning,
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,

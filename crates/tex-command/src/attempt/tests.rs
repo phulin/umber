@@ -182,7 +182,7 @@ impl<G> AttemptPromotionDestination<G> for TestPromotionDestination<G> {
         let mut matched = 0;
         for root in &mut self.definitions {
             if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
-                *root = TestRoot::Durable(definition.clone());
+                *root = TestRoot::Durable(definition);
                 matched += 1;
             }
         }
@@ -348,7 +348,7 @@ fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
             universe
                 .command_context()
                 .expect("test fixture is valid")
-                .definition(destination.definition(0).clone())
+                .definition(*destination.definition(0))
                 .replacement_text(),
             &[word('x').token_word()]
         );
@@ -375,7 +375,7 @@ fn generic_cold_promotion_preserves_checked_definition_content() {
             .promote_into(universe, &mut destination)
             .expect("definition promotion");
         let context = universe.command_context().expect("admission");
-        let promoted_view = context.definition(destination.definition(0).clone());
+        let promoted_view = context.definition(*destination.definition(0));
         assert_eq!(promoted_view.replacement_text().len(), 32);
         assert!(attempt.definition_builder(definition).is_err());
         let recycled = attempt
@@ -421,7 +421,7 @@ fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 
         let context = universe.command_context().expect("definition context");
-        let promoted = context.definition(destination.definition(0).clone());
+        let promoted = context.definition(*destination.definition(0));
         assert_eq!(promoted.replacement_text(), [word('x').token_word()]);
         assert_eq!(
             promoted.replacement_text().as_ptr(),

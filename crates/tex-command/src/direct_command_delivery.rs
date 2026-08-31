@@ -69,7 +69,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
             MeaningWord::from_static(Meaning::ExpandablePrimitive(
                 ExpandablePrimitive::ExpandAfter,
             )),
-            MeaningWord::macro_definition(MeaningFlags::LONG, definition.clone()),
+            MeaningWord::macro_definition(MeaningFlags::LONG, definition),
             MeaningWord::from_static(Meaning::CountRegister(32_767)),
             MeaningWord::from_static(Meaning::DimenParam(17)),
             MeaningWord::from_static(Meaning::Font(NULL_FONT)),
