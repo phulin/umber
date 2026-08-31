@@ -20,7 +20,7 @@ use super::path::RequestedFile;
 use super::{
     CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, VirtualPath,
 };
-use umber_vfs::{ResourceLedger, VfsSnapshot};
+use umber_vfs::{FileOrigin, ResourceLedger, VfsSnapshot};
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
@@ -148,7 +148,10 @@ impl ResourceHost for VirtualRunResolvers<'_> {
                         .open(input, FileKind::TexInput, original_name, request_index)
                 })
                 .map(|lookup| {
-                    lookup.map(|content| ResourceFulfillment::world_input(name, content))
+                    lookup.map(|content| {
+                        let role = virtual_source_role(self.input.snapshot, &content);
+                        ResourceFulfillment::world_input_with_role(name, content, role)
+                    })
                 }),
             ResourceNeed::InputProbe { request } => world
                 .with_input_read_state(|input| {
@@ -209,6 +212,35 @@ impl ResourceHost for VirtualRunResolvers<'_> {
             }
         }
     }
+}
+
+fn virtual_source_role(snapshot: &VfsSnapshot, content: &FileContent) -> tex_command::SourceRole {
+    let Some(path) = content.path().to_str() else {
+        return tex_command::SourceRole::GeneratedInput;
+    };
+    let virtual_path = if path.starts_with("/texlive/") {
+        umber_vfs::VirtualPath::distribution(path).ok()
+    } else {
+        umber_vfs::VirtualPath::user(path).ok()
+    };
+    let origin = virtual_path
+        .as_ref()
+        .and_then(|path| snapshot.get(path).ok().flatten())
+        .map(umber_vfs::VirtualFile::origin);
+    match origin {
+        Some(FileOrigin::Resolved(_)) => tex_command::SourceRole::DistributionPackageClass,
+        Some(FileOrigin::Generated) | None => tex_command::SourceRole::GeneratedInput,
+        Some(FileOrigin::User) if is_package_class_path(content.path()) => {
+            tex_command::SourceRole::ProjectPackageClass
+        }
+        Some(FileOrigin::User) => tex_command::SourceRole::UserDocumentInclude,
+    }
+}
+
+fn is_package_class_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| matches!(extension, "sty" | "cls"))
 }
 
 fn output_image_request(request: &tex_command::PdfImageRequest) -> PdfImageRequest {

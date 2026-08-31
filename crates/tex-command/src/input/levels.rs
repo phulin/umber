@@ -241,7 +241,7 @@ impl<G> MacroArgumentCursor<G> {
     ) -> Result<super::InputTopTransition, ()> {
         let position = self.frame.position();
         let identity = self.frame.identity();
-        let active_source = self.frame.source_id();
+        let active_source = self.frame.source_context();
         let suppress_expandable = self
             .frame
             .flags()
@@ -330,7 +330,7 @@ impl<G> TokenCursor<G> {
                     .frame
                     .flags()
                     .contains(InputFrameFlags::HAS_MACRO_LINEAGE),
-                active_source: self.frame.source_id(),
+                active_source: self.frame.source_context(),
             }
         } else {
             let resolution = destination.write_resolved_delivery(
@@ -340,7 +340,7 @@ impl<G> TokenCursor<G> {
                 u64::from(position),
                 sequence,
                 source_provenance,
-                self.frame.source_id(),
+                self.frame.source_context(),
                 false,
                 None,
                 self.frame
@@ -635,15 +635,18 @@ impl<G> InputLevel<G> {
     /// External source context inherited when this semantic input row became
     /// visible. Source owners remain exclusively in `InputStack`; this is the
     /// compact execution fact delivered commands need for checkpoint origin.
-    pub(crate) const fn source_context(&self) -> Option<tex_state::SourceId> {
+    pub(crate) const fn source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         match self {
-            Self::Source(source) => source.frame.source_id(),
-            Self::Tokens(tokens) => tokens.frame.source_id(),
-            Self::MacroArgument(argument) => argument.frame.source_id(),
+            Self::Source(source) => source.frame.source_context(),
+            Self::Tokens(tokens) => tokens.frame.source_context(),
+            Self::MacroArgument(argument) => argument.frame.source_context(),
         }
     }
 
-    pub(crate) fn set_source_context(&mut self, source: Option<tex_state::SourceId>) {
+    pub(crate) fn set_source_context(
+        &mut self,
+        source: Option<tex_state::packed_input::SourceContext>,
+    ) {
         match self {
             Self::Source(level) => level.frame.set_source_context(source),
             Self::Tokens(tokens) => tokens.frame.set_source_context(source),

@@ -111,6 +111,18 @@ impl TexInputSearchPath {
         )
     }
 
+    pub(crate) fn source_role(&self, content: &FileContent) -> tex_command::SourceRole {
+        if content.path().starts_with(&self.user_area) {
+            if is_package_class_path(content.path()) {
+                tex_command::SourceRole::ProjectPackageClass
+            } else {
+                tex_command::SourceRole::UserDocumentInclude
+            }
+        } else {
+            tex_command::SourceRole::DistributionPackageClass
+        }
+    }
+
     /// Emulates pdfTeX's restricted `|kpsewhich NAME` pipe without launching
     /// a process. The existing deterministic search policy resolves `NAME`,
     /// and the generated input consists only of that resolved path.
@@ -149,6 +161,12 @@ impl TexInputSearchPath {
                 .map(|content| format!("{}\n", content.path().display())),
         )
     }
+}
+
+fn is_package_class_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| matches!(extension, "sty" | "cls"))
 }
 
 impl TexFontSearchPath {

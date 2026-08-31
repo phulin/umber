@@ -45,7 +45,7 @@ pub use lines::{
 };
 pub use source::{
     MalformedUnicodeRange, RegisteredSourceKind, SourceFramingPolicy, SourceNameClass,
-    SourceRegistration, SourceRegistrationError,
+    SourceRegistration, SourceRegistrationError, SourceRole,
 };
 pub use tokenizer::{
     CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,
@@ -1397,6 +1397,8 @@ impl<G> InputState<G> {
     }
 
     pub(crate) fn current_file_source_id(&self) -> Option<tex_state::SourceId> {
-        self.levels.current_source_context()
+        self.levels
+            .current_source_context()
+            .map(tex_state::packed_input::SourceContext::source)
     }
 }

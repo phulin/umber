@@ -170,7 +170,7 @@ enum InputUndo<G> {
     /// later delivery still records its initial execution position.
     SourceContext {
         index: u32,
-        source: Option<tex_state::SourceId>,
+        source: Option<tex_state::packed_input::SourceContext>,
     },
     Replacement {
         index: u32,
@@ -470,16 +470,22 @@ impl<G> InputStack<G> {
             self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         }
         for index in 0..self.top {
-            if self.rows[index].source_context() != Some(id) {
+            let Some(source_context) = self.rows[index].source_context() else {
+                continue;
+            };
+            if source_context.source() != id {
                 continue;
             }
             if self.recording {
                 self.undo.append(InputUndo::SourceContext {
                     index: u32::try_from(index).expect("input row index fits u32"),
-                    source: Some(id),
+                    source: Some(source_context),
                 });
             }
-            self.rows[index].set_source_context(Some(replacement_id));
+            self.rows[index].set_source_context(Some(tex_state::packed_input::SourceContext::new(
+                replacement_id,
+                source_context.role(),
+            )));
         }
         self.note_context_mutation();
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
@@ -492,7 +498,7 @@ impl<G> InputStack<G> {
     /// its common frame, so the query reads one row and never walks input
     /// ancestry or validates a source-owner slot.
     #[inline(always)]
-    pub(crate) fn current_source_context(&self) -> Option<tex_state::SourceId> {
+    pub(crate) fn current_source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         record_source_context_read();
         self.rows
             .get(self.top.checked_sub(1)?)
@@ -698,7 +704,7 @@ impl<G> crate::CommandState<G> {
                 }
                 let identity = source.identity();
                 let position = slot.cursor.next_physical_offset;
-                let active_source = source.frame.source_id();
+                let active_source = source.frame.source_context();
                 let step = {
                     let mut queries = super::stack::LiveSourceQueries {
                         state,

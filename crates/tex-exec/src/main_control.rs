@@ -366,9 +366,9 @@ pub struct MainControl<G> {
     root_completion: RootCompletionPolicy,
     /// Scalar identity of the one host-selected root main input file.
     ///
-    /// This is execution policy, not a source-role classification. Boundary
-    /// formation compares it with command state's active external file frame;
-    /// token provenance and file names never participate.
+    /// This is editor/restart and startup-framing identity, not checkpoint
+    /// retention policy. Boundary formation freezes the independently carried
+    /// source role; token provenance and macro names never participate.
     root_main_source: Option<tex_state::SourceId>,
     /// The ordered publication transaction produced by
     /// `fire_pending_page_output` after the contributing step's own records.
@@ -415,8 +415,8 @@ pub struct MainControl<G> {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
-    /// Move-only restart eligibility produced alongside root-main outer
-    /// paragraph evidence. Shipout evidence never enters this lane.
+    /// Move-only restart eligibility produced alongside retained-role outer
+    /// paragraph and shipout evidence.
     completed_checkpoint_eligibilities: Vec<crate::checkpoint::CheckpointEligibility>,
     /// The sole job-start restart capability. Restored controls do not regain
     /// it, and successful initial capture consumes it permanently.
@@ -1651,10 +1651,10 @@ impl<G> MainControl<G> {
                 crate::checkpoint::CheckpointEligibility::job_start()
             }
             crate::EngineBoundary::OuterParagraphEnd => {
-                crate::checkpoint::CheckpointEligibility::outer_paragraph_end()
+                crate::checkpoint::CheckpointEligibility::named(boundary)
             }
             crate::EngineBoundary::ShipoutComplete => {
-                panic!("shipout completion does not publish checkpoint eligibility")
+                crate::checkpoint::CheckpointEligibility::named(boundary)
             }
         };
         self.capture_checkpoint_with_identity_demand(eligibility, stores, budget_counters, false)
@@ -2105,6 +2105,11 @@ impl<G> MainControl<G> {
             self.root_main_source.is_none(),
             "one MainControl has exactly one root main source"
         );
+        let source = if source.role().is_some() {
+            source
+        } else {
+            source.with_role(tex_command::SourceRole::RootDocument)
+        };
         let id = self.command.register_source(source)?;
         // `id` was just allocated by this command state, so this can fail
         // only if the state implementation has violated its own invariant.
@@ -6333,7 +6338,7 @@ impl<G> MainControl<G> {
         let mode = host_preparation.mode();
         let last_node_type = host_preparation.last_node_type();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let root_main_file_origin = frame.is_root_main_file_operation(self.root_main_source);
+        let source_role = frame.operation_source_role();
         if matches!(delivery, OperationDelivery::Hot) {
             let applied = self.apply_hot_operation(
                 stores,
@@ -6342,7 +6347,7 @@ impl<G> MainControl<G> {
                 frame.hot_mut(),
                 OperationOutputStart {
                     outer_paragraph_was_active,
-                    root_main_file_origin,
+                    source_role,
                     artifact_count: stores.world().artifact_commits().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6361,7 +6366,7 @@ impl<G> MainControl<G> {
                 frame,
                 cold,
                 outer_paragraph_was_active,
-                root_main_file_origin,
+                source_role,
             );
         }
         let tracked_region_is_active = stores
@@ -6667,7 +6672,7 @@ impl<G> MainControl<G> {
                 frame,
                 cold,
                 outer_paragraph_was_active,
-                root_main_file_origin,
+                source_role,
             ),
             ScannedOperation::Hot => {
                 let applied = self.apply_hot_operation(
@@ -6677,7 +6682,7 @@ impl<G> MainControl<G> {
                     frame.hot_mut(),
                     OperationOutputStart {
                         outer_paragraph_was_active,
-                        root_main_file_origin,
+                        source_role,
                         artifact_count: stores.world().artifact_commits().len(),
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6699,7 +6704,7 @@ impl<G> MainControl<G> {
         frame: &mut OperationFrame<G>,
         cold: &mut ColdOperationSlot<G>,
         outer_paragraph_was_active: bool,
-        root_main_file_origin: bool,
+        source_role: Option<tex_command::SourceRole>,
     ) -> OperationReadiness {
         let resource_result = {
             let scanned = frame.unavailable_mut(cold);
@@ -6785,7 +6790,7 @@ impl<G> MainControl<G> {
         frame.alignment_preamble = alignment_preamble;
         frame.output_start = Some(OperationOutputStart {
             outer_paragraph_was_active,
-            root_main_file_origin,
+            source_role,
             artifact_count: stores.world().artifact_commits().len(),
             effect_count: stores.world().effect_records().len(),
             prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6985,11 +6990,11 @@ impl<G> MainControl<G> {
                 output_start.artifact_count,
                 output_start.effect_count,
                 stores,
-                output_start.root_main_file_origin,
+                output_start.source_role,
             );
             self.finish_paragraph_boundary(
                 output_start.outer_paragraph_was_active,
-                output_start.root_main_file_origin,
+                output_start.source_role,
                 stores,
             );
         }
@@ -7681,11 +7686,11 @@ impl<G> MainControl<G> {
                 output_start.artifact_count,
                 output_start.effect_count,
                 stores,
-                output_start.root_main_file_origin,
+                output_start.source_role,
             );
             self.finish_paragraph_boundary(
                 output_start.outer_paragraph_was_active,
-                output_start.root_main_file_origin,
+                output_start.source_role,
                 stores,
             );
         }

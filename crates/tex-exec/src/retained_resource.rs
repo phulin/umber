@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tex_command::{
     FileEnquiryRequest, FileEnquiryResource, FontLoadRequest, FontResource, PdfImageRequest,
-    PdfImageResource, RegisteredSourceKind, SourceRegistration,
+    PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRole,
 };
 use tex_state::{FileContent, InputReadState, Universe, WorldError};
 
@@ -65,10 +65,35 @@ impl ResourceFulfillment {
     }
 
     #[must_use]
+    pub fn input_with_role(
+        name: impl Into<String>,
+        kind: RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+        role: SourceRole,
+    ) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::new(kind, bytes).with_role(role),
+        }
+    }
+
+    #[must_use]
     pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
         Self::Input {
             name: name.into(),
             source: SourceRegistration::world(content),
+        }
+    }
+
+    #[must_use]
+    pub fn world_input_with_role(
+        name: impl Into<String>,
+        content: FileContent,
+        role: SourceRole,
+    ) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::world(content).with_role(role),
         }
     }
 

@@ -45,7 +45,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let (level, framing_name) = self
             .command
             .open_scantokens(
-                SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
+                SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes())
+                    .with_role(crate::SourceRole::GeneratedInput),
                 every_eof,
                 scantokens_numeric_name(tracing_scantokens),
                 open_depths,

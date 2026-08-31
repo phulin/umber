@@ -152,7 +152,7 @@ fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
         assert_eq!(crate::mode::semantic_fingerprint_calls_for_test(), 0);
 
         let requested = EngineCheckpoint::capture_checkpoint_with_identity_demand(
-            CheckpointEligibility::outer_paragraph_end(),
+            CheckpointEligibility::named(EngineBoundary::OuterParagraphEnd),
             &mut command,
             &mut modes,
             universe,
@@ -260,7 +260,7 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
         );
 
         let later = EngineCheckpoint::capture_checkpoint(
-            CheckpointEligibility::outer_paragraph_end(),
+            CheckpointEligibility::named(EngineBoundary::OuterParagraphEnd),
             &mut command,
             &mut modes,
             universe,
@@ -481,7 +481,7 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
         let mut command = CommandState::default();
         let mut modes = ModeNest::new();
         let checkpoint = EngineCheckpoint::capture_checkpoint(
-            CheckpointEligibility::outer_paragraph_end(),
+            CheckpointEligibility::named(EngineBoundary::OuterParagraphEnd),
             &mut command,
             &mut modes,
             universe,

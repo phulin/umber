@@ -947,12 +947,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .last()
                                 .and_then(|level| match level {
                                     InputLevel::Tokens(cursor) if cursor.identity() == identity => {
-                                        Some((cursor.frame.position(), cursor.frame.source_id()))
+                                        Some((
+                                            cursor.frame.position(),
+                                            cursor.frame.source_context(),
+                                        ))
                                     }
                                     InputLevel::MacroArgument(cursor)
                                         if cursor.identity() == identity =>
                                     {
-                                        Some((cursor.frame.position(), cursor.frame.source_id()))
+                                        Some((
+                                            cursor.frame.position(),
+                                            cursor.frame.source_context(),
+                                        ))
                                     }
                                     _ => None,
                                 })

@@ -113,7 +113,7 @@ pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
     RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceFramingPolicy,
     SourceLocation, SourceNameClass, SourceProvenance, SourceRange, SourceRegistration,
-    SourceRegistrationError, SourceScalarRange, SourceStepQueries, SourceToken,
+    SourceRegistrationError, SourceRole, SourceScalarRange, SourceStepQueries, SourceToken,
     SourceTokenizationStep,
 };
 #[cfg(feature = "profiling")]

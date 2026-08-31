@@ -87,6 +87,7 @@ pub struct CurrentCommand<G> {
     /// provenance: a package-defined macro invoked from the main file keeps
     /// the main file here.
     active_source: u32,
+    active_source_role: crate::SourceRole,
     direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     delivery_flags: CommandDeliveryFlags,
@@ -143,6 +144,7 @@ impl<G> Clone for CurrentCommand<G> {
             delivery: self.delivery,
             source_provenance: self.source_provenance,
             active_source: self.active_source,
+            active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
@@ -159,6 +161,7 @@ impl<G> PartialEq for CurrentCommand<G> {
             && self.delivery == other.delivery
             && self.source_provenance == other.source_provenance
             && self.active_source == other.active_source
+            && self.active_source_role == other.active_source_role
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
             && self.delivery_flags == other.delivery_flags
@@ -176,6 +179,7 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.delivery.hash(state);
         self.source_provenance.hash(state);
         self.active_source.hash(state);
+        self.active_source_role.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
         self.delivery_flags.hash(state);
@@ -353,7 +357,12 @@ impl<G> CurrentCommand<G> {
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut command = Self::empty();
-        let active_source = source_provenance.map(|provenance| provenance.range().source());
+        let active_source = source_provenance.map(|provenance| {
+            tex_state::packed_input::SourceContext::new(
+                provenance.range().source(),
+                crate::SourceRole::GeneratedInput,
+            )
+        });
         let _ = command.empty_for_raw_delivery().write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
@@ -395,6 +404,7 @@ impl<G> CurrentCommand<G> {
             delivery: DeliveryStamp::new(0, 0, 0),
             source_provenance: None,
             active_source: 0,
+            active_source_role: crate::SourceRole::GeneratedInput,
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             delivery_flags: CommandDeliveryFlags::default(),
@@ -648,6 +658,19 @@ impl<G> CurrentCommand<G> {
         }
     }
 
+    /// Host/VFS role of the external source active at this delivery.
+    #[must_use]
+    pub const fn active_source_role(&self) -> Option<crate::SourceRole> {
+        if self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::HAS_ACTIVE_SOURCE)
+        {
+            Some(self.active_source_role)
+        } else {
+            None
+        }
+    }
+
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
@@ -692,6 +715,7 @@ impl<G> CurrentCommand<G> {
             delivery: self.delivery,
             source_provenance: self.source_provenance,
             active_source: self.active_source,
+            active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
@@ -731,7 +755,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         position: u64,
         sequence: u64,
         source_provenance: Option<SourceProvenance>,
-        active_source: Option<tex_state::SourceId>,
+        active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -746,7 +770,9 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         command.spelling = TracedTokenWord::from_parts(word, origin);
         command.delivery = DeliveryStamp::new(input_level, position, sequence);
         command.source_provenance = source_provenance;
-        command.active_source = active_source.map_or(0, tex_state::SourceId::raw);
+        command.active_source = active_source.map_or(0, |source| source.source().raw());
+        command.active_source_role =
+            active_source.map_or(crate::SourceRole::GeneratedInput, |source| source.role());
         command.direct_source_line = direct_source_line.unwrap_or(0);
         command.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
         command.delivery_flags = CommandDeliveryFlags::default();

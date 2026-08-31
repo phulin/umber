@@ -3825,7 +3825,18 @@ impl ResourceHost for DirectResourceHost {
             ResourceNeed::Input { name, .. } => world.read_file(Path::new(name)).ok().map_or(
                 ResourceOutcome::Unavailable,
                 |content| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
+                    let role = if Path::new(name)
+                        .extension()
+                        .and_then(std::ffi::OsStr::to_str)
+                        .is_some_and(|extension| matches!(extension, "sty" | "cls"))
+                    {
+                        tex_command::SourceRole::ProjectPackageClass
+                    } else {
+                        tex_command::SourceRole::UserDocumentInclude
+                    };
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
+                        name, content, role,
+                    ))
                 },
             ),
             ResourceNeed::InputProbe { request } => world

@@ -7427,22 +7427,20 @@ fn checkpoint_boundaries<G>(
         .collect()
 }
 
-#[test]
-fn named_checkpoints_require_root_main_file_and_level_zero() {
+fn assert_source_role_checkpoint_schedule(
+    root: SourceRegistration,
+    inputs: Vec<(&'static str, SourceRegistration)>,
+    expected: &[crate::EngineBoundary],
+) {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        control.capabilities_mut().register_input(
-            "child.tex",
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(&br"\def\finish{B\par}C\par\shipout\vbox{}\endinput"[..]),
-            ),
-        );
-        register_source(
-            &mut control,
-            br"\begingroup A\par\endgroup\input child \finish\shipout\vbox{}\end",
-        );
+        for (name, source) in inputs {
+            control.capabilities_mut().register_input(name, source);
+        }
+        control
+            .register_root_source(root)
+            .expect("root source registers and opens");
 
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
@@ -7462,15 +7460,134 @@ fn named_checkpoints_require_root_main_file_and_level_zero() {
             }
         }
 
-        assert_eq!(
-            checkpoint_boundaries(&checkpoints),
-            [
+        assert_eq!(checkpoint_boundaries(&checkpoints), expected);
+    });
+}
+
+#[test]
+fn named_checkpoint_retention_uses_explicit_source_roles() {
+    let document_body = Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten A\par\shipout\vbox{}\end"[..]);
+    assert_source_role_checkpoint_schedule(
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::clone(&document_body)),
+        Vec::new(),
+        &[
+            crate::EngineBoundary::JobStart,
+            crate::EngineBoundary::OuterParagraphEnd,
+            crate::EngineBoundary::ShipoutComplete,
+            crate::EngineBoundary::ShipoutComplete,
+        ],
+    );
+
+    let nested_root = || {
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten \input child \end"[..]),
+        )
+    };
+    let nested_body = || Arc::<[u8]>::from(&br"A\par\shipout\vbox{}\endinput"[..]);
+    for (role, expected) in [
+        (
+            tex_command::SourceRole::UserDocumentInclude,
+            &[
                 crate::EngineBoundary::JobStart,
                 crate::EngineBoundary::OuterParagraphEnd,
-            ],
-            "only the package-defined macro invoked from the quiescent root is restart-eligible; shipouts remain boundary evidence"
+                crate::EngineBoundary::ShipoutComplete,
+                crate::EngineBoundary::ShipoutComplete,
+            ][..],
+        ),
+        (
+            tex_command::SourceRole::ProjectPackageClass,
+            &[
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::ShipoutComplete,
+            ][..],
+        ),
+        (
+            tex_command::SourceRole::DistributionPackageClass,
+            &[
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::ShipoutComplete,
+            ][..],
+        ),
+        (
+            tex_command::SourceRole::GeneratedInput,
+            &[
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::ShipoutComplete,
+            ][..],
+        ),
+    ] {
+        assert_source_role_checkpoint_schedule(
+            nested_root(),
+            vec![(
+                "child.tex",
+                SourceRegistration::new(RegisteredSourceKind::Generated, nested_body())
+                    .with_role(role),
+            )],
+            expected,
         );
-    });
+    }
+
+    assert_source_role_checkpoint_schedule(
+        SourceRegistration::new(RegisteredSourceKind::Generated, document_body)
+            .with_role(tex_command::SourceRole::FormatInitialization),
+        Vec::new(),
+        &[crate::EngineBoundary::JobStart],
+    );
+}
+
+#[test]
+fn nested_sources_inherit_package_role_and_package_return_restores_document_policy() {
+    assert_source_role_checkpoint_schedule(
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten \input package \end"[..]),
+        ),
+        vec![
+            (
+                "package.tex",
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&br"\input helper \endinput"[..]),
+                )
+                .with_role(tex_command::SourceRole::ProjectPackageClass),
+            ),
+            (
+                "helper.tex",
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&br"A\par\shipout\vbox{}\endinput"[..]),
+                ),
+            ),
+        ],
+        &[
+            crate::EngineBoundary::JobStart,
+            crate::EngineBoundary::ShipoutComplete,
+        ],
+    );
+
+    assert_source_role_checkpoint_schedule(
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(
+                &br"\font\ten=cmr10 \ten \def\finish{A\par\input package}\finish\shipout\vbox{}\end"[..],
+            ),
+        ),
+        vec![(
+            "package.tex",
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&br"\endinput"[..]),
+            )
+            .with_role(tex_command::SourceRole::ProjectPackageClass),
+        )],
+        &[
+            crate::EngineBoundary::JobStart,
+            crate::EngineBoundary::OuterParagraphEnd,
+            crate::EngineBoundary::ShipoutComplete,
+            crate::EngineBoundary::ShipoutComplete,
+        ],
+    );
 }
 
 #[test]
@@ -7482,7 +7599,8 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
             SourceRegistration::new(
                 RegisteredSourceKind::Generated,
                 Arc::<[u8]>::from(&br"\shipout\vbox{}\endinput"[..]),
-            ),
+            )
+            .with_role(tex_command::SourceRole::ProjectPackageClass),
         );
         register_source(
             &mut control,
@@ -7516,7 +7634,7 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
             control.pending_named_boundaries.front(),
             Some(&PendingNamedBoundary {
                 boundary: crate::EngineBoundary::ShipoutComplete,
-                root_main_file_origin: false,
+                source_role: Some(tex_command::SourceRole::ProjectPackageClass),
             })
         );
         assert_eq!(
@@ -7556,8 +7674,11 @@ fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
         }
         assert_eq!(
             checkpoint_boundaries(&checkpoints),
-            [crate::EngineBoundary::JobStart],
-            "shipout origin remains evidence-only across return and retry"
+            [
+                crate::EngineBoundary::JobStart,
+                crate::EngineBoundary::ShipoutComplete,
+            ],
+            "the project-package shipout remains filtered across source return and retry; the later root-document shipout is retained"
         );
     });
 }
@@ -7570,13 +7691,13 @@ fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
             .pending_named_boundaries
             .push_back(PendingNamedBoundary {
                 boundary: crate::EngineBoundary::OuterParagraphEnd,
-                root_main_file_origin: true,
+                source_role: Some(tex_command::SourceRole::RootDocument),
             });
         control
             .pending_named_boundaries
             .push_back(PendingNamedBoundary {
                 boundary: crate::EngineBoundary::ShipoutComplete,
-                root_main_file_origin: true,
+                source_role: Some(tex_command::SourceRole::RootDocument),
             });
 
         control
@@ -7597,8 +7718,11 @@ fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
                 .iter()
                 .map(crate::checkpoint::CheckpointEligibility::boundary)
                 .collect::<Vec<_>>(),
-            [crate::EngineBoundary::OuterParagraphEnd],
-            "shipout completion is detached evidence, not restart eligibility"
+            [
+                crate::EngineBoundary::OuterParagraphEnd,
+                crate::EngineBoundary::ShipoutComplete,
+            ],
+            "approved document roles retain paragraph and shipout restart boundaries"
         );
     });
 }
@@ -7798,8 +7922,8 @@ fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
         );
         assert_eq!(
             checkpoint_boundaries(&checkpoints),
-            [],
-            "shipout completion must not manufacture a restart checkpoint"
+            [crate::EngineBoundary::ShipoutComplete],
+            "the root-document shipout publishes after its macro content unwinds"
         );
     });
 }
@@ -7838,7 +7962,11 @@ fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
                 .iter()
                 .map(crate::EngineCheckpoint::boundary)
                 .collect::<Vec<_>>(),
-            [crate::EngineBoundary::OuterParagraphEnd,]
+            [
+                crate::EngineBoundary::OuterParagraphEnd,
+                crate::EngineBoundary::ShipoutComplete,
+                crate::EngineBoundary::ShipoutComplete,
+            ]
         );
     });
 }

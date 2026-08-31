@@ -12,7 +12,7 @@ pub(super) type ObservationSlot = Option<ObservationBuffer>;
 #[derive(Clone, Copy)]
 pub(super) struct OperationOutputStart {
     pub(super) outer_paragraph_was_active: bool,
-    pub(super) root_main_file_origin: bool,
+    pub(super) source_role: Option<tex_command::SourceRole>,
     pub(super) artifact_count: usize,
     pub(super) effect_count: usize,
     pub(super) prepared_page_count: usize,
@@ -535,11 +535,11 @@ impl<G> MainControl<G> {
             output_start.artifact_count,
             output_start.effect_count,
             stores,
-            output_start.root_main_file_origin,
+            output_start.source_role,
         );
         self.finish_paragraph_boundary(
             output_start.outer_paragraph_was_active,
-            output_start.root_main_file_origin,
+            output_start.source_role,
             stores,
         );
         Ok(applied)
@@ -549,7 +549,7 @@ impl<G> MainControl<G> {
     pub(super) fn finish_paragraph_boundary(
         &mut self,
         outer_paragraph_was_active: bool,
-        root_main_file_origin: bool,
+        source_role: Option<tex_command::SourceRole>,
         stores: &mut Universe<G>,
     ) {
         if outer_paragraph_was_active
@@ -564,7 +564,7 @@ impl<G> MainControl<G> {
             self.pending_named_boundaries
                 .push_back(PendingNamedBoundary {
                     boundary: crate::EngineBoundary::OuterParagraphEnd,
-                    root_main_file_origin,
+                    source_role,
                 });
         }
     }
@@ -635,7 +635,7 @@ impl<G> MainControl<G> {
                 .pop_front()
                 .expect("inspected named-boundary intent remains queued");
             debug_assert_eq!(published, pending);
-            if !published.root_main_file_origin {
+            if !checkpoint_role_is_retained(published.source_role) {
                 continue;
             }
             if published.boundary == crate::EngineBoundary::ShipoutComplete {
@@ -645,10 +645,9 @@ impl<G> MainControl<G> {
                         context: "rootless shipout page release",
                     })?;
             }
-            if published.boundary == crate::EngineBoundary::OuterParagraphEnd {
-                self.completed_checkpoint_eligibilities
-                    .push(crate::checkpoint::CheckpointEligibility::outer_paragraph_end());
-            }
+            self.completed_checkpoint_eligibilities.push(
+                crate::checkpoint::CheckpointEligibility::named(published.boundary),
+            );
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
         }
@@ -686,7 +685,7 @@ impl<G> MainControl<G> {
         artifact_count: usize,
         _effect_count: usize,
         stores: &mut Universe<G>,
-        root_main_file_origin: bool,
+        source_role: Option<tex_command::SourceRole>,
     ) {
         let committed = stores
             .world()
@@ -695,7 +694,7 @@ impl<G> MainControl<G> {
             .saturating_sub(artifact_count);
         let intent = PendingNamedBoundary {
             boundary: crate::EngineBoundary::ShipoutComplete,
-            root_main_file_origin,
+            source_role,
         };
         for _ in 0..committed {
             self.pending_named_boundaries.push_back(intent);
@@ -857,7 +856,14 @@ pub(super) struct OperationReceiptStart {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PendingNamedBoundary {
     pub(super) boundary: crate::EngineBoundary,
-    pub(super) root_main_file_origin: bool,
+    pub(super) source_role: Option<tex_command::SourceRole>,
+}
+
+const fn checkpoint_role_is_retained(role: Option<tex_command::SourceRole>) -> bool {
+    matches!(
+        role,
+        Some(tex_command::SourceRole::RootDocument | tex_command::SourceRole::UserDocumentInclude)
+    )
 }
 
 /// Explicit live-observer boundary for detached shipout geometry.

@@ -2258,11 +2258,16 @@ impl<G> CommandState<G> {
     ) -> InputLevelId {
         let identity = self.allocate_input_level_identity();
         let enclosing_source = self.input.levels.current_source_context();
+        let resolved_role = registered
+            .role
+            .or_else(|| enclosing_source.map(tex_state::packed_input::SourceContext::role))
+            .unwrap_or(crate::SourceRole::GeneratedInput);
+        let own_source = tex_state::packed_input::SourceContext::new(registered.id, resolved_role);
         let source_context = match name_class {
-            SourceNameClass::File | SourceNameClass::Scantokens(_) => Some(registered.id),
+            SourceNameClass::File | SourceNameClass::Scantokens(_) => Some(own_source),
             SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => enclosing_source,
         };
-        let mut frame = crate::input::PackedInputFrame::source(identity.0, registered.id);
+        let mut frame = crate::input::PackedInputFrame::source(identity.0, own_source);
         frame.set_source_context(source_context);
         self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
         self.input.levels.push_source(

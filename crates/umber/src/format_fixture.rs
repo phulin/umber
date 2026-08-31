@@ -894,7 +894,8 @@ pub(crate) fn construct_format_in_worker(
                 &recipe.construction_source_name,
                 &recipe.construction_source_name,
                 SourceRegistration::new(RegisteredSourceKind::Generated, source_bytes.clone())
-                    .with_name(format!("./{}", recipe.construction_source_name)),
+                    .with_name(format!("./{}", recipe.construction_source_name))
+                    .with_role(tex_command::SourceRole::FormatInitialization),
             )?;
             let mut observer = LiveSessionTranslator::for_root(
                 SchemaVersion::V3,

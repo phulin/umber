@@ -339,10 +339,11 @@ impl ResourceHost for FileSessionResolvers {
                     .read_restricted_pipe_from_resource_world(world, name)
                 {
                     return result.map_or(ResourceOutcome::Unavailable, |text| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::input(
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::input_with_role(
                             name,
                             RegisteredSourceKind::Generated,
                             Arc::from(text.into_bytes()),
+                            tex_command::SourceRole::GeneratedInput,
                         ))
                     });
                 }
@@ -351,7 +352,10 @@ impl ResourceHost for FileSessionResolvers {
                     .read_from_resource_world(world, name)
                     .ok()
                     .map_or(ResourceOutcome::Unavailable, |content| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
+                        let role = self.input.0.source_role(&content);
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
+                            name, content, role,
+                        ))
                     })
             }
             tex_exec::ResourceNeed::InputProbe { request } => self

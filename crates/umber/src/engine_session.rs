@@ -160,7 +160,9 @@ fn same_run_input_fulfillment(name: &str, content: FileContent) -> ResourceFulfi
         // selects this job-local path directly, matching the `./name`
         // resolved spelling supplied by the loaded-format host for other
         // files beside the job.
-        source: SourceRegistration::world(content).with_name(format!("./{name}")),
+        source: SourceRegistration::world(content)
+            .with_name(format!("./{name}"))
+            .with_role(tex_command::SourceRole::GeneratedInput),
     }
 }
 
@@ -1340,7 +1342,7 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>(),
-                [EngineBoundary::JobStart]
+                [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete,]
             );
             let telemetry = session.episode_telemetry();
             assert_eq!(
@@ -2148,7 +2150,10 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>();
-                assert_eq!(boundaries, [EngineBoundary::JobStart]);
+                assert_eq!(
+                    boundaries,
+                    [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete,]
+                );
             },
         );
     }

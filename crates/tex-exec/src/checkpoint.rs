@@ -364,9 +364,9 @@ pub enum EngineBoundary {
 /// Move-only proof that a restart checkpoint may be captured now.
 ///
 /// Construction is private to main control: job start contributes its sole
-/// initial receipt, and live execution contributes one only after a
-/// root-main-file outer paragraph has reached the quiescent publication
-/// barrier. Shipout completion deliberately has no constructor.
+/// initial receipt, and live execution contributes one only after an approved
+/// document-source paragraph or shipout has reached the quiescent publication
+/// barrier.
 #[derive(Debug)]
 pub(crate) struct CheckpointEligibility {
     boundary: EngineBoundary,
@@ -379,9 +379,14 @@ impl CheckpointEligibility {
         }
     }
 
-    pub(crate) const fn outer_paragraph_end() -> Self {
-        Self {
-            boundary: EngineBoundary::OuterParagraphEnd,
+    pub(crate) const fn named(boundary: EngineBoundary) -> Self {
+        match boundary {
+            EngineBoundary::OuterParagraphEnd | EngineBoundary::ShipoutComplete => {
+                Self { boundary }
+            }
+            EngineBoundary::JobStart => {
+                panic!("JobStart owns its dedicated one-shot eligibility")
+            }
         }
     }
 
@@ -637,10 +642,8 @@ impl<G> EngineCheckpoint<G> {
     ) -> Result<Self, CommandSummaryError> {
         let eligibility = match boundary {
             EngineBoundary::JobStart => CheckpointEligibility::job_start(),
-            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::outer_paragraph_end(),
-            EngineBoundary::ShipoutComplete => {
-                panic!("shipout completion is evidence-only and cannot own a restart root")
-            }
+            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::named(boundary),
+            EngineBoundary::ShipoutComplete => CheckpointEligibility::named(boundary),
         };
         Self::capture_checkpoint_with_identity_demand(
             eligibility,
@@ -653,8 +656,8 @@ impl<G> EngineCheckpoint<G> {
     }
 
     /// Runs ordinary restart-root capture for the standalone aggregate gate.
-    /// Production eligibility remains private; the profiling seam accepts only
-    /// the two boundary kinds which can carry restart state.
+    /// Production eligibility remains private; the profiling seam accepts
+    /// every named boundary kind which can carry restart state.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
     pub fn profile_capture_checkpoint(
@@ -666,10 +669,8 @@ impl<G> EngineCheckpoint<G> {
     ) -> Result<Self, CommandSummaryError> {
         let eligibility = match boundary {
             EngineBoundary::JobStart => CheckpointEligibility::job_start(),
-            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::outer_paragraph_end(),
-            EngineBoundary::ShipoutComplete => {
-                panic!("shipout completion is evidence-only and cannot own a restart root")
-            }
+            EngineBoundary::OuterParagraphEnd => CheckpointEligibility::named(boundary),
+            EngineBoundary::ShipoutComplete => CheckpointEligibility::named(boundary),
         };
         Self::capture_checkpoint(eligibility, command, nest, universe, budget_counters)
     }

@@ -456,11 +456,10 @@ pub(super) struct OperationFrame<G> {
     pub(super) scalar: tex_command::ScalarScanFrame,
     pub(super) operation_scan: Option<PendingOperationScanPhase>,
     pub(super) alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
-    /// Whether the command which produced a detached operation was delivered
-    /// while the root main source was active. This is written only when the
-    /// command slot is about to be retired, then travels with that operation
-    /// through resource suspension.
-    pub(super) root_main_file_origin: bool,
+    /// Host/VFS source role active when this detached operation was formed.
+    /// This is written only when the command slot is about to be retired, then
+    /// travels with that operation through resource suspension.
+    pub(super) source_role: Option<tex_command::SourceRole>,
 }
 
 impl<G> Default for OperationFrame<G> {
@@ -479,7 +478,7 @@ impl<G> Default for OperationFrame<G> {
             scalar: tex_command::ScalarScanFrame::default(),
             operation_scan: None,
             alignment_scanner: None,
-            root_main_file_origin: false,
+            source_role: None,
         }
     }
 }
@@ -655,31 +654,20 @@ impl<G> OperationFrame<G> {
         self.operation_scan = None;
     }
 
-    pub(super) fn retain_root_main_file_origin(
-        &mut self,
-        root_main_source: Option<tex_state::SourceId>,
-    ) {
-        self.root_main_file_origin = root_main_source
-            .zip(
-                self.current_option()
-                    .and_then(|command| command.active_source_id()),
-            )
-            .is_some_and(|(root, active)| root == active);
+    pub(super) fn retain_source_role(&mut self) {
+        self.source_role = self
+            .current_option()
+            .and_then(tex_command::CurrentCommand::active_source_role);
     }
 
-    pub(super) fn is_root_main_file_operation(
-        &self,
-        root_main_source: Option<tex_state::SourceId>,
-    ) -> bool {
+    pub(super) fn operation_source_role(&self) -> Option<tex_command::SourceRole> {
         self.current_option()
-            .and_then(|command| command.active_source_id())
-            .zip(root_main_source)
-            .is_some_and(|(active, root)| active == root)
-            || self.root_main_file_origin
+            .and_then(tex_command::CurrentCommand::active_source_role)
+            .or(self.source_role)
     }
 
     pub(super) fn clear_operation_origin(&mut self) {
-        self.root_main_file_origin = false;
+        self.source_role = None;
     }
 
     pub(super) fn assert_empty(&self) {
@@ -697,7 +685,7 @@ impl<G> OperationFrame<G> {
                 && self.scalar.is_empty()
                 && self.operation_scan.is_none()
                 && self.alignment_scanner.is_none()
-                && !self.root_main_file_origin,
+                && self.source_role.is_none(),
             "one command attempt owns one empty operation frame"
         );
     }

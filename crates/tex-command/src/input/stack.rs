@@ -21,7 +21,7 @@ pub(crate) enum InputTopTransition {
     OutParameter {
         slot: u8,
         has_macro_lineage: bool,
-        active_source: Option<tex_state::SourceId>,
+        active_source: Option<tex_state::packed_input::SourceContext>,
     },
     InvalidCharacter,
     NeedLine(InputLevelId),
@@ -715,7 +715,7 @@ impl<G> CommandState<G> {
     fn replay_out_parameter_after_admission(
         &mut self,
         has_macro_lineage: bool,
-        active_source: Option<tex_state::SourceId>,
+        active_source: Option<tex_state::packed_input::SourceContext>,
         slot: u8,
     ) -> Result<OutParameterReplay, ParameterReplayError> {
         if !(1..=9).contains(&slot) {

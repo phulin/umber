@@ -57,6 +57,37 @@ fn user_area_wins_before_configured_system_areas() {
 }
 
 #[test]
+fn input_search_metadata_classifies_document_project_and_distribution_sources() {
+    let mut world = World::memory();
+    for (path, bytes) in [
+        ("/job/chapter.tex", b"chapter".as_slice()),
+        ("/job/local.sty", b"package".as_slice()),
+        ("/texlive/base/plain.tex", b"plain".as_slice()),
+    ] {
+        world
+            .set_memory_file(path, bytes.to_vec())
+            .expect("seed classified input");
+    }
+    crate::with_engine_world(world, |universe| {
+        let search = TexInputSearchPath::new("/job", [PathBuf::from("/texlive/base")]);
+        for (name, expected) in [
+            ("chapter.tex", tex_command::SourceRole::UserDocumentInclude),
+            ("local.sty", tex_command::SourceRole::ProjectPackageClass),
+            (
+                "plain.tex",
+                tex_command::SourceRole::DistributionPackageClass,
+            ),
+        ] {
+            let content = search
+                .read(&mut universe.input_open_context(), name)
+                .expect("classified input resolves");
+            assert_eq!(search.source_role(&content), expected);
+        }
+    })
+    .expect("fresh universe");
+}
+
+#[test]
 fn input_with_non_tex_extension_falls_back_to_appended_tex_extension() {
     let mut world = World::memory();
     world

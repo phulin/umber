@@ -124,7 +124,6 @@ impl<G> MainControl<G> {
         self.ensure_primitive_handles(stores);
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let root_main_source = self.root_main_source;
         let context_readiness = stores
             .with_command_context(|context| {
                 self.prepare_host_capabilities(context, host_preparation);
@@ -288,7 +287,7 @@ impl<G> MainControl<G> {
                                     // result. Retire the delivery/scanner episode as a
                                     // unit before handing that operation to execution;
                                     // no preflight marker belongs to the next stage.
-                                    frame.retain_root_main_file_origin(root_main_source);
+                                    frame.retain_source_role();
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
                                         OperationDelivery::Hot,
@@ -298,7 +297,7 @@ impl<G> MainControl<G> {
                                     );
                                 }
                                 Ok(ScannedOperation::Cold) => {
-                                    frame.retain_root_main_file_origin(root_main_source);
+                                    frame.retain_source_role();
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
                                         OperationDelivery::Scanned,
@@ -436,7 +435,7 @@ impl<G> MainControl<G> {
             let capabilities = crate::transaction_protocol::canonical_command_capabilities(
                 frame.current().meaning(),
             );
-            frame.retain_root_main_file_origin(root_main_source);
+            frame.retain_source_role();
             frame.discard_resident_command();
             host_preparation.fill_preflight(OperationDelivery::Prepared, capabilities, None, None);
             return PreflightReadiness::Ready;

@@ -8,6 +8,8 @@ use tex_state::source_map::SourceDescriptor;
 use tex_state::world::FileContent;
 use tex_state::{InputRecordId, SourceId};
 
+pub use tex_state::packed_input::SourceRole;
+
 use crate::profile::{CharacterMode, CommandProfile};
 
 use super::lines::SourceLineState;
@@ -94,6 +96,9 @@ pub enum SourceNameClass {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SourceRegistration {
     kind: RegisteredSourceKind,
+    /// Explicit host/VFS classification. `None` means inherit the enclosing
+    /// external source when this registration is opened as nested input.
+    role: Option<SourceRole>,
     bytes: Arc<[u8]>,
     world_record: Option<InputRecordId>,
     modification_date: Option<tex_state::FileModificationDate>,
@@ -108,6 +113,7 @@ impl SourceRegistration {
     pub fn new(kind: RegisteredSourceKind, bytes: impl Into<Arc<[u8]>>) -> Self {
         Self {
             kind,
+            role: None,
             bytes: bytes.into(),
             world_record: None,
             modification_date: None,
@@ -123,6 +129,7 @@ impl SourceRegistration {
     pub fn world(content: FileContent) -> Self {
         Self {
             kind: RegisteredSourceKind::World,
+            role: None,
             bytes: content.shared_bytes(),
             world_record: Some(content.record()),
             modification_date: content.modification_date(),
@@ -165,6 +172,24 @@ impl SourceRegistration {
     pub fn with_framing(mut self, framing: SourceFramingPolicy) -> Self {
         self.framing = framing;
         self
+    }
+
+    /// Supplies the semantic source role selected by the host or VFS.
+    ///
+    /// Registrations without an override inherit the enclosing external
+    /// source deterministically when opened. Root registration supplies
+    /// [`SourceRole::RootDocument`] when the host did not select a more
+    /// specific role such as [`SourceRole::FormatInitialization`].
+    #[must_use]
+    pub fn with_role(mut self, role: SourceRole) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    /// Returns the host/VFS override, or `None` when nested opening inherits.
+    #[must_use]
+    pub const fn role(&self) -> Option<SourceRole> {
+        self.role
     }
 
     /// Returns the acquisition class retained with the backing.
@@ -411,6 +436,7 @@ impl std::error::Error for SourceRegistrationError {}
 pub(crate) struct RegisteredSource {
     pub(crate) id: SourceId,
     pub(crate) kind: RegisteredSourceKind,
+    pub(crate) role: Option<SourceRole>,
     pub(crate) mode: CharacterMode,
     pub(crate) bytes: Arc<[u8]>,
     /// tex.web §537's `a_make_name_string` name, carried from the
@@ -466,6 +492,7 @@ impl RegisteredSource {
         Ok(Self {
             id,
             kind: RegisteredSourceKind::Generated,
+            role: self.role,
             mode: self.mode,
             bytes,
             name: self.name.clone(),
@@ -543,6 +570,7 @@ impl RegisteredSource {
         Ok(Self {
             id,
             kind: registration.kind,
+            role: registration.role,
             mode,
             bytes: registration.bytes,
             name: registration.name,
@@ -559,6 +587,7 @@ impl fmt::Debug for RegisteredSource {
             .debug_struct("RegisteredSource")
             .field("id", &self.id)
             .field("kind", &self.kind)
+            .field("role", &self.role)
             .field("mode", &self.mode)
             .field("bytes", &self.bytes)
             .field("name", &self.name)

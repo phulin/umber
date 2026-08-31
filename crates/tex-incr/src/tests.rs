@@ -70,8 +70,8 @@ fn cold_execution_publishes_detached_artifact_and_boundary_history() {
         session
             .history()
             .iter()
-            .all(|record| record.key().boundary != EngineBoundary::ShipoutComplete),
-        "shipout is completion evidence, not restart eligibility"
+            .any(|record| record.key().boundary == EngineBoundary::ShipoutComplete),
+        "approved root-document shipout is restart eligible"
     );
 }
 
@@ -703,14 +703,16 @@ fn changed_prefix_convergence_rehomes_suffix_for_the_next_edit() {
 }
 
 #[test]
-fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
+fn source_role_checkpoint_schedule_keeps_restart_and_convergence_deterministic() {
     let source = r"\font\tenrm=cmr10 \tenrm
 \begingroup A\par\endgroup
 \input child
+\input localpkg.sty
 \finish
 \shipout\vbox{}
 \end";
     let child = br"\def\finish{B\par}C\par\shipout\vbox{}\endinput";
+    let local_package = br"P\par\shipout\vbox{}\endinput";
     let mut session = session(RevisionId::new(1), source);
     session
         .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
@@ -718,6 +720,9 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
     session
         .register_input_file(Path::new("child.tex"), child.to_vec())
         .expect("nested input registers");
+    session
+        .register_input_file(Path::new("localpkg.sty"), local_package.to_vec())
+        .expect("project package registers");
     session.cold().expect("baseline");
 
     let before = session
@@ -727,8 +732,15 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
         .collect::<Vec<_>>();
     assert_eq!(
         before.iter().map(|key| key.boundary).collect::<Vec<_>>(),
-        [EngineBoundary::JobStart, EngineBoundary::OuterParagraphEnd,],
-        "only the root-main-file, group-zero outer paragraph is restart eligible"
+        [
+            EngineBoundary::JobStart,
+            EngineBoundary::OuterParagraphEnd,
+            EngineBoundary::ShipoutComplete,
+            EngineBoundary::OuterParagraphEnd,
+            EngineBoundary::ShipoutComplete,
+            EngineBoundary::ShipoutComplete,
+        ],
+        "user includes and returned root input retain boundaries while project-package boundaries remain atomic"
     );
 
     let output = session
@@ -743,7 +755,7 @@ fn root_file_checkpoint_filter_keeps_history_and_convergence_deterministic() {
             .map(BoundaryRecord::key)
             .collect::<Vec<_>>(),
         before,
-        "filtered nested occurrences do not perturb accepted schedule keys"
+        "source-role filtering keeps accepted restart keys deterministic"
     );
 }
 
@@ -1189,7 +1201,7 @@ fn history_budget_keeps_job_start_and_newest_observation() {
     );
     assert_eq!(
         session.history()[1].key().boundary,
-        EngineBoundary::OuterParagraphEnd
+        EngineBoundary::ShipoutComplete
     );
     assert_eq!(
         session.current_retained_checkpoint_count(),

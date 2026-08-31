@@ -2489,7 +2489,9 @@ mod tests {
                     .assign_count(0, 20, AssignmentScope::Global)
                     .expect("later count");
                 crate::EngineCheckpoint::capture_checkpoint(
-                    crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
+                    crate::checkpoint::CheckpointEligibility::named(
+                        crate::EngineBoundary::OuterParagraphEnd,
+                    ),
                     &mut command,
                     &mut modes,
                     universe,
@@ -2819,7 +2821,9 @@ mod tests {
 
             lane.begin(&job);
             let replacement = crate::EngineCheckpoint::capture_checkpoint(
-                crate::checkpoint::CheckpointEligibility::outer_paragraph_end(),
+                crate::checkpoint::CheckpointEligibility::named(
+                    crate::EngineBoundary::OuterParagraphEnd,
+                ),
                 &mut command,
                 &mut modes,
                 universe,

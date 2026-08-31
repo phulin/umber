@@ -58,20 +58,60 @@ impl InputFrameFlags {
     }
 }
 
+/// Host-classified semantic role of one external input source.
+///
+/// This is immutable descriptive metadata. The command and execution layers
+/// decide how a role affects their policies; the state layer only carries the
+/// role beside the source identity through input replay and rollback.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum SourceRole {
+    RootDocument,
+    UserDocumentInclude,
+    ProjectPackageClass,
+    DistributionPackageClass,
+    GeneratedInput,
+    FormatInitialization,
+}
+
+/// Compact external-source identity and its resolved semantic role.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceContext {
+    source: crate::SourceId,
+    role: SourceRole,
+}
+
+impl SourceContext {
+    #[must_use]
+    pub const fn new(source: crate::SourceId, role: SourceRole) -> Self {
+        Self { source, role }
+    }
+
+    #[must_use]
+    pub const fn source(self) -> crate::SourceId {
+        self.source
+    }
+
+    #[must_use]
+    pub const fn role(self) -> SourceRole {
+        self.role
+    }
+}
+
 /// Copy-only input frame coordinate.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InputFrame {
     identity: u64,
     position: u32,
     limit: u32,
-    source: Option<crate::SourceId>,
+    source: Option<SourceContext>,
     kind: InputFrameKind,
     flags: InputFrameFlags,
 }
 
 impl InputFrame {
     #[must_use]
-    pub const fn source(identity: u64, source: crate::SourceId) -> Self {
+    pub const fn source(identity: u64, source: SourceContext) -> Self {
         Self {
             identity,
             position: 0,
@@ -124,6 +164,14 @@ impl InputFrame {
 
     #[must_use]
     pub const fn source_id(self) -> Option<crate::SourceId> {
+        match self.source {
+            Some(source) => Some(source.source()),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn source_context(self) -> Option<SourceContext> {
         self.source
     }
 
@@ -133,7 +181,7 @@ impl InputFrame {
     /// terminal/read frames and token frames inherit the enclosing external
     /// source. The scalar is immutable after admission and is not a backing
     /// owner, cache, or provenance graph.
-    pub const fn set_source_context(&mut self, source: Option<crate::SourceId>) {
+    pub const fn set_source_context(&mut self, source: Option<SourceContext>) {
         self.source = source;
     }
 
