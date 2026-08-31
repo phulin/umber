@@ -232,13 +232,13 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(crate) fn deliver_into<'slot>(
+    pub(crate) fn deliver_into(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        destination: crate::command::EmptyCommand<'slot, G>,
+        destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
+    ) -> Result<super::InputTopTransition, ()> {
         let position = self.frame.position();
         let identity = self.frame.identity();
         let active_source = self.frame.source_id();
@@ -249,7 +249,7 @@ impl<G> MacroArgumentCursor<G> {
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
             return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
         };
-        let (resolved, resolution) = destination.write_resolved_delivery(
+        let resolution = destination.write_resolved_delivery(
             word.token_word(),
             word.origin(),
             identity,
@@ -265,10 +265,7 @@ impl<G> MacroArgumentCursor<G> {
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(super::InputTopTransition::Delivered {
-            resolved,
-            resolution,
-        })
+        Ok(super::InputTopTransition::Delivered { resolution })
     }
 }
 
@@ -289,13 +286,13 @@ impl<G> TokenCursor<G> {
 
     /// Delivers the canonical word at the fixed frame's scalar position.
     #[inline(always)]
-    pub(crate) fn deliver_into<'slot>(
+    pub(crate) fn deliver_into(
         &mut self,
         sources: PackedTokenSources<'_, G>,
-        destination: crate::command::EmptyCommand<'slot, G>,
+        destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::InputTopTransition<'slot, G>, ()> {
+    ) -> Result<super::InputTopTransition, ()> {
         let position = self.frame.position();
         let index = position as usize;
         let Some((word, origin, source_provenance)) = (match &self.span {
@@ -336,7 +333,7 @@ impl<G> TokenCursor<G> {
                 active_source: self.frame.source_id(),
             }
         } else {
-            let (resolved, resolution) = destination.write_resolved_delivery(
+            let resolution = destination.write_resolved_delivery(
                 word,
                 origin,
                 self.frame.identity(),
@@ -351,10 +348,7 @@ impl<G> TokenCursor<G> {
                     .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
                 state,
             );
-            super::InputTopTransition::Delivered {
-                resolved,
-                resolution,
-            }
+            super::InputTopTransition::Delivered { resolution }
         };
         if self.frame.advance() != Some(position) {
             return Err(());

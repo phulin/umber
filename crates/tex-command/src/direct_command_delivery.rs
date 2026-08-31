@@ -125,7 +125,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
         for _ in 0..rounds {
             for (index, word) in self.words.iter().copied().enumerate() {
                 self.sequence = self.sequence.wrapping_add(1);
-                let (resolved, resolution) = self
+                let resolution = self
                     .command
                     .empty_for_raw_delivery()
                     .write_resolved_delivery(
@@ -142,7 +142,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
                         state,
                     );
                 assert!(resolution.meaning_lookup());
-                let semantic = match (index, resolved.as_ref().meaning_ref()) {
+                let semantic = match (index, self.command.meaning_ref()) {
                     (0, ResolvedMeaning::Static(Meaning::Undefined)) => 1,
                     (
                         1,

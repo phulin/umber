@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CurrentCommand, DeliveryStamp, EmptyCommand, ResolvedCommand};
+use super::{CurrentCommand, DeliveryStamp, EmptyCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
@@ -17,10 +17,6 @@ fn command_delivery_layout_stays_compact() {
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
     assert_eq!(
         std::mem::size_of::<EmptyCommand<'_, ()>>(),
-        std::mem::size_of::<&mut CurrentCommand<()>>()
-    );
-    assert_eq!(
-        std::mem::size_of::<ResolvedCommand<'_, ()>>(),
         std::mem::size_of::<&mut CurrentCommand<()>>()
     );
 }
@@ -99,7 +95,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         );
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
-        let (resolved, resolution) = command.empty_for_raw_delivery().write_resolved_delivery(
+        let resolution = command.empty_for_raw_delivery().write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
             17,
@@ -114,7 +110,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         );
         assert!(!resolution.meaning_lookup());
         assert_eq!(resolution.literal_catcode(), Some(Catcode::Letter));
-        assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
+        assert_eq!(core::ptr::from_ref(&command), slot);
 
         fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
             core::ptr::from_ref(command)
@@ -122,14 +118,11 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         fn execute<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
             core::ptr::from_ref(command)
         }
-        assert_eq!(prepare(resolved.as_ref()), slot);
-        assert_eq!(execute(resolved.as_ref()), slot);
+        assert_eq!(prepare(&command), slot);
+        assert_eq!(execute(&command), slot);
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23, 29));
         assert_eq!(
-            resolved.as_ref().delivery_stamp(),
-            DeliveryStamp::new(17, 23, 29)
-        );
-        assert_eq!(
-            resolved.as_ref().meaning_ref(),
+            command.meaning_ref(),
             &ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'x',
                 cat: Catcode::Letter,
@@ -155,7 +148,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         #[cfg(feature = "profiling")]
         let before = tex_state::meaning::direct_command_delivery_counters();
 
-        let (resolved, resolution) = command.empty_for_raw_delivery().write_resolved_delivery(
+        let resolution = command.empty_for_raw_delivery().write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
             31,
@@ -171,7 +164,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         #[cfg(feature = "profiling")]
         let after = tex_state::meaning::direct_command_delivery_counters();
 
-        assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
+        assert_eq!(core::ptr::from_ref(&command), slot);
         assert!(resolution.meaning_lookup());
         #[cfg(feature = "profiling")]
         {
@@ -184,10 +177,10 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
             );
         }
         assert_eq!(
-            resolved.as_ref().meaning_ref(),
+            command.meaning_ref(),
             &ResolvedMeaning::Static(Meaning::CountRegister(32_767))
         );
-        assert_eq!(resolved.as_ref().control_sequence(), Some(symbol.symbol()));
+        assert_eq!(command.control_sequence(), Some(symbol.symbol()));
     });
 }
 

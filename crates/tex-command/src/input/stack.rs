@@ -14,9 +14,8 @@ use super::{
 };
 
 /// Result of one admission of the current input top.
-pub(crate) enum InputTopTransition<'slot, G> {
+pub(crate) enum InputTopTransition {
     Delivered {
-        resolved: crate::command::ResolvedCommand<'slot, G>,
         resolution: tex_state::token::PackedMeaningResolution,
     },
     OutParameter {

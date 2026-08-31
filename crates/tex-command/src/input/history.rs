@@ -621,7 +621,7 @@ impl<G> crate::CommandState<G> {
         state: &mut tex_state::CommandContext<'_, G>,
         fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
-        destination: crate::command::EmptyCommand<'_, G>,
+        mut destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
     ) -> Result<super::ResidentCommandTransition, ()> {
         let profile = self.profile();
@@ -738,7 +738,7 @@ impl<G> crate::CommandState<G> {
                                     range.end(),
                                 )
                             };
-                            let (resolved, resolution) = destination.write_resolved_delivery(
+                            let resolution = destination.reborrow().write_resolved_delivery(
                                 token.word,
                                 origin,
                                 identity.0,
@@ -756,10 +756,7 @@ impl<G> crate::CommandState<G> {
                                 path_counters.source_direct =
                                     path_counters.source_direct.saturating_add(1);
                             }
-                            Ok(super::InputTopTransition::Delivered {
-                                resolved,
-                                resolution,
-                            })
+                            Ok(super::InputTopTransition::Delivered { resolution })
                         }
                     }
                     CompactSourceTokenizationStep::InvalidCharacter => {
@@ -786,7 +783,8 @@ impl<G> crate::CommandState<G> {
                     counters: &mut levels.cursor_mutations,
                 };
                 recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-                let delivery = cursor.deliver_into(sources, destination, sequence, state);
+                let delivery =
+                    cursor.deliver_into(sources, destination.reborrow(), sequence, state);
                 #[cfg(test)]
                 match &delivery {
                     Ok(super::InputTopTransition::Delivered { .. }) => {
@@ -816,7 +814,8 @@ impl<G> crate::CommandState<G> {
                     cursor.frame,
                     super::RetirementBehavior::Pop,
                 ));
-                let delivery = cursor.deliver_into(scratch, destination, sequence, state);
+                let delivery =
+                    cursor.deliver_into(scratch, destination.reborrow(), sequence, state);
                 #[cfg(test)]
                 if matches!(&delivery, Ok(super::InputTopTransition::Delivered { .. })) {
                     path_counters.macro_argument_direct =
@@ -827,20 +826,18 @@ impl<G> crate::CommandState<G> {
         };
         levels.note_context_mutation();
         match delivery? {
-            super::InputTopTransition::Delivered {
-                mut resolved,
-                resolution,
-            } => {
-                if resolved.as_ref().suppresses_expandable_control_sequence() {
-                    resolved.as_mut().suppress_expandable();
+            super::InputTopTransition::Delivered { resolution } => {
+                let command = destination.into_resident();
+                if command.suppresses_expandable_control_sequence() {
+                    command.suppress_expandable();
                 }
                 fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
-                let interception = if resolved.as_ref().is_outer() && scanner_active {
+                let interception = if command.is_outer() && scanner_active {
                     super::ResidentCommandInterception::Outer
                 } else {
                     roots.alignment.classify_delivery(
                         timeline,
-                        resolved.as_mut(),
+                        command,
                         resolution.literal_catcode(),
                     );
                     super::ResidentCommandInterception::Ready

@@ -93,15 +93,10 @@ pub struct CurrentCommand<G> {
 /// Exclusive proof that the caller-owned command slot is ready for raw input.
 ///
 /// The wrapper is only one mutable reference. It adds no storage and cannot
-/// outlive the caller's final [`CurrentCommand`]. Consuming it is the only
-/// production route to [`ResolvedCommand`], so cold input transitions cannot
-/// leave a half-initialized command borrow live.
+/// outlive the caller's final [`CurrentCommand`]. Resident input reborrows it
+/// for each attempted write; a successful transition then reclaims the same
+/// slot locally for delivery settlement.
 pub(crate) struct EmptyCommand<'slot, G>(&'slot mut CurrentCommand<G>);
-
-/// Exclusive proof that meaning resolution completed in the same command
-/// slot. Delivery policy may now settle noexpand, outer validity, alignment,
-/// and observation exactly once.
-pub(crate) struct ResolvedCommand<'slot, G>(&'slot mut CurrentCommand<G>);
 
 /// Scalar delivery facts shared by the raw, resolved, and recovery phases.
 ///
@@ -710,6 +705,13 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         EmptyCommand(self.0)
     }
 
+    /// Reclaims the sole resident destination after input returned a scalar
+    /// successful-delivery fact. No reference crosses the input transition.
+    #[inline(always)]
+    pub(crate) fn into_resident(self) -> &'slot mut CurrentCommand<G> {
+        self.0
+    }
+
     /// Writes and resolves one resident input word in the final caller-owned
     /// slot.
     ///
@@ -732,10 +734,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
-    ) -> (
-        ResolvedCommand<'slot, G>,
-        tex_state::token::PackedMeaningResolution,
-    ) {
+    ) -> tex_state::token::PackedMeaningResolution {
         #[cfg(any(test, feature = "profiling"))]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
@@ -763,20 +762,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
             CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
             suppress_expandable,
         );
-        let resolution = state.write_packed_token_command_into(word, command);
-        (ResolvedCommand(command), resolution)
-    }
-}
-
-impl<'slot, G> ResolvedCommand<'slot, G> {
-    #[inline(always)]
-    pub(crate) fn as_ref(&self) -> &CurrentCommand<G> {
-        self.0
-    }
-
-    #[inline(always)]
-    pub(crate) fn as_mut(&mut self) -> &mut CurrentCommand<G> {
-        self.0
+        state.write_packed_token_command_into(word, command)
     }
 }
 

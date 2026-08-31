@@ -169,14 +169,23 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert_eq!(input_history.matches("match delivery?").count(), 1);
     assert!(!levels.contains("let frame = self.frame;"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
-    assert!(command.contains("struct ResolvedCommand<'slot, G>"));
-    assert!(levels.contains("crate::command::EmptyCommand<'slot, G>"));
+    assert!(!command.contains("ResolvedCommand"));
+    assert!(levels.contains("crate::command::EmptyCommand<'_, G>"));
+    assert!(input_stack.contains("enum InputTopTransition {"));
+    let delivered_transition = input_stack
+        .split("Delivered {")
+        .nth(1)
+        .and_then(|tail| tail.split("},").next())
+        .expect("locate scalar delivered transition");
+    assert!(delivered_transition.contains("PackedMeaningResolution"));
+    assert!(!delivered_transition.contains("CurrentCommand"));
+    assert!(!delivered_transition.contains("&'"));
     assert_eq!(
         command.matches("fn write_resolved_delivery(").count(),
         1,
         "resident input words must resolve through one final-slot write"
     );
-    assert!(input_history.contains("destination.write_resolved_delivery("));
+    assert!(input_history.contains(".write_resolved_delivery("));
     assert!(levels.contains("destination.write_resolved_delivery("));
     for retired in [
         "RawDeliverySlot",

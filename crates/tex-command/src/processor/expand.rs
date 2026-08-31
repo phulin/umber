@@ -981,7 +981,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     break DeliveryStatus::ReplayCompleted(episode);
                                 }
                                 RetirementHandoff::EndV(level) => {
-                                    let (_, resolution) = destination
+                                    let resolution = destination
                                         .as_mut()
                                         .expect("delivery machine owns its reusable command slot")
                                         .empty_for_raw_delivery()

@@ -812,6 +812,9 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         requested_bytes: u64,
         whole_frame_copies: u64,
         whole_command_copies: u64,
+        resolved_writes: u64,
+        transition_bytes: usize,
+        transition_needs_drop: bool,
     }
 
     fn run(operations: usize) -> Evidence {
@@ -980,7 +983,17 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                     - allocations_before.requested_bytes,
                 whole_frame_copies: timeline_after.full_frame_history_clones
                     - timeline_before.full_frame_history_clones,
-                whole_command_copies: commands_after.clones - commands_before.clones,
+                whole_command_copies: commands_after
+                    .clones
+                    .saturating_sub(commands_before.clones)
+                    .saturating_add(
+                        commands_after
+                            .backup_copies
+                            .saturating_sub(commands_before.backup_copies),
+                    ),
+                resolved_writes: commands_after.resolved_writes - commands_before.resolved_writes,
+                transition_bytes: std::mem::size_of::<crate::input::InputTopTransition>(),
+                transition_needs_drop: std::mem::needs_drop::<crate::input::InputTopTransition>(),
             }
         })
     }
@@ -996,6 +1009,9 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             requested_bytes: 0,
             whole_frame_copies: 0,
             whole_command_copies: 0,
+            resolved_writes: 6,
+            transition_bytes: 16,
+            transition_needs_drop: false,
         }
     );
     let four_k = run(4_096);
@@ -1006,6 +1022,9 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(four_k.requested_bytes, 0);
     assert_eq!(four_k.whole_frame_copies, 0);
     assert_eq!(four_k.whole_command_copies, 0);
+    assert_eq!(four_k.resolved_writes, 20_481);
+    assert_eq!(four_k.transition_bytes, 16);
+    assert!(!four_k.transition_needs_drop);
 }
 
 #[test]
