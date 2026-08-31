@@ -103,6 +103,13 @@ struct ReservedChunkSlot<'a, T> {
     became_full: bool,
 }
 
+struct ReservedChunkPosition {
+    page: usize,
+    index: usize,
+    offset: u32,
+    became_full: bool,
+}
+
 struct ReservationCompletion {
     placeholder_identity: Option<u64>,
     item_identity: Option<u64>,
@@ -413,6 +420,35 @@ impl<T> ChunkStorage<T> {
         dependency_floor: Option<usize>,
         dependency_metadata_complete: bool,
     ) -> Result<ReservedChunkSlot<'_, T>, ForkArenaError> {
+        let ReservedChunkPosition {
+            page,
+            index,
+            offset,
+            became_full,
+        } = self.reserve_position(
+            key,
+            arena,
+            lineage,
+            item_identity,
+            dependency_floor,
+            dependency_metadata_complete,
+        )?;
+        Ok(ReservedChunkSlot {
+            slot: &mut self.pages[page].slots[index],
+            offset,
+            became_full,
+        })
+    }
+
+    fn reserve_position(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        lineage: u32,
+        item_identity: Option<u64>,
+        dependency_floor: Option<usize>,
+        dependency_metadata_complete: bool,
+    ) -> Result<ReservedChunkPosition, ForkArenaError> {
         let used = {
             let meta = self.validate_lineage(key, arena, lineage)?;
             if meta.sealed || meta.used as usize == self.slots_per_chunk {
@@ -439,11 +475,62 @@ impl<T> ChunkStorage<T> {
             meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
         }
         meta.dependency_metadata_complete &= dependency_metadata_complete;
-        Ok(ReservedChunkSlot {
-            slot: &mut self.pages[page].slots[index],
+        Ok(ReservedChunkPosition {
+            page,
+            index,
             offset: used,
             became_full,
         })
+    }
+
+    /// Clones one admitted source cell into one distinct final reserved cell.
+    fn reserve_clone_from(
+        &mut self,
+        key: RawChunkKey,
+        arena: u32,
+        lineage: u32,
+        item_identity: Option<u64>,
+        dependency_floor: Option<usize>,
+        source: (RawChunkKey, u32),
+    ) -> Result<(u32, bool), ForkArenaError>
+    where
+        T: Clone,
+    {
+        let (source_key, source_offset) = source;
+        if key == source_key {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let source_meta = self.validate(source_key, arena)?;
+        if source_offset >= source_meta.used {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let (source_page, source_index) = self.slot_index(source_key, source_offset as usize)?;
+        if self.pages[source_page].slots[source_index].is_none() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let ReservedChunkPosition {
+            page,
+            index,
+            offset,
+            became_full,
+        } = self.reserve_position(key, arena, lineage, item_identity, dependency_floor, true)?;
+        if source_page == page {
+            let slots = &mut self.pages[page].slots;
+            if source_index < index {
+                let (before, after) = slots.split_at_mut(index);
+                after[0].clone_from(&before[source_index]);
+            } else {
+                let (before, after) = slots.split_at_mut(source_index);
+                before[index].clone_from(&after[0]);
+            }
+        } else if source_page < page {
+            let (before, after) = self.pages.split_at_mut(page);
+            after[0].slots[index].clone_from(&before[source_page].slots[source_index]);
+        } else {
+            let (before, after) = self.pages.split_at_mut(source_page);
+            before[page].slots[index].clone_from(&after[0].slots[source_index]);
+        }
+        Ok((offset, became_full))
     }
 
     fn get(&self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&T> {
@@ -1825,6 +1912,28 @@ impl<T, Lane> ForkArena<T, Lane> {
         dependency_floor: Option<usize>,
         dependency_metadata_complete: bool,
     ) -> Result<&'pool mut Option<T>, ForkArenaError> {
+        let key = self.payload_reservation_target(pool, root)?;
+        let ReservedChunkSlot {
+            slot,
+            offset,
+            became_full,
+        } = pool.payload.reserve(
+            key,
+            self.owner,
+            self.lineage,
+            item_identity,
+            dependency_floor,
+            dependency_metadata_complete,
+        )?;
+        self.complete_payload_reservation(root, key, offset, became_full)?;
+        Ok(slot)
+    }
+
+    fn payload_reservation_target(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &ArenaListId<Lane>,
+    ) -> Result<RawChunkKey, ForkArenaError> {
         if !root.is_empty() && root.arena != self.owner {
             return Err(ForkArenaError::ForeignArena);
         }
@@ -1860,18 +1969,16 @@ impl<T, Lane> ForkArena<T, Lane> {
                 key
             }
         };
-        let ReservedChunkSlot {
-            slot,
-            offset,
-            became_full,
-        } = pool.payload.reserve(
-            key,
-            self.owner,
-            self.lineage,
-            item_identity,
-            dependency_floor,
-            dependency_metadata_complete,
-        )?;
+        Ok(key)
+    }
+
+    fn complete_payload_reservation(
+        &mut self,
+        root: &mut ArenaListId<Lane>,
+        key: RawChunkKey,
+        offset: u32,
+        became_full: bool,
+    ) -> Result<(), ForkArenaError> {
         if root.is_empty() {
             *root = ArenaListId::from_root(
                 self.owner,
@@ -1890,7 +1997,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
         }
         self.counters.new_semantic_nodes += 1;
-        Ok(slot)
+        Ok(())
     }
 
     /// Writes one value already duplicated from an existing semantic node.
@@ -1915,6 +2022,39 @@ impl<T, Lane> ForkArena<T, Lane> {
         )?;
         assert!(slot.is_none(), "reserved copy destination is vacant");
         *slot = Some(value);
+        Ok(())
+    }
+
+    /// Clones one same-arena source cell directly into its final packed slot.
+    fn append_payload_clone_from_coordinate(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &mut ArenaListId<Lane>,
+        source_key: RawChunkKey,
+        source_offset: u32,
+        item_identity: Option<u64>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Clone + RegionValue<Lane>,
+    {
+        let dependency_floor = {
+            let source = pool
+                .payload
+                .get(source_key, self.owner, source_offset)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            self.region_value_dependency_floor(pool, source)?
+        };
+        let key = self.payload_reservation_target(pool, root)?;
+        let (offset, became_full) = pool.payload.reserve_clone_from(
+            key,
+            self.owner,
+            self.lineage,
+            item_identity,
+            dependency_floor,
+            (source_key, source_offset),
+        )?;
+        self.complete_payload_reservation(root, key, offset, became_full)?;
+        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
         Ok(())
     }
 
@@ -2773,25 +2913,9 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone + RegionValue<Lane>,
     {
-        let mut copy = ArenaListId::empty();
-        // The chain is reverse-linked, so collect the explicit fallback in
-        // its cheap direction and replay it once. This keeps counted shared
-        // copying O(nodes + actual block crossings), never O(nodes*blocks).
-        let reverse = self
-            .list(pool, right)?
-            .iter()
-            .rev()
-            .cloned()
-            .collect::<Vec<_>>();
-        for value in reverse.into_iter().rev() {
-            self.append_payload_copy(pool, &mut copy, value, None)?;
-        }
-        self.counters.new_semantic_nodes = self
-            .counters
-            .new_semantic_nodes
-            .saturating_sub(right.len as u64);
-        self.record_source_nodes_copied(right.len());
-        self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })
+        let (root, _, _) =
+            self.copy_shared_then_splice_with_identity(pool, left, right, &mut |_| None)?;
+        Ok(root)
     }
 
     /// Copies a shared coordinate while maintaining summaries on every new
@@ -2814,17 +2938,45 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone + RegionValue<Lane>,
     {
+        self.copy_shared_then_splice_with_identity(pool, left, right, &mut |value| {
+            Some(item_identity(value))
+        })
+    }
+
+    fn copy_shared_then_splice_with_identity(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        left: ArenaListId<Lane>,
+        right: ArenaListId<Lane>,
+        item_identity: &mut impl FnMut(&T) -> Option<u64>,
+    ) -> Result<
+        (
+            ArenaListId<Lane>,
+            SemanticSequenceIdentity,
+            SequenceSummaryWork,
+        ),
+        ForkArenaError,
+    >
+    where
+        T: Clone + RegionValue<Lane>,
+    {
+        self.validate_list(pool, right)?;
         let mut copy = ArenaListId::empty();
-        let reverse = self
-            .list(pool, right)?
-            .iter()
-            .rev()
-            .map(|value| (value.clone(), item_identity(value)))
-            .collect::<Vec<_>>();
         let mut summary = SemanticSequenceIdentity::empty();
-        for (value, identity) in reverse.into_iter().rev() {
-            self.append_payload_copy(pool, &mut copy, value, Some(identity))?;
-            summary.push_back(identity);
+        let mut work = SequenceSummaryWork::default();
+        let mut identity_mode = None;
+        if !right.is_empty() {
+            self.copy_shared_chunk_prefix(
+                pool,
+                right,
+                right.tail.raw,
+                right.tail.offset,
+                &mut copy,
+                &mut summary,
+                &mut work,
+                &mut identity_mode,
+                item_identity,
+            )?;
         }
         self.counters.new_semantic_nodes = self
             .counters
@@ -2832,14 +2984,67 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_sub(right.len as u64);
         self.record_source_nodes_copied(right.len());
         let root = self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })?;
-        Ok((
-            root,
-            summary,
-            SequenceSummaryWork {
-                hashed_values: right.len as u64,
-                combined_summaries: 0,
-            },
-        ))
+        Ok((root, summary, work))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn copy_shared_chunk_prefix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        key: RawChunkKey,
+        end: u32,
+        copy: &mut ArenaListId<Lane>,
+        summary: &mut SemanticSequenceIdentity,
+        work: &mut SequenceSummaryWork,
+        identity_mode: &mut Option<bool>,
+        item_identity: &mut impl FnMut(&T) -> Option<u64>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Clone + RegionValue<Lane>,
+    {
+        let start = if key == list.head.raw {
+            list.head.offset
+        } else {
+            let previous = pool
+                .payload
+                .previous_in_list(key, self.owner)?
+                .ok_or(ForkArenaError::InvalidRange)?;
+            self.copy_shared_chunk_prefix(
+                pool,
+                list,
+                previous.0,
+                previous.1,
+                copy,
+                summary,
+                work,
+                identity_mode,
+                item_identity,
+            )?;
+            0
+        };
+        for offset in start..end {
+            let identity = {
+                let source = pool
+                    .payload
+                    .get(key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidRange)?;
+                item_identity(source)
+            };
+            match *identity_mode {
+                Some(enabled) if enabled != identity.is_some() => {
+                    return Err(ForkArenaError::IdentityModeMismatch);
+                }
+                None => *identity_mode = Some(identity.is_some()),
+                _ => {}
+            }
+            self.append_payload_clone_from_coordinate(pool, copy, key, offset, identity)?;
+            if let Some(identity) = identity {
+                summary.push_back(identity);
+                work.hashed_values = work.hashed_values.saturating_add(1);
+            }
+        }
+        Ok(())
     }
 
     fn seal_direct_tail(

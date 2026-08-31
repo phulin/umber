@@ -88,10 +88,12 @@ positions and widths from its one forward prefix walk; diagnostic breakpoint
 probes remain indexed but run only under explicit trace demand. Shared and
 sliced transforms increment `source_nodes_copied`
 exactly; they are not permitted to hide a whole-list copy behind generic
-concatenation. The counted fallback collects one reverse traversal and replays
-it once, so it visits and hashes every copied node exactly once and never
-revisits an accumulated prefix. Demand-enabled copies maintain summaries on
-their destination blocks before a generated suffix can extend the tail.
+concatenation. The counted fallback follows stable source chunk coordinates in
+logical order and clones each source node once into its final reserved
+destination slot. It owns no whole-list `Vec<Node>`, performs no second node
+transport, and never revisits an accumulated prefix. Demand-enabled copies
+derive each identity from the same source visit and maintain summaries on their
+destination blocks before a generated suffix can extend the tail.
 Physical pages contain sixteen logical blocks, so many small lists share one
 bump allocation. The pool reports payload capacity and block metadata
 separately, while `unused_sealed_bytes` records exact tail slack.

@@ -403,8 +403,8 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
 
         assert_eq!(normalized.len(), VALUES);
         assert_eq!(
-            traversal.index_resolutions, offending as u64,
-            "indexed work is bounded by composed output ranges, not source nodes"
+            traversal.index_resolutions, 0,
+            "direct shared copying adds no indexed source work"
         );
         assert_eq!(
             counters_after.new_semantic_nodes - counters_before.new_semantic_nodes,

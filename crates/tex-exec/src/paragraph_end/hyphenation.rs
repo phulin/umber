@@ -2102,12 +2102,12 @@ mod tests {
                 assert_eq!(output.len(), values);
                 assert_eq!(context.language, 0);
                 assert_eq!(
-                    direct.index_resolutions, 1,
-                    "only the existing output-range traversal resolves an index"
+                    direct.index_resolutions, 0,
+                    "direct shared copying performs no indexed source resolution"
                 );
                 assert_eq!(
-                    direct.index_predecessor_steps,
-                    reference.forward_chunk_crossings
+                    direct.index_predecessor_steps, 0,
+                    "direct shared copying follows stable chunk coordinates"
                 );
                 assert_eq!(
                     direct.forward_chunk_crossings,

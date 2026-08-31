@@ -23,6 +23,28 @@ impl super::RegionValue<ActiveLane> for CloneTracked {
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
+#[derive(Debug)]
+struct SharedCloneTracked {
+    value: u32,
+    clones: Rc<Cell<usize>>,
+}
+
+impl Clone for SharedCloneTracked {
+    fn clone(&self) -> Self {
+        self.clones.set(self.clones.get().saturating_add(1));
+        Self {
+            value: self.value,
+            clones: Rc::clone(&self.clones),
+        }
+    }
+}
+
+impl super::RegionValue<ActiveLane> for SharedCloneTracked {
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 enum ActiveLane {}
 enum PageLane {}
 
@@ -272,42 +294,104 @@ fn copying_a_shared_right_root_never_rewrites_an_earlier_composite() {
 
 #[test]
 fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
+    const ALLOCATION_OWNER: usize = 15;
+
     for size in [1_usize, 64, 4_096] {
-        let mut pool = ChunkPool::<u32>::with_chunk_bytes(512);
-        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let clones = Rc::new(Cell::new(0));
+        let mut pool = ChunkPool::<SharedCloneTracked>::with_chunk_bytes(512);
+        let mut arena = ForkArena::<SharedCloneTracked, ActiveLane>::new();
         let source = {
             let mut builder = arena.begin_builder(&mut pool).expect("source builder");
             for value in 0..size {
-                builder.push(value as u32).expect("source node");
+                builder
+                    .push(SharedCloneTracked {
+                        value: value as u32,
+                        clones: Rc::clone(&clones),
+                    })
+                    .expect("source node");
             }
             builder.seal().expect("source list")
         };
+        let source_mark = arena.operation_mark(&pool);
+
+        let copy = |arena: &mut ForkArena<SharedCloneTracked, ActiveLane>,
+                    pool: &mut ChunkPool<SharedCloneTracked>| {
+            let mut destination = ActiveListBuilder::vacant();
+            arena
+                .open_active_list(pool, &mut destination)
+                .expect("destination builder");
+            arena
+                .push_active_list(
+                    pool,
+                    &mut destination,
+                    SharedCloneTracked {
+                        value: u32::MAX,
+                        clones: Rc::clone(&clones),
+                    },
+                )
+                .expect("exact splice prefix");
+            arena
+                .append_active_list(pool, &mut destination, source)
+                .expect("explicit shared copy");
+            arena
+                .finalize_active_list(pool, &mut destination)
+                .expect("finalize copy");
+            destination.take_sealed().expect("copied root")
+        };
+
+        let _warm = copy(&mut arena, &mut pool);
+        arena
+            .restore_operation(&mut pool, source_mark)
+            .expect("restore warmed destination");
+        clones.set(0);
         let before = arena.counters();
-        let mut destination = ActiveListBuilder::vacant();
-        arena
-            .open_active_list(&pool, &mut destination)
-            .expect("destination builder");
-        arena
-            .append_active_list(&mut pool, &mut destination, source)
-            .expect("explicit shared copy");
-        arena
-            .finalize_active_list(&mut pool, &mut destination)
-            .expect("finalize copy");
-        let copied = destination.take_sealed().expect("copied root");
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let copied = {
+            let _scope = scope(ALLOCATION_OWNER);
+            copy(&mut arena, &mut pool)
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
         let after = arena.counters();
 
-        assert_eq!(copied.len(), size);
+        assert_eq!(copied.len(), size + 1);
+        assert_eq!(clones.get(), size, "one semantic clone per source node");
         assert_eq!(
             after.source_nodes_copied - before.source_nodes_copied,
             size as u64
         );
-        assert_eq!(after.new_semantic_nodes, before.new_semantic_nodes);
+        assert_eq!(
+            after.whole_payload_copies - before.whole_payload_copies,
+            size as u64
+        );
+        assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 1);
         assert_eq!(
             after.partial_edge_nodes_copied,
             before.partial_edge_nodes_copied
         );
+        assert_eq!(allocation_after.calls - allocation_before.calls, 0);
+        assert_eq!(
+            allocation_after.requested_bytes - allocation_before.requested_bytes,
+            0
+        );
+        let copied_view = arena.list(&pool, copied).expect("copied list remains live");
+        assert_eq!(copied_view.get(0).map(|value| value.value), Some(u32::MAX));
+        for index in 0..size {
+            assert_eq!(
+                copied_view.get(index + 1).map(|value| value.value),
+                Some(index as u32)
+            );
+        }
+        assert_eq!(
+            arena
+                .list(&pool, source)
+                .expect("shared source remains live")
+                .get(0)
+                .map(|value| value.value),
+            Some(0)
+        );
         eprintln!(
-            "DIRECT_SHARED_COPY_SCALE nodes={size} copied_nodes={}",
+            "DIRECT_SHARED_COPY_SCALE nodes={size} semantic_clones={} copied_nodes={} allocation_calls=0 allocation_bytes=0",
+            clones.get(),
             after.source_nodes_copied - before.source_nodes_copied
         );
     }
@@ -1733,6 +1817,79 @@ fn active_shared_subrange_copies_an_offset_past_the_first_payload_chunk() {
         source_address
     );
     assert_eq!(arena.counters().source_nodes_copied, 3);
+}
+
+#[test]
+fn shared_copy_operation_rollback_restores_the_exact_source_frontier() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let source = list(&mut arena, &mut pool, [10, 20, 30, 40]);
+    let source_mark = arena.operation_mark(&pool);
+    let mut active = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut active)
+        .expect("open shared-copy operation");
+    arena
+        .push_active_list(&mut pool, &mut active, 5)
+        .expect("splice prefix");
+    arena
+        .append_active_list(&mut pool, &mut active, source)
+        .expect("copy shared source");
+    arena
+        .rollback_active_list(&mut pool, &mut active)
+        .expect("rollback shared-copy operation");
+
+    let restored = arena.operation_mark(&pool);
+    assert_eq!(restored.arena, source_mark.arena);
+    assert_eq!(restored.payload_chunks, source_mark.payload_chunks);
+    assert_eq!(restored.payload_tail_used, source_mark.payload_tail_used);
+    assert_eq!(
+        restored.payload_tail_summary,
+        source_mark.payload_tail_summary
+    );
+    assert_eq!(restored.descriptor_chunks, source_mark.descriptor_chunks);
+    assert_eq!(
+        restored.descriptor_tail_used,
+        source_mark.descriptor_tail_used
+    );
+    assert_eq!(
+        arena
+            .list(&pool, source)
+            .expect("source remains live after rollback")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [10, 20, 30, 40]
+    );
+    let replacement = list(&mut arena, &mut pool, [50, 60]);
+    assert_eq!(
+        arena
+            .list(&pool, replacement)
+            .expect("rolled-back slots accept replacement")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [50, 60]
+    );
+}
+
+#[test]
+fn shared_copy_implementation_has_no_whole_list_payload_staging() {
+    let source = include_str!("../fork_arena.rs");
+    let start = source
+        .find("fn copy_shared_then_splice(")
+        .expect("shared-copy implementation remains present");
+    let end = source[start..]
+        .find("fn seal_direct_tail(")
+        .map(|offset| start + offset)
+        .expect("shared-copy implementation boundary remains present");
+    let implementation = &source[start..end];
+
+    assert!(!implementation.contains("Vec<"));
+    assert!(!implementation.contains("collect::<Vec"));
+    assert!(!implementation.contains(".cloned()"));
+    assert!(implementation.contains("copy_shared_then_splice_with_identity"));
+    assert!(implementation.contains("append_payload_clone_from_coordinate"));
 }
 
 #[test]

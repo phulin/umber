@@ -317,6 +317,46 @@ fn demand_enabled_shared_append_keeps_copied_tail_summary_open_for_generated_suf
 }
 
 #[test]
+fn demand_enabled_shared_append_preserves_nested_children_and_exact_identity() {
+    page_arena!(arena, pool, state, 64);
+    arena.enable_semantic_identity();
+    let children = arena.publish_owned(penalties(&[11, 12])).expect("children");
+    let source_nodes = vec![boxed(children), Node::Penalty(20)];
+    let source = arena
+        .publish_owned(source_nodes.clone())
+        .expect("shared parent source");
+    let source_identity = source.semantic_identity();
+    let before = arena.counters();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .append_to_active_list(&mut builder, source)
+        .expect("copy summarized parent source");
+    let copied = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize copied parent source");
+    let after = arena.counters();
+
+    assert_eq!(resolved(&arena, copied), source_nodes);
+    assert_eq!(copied.semantic_identity(), source_identity);
+    assert_eq!(source.semantic_identity(), source_identity);
+    assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 2);
+    assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 2);
+    let Node::HList(copied_box) = arena
+        .list(copied.list())
+        .expect("copied parent list")
+        .get(0)
+        .cloned()
+        .expect("copied parent")
+    else {
+        panic!("copied parent lost box shape");
+    };
+    assert_eq!(copied_box.children, children);
+    assert_eq!(resolved(&arena, copied_box.children), penalties(&[11, 12]));
+}
+
+#[test]
 fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six() {
     for size in [1_usize, 64, 4_096] {
         page_arena!(arena, pool, state, 512);
@@ -341,6 +381,89 @@ fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six
         eprintln!(
             "DIRECT_UNIQUE_SUFFIX_SCALE nodes={size} blocks={} copies=0",
             counters.direct_blocks_allocated
+        );
+    }
+}
+
+#[test]
+fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
+    const ALLOCATION_OWNER: usize = 15;
+
+    for size in [1_usize, 64, 4_096] {
+        page_arena!(arena, pool, state, 512);
+        arena.enable_semantic_identity();
+        let source_nodes = penalties(&(0..size as i32).collect::<Vec<_>>());
+        let source = arena
+            .publish_owned(source_nodes.clone())
+            .expect("shared source");
+        let source_identity = source.semantic_identity();
+        let source_address = arena
+            .list(source.list())
+            .expect("source list")
+            .get(0)
+            .map(std::ptr::from_ref)
+            .expect("source node");
+        let source_mark = arena.operation_mark();
+
+        let copy = |arena: &mut PageMaterialArena<'_>| {
+            let mut builder = PageMaterialActiveListBuilder::vacant();
+            arena.open_active_list(&mut builder).expect("open builder");
+            arena
+                .construct_active_list(&mut builder, |slot| {
+                    *slot = Some(Node::Penalty(-1));
+                })
+                .expect("exact splice prefix");
+            arena
+                .append_to_active_list(&mut builder, source)
+                .expect("copy shared source");
+            arena
+                .finalize_active_list(&mut builder)
+                .expect("finalize copied source")
+        };
+
+        let _warm = copy(&mut arena);
+        arena
+            .restore_operation(source_mark)
+            .expect("restore warmed copy");
+        let before = arena.counters();
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let copied = {
+            let _scope = scope(ALLOCATION_OWNER);
+            copy(&mut arena)
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
+        let after = arena.counters();
+
+        let mut expected = vec![Node::Penalty(-1)];
+        expected.extend(source_nodes.iter().cloned());
+        assert_eq!(resolved(&arena, copied.list()), expected);
+        assert_eq!(copied.semantic_identity(), Some(identity(&expected).raw()));
+        assert_eq!(source.semantic_identity(), source_identity);
+        assert_eq!(
+            arena
+                .list(source.list())
+                .expect("source remains live")
+                .get(0)
+                .map(std::ptr::from_ref),
+            Some(source_address)
+        );
+        assert_eq!(
+            after.source_nodes_copied - before.source_nodes_copied,
+            size as u64
+        );
+        assert_eq!(
+            after.whole_payload_copies - before.whole_payload_copies,
+            size as u64
+        );
+        assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 1);
+        assert_eq!(allocation_after.calls - allocation_before.calls, 0);
+        assert_eq!(
+            allocation_after.requested_bytes - allocation_before.requested_bytes,
+            0
+        );
+        eprintln!(
+            "PAGE_SHARED_COPY_SCALE nodes={size} copied_nodes={} allocation_calls=0 allocation_bytes=0",
+            after.source_nodes_copied - before.source_nodes_copied
         );
     }
 }

@@ -225,6 +225,11 @@ Ordinary list processing is packed-block movement plus append-only output:
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 
+The same-arena counted-copy path keeps only stable source chunk/offset
+coordinates while destination mutation is exclusive. It clones each source
+node directly into the final reserved destination slot, derives optional
+identity from that same visit, and retains no temporary whole-list node owner.
+
 Generated nodes use destination construction. The active-list owner first
 reserves one checked vacant slot in its current packed chunk, then lends that
 final `Option<Node>` place to the producer for initialization. The resident
