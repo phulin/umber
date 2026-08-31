@@ -1,4 +1,5 @@
 use super::*;
+use tex_arith::Scaled;
 
 #[test]
 fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
@@ -223,6 +224,11 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
         ratio: -20,
     };
     assert_eq!(super::finalize::font_horizontal_scale(&construction), 0.98);
+    assert_eq!(
+        super::finalize::pdftex_positioning_font_size(Scaled::from_raw(10 * 65_536)),
+        9.9626,
+        "pdftex.web §690 keeps the four-place font raster for cursor advances"
+    );
 
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 12.0,

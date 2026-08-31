@@ -614,6 +614,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         parameters.decimal_digits,
                     );
                     let font_size = scaled_to_bp_f32(font.at_size, parameters.decimal_digits);
+                    let positioning_font_size = pdftex_positioning_font_size(font.at_size);
                     let horizontal_scale = font_horizontal_scale(&font.construction);
                     let explicit_space = font_has_explicit_space(resource);
                     let mut segment = Vec::new();
@@ -637,7 +638,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                         resource,
                                         font,
                                         &segment,
-                                        font_size,
+                                        positioning_font_size,
                                         horizontal_scale,
                                     );
                                     content_operations.push(PdfContentOperation::Text(
@@ -710,7 +711,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 resource,
                                 font,
                                 &segment,
-                                font_size,
+                                positioning_font_size,
                                 horizontal_scale,
                             ),
                             bytes: segment,
@@ -4371,6 +4372,13 @@ fn pdf_page_extents(
 fn scaled_to_bp_f32(value: Scaled, decimal_digits: i32) -> f32 {
     let scale = 10_f32.powi(decimal_digits);
     scaled_to_bp_coefficient(value, decimal_digits) as f32 / scale
+}
+
+pub(super) fn pdftex_positioning_font_size(value: Scaled) -> f32 {
+    // pdftex.web §690 (`pdf_use_font` and `adv_char_width`) retains a
+    // font-size raster independent of `\pdfdecimaldigits`; its `Tf` display
+    // precision does not control cumulative character-width accounting.
+    scaled_to_bp_f32(value, 4)
 }
 
 fn scaled_to_bp_number(value: Scaled, decimal_digits: i32) -> Result<PdfNumber, PdfModelError> {
