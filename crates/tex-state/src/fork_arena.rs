@@ -117,6 +117,18 @@ struct ReservationCompletion {
 }
 
 impl<T> ChunkStorage<T> {
+    #[inline]
+    fn initialize_vacant_clone(destination: &mut Option<T>, source: &Option<T>)
+    where
+        T: Clone,
+    {
+        debug_assert!(destination.is_none());
+        let source = source
+            .as_ref()
+            .expect("admitted source coordinate contains its payload");
+        destination.get_or_insert_with(|| source.clone());
+    }
+
     /// Creates a pool whose logical chunk capacity is derived from a byte
     /// budget. At least one value fits even when `T` exceeds that budget.
     #[must_use]
@@ -527,17 +539,23 @@ impl<T> ChunkStorage<T> {
             let slots = &mut self.pages[page].slots;
             if source_index < index {
                 let (before, after) = slots.split_at_mut(index);
-                after[0].clone_from(&before[source_index]);
+                Self::initialize_vacant_clone(&mut after[0], &before[source_index]);
             } else {
                 let (before, after) = slots.split_at_mut(source_index);
-                before[index].clone_from(&after[0]);
+                Self::initialize_vacant_clone(&mut before[index], &after[0]);
             }
         } else if source_page < page {
             let (before, after) = self.pages.split_at_mut(page);
-            after[0].slots[index].clone_from(&before[source_page].slots[source_index]);
+            Self::initialize_vacant_clone(
+                &mut after[0].slots[index],
+                &before[source_page].slots[source_index],
+            );
         } else {
             let (before, after) = self.pages.split_at_mut(source_page);
-            before[page].slots[index].clone_from(&after[0].slots[source_index]);
+            Self::initialize_vacant_clone(
+                &mut before[page].slots[index],
+                &after[0].slots[source_index],
+            );
         }
         Ok((offset, became_full))
     }
