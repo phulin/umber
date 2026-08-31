@@ -110,6 +110,15 @@ struct ReservedChunkPosition {
     became_full: bool,
 }
 
+struct CloneReservation {
+    item_identity: Option<u64>,
+    dependency_floor: Option<usize>,
+    dependency_metadata_complete: bool,
+    source_arena: u32,
+    source_key: RawChunkKey,
+    source_offset: u32,
+}
+
 struct ReservationCompletion {
     placeholder_identity: Option<u64>,
     item_identity: Option<u64>,
@@ -501,16 +510,19 @@ impl<T> ChunkStorage<T> {
         key: RawChunkKey,
         arena: u32,
         lineage: u32,
-        item_identity: Option<u64>,
-        dependency_floor: Option<usize>,
-        dependency_metadata_complete: bool,
-        source_arena: u32,
-        source: (RawChunkKey, u32),
+        reservation: CloneReservation,
     ) -> Result<(u32, bool), ForkArenaError>
     where
         T: Clone,
     {
-        let (source_key, source_offset) = source;
+        let CloneReservation {
+            item_identity,
+            dependency_floor,
+            dependency_metadata_complete,
+            source_arena,
+            source_key,
+            source_offset,
+        } = reservation;
         if key == source_key {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -2053,11 +2065,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             key,
             self.owner,
             self.lineage,
-            item_identity,
-            dependency_floor,
-            true,
-            self.owner,
-            (source_key, source_offset),
+            CloneReservation {
+                item_identity,
+                dependency_floor,
+                dependency_metadata_complete: true,
+                source_arena: self.owner,
+                source_key,
+                source_offset,
+            },
         )?;
         self.complete_payload_reservation(root, key, offset, became_full)?;
         self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
@@ -2088,11 +2103,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             key,
             self.owner,
             self.lineage,
-            placeholder_identity,
-            None,
-            false,
-            source_arena,
-            (source_key, source_offset),
+            CloneReservation {
+                item_identity: placeholder_identity,
+                dependency_floor: None,
+                dependency_metadata_complete: false,
+                source_arena,
+                source_key,
+                source_offset,
+            },
         )?;
         self.complete_payload_reservation(root, key, offset, became_full)?;
         self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
