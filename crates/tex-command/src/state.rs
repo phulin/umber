@@ -1116,6 +1116,27 @@ impl<G> CommandState<G> {
         self.input.current_file_source_id()
     }
 
+    /// Returns the bottom physical source row while command input still owns
+    /// it. Compact source context deliberately survives source retirement for
+    /// diagnostics, but an editor restart requires this owner-backed row.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live_physical_root_source_id(&self) -> Option<tex_state::SourceId> {
+        self.input.levels.iter().find_map(|level| {
+            let crate::input::InputLevel::Source(source) = level else {
+                return None;
+            };
+            Some(
+                self.input
+                    .levels
+                    .source_level_slot(source)
+                    .cursor
+                    .current_backing()
+                    .id,
+            )
+        })
+    }
+
     /// Most recent direct source location committed by command delivery.
     #[must_use]
     pub fn last_diagnostic_location(&self) -> Option<crate::SourceLocation> {

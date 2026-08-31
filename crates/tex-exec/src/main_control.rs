@@ -2120,6 +2120,13 @@ impl<G> MainControl<G> {
         Ok(id)
     }
 
+    /// Returns the physical root row owned by command input and therefore
+    /// restorable by a named checkpoint. Compact source context can outlive
+    /// that row for diagnostics, so it is not sufficient for restart.
+    fn restartable_root_source_identity(&self) -> Option<tex_state::SourceId> {
+        self.command.live_physical_root_source_id()
+    }
+
     /// Substitutes the edited root buffer after an aggregate checkpoint fork.
     /// The command input owner journals the old backing; this scalar root id
     /// changes only in the candidate's restored MainControl.
@@ -2130,8 +2137,7 @@ impl<G> MainControl<G> {
         unchanged_prefix: usize,
     ) -> Result<(), SourceRegistrationError> {
         let accepted = self
-            .root_main_source
-            .or_else(|| self.command.current_file_source_id())
+            .restartable_root_source_identity()
             .expect("a rooted checkpoint retains its main source identity");
         let current = self
             .command

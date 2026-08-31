@@ -635,7 +635,7 @@ impl<G> MainControl<G> {
                 .expect("inspected named-boundary intent remains queued");
             debug_assert_eq!(published, pending);
             if !checkpoint_role_is_retained(published.source_role)
-                || !self.has_restartable_root_source_identity()
+                || self.restartable_root_source_identity().is_none()
             {
                 continue;
             }
@@ -670,15 +670,6 @@ impl<G> MainControl<G> {
 }
 
 impl<G> MainControl<G> {
-    /// A named root can restart an editor only while the aggregate control or
-    /// command input retains the physical source identity used to rebind the
-    /// replacement bytes. Delayed terminal shipout intents may retain their
-    /// originating document role after both identities have retired; they
-    /// remain valid output evidence but must not become anchor-zero roots.
-    fn has_restartable_root_source_identity(&self) -> bool {
-        self.root_main_source.is_some() || self.command.current_file_source_id().is_some()
-    }
-
     pub(super) fn observe_committed(
         &mut self,
         records: impl IntoIterator<Item = CommandObservation>,
