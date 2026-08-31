@@ -313,6 +313,21 @@ impl TokenWord {
         }
     }
 
+    /// Returns the category encoded by a literal character spelling.
+    ///
+    /// Token grammars use this narrow projection when the complete character
+    /// value is irrelevant. Control sequences keep their spelling kind even
+    /// when their resolved meaning is a character command.
+    #[must_use]
+    #[inline(always)]
+    pub const fn literal_catcode(self) -> Option<Catcode> {
+        if self.0 >> Self::KIND_SHIFT == Self::KIND_CHAR {
+            catcode_from_raw((self.0 & 0xF) as u8)
+        } else {
+            None
+        }
+    }
+
     pub const fn raw(self) -> u32 {
         self.0
     }

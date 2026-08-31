@@ -1509,14 +1509,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     missing_left_brace: false,
                 });
             }
-            if let Some(number) = parameter_number(follower_token.spelling())
+            if let Some(number) = parameter_number(follower_token.spelling().semantic_token())
                 && number == next_parameter
                 && number <= 9
             {
                 if let Token::Char {
                     ch,
                     cat: Catcode::Parameter,
-                } = token.spelling()
+                } = token.spelling().semantic_token()
                     && ch != '#'
                 {
                     // TeX82 §476's match token retains `cur_chr`, i.e. the
@@ -1863,7 +1863,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     clear_command_destination(&mut destination);
                     continue;
                 }
-                if let Some(number) = parameter_number(token.spelling())
+                if let Some(number) = parameter_number(token.spelling().semantic_token())
                     && number <= highest_parameter
                 {
                     let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());

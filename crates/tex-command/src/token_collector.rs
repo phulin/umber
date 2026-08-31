@@ -10,7 +10,7 @@
 use core::marker::PhantomData;
 
 use tex_state::interner::Symbol;
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
 use crate::input::ReplayInputBuilderId;
@@ -21,7 +21,7 @@ impl<G> crate::CommandProcessor<'_, '_, G> {
     pub(crate) fn classify_collector_token(
         &mut self,
         command: &crate::CurrentCommand<G>,
-        paragraph_token: Option<Token>,
+        paragraph_token: Option<TokenWord>,
     ) -> ClassifiedToken {
         #[cfg(test)]
         {
@@ -42,83 +42,56 @@ impl<G> crate::CommandProcessor<'_, '_, G> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ClassifiedToken {
     word: TracedTokenWord,
-    spelling: Token,
     paragraph: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ClassifiedToken>() == 16);
 
 impl ClassifiedToken {
     pub(crate) fn from_command<G>(
         command: &crate::CurrentCommand<G>,
-        paragraph_token: Option<Token>,
+        paragraph_token: Option<TokenWord>,
     ) -> Self {
         let word = command.spelling();
-        let spelling = word.semantic_token();
         Self {
             word,
-            spelling,
-            paragraph: Some(spelling) == paragraph_token,
+            paragraph: Some(word.token_word()) == paragraph_token,
         }
     }
 
     #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<Token>) -> Self {
-        let spelling = word.semantic_token();
+    pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<TokenWord>) -> Self {
         Self {
             word,
-            spelling,
-            paragraph: Some(spelling) == paragraph_token,
+            paragraph: Some(word.token_word()) == paragraph_token,
         }
     }
 
-    pub(crate) const fn word(self) -> TracedTokenWord {
+    pub(crate) const fn word(&self) -> TracedTokenWord {
         self.word
     }
 
-    pub(crate) const fn spelling(self) -> Token {
-        self.spelling
+    pub(crate) const fn spelling(&self) -> TokenWord {
+        self.word.token_word()
     }
 
-    pub(crate) const fn spelling_is_begin_group(self) -> bool {
-        matches!(
-            self.spelling,
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            }
-        )
+    pub(crate) const fn spelling_is_begin_group(&self) -> bool {
+        matches!(self.spelling().literal_catcode(), Some(Catcode::BeginGroup))
     }
 
-    pub(crate) const fn spelling_is_end_group(self) -> bool {
-        matches!(
-            self.spelling,
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            }
-        )
+    pub(crate) const fn spelling_is_end_group(&self) -> bool {
+        matches!(self.spelling().literal_catcode(), Some(Catcode::EndGroup))
     }
 
-    pub(crate) const fn spelling_is_space(self) -> bool {
-        matches!(
-            self.spelling,
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        )
+    pub(crate) const fn spelling_is_space(&self) -> bool {
+        matches!(self.spelling().literal_catcode(), Some(Catcode::Space))
     }
 
-    pub(crate) const fn spelling_is_parameter(self) -> bool {
-        matches!(
-            self.spelling,
-            Token::Char {
-                cat: Catcode::Parameter,
-                ..
-            }
-        )
+    pub(crate) const fn spelling_is_parameter(&self) -> bool {
+        matches!(self.spelling().literal_catcode(), Some(Catcode::Parameter))
     }
 
-    pub(crate) const fn rejects_non_long_paragraph(self, paragraph_checked: bool) -> bool {
+    pub(crate) const fn rejects_non_long_paragraph(&self, paragraph_checked: bool) -> bool {
         paragraph_checked && self.paragraph
     }
 }

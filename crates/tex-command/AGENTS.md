@@ -438,9 +438,10 @@ collector (see `src/conditionals.rs`).
   group-close sites are tracked by `umber2-aqx9`.
 - `src/token_collector.rs`: shared scanner-owned in-progress collector for
   macro arguments, token-list scans, and definition scans. It owns the one raw
-  classification, brace/delimiter/parameter state, destination phase, and
-  publication cursor while preserving activation-scratch versus
-  attempt/durable destination lifetimes.
+  packed-spelling classification without reconstructing a second semantic
+  token, brace/delimiter/parameter state, destination phase, and publication
+  cursor while preserving activation-scratch versus attempt/durable
+  destination lifetimes.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

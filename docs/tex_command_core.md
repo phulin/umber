@@ -2154,12 +2154,15 @@ one traced-word suffix in the generation's fixed-chunk lane. The paragraph fact 
 the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
 prefix and later committed after a mismatch retains its first spelling/group
 classification but does not acquire the ordinary paragraph-check fact. The
-scalar matcher classifies each completed raw delivery once. Its admitted
+scalar matcher keeps each completed raw delivery's canonical packed spelling
+resident and projects its literal category directly; it never reconstructs a
+second semantic token or consults resolved meaning for this grammar. Its admitted
 `MacroMatchWriter` then performs the sole accepted-token transition: it appends
 the exact traced word, accepts the lane's returned cursor, and updates paragraph,
 brace-depth, and removable-outer-group aggregates under the same scratch
 borrow. Delimiter-prefix storage retains that classification beside the word,
-so overlap recovery neither decodes provenance/group facts again nor rebuilds
+so overlap recovery compares packed immutable spelling and neither decodes
+provenance/group facts again nor rebuilds
 an aggregate. The writer's brace depth is also the delimiter matcher's depth;
 there is no scanner-local duplicate. The matcher consumes the resident facts
 for the non-`\long` decision and outer-pair removal without rereading stored words.

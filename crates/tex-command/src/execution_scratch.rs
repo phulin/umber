@@ -1914,7 +1914,7 @@ impl<G> ExecutionScratch<G> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_state::token::{Catcode, OriginId, Token};
+    use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
     fn word(ch: char) -> TracedTokenWord {
         TracedTokenWord::pack(
@@ -2203,7 +2203,7 @@ mod tests {
             scratch
                 .settle_argument_token(
                     &mut buffer,
-                    ClassifiedToken::from_word(word, Some(paragraph_token)),
+                    ClassifiedToken::from_word(word, Some(TokenWord::pack(paragraph_token))),
                     true,
                 )
                 .expect("argument word");
@@ -2260,7 +2260,7 @@ mod tests {
                 scratch
                     .settle_argument_token(
                         &mut writer,
-                        ClassifiedToken::from_word(token_word, Some(word('p').semantic_token())),
+                        ClassifiedToken::from_word(token_word, Some(word('p').token_word())),
                         true,
                     )
                     .expect("fused classified-token settlement");

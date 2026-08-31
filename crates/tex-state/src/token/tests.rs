@@ -113,6 +113,29 @@ fn out_parameter_slot_is_a_narrow_packed_projection() {
 }
 
 #[test]
+fn literal_catcode_does_not_conflate_spelling_with_resolved_meaning() {
+    assert_eq!(
+        TokenWord::pack(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        })
+        .literal_catcode(),
+        Some(Catcode::BeginGroup)
+    );
+    assert_eq!(TokenWord::pack(Token::Param(1)).literal_catcode(), None);
+
+    let budget = InternerBudget::new(16, 16, 256).expect("budget");
+    crate::with_universe(budget, |universe| {
+        let alias = universe.intern("brace-alias").expect("alias");
+        assert_eq!(
+            TokenWord::pack(Token::Cs(alias.symbol())).literal_catcode(),
+            None
+        );
+    })
+    .expect("fresh universe");
+}
+
+#[test]
 fn origin_encoding_round_trips_direct_and_arena_boundaries() {
     use crate::source_map::SourcePos;
 
