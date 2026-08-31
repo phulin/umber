@@ -126,6 +126,71 @@ pub enum HotCoreCommandFamily {
     Unknown,
 }
 
+/// Exact resolved-meaning family reaching TeX's main-control reswitch seam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HotCoreMeaningFamily {
+    Undefined,
+    Relax,
+    Macro,
+    CharGiven,
+    CharToken,
+    MathCharGiven,
+    CountRegister,
+    DimenRegister,
+    SkipRegister,
+    MuskipRegister,
+    ToksRegister,
+    IntParam,
+    DimenParam,
+    GlueParam,
+    MuGlueParam,
+    TokParam,
+    PageDimension,
+    PageInteger,
+    InternalInteger,
+    Font,
+    ExpandablePrimitive,
+    EndV,
+    UnexpandablePrimitive,
+    Unknown,
+}
+
+impl HotCoreMeaningFamily {
+    pub const COUNT: usize = 24;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub const NAMES: [&'static str; Self::COUNT] = [
+        "undefined",
+        "relax",
+        "macro",
+        "char_given",
+        "char_token",
+        "math_char_given",
+        "count_register",
+        "dimen_register",
+        "skip_register",
+        "muskip_register",
+        "toks_register",
+        "int_param",
+        "dimen_param",
+        "glue_param",
+        "mu_glue_param",
+        "tok_param",
+        "page_dimension",
+        "page_integer",
+        "internal_integer",
+        "font",
+        "expandable_primitive",
+        "end_v",
+        "unexpandable_primitive",
+        "unknown",
+    ];
+}
+
 impl HotCoreCommandFamily {
     pub const COUNT: usize = 11;
 
@@ -212,8 +277,10 @@ pub struct HotCoreCensus {
     pub episode_lengths: [u64; 257],
     pub stop_reasons: [u64; HotCoreStopReason::COUNT],
     pub command_families: [u64; HotCoreCommandFamily::COUNT],
+    pub main_control_meanings: [u64; HotCoreMeaningFamily::COUNT],
     pub expandable_opcodes: [u64; HOT_CORE_EXPANDABLE_OPCODE_COUNT],
     pub macro_expansions: u64,
+    pub undefined_expansions: u64,
     pub unexpandable_opcodes: [u64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
     pub materializations: [u64; HotCoreMaterialization::COUNT],
     pub page_builder_transitions: [u64; HotCorePageBuilderTransition::COUNT],
@@ -375,8 +442,10 @@ impl Default for HotCoreCensus {
             episode_lengths: [0; 257],
             stop_reasons: [0; HotCoreStopReason::COUNT],
             command_families: [0; HotCoreCommandFamily::COUNT],
+            main_control_meanings: [0; HotCoreMeaningFamily::COUNT],
             expandable_opcodes: [0; HOT_CORE_EXPANDABLE_OPCODE_COUNT],
             macro_expansions: 0,
+            undefined_expansions: 0,
             unexpandable_opcodes: [0; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
             materializations: [0; HotCoreMaterialization::COUNT],
             page_builder_transitions: [0; HotCorePageBuilderTransition::COUNT],
@@ -408,12 +477,19 @@ impl HotCoreCensus {
             command_families: core::array::from_fn(|index| {
                 self.command_families[index].saturating_sub(baseline.command_families[index])
             }),
+            main_control_meanings: core::array::from_fn(|index| {
+                self.main_control_meanings[index]
+                    .saturating_sub(baseline.main_control_meanings[index])
+            }),
             expandable_opcodes: core::array::from_fn(|index| {
                 self.expandable_opcodes[index].saturating_sub(baseline.expandable_opcodes[index])
             }),
             macro_expansions: self
                 .macro_expansions
                 .saturating_sub(baseline.macro_expansions),
+            undefined_expansions: self
+                .undefined_expansions
+                .saturating_sub(baseline.undefined_expansions),
             unexpandable_opcodes: core::array::from_fn(|index| {
                 self.unexpandable_opcodes[index]
                     .saturating_sub(baseline.unexpandable_opcodes[index])
@@ -443,9 +519,12 @@ static STOP_REASONS: [AtomicU64; HotCoreStopReason::COUNT] =
     [const { AtomicU64::new(0) }; HotCoreStopReason::COUNT];
 static COMMAND_FAMILIES: [AtomicU64; HotCoreCommandFamily::COUNT] =
     [const { AtomicU64::new(0) }; HotCoreCommandFamily::COUNT];
+static MAIN_CONTROL_MEANINGS: [AtomicU64; HotCoreMeaningFamily::COUNT] =
+    [const { AtomicU64::new(0) }; HotCoreMeaningFamily::COUNT];
 static EXPANDABLE_OPCODES: [AtomicU64; HOT_CORE_EXPANDABLE_OPCODE_COUNT] =
     [const { AtomicU64::new(0) }; HOT_CORE_EXPANDABLE_OPCODE_COUNT];
 static MACRO_EXPANSIONS: AtomicU64 = AtomicU64::new(0);
+static UNDEFINED_EXPANSIONS: AtomicU64 = AtomicU64::new(0);
 static UNEXPANDABLE_OPCODES: [AtomicU64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT] =
     [const { AtomicU64::new(0) }; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT];
 static MATERIALIZATIONS: [AtomicU64; HotCoreMaterialization::COUNT] =
@@ -558,6 +637,10 @@ pub fn record_hot_core_command_family(family: HotCoreCommandFamily) {
     COMMAND_FAMILIES[family.index()].fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn record_hot_core_main_control_meaning(family: HotCoreMeaningFamily) {
+    MAIN_CONTROL_MEANINGS[family.index()].fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn record_hot_core_expandable_opcode(operand: usize) {
     assert!(operand < HOT_CORE_EXPANDABLE_OPCODE_COUNT);
     EXPANDABLE_OPCODES[operand].fetch_add(1, Ordering::Relaxed);
@@ -565,6 +648,10 @@ pub fn record_hot_core_expandable_opcode(operand: usize) {
 
 pub fn record_hot_core_macro_expansion() {
     MACRO_EXPANSIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_undefined_expansion() {
+    UNDEFINED_EXPANSIONS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_hot_core_unexpandable_opcode(operand: usize) {
@@ -749,10 +836,14 @@ pub fn hot_core_census() -> HotCoreCensus {
         command_families: core::array::from_fn(|index| {
             COMMAND_FAMILIES[index].load(Ordering::Relaxed)
         }),
+        main_control_meanings: core::array::from_fn(|index| {
+            MAIN_CONTROL_MEANINGS[index].load(Ordering::Relaxed)
+        }),
         expandable_opcodes: core::array::from_fn(|index| {
             EXPANDABLE_OPCODES[index].load(Ordering::Relaxed)
         }),
         macro_expansions: MACRO_EXPANSIONS.load(Ordering::Relaxed),
+        undefined_expansions: UNDEFINED_EXPANSIONS.load(Ordering::Relaxed),
         unexpandable_opcodes: core::array::from_fn(|index| {
             UNEXPANDABLE_OPCODES[index].load(Ordering::Relaxed)
         }),

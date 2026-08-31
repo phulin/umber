@@ -30,6 +30,9 @@ pub struct CommandWorkCounters {
     pub scanner_tokens: u64,
     /// Expandable commands executed inside deferred-write expansion.
     pub write_expansions: u64,
+    /// Raw resolved deliveries by source, stored-token, macro-argument, and
+    /// synthetic-end-v owner, in that order.
+    pub raw_delivery_kinds: [u64; 4],
 }
 
 impl CommandWorkCounters {
@@ -42,6 +45,7 @@ impl CommandWorkCounters {
             meaning_lookups: detail.meaning_lookups,
             scanner_tokens: detail.scanner_tokens,
             write_expansions: detail.write_expansions,
+            raw_delivery_kinds: detail.raw_delivery_kinds,
         }
     }
 
@@ -54,6 +58,7 @@ impl CommandWorkCounters {
             meaning_lookups: 0,
             scanner_tokens: 0,
             write_expansions: 0,
+            raw_delivery_kinds: [0; 4],
         }
     }
 }
@@ -70,6 +75,17 @@ struct CommandWorkDetail {
     meaning_lookups: u64,
     scanner_tokens: u64,
     write_expansions: u64,
+    raw_delivery_kinds: [u64; 4],
+}
+
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub(crate) enum RawDeliveryKind {
+    Source,
+    StoredToken,
+    MacroArgument,
+    SyntheticEndV,
 }
 
 #[cfg(feature = "profiling")]
@@ -80,6 +96,7 @@ impl CommandWorkDetail {
         meaning_lookups: 0,
         scanner_tokens: 0,
         write_expansions: 0,
+        raw_delivery_kinds: [0; 4],
     };
 }
 
@@ -185,8 +202,15 @@ impl CommandFuel {
     /// the singular ledger once instead of repeatedly reborrowing it. The
     /// preceding fuel charge remains separate and happens before input work.
     #[cfg(feature = "profiling")]
-    pub(crate) fn record_raw_delivery(&mut self, scanner: bool, meaning_lookup: bool) {
+    pub(crate) fn record_raw_delivery(
+        &mut self,
+        scanner: bool,
+        meaning_lookup: bool,
+        kind: RawDeliveryKind,
+    ) {
         self.work.token_frame_steps = self.work.token_frame_steps.saturating_add(1);
+        self.work.raw_delivery_kinds[kind as usize] =
+            self.work.raw_delivery_kinds[kind as usize].saturating_add(1);
         if scanner {
             self.work.scanner_tokens = self.work.scanner_tokens.saturating_add(1);
         }

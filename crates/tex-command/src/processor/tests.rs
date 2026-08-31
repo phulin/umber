@@ -780,6 +780,7 @@ fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_a
                     meaning_lookups: 0,
                     scanner_tokens: 0,
                     write_expansions: 0,
+                    raw_delivery_kinds: [0, count, 0, 0],
                 },
                 allocation_calls: 0,
                 requested_bytes: 0,

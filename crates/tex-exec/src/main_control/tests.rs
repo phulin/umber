@@ -6070,6 +6070,7 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
                 meaning_lookups: 5,
                 scanner_tokens: 0,
                 write_expansions: 0,
+                raw_delivery_kinds: [17, 0, 0, 0],
             },
             "the direct prefix and one-command retry have exact actual work"
         );

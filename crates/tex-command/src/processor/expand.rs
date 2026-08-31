@@ -1015,13 +1015,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             self.state,
                                         );
                                     #[cfg(feature = "profiling")]
-                                    self.fuel.record_raw_delivery(
-                                        !matches!(
-                                            self.command.scanner.status(),
-                                            crate::processor::ScannerStatus::Normal
-                                        ),
-                                        _resolution.meaning_lookup(),
-                                    );
+                                    {
+                                        self.fuel.record_raw_delivery(
+                                            !matches!(
+                                                self.command.scanner.status(),
+                                                crate::processor::ScannerStatus::Normal
+                                            ),
+                                            _resolution.meaning_lookup(),
+                                            crate::fuel::RawDeliveryKind::SyntheticEndV,
+                                        );
+                                    }
                                     ResidentCommandInterception::Ready
                                 }
                             }
@@ -1430,6 +1433,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Ok(())
                 }
                 ExpansionDispatch::Undefined => {
+                    #[cfg(feature = "profiling")]
+                    tex_state::measurement::record_hot_core_undefined_expansion();
                     let context = self.command.output_open_context(self.state);
                     self.command.semantic_diagnostics.push(
                         crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },

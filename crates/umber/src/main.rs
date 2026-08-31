@@ -263,7 +263,7 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         }
     }
 
-    let mut output = String::from("{\"schema\":3,\"allocations\":{");
+    let mut output = String::from("{\"schema\":4,\"allocations\":{");
     let mut first = true;
     for (name, measurement) in tex_state::measurement::HotCoreAllocationOwner::NAMES
         .into_iter()
@@ -304,10 +304,19 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         separator(&mut output, &mut first);
         write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
     }
+    output.push_str("},\"main_control_meanings\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCoreMeaningFamily::NAMES
+        .into_iter()
+        .zip(census.main_control_meanings)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
     write!(
         output,
-        "}},\"expansion_opcodes\":{{\"macro\":{},\"primitives\":{{",
-        census.macro_expansions,
+        "}},\"expansion_opcodes\":{{\"macro\":{},\"undefined\":{},\"primitives\":{{",
+        census.macro_expansions, census.undefined_expansions,
     )
     .expect("writing to a String cannot fail");
     first = true;

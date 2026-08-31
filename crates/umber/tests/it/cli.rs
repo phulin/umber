@@ -2172,6 +2172,37 @@ fn profiling_stats_flag_reports_feature_only_census() {
         stderr.contains("\"expansion_opcodes\":{\"macro\":1"),
         "the profiling census must observe the fixture's macro expansion: {stderr}"
     );
+
+    let census: serde_json::Value = serde_json::from_str(
+        stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("HOT_CORE_CENSUS "))
+            .expect("hot-core census line"),
+    )
+    .expect("valid census JSON");
+    let object_sum = |name: &str| {
+        census[name]
+            .as_object()
+            .expect("census object")
+            .values()
+            .map(|value| value.as_u64().expect("counter"))
+            .sum::<u64>()
+    };
+    assert_eq!(
+        object_sum("main_control_meanings"),
+        object_sum("command_families")
+    );
+    assert_eq!(
+        census["dispatch_opcodes"]["unexpandable_primitives"]
+            .as_object()
+            .expect("unexpandable opcode object")
+            .values()
+            .map(|value| value.as_u64().expect("counter"))
+            .sum::<u64>(),
+        census["main_control_meanings"]["unexpandable_primitive"]
+            .as_u64()
+            .expect("unexpandable meaning count")
+    );
 }
 
 #[cfg(not(feature = "profiling"))]

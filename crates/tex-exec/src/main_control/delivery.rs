@@ -2919,7 +2919,7 @@ pub(super) fn dispatch_main_control_command<G>(
 
 #[cfg(feature = "profiling")]
 pub(super) fn hot_core_command_family<G>(
-    meaning: ResolvedMeaning<G>,
+    meaning: &ResolvedMeaning<G>,
 ) -> tex_state::measurement::HotCoreCommandFamily {
     use tex_state::measurement::HotCoreCommandFamily as Family;
 
@@ -2949,6 +2949,40 @@ pub(super) fn hot_core_command_family<G>(
         ResolvedMeaning::Static(Meaning::Font(_)) => Family::Font,
         ResolvedMeaning::Static(Meaning::InternalInteger(_)) => Family::InternalQuantity,
         ResolvedMeaning::Static(Meaning::EndV) => Family::EndTemplate,
+        ResolvedMeaning::Static(Meaning::Unknown(_)) => Family::Unknown,
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn hot_core_meaning_family<G>(
+    meaning: &ResolvedMeaning<G>,
+) -> tex_state::measurement::HotCoreMeaningFamily {
+    use tex_state::measurement::HotCoreMeaningFamily as Family;
+
+    match meaning {
+        ResolvedMeaning::Static(Meaning::Undefined) => Family::Undefined,
+        ResolvedMeaning::Static(Meaning::Relax) => Family::Relax,
+        ResolvedMeaning::Macro { .. } => Family::Macro,
+        ResolvedMeaning::Static(Meaning::CharGiven(_)) => Family::CharGiven,
+        ResolvedMeaning::Static(Meaning::CharToken { .. }) => Family::CharToken,
+        ResolvedMeaning::Static(Meaning::MathCharGiven(_)) => Family::MathCharGiven,
+        ResolvedMeaning::Static(Meaning::CountRegister(_)) => Family::CountRegister,
+        ResolvedMeaning::Static(Meaning::DimenRegister(_)) => Family::DimenRegister,
+        ResolvedMeaning::Static(Meaning::SkipRegister(_)) => Family::SkipRegister,
+        ResolvedMeaning::Static(Meaning::MuskipRegister(_)) => Family::MuskipRegister,
+        ResolvedMeaning::Static(Meaning::ToksRegister(_)) => Family::ToksRegister,
+        ResolvedMeaning::Static(Meaning::IntParam(_)) => Family::IntParam,
+        ResolvedMeaning::Static(Meaning::DimenParam(_)) => Family::DimenParam,
+        ResolvedMeaning::Static(Meaning::GlueParam(_)) => Family::GlueParam,
+        ResolvedMeaning::Static(Meaning::MuGlueParam(_)) => Family::MuGlueParam,
+        ResolvedMeaning::Static(Meaning::TokParam(_)) => Family::TokParam,
+        ResolvedMeaning::Static(Meaning::PageDimension(_)) => Family::PageDimension,
+        ResolvedMeaning::Static(Meaning::PageInteger(_)) => Family::PageInteger,
+        ResolvedMeaning::Static(Meaning::InternalInteger(_)) => Family::InternalInteger,
+        ResolvedMeaning::Static(Meaning::Font(_)) => Family::Font,
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_)) => Family::ExpandablePrimitive,
+        ResolvedMeaning::Static(Meaning::EndV) => Family::EndV,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(_)) => Family::UnexpandablePrimitive,
         ResolvedMeaning::Static(Meaning::Unknown(_)) => Family::Unknown,
     }
 }
@@ -3025,11 +3059,14 @@ pub(super) fn dispatch_main_control_command_inner<G>(
             let retained_flags = flags;
             #[cfg(feature = "profiling")]
             {
+                let meaning = command.current().meaning_ref();
                 tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
-                    command.current().meaning(),
+                    meaning,
                 ));
-                if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
-                    command.current().meaning()
+                tex_state::measurement::record_hot_core_main_control_meaning(
+                    hot_core_meaning_family(meaning),
+                );
+                if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) = meaning
                 {
                     tex_state::measurement::record_hot_core_unexpandable_opcode(
                         usize::try_from(primitive.operand())

@@ -48,7 +48,7 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
 #[cfg(feature = "profiling")]
 fn published_work_derives_fuel_without_mutating_detail_counters() {
     let mut fuel = CommandFuel::new(2).expect("valid test limit");
-    fuel.record_raw_delivery(true, true);
+    fuel.record_raw_delivery(true, true, RawDeliveryKind::StoredToken);
     fuel.record_expanded_delivery();
     fuel.record_write_expansion();
     fuel.charge().expect("first charge");
@@ -62,7 +62,12 @@ fn published_work_derives_fuel_without_mutating_detail_counters() {
             meaning_lookups: 1,
             scanner_tokens: 1,
             write_expansions: 1,
+            raw_delivery_kinds: [0, 1, 0, 0],
         }
+    );
+    assert_eq!(
+        fuel.work().raw_delivery_kinds.into_iter().sum::<u64>(),
+        fuel.work().token_frame_steps,
     );
     assert_eq!(fuel.remaining, 1);
 }

@@ -993,7 +993,13 @@ impl<G> crate::CommandState<G> {
                                     .saturating_add(1);
                             }
                             self.last_diagnostic_location = Some(location);
-                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                            self.settle_resident_delivery(
+                                fuel,
+                                destination.reborrow(),
+                                resolution,
+                                #[cfg(feature = "profiling")]
+                                crate::fuel::RawDeliveryKind::Source,
+                            )
                         }
                         ResidentSourceAdvance::InvalidCharacter => {
                             super::ResidentCommandTransition::InvalidCharacter
@@ -1021,7 +1027,13 @@ impl<G> crate::CommandState<G> {
                                     .stored_direct
                                     .saturating_add(1);
                             }
-                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                            self.settle_resident_delivery(
+                                fuel,
+                                destination.reborrow(),
+                                resolution,
+                                #[cfg(feature = "profiling")]
+                                crate::fuel::RawDeliveryKind::StoredToken,
+                            )
                         }
                         super::levels::StoredTokenAdvance::OutParameter {
                             slot,
@@ -1059,7 +1071,13 @@ impl<G> crate::CommandState<G> {
                                     .macro_argument_direct
                                     .saturating_add(1);
                             }
-                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                            self.settle_resident_delivery(
+                                fuel,
+                                destination.reborrow(),
+                                resolution,
+                                #[cfg(feature = "profiling")]
+                                crate::fuel::RawDeliveryKind::MacroArgument,
+                            )
                         }
                         super::levels::MacroArgumentAdvance::Exhausted(identity) => {
                             super::ResidentCommandTransition::TokenExhausted {
@@ -1110,6 +1128,7 @@ impl<G> crate::CommandState<G> {
         _fuel: &mut crate::fuel::CommandFuel,
         destination: crate::command::EmptyCommand<'_, G>,
         resolution: tex_state::token::PackedMeaningResolution,
+        #[cfg(feature = "profiling")] kind: crate::fuel::RawDeliveryKind,
     ) -> super::ResidentCommandTransition {
         let scanner_active = !matches!(
             self.roots.scanner.status(),
@@ -1120,7 +1139,7 @@ impl<G> crate::CommandState<G> {
             command.suppress_expandable();
         }
         #[cfg(feature = "profiling")]
-        _fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
+        _fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup(), kind);
         let interception = if command.is_outer() && scanner_active {
             super::ResidentCommandInterception::Outer
         } else {
