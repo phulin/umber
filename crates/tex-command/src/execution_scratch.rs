@@ -2499,7 +2499,7 @@ mod tests {
                 scratch
                     .settle_argument_token(
                         &mut writer,
-                        ClassifiedToken::from_word(token_word, Some(word('p').semantic_token())),
+                        ClassifiedToken::from_word(token_word, Some(word('p').token_word())),
                         true,
                     )
                     .expect("fused classified-token settlement");
