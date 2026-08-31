@@ -219,8 +219,8 @@ The JSON fields have these semantics:
 - `command_families` classifies every meaning reaching the canonical
   main-control reswitch loop. Prefixes and commands fetched by `ignore_spaces`
   are each counted when they actually reach that loop; expanded-away macros
-  remain visible through the separate command-work vector rather than being
-  fabricated as dispatches.
+  remain visible through the profiling-only command-work vector rather than
+  being fabricated as dispatches.
 - `expansion_opcodes` counts each real macro expansion and every expandable
   primitive by its stable serialized operand and Rust catalogue name.
   `dispatch_opcodes.unexpandable_primitives` does the same for each primitive
@@ -246,7 +246,10 @@ The allocator forwarding implementation is isolated in
 `profiling` axis. All call sites, scopes, counters, and the allocator selection
 are `#[cfg(feature = "profiling")]`, so the production feature resolution
 contains no additional hot-path field, branch, call, allocation hook, or
-reference-count operation.
+reference-count operation. The command-work detail fields follow the same
+axis: production `CommandFuel` stores only its limit and remaining countdown,
+while profiling adds the exact token-frame, expanded-delivery, meaning-lookup,
+scanner-token, and write-expansion census.
 
 The pinned integrated authority for later HotCore work is
 [`writeback/umber2-awgc.1.3.md`](writeback/umber2-awgc.1.3.md), with its exact
@@ -791,12 +794,21 @@ the internal costs of a subsystem.
 ## Scalar command delivery and scanning
 
 Issue `umber2-3v8z.27` added a monotonic command-work vector beside the
-canonical fuel ledger. It distinguishes successful fuel charges, raw
-token-frame steps, completed expanded deliveries, live meaning lookups,
-tokens delivered under a non-normal scanner status, and expandable commands
-executed during deferred-write expansion. These counters are operational
-evidence outside TeX state: checkpoints, rollback, formats, semantic identity,
-corpus inputs, and fuel guards do not contain or alter them.
+canonical fuel ledger. The vector distinguishes successful fuel charges, raw
+token-frame steps, completed expanded deliveries, live meaning lookups, tokens
+delivered under a non-normal scanner status, and expandable commands executed
+during deferred-write expansion. The five detailed fields now exist only in
+the `profiling` resolution. Default production delivery performs only the fuel
+guard's decrement and exhaustion check; its stable published value reports
+fuel and leaves the detailed fields zero. No runtime option or observer branch
+selects accounting per token.
+
+Profiling counters are operational evidence outside TeX state: checkpoints,
+rollback, formats, semantic identity, corpus inputs, and fuel guards do not
+contain or alter them. Periodic exact-vector comparisons must therefore build
+both sides with the matched `profiling` feature. Production comparisons use
+fuel, semantic output, and focused instruction/branch evidence instead of
+treating a detailed vector as engine behavior.
 
 Their comparison contract depends on transaction demand. When both binaries
 roll back the same prefixes, all six fields must match before a CPU or
@@ -816,7 +828,7 @@ and a focused transaction control attributes the redistribution while proving
 that direct retry adds no unrelated work. See
 [`umber2-awgc.12`](writeback/umber2-awgc.12.md).
 
-Exact focused controls exercise 256 macro invocations and 64 macro expansions
+Exact profiling controls exercise 256 macro invocations and 64 macro expansions
 inside deferred write text. Their respective vectors are
 `(513, 512, 256, 256, 0, 0)` and `(131, 131, 1, 64, 130, 64)` in the field
 order above. The tests assert the complete vectors rather than elapsed time.
@@ -824,7 +836,7 @@ The instrumented pdfTeX oracle does not currently export equivalent command
 work counters, so there is no fabricated cross-engine count comparison;
 existing oracle parity remains the semantic gate.
 
-The production endpoint captures used the authenticated pinned distribution,
+The historical endpoint captures used the authenticated pinned distribution,
 format, source, and offline cache. At 6,000,000 fuel they recorded
 `(6000000, 6000000, 556280, 1710443, 5383815, 433)` from 1,356 cycle samples;
 at 12,000,000 fuel they recorded
@@ -971,8 +983,9 @@ owner comparisons. These counts establish frame misses as the allocation
 case, exact hits as the no-sweep control, and list resolution as distinct
 borrowed work.
 
-The production-feature comparison retained the exact command-work vectors
-recorded above. The 6M profile collected 1,381 cycle samples with none lost;
+The historical comparison retained the exact command-work vectors recorded
+above. Those vectors now belong to the matched profiling resolution rather
+than the default production contract. The 6M profile collected 1,381 cycle samples with none lost;
 the disjoint provenance owner fell from 512,475,473 weighted cycles (3.20%) on
 the immediately preceding scalar-delivery capture to 426,847,781 (2.62%), a
 16.7% reduction in attributed cycles. The 12M profile collected 2,331 samples

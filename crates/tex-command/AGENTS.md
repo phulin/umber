@@ -171,11 +171,13 @@ collector (see `src/conditionals.rs`).
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
 - `src/fuel.rs` and `src/fuel/tests.rs`: checked finite command-work limits,
-  one exact remaining-budget countdown, separately stored non-fuel work
+  one exact remaining-budget countdown, profiling-only non-fuel work
   counters, terminal/publication-time consumed-fuel derivation, the
   constructor-free borrow-only `CommandFuel` capability used by leaf
   operations, and the top-level `CommandFuelLedger` session owner shared by
-  every canonical processor episode. Fuel and work counters are operational
+  every canonical processor episode. Default production delivery stores and
+  updates only the fuel guard; the existing `profiling` resolution compiles in
+  the exact detailed census. Fuel and profiling counters are operational
   evidence outside semantic state; rollback never refunds them.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error

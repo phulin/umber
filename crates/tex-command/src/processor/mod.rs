@@ -674,10 +674,12 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.fuel.charge()
     }
 
+    #[cfg(feature = "profiling")]
     pub(crate) fn record_expanded_delivery(&mut self) {
         self.fuel.record_expanded_delivery();
     }
 
+    #[cfg(feature = "profiling")]
     pub(crate) fn record_write_expansion(&mut self) {
         self.fuel.record_write_expansion();
     }

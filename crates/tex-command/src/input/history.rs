@@ -1012,7 +1012,7 @@ impl<G> crate::CommandState<G> {
     #[inline(always)]
     fn settle_resident_delivery(
         &mut self,
-        fuel: &mut crate::fuel::CommandFuel,
+        _fuel: &mut crate::fuel::CommandFuel,
         destination: crate::command::EmptyCommand<'_, G>,
         resolution: tex_state::token::PackedMeaningResolution,
     ) -> super::ResidentCommandTransition {
@@ -1024,7 +1024,8 @@ impl<G> crate::CommandState<G> {
         if command.suppresses_expandable_control_sequence() {
             command.suppress_expandable();
         }
-        fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
+        #[cfg(feature = "profiling")]
+        _fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
         let interception = if command.is_outer() && scanner_active {
             super::ResidentCommandInterception::Outer
         } else {

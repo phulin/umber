@@ -422,8 +422,10 @@ The input stack ends its raw borrow before a cold line, EOF, parameter push, or
 suspension transition; meaning resolution ends its dense-state borrow before
 outer recovery, alignment settlement, observation, or delivery. Raw delivery
 records token-frame, scanner, and optional meaning-lookup work together in the
-singular fuel ledger after resolution, while the admission charge remains at
-the canonical episode boundary.
+singular fuel ledger after resolution only when the existing `profiling`
+resolution is selected. The default resolution compiles those updates out;
+its admission charge remains the sole accounting at the canonical episode
+boundary.
 
 No borrow crosses an executor barrier. A suspended scanner, macro expansion,
 or resource request stores the current-generation execution lease plus ids and

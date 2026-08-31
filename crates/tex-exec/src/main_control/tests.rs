@@ -6059,6 +6059,8 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
         assert_eq!(resumed_interpreter.live_processors, 0);
         assert_eq!(resumed_interpreter.maximum_live_processors, 1);
         let direct_work = control.command_work();
+        assert_eq!(direct_work.fuel_charges, 17);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             direct_work,
             tex_command::CommandWorkCounters {

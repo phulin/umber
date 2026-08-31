@@ -45,6 +45,7 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
 }
 
 #[test]
+#[cfg(feature = "profiling")]
 fn published_work_derives_fuel_without_mutating_detail_counters() {
     let mut fuel = CommandFuel::new(2).expect("valid test limit");
     fuel.record_raw_delivery(true, true);
@@ -64,6 +65,25 @@ fn published_work_derives_fuel_without_mutating_detail_counters() {
         }
     );
     assert_eq!(fuel.remaining, 1);
+}
+
+#[test]
+#[cfg(not(feature = "profiling"))]
+fn production_ledger_stores_only_the_runaway_guard() {
+    assert_eq!(
+        std::mem::size_of::<CommandFuel>(),
+        2 * std::mem::size_of::<u64>()
+    );
+
+    let mut fuel = CommandFuel::new(2).expect("valid test limit");
+    fuel.charge().expect("first charge");
+    assert_eq!(
+        fuel.work(),
+        CommandWorkCounters {
+            fuel_charges: 1,
+            ..CommandWorkCounters::default()
+        }
+    );
 }
 
 #[test]

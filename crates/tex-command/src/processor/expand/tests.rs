@@ -92,6 +92,7 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
     });
 }
 
+#[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OrdinaryDeliveryEvidence {
     slot_initializations: u64,
@@ -108,6 +109,7 @@ struct OrdinaryDeliveryEvidence {
     allocated_bytes: u64,
 }
 
+#[cfg(feature = "profiling")]
 fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
@@ -224,6 +226,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
 }
 
 #[test]
+#[cfg(feature = "profiling")]
 fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     let one = empty_macro_delivery_evidence(1);
     let many = empty_macro_delivery_evidence(4_096);
@@ -330,7 +333,7 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
 }
 
 #[test]
-fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
+fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
     crate::test_harness::with_universe(|universe| {
         let token = Token::Char {
             ch: 'A',
@@ -342,7 +345,6 @@ fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
-        let work_before = fuel.work();
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
@@ -368,15 +370,10 @@ fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
             token
         );
         drop(processor);
-        let work_after = fuel.work();
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             super::expanded_classifications() - classifications_before,
             1
-        );
-        assert_eq!(
-            work_after.expanded_deliveries - work_before.expanded_deliveries,
-            0
         );
         assert_eq!(
             ownership_after.slot_initializations - ownership_before.slot_initializations,
@@ -387,6 +384,7 @@ fn unexpandable_preflight_classifies_once_without_a_second_driver_completion() {
 }
 
 #[test]
+#[cfg(feature = "profiling")]
 fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
     crate::test_harness::with_universe(|universe| {
         let token = Token::Char {

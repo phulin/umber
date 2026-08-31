@@ -3638,14 +3638,17 @@ before each central raw-delivery attempt, including attempts nested beneath
 expanded delivery, macro matching, and scanners. The same ledger counts raw
 token-frame steps, completed expanded deliveries, live meaning lookups,
 non-normal scanner-status tokens, and expandable commands executed inside a
-deferred write. Its one mutable fuel value is the exact remaining budget: an
-ordinary charge performs one exhaustion check and one decrement. The admitted
-limit is immutable, and consumed fuel is derived from it only when the host
-requests telemetry or constructs terminal error evidence; there is no stored
-consumed counter or batch-charge path. A failed semantic step may restore
-`CommandState`, but that operation does not restore the fuel or work vector.
-These counters are host telemetry and never enter snapshot, checkpoint,
-format, or semantic identity.
+deferred write only in the existing `profiling` feature resolution. Those
+detailed fields and their update call sites are absent from the production
+resolution; production publication retains the stable counter vocabulary but
+reports its five detail fields as zero. Its one mutable production fuel value
+is the exact remaining budget: an ordinary charge performs one exhaustion
+check and one decrement. The admitted limit is immutable, and consumed fuel is
+derived from it only when the host requests telemetry or constructs terminal
+error evidence; there is no stored consumed counter or batch-charge path. A
+failed semantic step may restore `CommandState`, but that operation does not
+restore fuel or, in a profiling build, the work vector. Fuel and profiling
+counters never enter snapshot, checkpoint, format, or semantic identity.
 Canonical sessions default to 100,000,000 actions and accept only
 `1..=100,000,000,000`; zero, larger values, and `u64::MAX` are typed
 configuration errors rather than unlimited sentinels.

@@ -10,10 +10,12 @@ pub const DEFAULT_COMMAND_FUEL_LIMIT: u64 = 100_000_000;
 /// smaller per-run budget and retain their independent time and memory guards.
 pub const MAX_COMMAND_FUEL_LIMIT: u64 = 100_000_000_000;
 
-/// Monotonic scalar-work accounting for one canonical command session.
+/// Published scalar-work accounting for one canonical command session.
 ///
-/// These counters are operational evidence, not TeX state. They live beside
-/// the fuel ledger so a semantic rollback cannot refund work already done.
+/// Fuel is present in every build because it is the runaway guard. The five
+/// detailed census fields are populated only by the `profiling` resolution;
+/// production publication leaves them zero rather than charging the command
+/// path for measurement that cannot affect execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CommandWorkCounters {
     /// Successful charges against the canonical command-work guard.
@@ -31,6 +33,7 @@ pub struct CommandWorkCounters {
 }
 
 impl CommandWorkCounters {
+    #[cfg(feature = "profiling")]
     const fn with_fuel_charges(fuel_charges: u64, detail: CommandWorkDetail) -> Self {
         Self {
             fuel_charges,
@@ -41,6 +44,18 @@ impl CommandWorkCounters {
             write_expansions: detail.write_expansions,
         }
     }
+
+    #[cfg(not(feature = "profiling"))]
+    const fn with_fuel_charges(fuel_charges: u64) -> Self {
+        Self {
+            fuel_charges,
+            token_frame_steps: 0,
+            expanded_deliveries: 0,
+            meaning_lookups: 0,
+            scanner_tokens: 0,
+            write_expansions: 0,
+        }
+    }
 }
 
 /// Work telemetry that is independent of the command-fuel countdown.
@@ -48,6 +63,7 @@ impl CommandWorkCounters {
 /// Fuel consumption has no second stored representation: publication derives
 /// it from the immutable admitted limit and the one mutable remaining count.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg(feature = "profiling")]
 struct CommandWorkDetail {
     token_frame_steps: u64,
     expanded_deliveries: u64,
@@ -56,6 +72,7 @@ struct CommandWorkDetail {
     write_expansions: u64,
 }
 
+#[cfg(feature = "profiling")]
 impl CommandWorkDetail {
     const ZERO: Self = Self {
         token_frame_steps: 0,
@@ -100,6 +117,7 @@ impl std::error::Error for CommandFuelLimitError {}
 pub struct CommandFuel {
     limit: u64,
     remaining: u64,
+    #[cfg(feature = "profiling")]
     work: CommandWorkDetail,
 }
 
@@ -111,6 +129,7 @@ impl CommandFuel {
         Ok(Self {
             limit,
             remaining: limit,
+            #[cfg(feature = "profiling")]
             work: CommandWorkDetail::ZERO,
         })
     }
@@ -127,7 +146,14 @@ impl CommandFuel {
 
     #[must_use]
     pub const fn work(&self) -> CommandWorkCounters {
-        CommandWorkCounters::with_fuel_charges(self.burned(), self.work)
+        #[cfg(feature = "profiling")]
+        {
+            CommandWorkCounters::with_fuel_charges(self.burned(), self.work)
+        }
+        #[cfg(not(feature = "profiling"))]
+        {
+            CommandWorkCounters::with_fuel_charges(self.burned())
+        }
     }
 
     /// Charges one bounded command-machine transition.
@@ -158,6 +184,7 @@ impl CommandFuel {
     /// Resolution knows all three facts at once, so the hot pipeline updates
     /// the singular ledger once instead of repeatedly reborrowing it. The
     /// preceding fuel charge remains separate and happens before input work.
+    #[cfg(feature = "profiling")]
     pub(crate) fn record_raw_delivery(&mut self, scanner: bool, meaning_lookup: bool) {
         self.work.token_frame_steps = self.work.token_frame_steps.saturating_add(1);
         if scanner {
@@ -168,10 +195,12 @@ impl CommandFuel {
         }
     }
 
+    #[cfg(feature = "profiling")]
     pub(crate) fn record_expanded_delivery(&mut self) {
         self.work.expanded_deliveries = self.work.expanded_deliveries.saturating_add(1);
     }
 
+    #[cfg(feature = "profiling")]
     pub(crate) fn record_write_expansion(&mut self) {
         self.work.write_expansions = self.work.write_expansions.saturating_add(1);
     }
@@ -224,6 +253,7 @@ impl Default for CommandFuelLedger {
             fuel: CommandFuel {
                 limit: DEFAULT_COMMAND_FUEL_LIMIT,
                 remaining: DEFAULT_COMMAND_FUEL_LIMIT,
+                #[cfg(feature = "profiling")]
                 work: CommandWorkDetail::ZERO,
             },
         }

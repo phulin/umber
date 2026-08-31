@@ -999,7 +999,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     break DeliveryStatus::ReplayCompleted(episode);
                                 }
                                 RetirementHandoff::EndV(level) => {
-                                    let resolution = destination
+                                    let _resolution = destination
                                         .as_mut()
                                         .expect("delivery machine owns its reusable command slot")
                                         .empty_for_raw_delivery()
@@ -1014,12 +1014,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             false,
                                             self.state,
                                         );
+                                    #[cfg(feature = "profiling")]
                                     self.fuel.record_raw_delivery(
                                         !matches!(
                                             self.command.scanner.status(),
                                             crate::processor::ScannerStatus::Normal
                                         ),
-                                        resolution.meaning_lookup(),
+                                        _resolution.meaning_lookup(),
                                     );
                                     ResidentCommandInterception::Ready
                                 }
@@ -1205,6 +1206,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         expansions_before: u64,
         alignment: AlignmentInterceptionPolicy,
     ) -> DeliveryStatus {
+        #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
         let pending = policy.observation == ExpandedObservationPolicy::DeferIfExpanded
             && self.command.expansion.cumulative_expansions != expansions_before;
@@ -1386,6 +1388,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpansionDispatch::Undefined => {}
             }
         }
+        #[cfg(feature = "profiling")]
         if self.write_expansion_depth != 0 {
             self.record_write_expansion();
         }
