@@ -65,6 +65,11 @@ checksum coverage, immutable/job-local split, and migration from schema 9.
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.
 
+`texlive_release_selection.md` defines annual TeX Live selection, the boundary
+that reserves locks and manifests for downloaded files, generated-format cache
+binding, and multi-release pdfTeX parity without compiling each historical
+engine.
+
 `arxiv_census/` contains machine-readable captures for the recent arXiv sample.
 Its README records the exact interpretation and partial-capture status.
 
