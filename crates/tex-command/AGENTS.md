@@ -59,8 +59,10 @@ collector (see `src/conditionals.rs`).
   and its unpublished suffix may rebase only after the last active ancestor
   retires. Activations never own a heap buffer or arena scope. Suspended
   `scan_toks` owners occupy their own recyclable typed row lane because they
-  carry a definition builder and attempt scope; every other typed continuation
-  remains in the bounded heterogeneous continuation lane.
+  carry their exact destination coordinate and attempt scope; an expanded
+  definition retains its transactional build key, while a raw definition is
+  synchronous and never enters the lane. Every other typed continuation remains
+  in the bounded heterogeneous continuation lane.
 - `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
   `src/expansion_work/tests.rs`: current-generation parked-expansion owner used
   only after a real immutable-resource suspension. Fixed command and typed
@@ -464,17 +466,13 @@ collector (see `src/conditionals.rs`).
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses
-  the scanner word/builder lanes. Macro `\def`/`\edef` and `read_toks`
-  collect semantic words into one attempt-local recyclable definition builder;
-  the builder's one non-atomic allocation becomes the final current-generation
-  `DefinitionId`, so successful publication retains it without allocating or
-  copying words. Generic cold-operation promotion borrows that exact builder in
-  its attempt row, validates its original destination identity policy before
-  publishing any batch row, then writes the durable owner directly into the
-  checked resident operation field and releases scratch ownership only after
-  success; failure needs no owner restoration. It constructs neither a
-  builder batch nor an aggregate owner receipt, and never copies the parameter/
-  replacement slices or reconstructs a second builder. Read setup and
+  the scanner word/builder lanes. Ordinary `\def`/`\gdef` select their local or
+  revision-global definition region before scanning and write semantic words
+  directly into one transactional arena mark; failure truncates it and sealing
+  appends only the compact header. Raw definition scanning has no continuation.
+  `\edef`/`\xdef` retain only the build key, scalar progress, and existing
+  expansion continuation when a resource is genuinely unavailable. `read_toks`
+  keeps its independent cold/import staging lifetime. Read setup and
   finalization share one cleanup transaction which
   restores `align_state` and scanner status and truncates the exact child scope
   on every error. General token-list scans append directly to independent

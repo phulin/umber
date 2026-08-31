@@ -82,6 +82,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
   `afterassignment` backup share one callback-scoped admitted context; a group
   transition ends admission before a possible page/host boundary. Detached
   mutation values and macro-body walks are demand-selected cold evidence.
+  Ordinary `let` carries only the scanned compact meaning and journals/replaces
+  it directly; global escape promotes a local definition span once. Ordinary
+  `def`-family application receives the already-sealed destination-region key
+  and publishes it directly to the meaning cell, with no executor-side body
+  carrier or publication copy.
 - `src/main_control/cold/`: uncommon-command boundary against that same
   interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
   values, the small attempt/prepared root fields that change domain in place,

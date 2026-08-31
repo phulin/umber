@@ -41,20 +41,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
-- `src/definition_arena.rs`: Private generation-branded non-atomic shared
-  macro-definition owners and the checked destination-policy builder which
-  constructs their single allocation in place. Publication adds the serial,
-  accounting charge, and semantic owner without allocating or copying words;
-  successful attempt retirement releases scratch ownership, while the last
-  semantic owner releases both accounting and payload. The exact publisher
-  cursor returns a rejected checkpoint loan to its private suffix mark without
-  retaining released bodies. Generic promotion borrows an already-checked
-  attempt builder through complete batch preflight, then writes the published
-  owner directly into the caller's resident destination field; failure leaves
-  the builder in place. Preflight must validate every preserved identity
-  policy before the first row is published and must never reconstruct a
-  destination-policy builder from parameter/replacement slices or return an
-  aggregate attempt receipt.
+- `src/definition_arena.rs`: Compact generation-branded definition keys and
+  borrowed views over one immutable format region, one checkpointed
+  revision-global region, and nested forked local-group regions. Ordinary
+  definitions scan transactionally into their final region and seal a header
+  without a publication copy or per-definition allocation. Group exit restores
+  meanings before retiring the whole local region; active macro input rows may
+  hold one coarse local-region lease. Candidate rollback truncates exact
+  global/local marks, while exceptional local-to-global `let` promotion copies
+  one span once and reuses the mapped global key. Detached builders remain only
+  for cold format/memo/import batches.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and
@@ -178,12 +174,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,
   first-alternate deduplication, cursor, and foreign-owner rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
-- `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
+- `src/macro_definition.rs`: Storage-independent allocation-free macro
+  parameter validation and borrowed pattern facts derived from immutable
+  definition words; definition headers do not retain an eager parameter plan.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
-- `src/meaning.rs`: Static packed TeX meanings plus generation-typed shared
-  macro owners and the canonical dense-row writer which decodes one borrowed
-  row directly into its caller's final command fields; raw integers never
-  materialize runtime definition handles.
+- `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
+  macro definition keys and the canonical dense-row writer which decodes one
+  borrowed row directly into its caller's final command fields.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, and coarse retained
