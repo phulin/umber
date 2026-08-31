@@ -354,6 +354,19 @@ fn edge_glyph_cursor(
     end: usize,
     edge: Edge,
 ) -> Option<Glyph> {
+    match edge_search_cursor(state, nodes, start, end, edge) {
+        Search::Glyph(glyph) => Some(glyph),
+        Search::Skip | Search::Block => None,
+    }
+}
+
+fn edge_search_cursor(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+    start: usize,
+    end: usize,
+    edge: Edge,
+) -> Search {
     let start = start.min(nodes.len());
     let end = end.min(nodes.len()).max(start);
     match edge {
@@ -363,9 +376,9 @@ fn edge_glyph_cursor(
                     .owned_node(index)
                     .expect("edge index belongs to source");
                 match search_node(state, node, edge) {
-                    Search::Glyph(glyph) => return Some(glyph),
+                    Search::Glyph(glyph) => return Search::Glyph(glyph),
                     Search::Skip => {}
-                    Search::Block => return None,
+                    Search::Block => return Search::Block,
                 }
             }
         }
@@ -375,14 +388,14 @@ fn edge_glyph_cursor(
                     .owned_node(index)
                     .expect("edge index belongs to source");
                 match search_node(state, node, edge) {
-                    Search::Glyph(glyph) => return Some(glyph),
+                    Search::Glyph(glyph) => return Search::Glyph(glyph),
                     Search::Skip => {}
-                    Search::Block => return None,
+                    Search::Block => return Search::Block,
                 }
             }
         }
     }
-    None
+    Search::Skip
 }
 
 fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
@@ -403,16 +416,22 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         }),
         Node::HList(box_node) => {
             let children = state.page_nodes(box_node.children);
-            edge_glyph_cursor(state, children, 0, children.len(), edge).map_or_else(
-                || {
-                    if box_node.width.raw() == 0 {
-                        Search::Skip
-                    } else {
-                        Search::Block
-                    }
-                },
-                Search::Glyph,
-            )
+            if children.is_empty() {
+                if box_node.width.raw() == 0
+                    && box_node.height.raw() == 0
+                    && box_node.depth.raw() == 0
+                {
+                    Search::Skip
+                } else {
+                    Search::Block
+                }
+            } else {
+                // pdftex.web §§24540--24615 descends into every nonempty
+                // hlist. A blocking child must remain blocking when the
+                // search returns to the parent; only exhausting a list is
+                // equivalent to skipping it.
+                edge_search_cursor(state, children, 0, children.len(), edge)
+            }
         }
         Node::Disc {
             pre, post, replace, ..
