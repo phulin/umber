@@ -85,7 +85,7 @@ impl AsciiScalar {
         } else {
             let mut fraction = remainder * DECIMAL_FRACTION_FACTOR;
             let mut width = 16;
-            while fraction % 10 == 0 {
+            while fraction.is_multiple_of(10) {
                 fraction /= 10;
                 width -= 1;
             }
