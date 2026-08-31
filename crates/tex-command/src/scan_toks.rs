@@ -1298,7 +1298,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 primary = command.origin();
             }
             let token = self.classify_collector_token(&command, None);
-            if token.is_begin_group() {
+            if token.spelling_is_begin_group() {
                 self.finish_scan_toks_parameters(collector)?;
                 return Ok(ScannedParameterText {
                     highest_parameter: next_parameter - 1,
@@ -1308,7 +1308,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     missing_left_brace: false,
                 });
             }
-            if token.is_end_group() {
+            if token.spelling_is_end_group() {
                 // TeX82 §§475--476's `done1` branch has already consumed the
                 // right brace and decremented `align_state`. It expresses
                 // shock, restores that contribution, and finishes the
@@ -1342,7 +1342,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     missing_left_brace: true,
                 });
             }
-            if !token.is_parameter() {
+            if !token.spelling_is_parameter() {
                 self.push_scan_toks_word(collector, token.word())?;
                 continue;
             }
@@ -1353,7 +1353,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .take()
                 .expect("command status initializes destination");
             let follower_token = self.classify_collector_token(&follower, None);
-            if follower_token.is_begin_group() {
+            if follower_token.spelling_is_begin_group() {
                 self.push_scan_toks_word(collector, follower_token.word())?;
                 self.finish_scan_toks_parameters(collector)?;
                 return Ok(ScannedParameterText {
@@ -1713,7 +1713,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 // §479: a second parameter character stores that character
                 // once -- `##` is one parameter token in the body, not two.
-                if token.is_parameter() {
+                if token.spelling_is_parameter() {
                     self.push_replacement_token(collector, spelling)?;
                     clear_command_destination(&mut destination);
                     continue;
@@ -1747,7 +1747,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if let Some((highest_parameter, target)) = macro_parameters
-                && token.is_parameter()
+                && token.spelling_is_parameter()
             {
                 collector
                     .set_pending_parameter(PendingParameter {

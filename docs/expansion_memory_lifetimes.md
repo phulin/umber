@@ -486,7 +486,9 @@ deferred-diagnostic cursor established when its destination was reserved.
 This is the same in-progress owner used by macro arguments: raw command
 classification, brace state, delimiter state, pending parameter state, and
 single final publication are common, while the destination variant preserves
-the semantic lifetime boundary. Macro arguments remain generation scratch
+the semantic lifetime boundary. The single classification retains both
+`cur_cmd` and `cur_tok`: macro matching consumes resolved command categories,
+whereas `scan_toks` balance consumes the spelling category. Macro arguments remain generation scratch
 owned; general lists remain attempt-lane owned; definitions write semantic
 words into their attempt builder for later durable publication.
 For a general list the collector advances its active writer from the parameter

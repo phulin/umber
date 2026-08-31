@@ -36,10 +36,10 @@ impl<G> crate::CommandProcessor<'_, '_, G> {
 /// One raw delivered command classified once for every collector decision.
 ///
 /// Token equality and parameter-number matching use the immutable spelling.
-/// Brace, parameter-character, and leading-space decisions use `cur_cmd`, as
-/// TeX does, so a control sequence `\let` to a character command retains the
-/// command classification without pretending that its spelling is a literal
-/// character token.
+/// Macro matching uses `cur_cmd` for braces and leading space, while
+/// `scan_toks` balance uses the category encoded in `cur_tok`. Retaining both
+/// facets here lets each grammar make its TeX-defined decision without
+/// decoding the spelling again.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ClassifiedToken {
     word: TracedTokenWord,
@@ -98,12 +98,38 @@ impl ClassifiedToken {
         matches!(self.command_catcode, Some(Catcode::EndGroup))
     }
 
-    pub(crate) const fn is_parameter(self) -> bool {
-        matches!(self.command_catcode, Some(Catcode::Parameter))
-    }
-
     pub(crate) const fn is_space(self) -> bool {
         matches!(self.command_catcode, Some(Catcode::Space))
+    }
+
+    pub(crate) const fn spelling_is_begin_group(self) -> bool {
+        matches!(
+            self.spelling,
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        )
+    }
+
+    pub(crate) const fn spelling_is_end_group(self) -> bool {
+        matches!(
+            self.spelling,
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    }
+
+    pub(crate) const fn spelling_is_parameter(self) -> bool {
+        matches!(
+            self.spelling,
+            Token::Char {
+                cat: Catcode::Parameter,
+                ..
+            }
+        )
     }
 
     pub(crate) const fn rejects_non_long_paragraph(self, paragraph_checked: bool) -> bool {
@@ -302,8 +328,12 @@ impl<G> TokenCollector<G> {
         if self.phase != TokenCollectorPhase::Replacement {
             return Err(());
         }
-        self.advance_brace_depth(token);
-        Ok(token.is_end_group() && self.brace_depth == 0)
+        if token.spelling_is_begin_group() {
+            self.brace_depth = self.brace_depth.saturating_add(1);
+        } else if token.spelling_is_end_group() && self.brace_depth != 0 {
+            self.brace_depth -= 1;
+        }
+        Ok(token.spelling_is_end_group() && self.brace_depth == 0)
     }
 
     fn advance_brace_depth(&mut self, token: ClassifiedToken) {
