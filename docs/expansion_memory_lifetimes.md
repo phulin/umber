@@ -340,14 +340,17 @@ return a zero-sized failure marker; a real failure moves its `CommandError` into
 that slot, and only the public boundary constructs the rich `Result`. Thus an
 ordinary successful token neither copies nor reconstructs the error envelope.
 The command slot is neither global nor a mailbox and never survives
-independently of its request. `CurrentCommand::delivery` is the sole full
-input-level/position/sequence stamp. The processor retains only the immediately
-eligible sequence as an episode-local freshness scalar; a new fetch, failure,
-backup, alignment handoff, cursor-only resume, or exact stopper retirement
-invalidates it. A retained-current-command resume explicitly readmits that
-command's sequence. Endwrite retirement borrows its exact input level directly
-from the still-resident stopper stamp, so raw delivery never copies a second
-full stamp into the processor.
+independently of its request. `CurrentCommand` retains only its compact
+immediate-delivery coordinate and the `OriginId` already packed in its
+spelling. Physical ranges, active source identity, macro ancestry, and
+observation payloads are resolved from immutable source/provenance owners only
+at backup, observation, tracing, diagnostic, or publication demand. The
+executor keeps the compact source role only because operand scanning may
+retire the originating input frame before application. `CommandProcessor`
+retains one scalar sequence solely for observation order; a genuine typed
+retry readmits its command/cursor explicitly. No second stamp, decoded
+provenance copy, command projection, or delivery owner is stored in executor
+preparation.
 
 Resident source tokens and literal macro arguments return directly from input
 delivery. Stored-token access projects an out-parameter slot from the packed

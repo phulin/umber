@@ -1661,22 +1661,43 @@ pub struct CurrentCommand {
 }
 ```
 
-The production value is 112 bytes: less than two 64-byte cache lines while it
-retains exact raw identity, a resolved static meaning or the one compact macro
-owner, delivery coordinates, provenance, and alignment/recovery flags.
-`SourceProvenance` uses a nonzero packed source identity so its optional form
-is the same 32 bytes as the present value. There is no per-command box,
-allocation, provenance arena, or alternate fast representation.
+The production value is one cache line or less for a static meaning. It keeps
+the packed spelling, resolved static meaning or sole macro owner, control-
+sequence identity, immediate-delivery coordinate, compact source role, and
+alignment/recovery flags. It does not repeat a decoded physical source range,
+active source identity, or diagnostic ancestry. There is no per-command box,
+allocation, provenance sidecar, or alternate fast representation.
+
+The spelling's four-byte `OriginId` is the stable provenance coordinate. A
+direct source origin encodes its immutable registered-source position; a
+derived origin indexes the generation provenance rows; one macro activation
+adds its invocation/definition/parent link once. Definition, argument,
+replacement, inserted, and replay spans retain those coordinates in their
+own immutable owners. Backup, raw/expanded observation, tracing, diagnostics,
+and rendered-source publication resolve the coordinate only when they
+actually require a physical range or ancestry. Ordinary meaning resolution,
+expansion classification, and main-control dispatch neither resolve nor copy
+that evidence.
+
+An input frame owns its immutable external source context once. Delivery
+retains only the compact source role because executor policy may consume it
+after operand scanning has advanced or retired the originating frame. The
+source identity remains recoverable from the origin or live input coordinate;
+it is not duplicated in every command. A direct physical line is retained
+only where TeX's alignment lifecycle must outlive the source cursor operation.
+This split preserves exact diagnostic provenance while removing cold source
+geometry from the default token path.
 
 The spelling and effective meaning may differ for the one delivery suppressed
-by `\noexpand`. `DeliveryStamp` proves the exact live input level and position
-that delivered the token. It is ephemeral, excluded from summaries, and never
-reconstructed from semantic token equality. `CurrentCommand::delivery` is its
-sole full representation. `CommandProcessor` retains only an episode-local
-optional sequence for immediate-delivery freshness; backup and alignment
-handoff compare that scalar, cursor-only resume clears it, retained-command
-resume readmits it, and endwrite retirement reads the exact input level from
-the resident stopper's own stamp before clearing freshness.
+by `\noexpand`. The immediate-delivery coordinate proves the exact live input
+level and position that delivered the token. It is ephemeral, excluded from
+summaries, and never reconstructed from semantic token equality. The
+processor's episode-local sequence remains observation ordering, not
+provenance. Only a command that crosses preflight, backup, an exact stopper
+retirement, or a genuine typed suspension retains the coordinate; internal
+ordinary expansion consumes the resident cursor fact directly. A genuine
+suspension materializes its existing typed frame and cursor then. No ordinary
+command constructs a suspension/checkpoint carrier speculatively.
 
 Meaning resolution occurs once at raw delivery. An ordinary character resolves
 to its literal character-token meaning, while a control sequence reads its
