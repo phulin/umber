@@ -165,12 +165,11 @@ pub use scanners::{
     ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
     ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
     ScannedGeneratedFontDefinition, ScannedGlueParameterAssignment, ScannedHyphenationData,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition,
-    ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
-    ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
-    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment, ScannedVSplit,
-    StructuredProvenance, WriteStreamSelector,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter,
+    ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
+    ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
+    ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenParameterAssignment,
+    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{
     CommandCheckpointReleaseReceipt, CommandGenerationOwner, CommandRestoreError,

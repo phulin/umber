@@ -1804,6 +1804,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         name: tex_state::interner::Symbol,
         definition: tex_state::DefinitionId<G>,
+        definition_region: tex_state::DefinitionRegionLease<G>,
         call_site: OriginId,
         arguments: MacroArguments<G>,
         replacement_len: usize,
@@ -1811,8 +1812,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let parent = self.command.parameters.parent_invocation();
         let invocation = call_site;
         let _ = parent;
-        self.command
-            .push_macro_activation(name, definition, arguments, invocation, replacement_len)
+        self.command.push_macro_activation(
+            name,
+            definition,
+            definition_region,
+            arguments,
+            invocation,
+            replacement_len,
+        )
     }
 }
 

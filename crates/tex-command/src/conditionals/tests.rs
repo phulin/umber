@@ -283,19 +283,25 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
                 .expect("definition with different replacement text"),
         };
 
-        assert!(CommandProcessor::ifx_meaning_eq(&first, &equal));
-        assert!(!CommandProcessor::ifx_meaning_eq(&first, &different_flags));
-        assert!(!CommandProcessor::ifx_meaning_eq(
-            &first,
-            &different_parameter
-        ));
-        assert!(!CommandProcessor::ifx_meaning_eq(
-            &first,
-            &different_replacement
-        ));
+        let mut command = CommandState::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert!(processor.ifx_meaning_eq(&first, &equal));
+        assert!(!processor.ifx_meaning_eq(&first, &different_flags));
+        assert!(!processor.ifx_meaning_eq(&first, &different_parameter));
+        assert!(!processor.ifx_meaning_eq(&first, &different_replacement));
         let undefined = ResolvedMeaning::Static(Meaning::Undefined);
-        assert!(!CommandProcessor::ifx_meaning_eq(&undefined, &first));
-        assert!(CommandProcessor::ifx_meaning_eq(&undefined, &undefined));
+        assert!(!processor.ifx_meaning_eq(&undefined, &first));
+        assert!(processor.ifx_meaning_eq(&undefined, &undefined));
     });
 }
 

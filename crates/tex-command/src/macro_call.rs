@@ -53,6 +53,7 @@ pub(crate) struct MacroActivation<G> {
     /// §314 prints it as this level's context descriptor.
     pub(crate) name: Symbol,
     pub(crate) definition: DefinitionId<G>,
+    pub(crate) definition_region: tex_state::DefinitionRegionLease<G>,
     pub(crate) arguments: MacroArguments<G>,
     pub(crate) invocation: OriginId,
 }
@@ -139,12 +140,20 @@ impl<G> ParameterState<G> {
         &mut self,
         name: Symbol,
         definition: DefinitionId<G>,
+        definition_region: tex_state::DefinitionRegionLease<G>,
         arguments: MacroArguments<G>,
         invocation: OriginId,
     ) -> MacroActivationId {
         let identity = MacroActivationId(self.next_activation_identity);
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
-        self.install_activation(identity, name, definition, arguments, invocation);
+        self.install_activation(
+            identity,
+            name,
+            definition,
+            definition_region,
+            arguments,
+            invocation,
+        );
         identity
     }
 
@@ -153,10 +162,18 @@ impl<G> ParameterState<G> {
         identity: MacroActivationId,
         name: Symbol,
         definition: DefinitionId<G>,
+        definition_region: tex_state::DefinitionRegionLease<G>,
         arguments: MacroArguments<G>,
         invocation: OriginId,
     ) {
-        self.install_activation(identity, name, definition, arguments, invocation);
+        self.install_activation(
+            identity,
+            name,
+            definition,
+            definition_region,
+            arguments,
+            invocation,
+        );
     }
 
     fn install_activation(
@@ -164,6 +181,7 @@ impl<G> ParameterState<G> {
         identity: MacroActivationId,
         name: Symbol,
         definition: DefinitionId<G>,
+        definition_region: tex_state::DefinitionRegionLease<G>,
         arguments: MacroArguments<G>,
         invocation: OriginId,
     ) {
@@ -171,6 +189,7 @@ impl<G> ParameterState<G> {
             identity,
             name,
             definition,
+            definition_region,
             arguments,
             invocation,
         });
@@ -263,6 +282,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         };
         let flags = *flags;
+        let definition = *definition;
         let macro_name = call
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
@@ -272,9 +292,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             .scratch
             .begin_macro_match()
             .map_err(|_| CommandError::input_invariant())?;
-        let pattern = definition.parameter_pattern();
-        let parameter_len = definition.parameter_text().len();
-        self.trace_macro_invocation(macro_name, definition);
+        let definition_view = self.state.definition(definition);
+        let pattern = definition_view.parameter_pattern();
+        let parameter_len = definition_view.parameter_text().len();
+        let replacement_len = definition_view.replacement_text().len();
+        self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
@@ -303,7 +325,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let scanned_arguments = self.macro_call_scalar(
             &matching,
             macro_name,
-            definition,
+            &definition,
             flags,
             pattern,
             parameter_len,
@@ -364,13 +386,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             .commit_macro_match(matching)
             .map_err(|_| CommandError::input_invariant())?;
         let arguments = MacroArguments::new(frame);
-        let replacement_len = definition.replacement_text().len();
+        let definition_region = self.state.definition_region_lease(definition);
         let definition = call
             .take_settled_macro_definition()
             .ok_or_else(CommandError::input_invariant)?;
         let _level = self.push_macro_activation(
             macro_name,
             definition,
+            definition_region,
             call_site,
             arguments,
             replacement_len,
@@ -517,7 +540,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: &DefinitionId<G>,
         index: usize,
     ) -> Result<Token, CommandError> {
-        definition
+        self.state
+            .definition(*definition)
             .parameter_text()
             .get(index)
             .map(|word| word.semantic_token())
@@ -532,8 +556,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         if index >= delimiter.len {
             return Err(CommandError::input_invariant());
         }
-        delimiter
-            .definition
+        self.state
+            .definition(*delimiter.definition)
             .parameter_text()
             .get(delimiter.start + index)
             .copied()
@@ -556,6 +580,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // non-`#` parameter marker is stored beside its compact out-parameter
         // slot and must render as one pair (`U3`), not as the literal marker
         // followed by the generic `#3` spelling.
+        let definition = self.state.definition(*definition);
         crate::processor::expand_render::append_meaning_token_words(
             self.state,
             definition.parameter_text(),

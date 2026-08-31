@@ -175,6 +175,10 @@ pub(crate) enum TokenCollectorDestination<G> {
         parameter_result: Option<AttemptTokenListId>,
     },
     Definition {
+        definition: tex_state::DefinitionBuildKey<G>,
+        writing_replacement: bool,
+    },
+    AttemptDefinition {
         definition: AttemptDefinitionId,
         writing_replacement: bool,
     },
@@ -240,9 +244,21 @@ impl<G> TokenCollector<G> {
         }
     }
 
-    pub(crate) fn definition(definition: AttemptDefinitionId) -> Self {
+    pub(crate) fn definition(definition: tex_state::DefinitionBuildKey<G>) -> Self {
         Self {
             destination: TokenCollectorDestination::Definition {
+                definition,
+                writing_replacement: false,
+            },
+            phase: TokenCollectorPhase::Parameter,
+            brace_depth: 0,
+            pending_parameter: None,
+        }
+    }
+
+    pub(crate) fn attempt_definition(definition: AttemptDefinitionId) -> Self {
+        Self {
+            destination: TokenCollectorDestination::AttemptDefinition {
                 definition,
                 writing_replacement: false,
             },
@@ -308,7 +324,8 @@ impl<G> TokenCollector<G> {
             } => observed_source.take(),
             TokenCollectorDestination::MacroArgument { .. }
             | TokenCollectorDestination::TokenBuffers { .. }
-            | TokenCollectorDestination::Definition { .. } => None,
+            | TokenCollectorDestination::Definition { .. }
+            | TokenCollectorDestination::AttemptDefinition { .. } => None,
         }
     }
 

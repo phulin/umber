@@ -544,6 +544,7 @@ impl<G> CommandState<G> {
         &mut self,
         name: tex_state::interner::Symbol,
         definition: DefinitionId<G>,
+        definition_region: tex_state::DefinitionRegionLease<G>,
         arguments: MacroArguments<G>,
         invocation: OriginId,
         replacement_len: usize,
@@ -564,9 +565,13 @@ impl<G> CommandState<G> {
             .sum::<usize>()
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
-        let activation = self
-            .parameters
-            .push_activation(name, definition, arguments, invocation);
+        let activation = self.parameters.push_activation(
+            name,
+            definition,
+            definition_region,
+            arguments,
+            invocation,
+        );
         self.push_token_level_with_macro_lineage(
             PackedTokenSpanHandle::MacroReplacement {
                 len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),

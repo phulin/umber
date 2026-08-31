@@ -1145,6 +1145,7 @@ impl<G> InputState<G> {
         }
 
         fn span_token<G>(
+            stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
             replay_lane: &ReplayLane<G>,
             index: usize,
@@ -1153,7 +1154,7 @@ impl<G> InputState<G> {
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             PackedTokenSources::new(replay_lane, attempt, parameters)
-                .token_at(&tokens.span, tokens.behavior, index)
+                .token_at(&tokens.span, tokens.behavior, index, stores)
                 .map(|(word, _)| word.semantic_token())
         }
 
@@ -1228,14 +1229,21 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) =
-                span_token(tokens, replay_lane, index, parameters, attempt, scratch)
-            {
+            if let Some(token) = span_token(
+                stores,
+                tokens,
+                replay_lane,
+                index,
+                parameters,
+                attempt,
+                scratch,
+            ) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
         }
         if let Some((_, definition)) = &macro_context {
+            let definition = stores.definition(**definition);
             if !before.is_complete() {
                 before.prepend_str("->");
             }
@@ -1302,9 +1310,15 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) =
-                span_token(tokens, replay_lane, index, parameters, attempt, scratch)
-            {
+            if let Some(token) = span_token(
+                stores,
+                tokens,
+                replay_lane,
+                index,
+                parameters,
+                attempt,
+                scratch,
+            ) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

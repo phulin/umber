@@ -366,16 +366,10 @@ fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
 }
 
 #[test]
-fn generic_promotion_transfers_the_original_builder_allocation() {
+fn generic_cold_promotion_preserves_checked_definition_content() {
     tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
         let definition = definition(&mut attempt, &[], &[word('x'); 32]);
-        let storage = attempt
-            .definition_builder(definition)
-            .expect("live builder")
-            .words()
-            .as_ptr();
-
         let mut destination = TestPromotionDestination::new(&[], &[], &[definition], &[]);
         attempt
             .promote_into(universe, &mut destination)
@@ -383,7 +377,6 @@ fn generic_promotion_transfers_the_original_builder_allocation() {
         let context = universe.command_context().expect("admission");
         let promoted_view = context.definition(destination.definition(0).clone());
         assert_eq!(promoted_view.replacement_text().len(), 32);
-        assert_eq!(promoted_view.replacement_text().as_ptr(), storage);
         assert!(attempt.definition_builder(definition).is_err());
         let recycled = attempt
             .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
@@ -392,7 +385,7 @@ fn generic_promotion_transfers_the_original_builder_allocation() {
             .definition_builder(recycled)
             .expect("recycled builder");
         assert!(recycled.words().is_empty());
-        assert_eq!(recycled.capacity(), 0);
+        assert!(recycled.capacity() >= 32);
     })
     .expect("test fixture is valid");
 }

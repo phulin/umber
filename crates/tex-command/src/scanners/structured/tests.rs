@@ -105,13 +105,72 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         );
 
         let scanned = processor
-            .scan_macro_definition(false)
+            .scan_macro_definition(false, false)
             .expect("active-character definition");
         assert!(processor.take_semantic_diagnostics().is_empty());
         let target = scanned.target;
         drop(processor);
         drop(context);
         assert_eq!(universe.resolve(target), Some("~"));
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
+    crate::test_harness::with_universe(|universe| {
+        let source_id = universe.intern("letsource").expect("source name");
+        let source = source_id.symbol();
+        let target = universe.intern("lettarget").expect("target name").symbol();
+        let definition = universe
+            .allocate_definition(
+                &[],
+                &[tex_state::token::TokenWord::pack(Token::frozen_relax())],
+            )
+            .expect("source definition");
+        universe
+            .assign_meaning(
+                source_id,
+                tex_state::MeaningWord::macro_definition(
+                    tex_state::meaning::MeaningFlags::EMPTY,
+                    definition,
+                ),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("source meaning");
+
+        let one_scan = [Token::Cs(target), other('='), Token::Cs(source)];
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, one_scan.into_iter().chain(one_scan));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let (_, warm) = processor.scan_let_assignment(false).expect("warm let scan");
+        assert!(matches!(warm, tex_state::ResolvedMeaning::Macro { .. }));
+        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let retain_before = tex_state::definition_retain_count();
+        let (_, measured) = {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            processor
+                .scan_let_assignment(false)
+                .expect("measured let scan")
+        };
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert!(matches!(measured, tex_state::ResolvedMeaning::Macro { .. }));
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert_eq!(tex_state::definition_retain_count(), retain_before);
     });
 }
 

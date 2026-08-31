@@ -160,7 +160,11 @@ fn memo_publication_uses_destination_definition_identity_policy() {
         else {
             panic!("macro meaning")
         };
-        assert_eq!(direct.semantic_identity(), imported.semantic_identity());
+        let context = destination.command_context().expect("command context");
+        assert_eq!(
+            context.definition(direct).semantic_identity(),
+            context.definition(imported).semantic_identity()
+        );
     })
     .expect("test fixture is valid");
 }

@@ -5881,6 +5881,33 @@ fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
 }
 
 #[test]
+fn local_definition_region_survives_active_body_and_global_let_escape() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\result{bad}
+                \begingroup
+                  \def\source{promoted}
+                  \global\let\escaped=\source
+                  \def\cross{\endgroup\gdef\result{continued}}
+                  \cross
+                \end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(macro_character_text(stores, "escaped"), "promoted");
+        assert_eq!(macro_character_text(stores, "result"), "continued");
+        assert!(admitted!(stores, |context| {
+            let source = context.intern_control_sequence("source");
+            let cross = context.intern_control_sequence("cross");
+            context.meaning(source) == ResolvedMeaning::Static(Meaning::Undefined)
+                && context.meaning(cross) == ResolvedMeaning::Static(Meaning::Undefined)
+        }));
+    });
+}
+
+#[test]
 fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
     // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
     crate::test_harness::with_nonstop_plain_universe(|stores| {

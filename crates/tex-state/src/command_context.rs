@@ -889,8 +889,84 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
+    pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
         self.admitted.definition(id)
+    }
+
+    pub fn definition_region_lease(&self, id: DefinitionId<G>) -> crate::DefinitionRegionLease<G> {
+        self.admitted.definition_region_lease(id)
+    }
+
+    pub fn begin_definition_build(
+        &mut self,
+        global: bool,
+        origin: crate::token::OriginId,
+    ) -> Result<crate::DefinitionBuildKey<G>, crate::DefinitionAllocationError> {
+        let destination = if global || self.admitted.state_ref().current_level() == 1 {
+            crate::DefinitionDestination::Global
+        } else {
+            crate::DefinitionDestination::Local
+        };
+        self.admitted.begin_definition_build(destination, origin)
+    }
+
+    pub fn push_definition_parameter(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        word: TokenWord,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.admitted.push_definition_parameter(build, word)
+    }
+
+    pub fn finish_definition_parameters(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.admitted.finish_definition_parameters(build)
+    }
+
+    pub fn push_definition_replacement(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        word: TokenWord,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.admitted.push_definition_replacement(build, word)
+    }
+
+    pub fn seal_definition_build(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+    ) -> Result<DefinitionId<G>, crate::DefinitionBuildError> {
+        self.admitted.seal_definition_build(build)
+    }
+
+    pub fn abort_definition_build(&mut self, build: crate::DefinitionBuildKey<G>) {
+        self.admitted.abort_definition_build(build);
+    }
+
+    pub fn promote_definition_global(
+        &mut self,
+        definition: DefinitionId<G>,
+    ) -> Result<DefinitionId<G>, crate::DefinitionAllocationError> {
+        self.admitted.promote_definition_global(definition)
+    }
+
+    pub fn set_definition_origin(
+        &mut self,
+        definition: DefinitionId<G>,
+        origin: crate::token::OriginId,
+    ) -> Result<(), crate::DefinitionAllocationError> {
+        self.admitted.set_definition_origin(definition, origin)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    #[doc(hidden)]
+    pub fn profile_reserve_definition_arena(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), crate::DefinitionAllocationError> {
+        self.admitted.reserve_definition_arena(rows, words)
     }
 
     /// Identity policy fixed by this command context's admitted destination
@@ -1629,7 +1705,16 @@ impl<'a, G> CommandContext<'a, G> {
         kind: crate::GroupKind,
         entered_line: u32,
     ) -> Result<crate::GroupFrame, StateError> {
-        let frame = self.admitted.state().begin_group(kind, entered_line)?;
+        self.admitted
+            .begin_definition_group()
+            .map_err(|_| StateError::GroupDepthExhausted)?;
+        let frame = match self.admitted.state().begin_group(kind, entered_line) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.admitted.end_definition_group();
+                return Err(error);
+            }
+        };
         self.durable_boxes.begin_group(frame.level());
         Ok(frame)
     }
@@ -1639,6 +1724,7 @@ impl<'a, G> CommandContext<'a, G> {
         kind: crate::GroupKind,
     ) -> Result<crate::GroupRestorationReceipt<G>, StateError> {
         let mut receipt = self.admitted.state().end_group(kind)?;
+        self.admitted.end_definition_group();
         let trace = self.admitted.state_ref().group_restoration_trace_state()?;
         let durable = self
             .durable_boxes

@@ -1273,9 +1273,14 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .intern("mixeddelivery")
                 .expect("mixed delivery macro name")
                 .symbol();
+            let definition_region = universe
+                .command_context()
+                .expect("mixed delivery definition context")
+                .definition_region_lease(definition);
             command.push_macro_activation(
                 macro_name,
                 definition,
+                definition_region,
                 crate::macro_call::MacroArguments::new(macro_frame),
                 OriginId::UNKNOWN,
                 operations,

@@ -3,7 +3,9 @@
 use core::marker::PhantomData;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::definition_arena::DefinitionArena;
+use crate::definition_arena::{
+    AcceptedDefinitionTail, DefinitionArena, DefinitionArenaCursor, DefinitionCheckpointLease,
+};
 use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
 use crate::memory_accounting::MemoryAccounting;
 use crate::provenance::OriginRecord;
@@ -42,9 +44,10 @@ impl<G, Namespace> ArenaToken<G, Namespace> {
 
 /// Coarse owner of the publishers and inline arenas in one revision generation.
 ///
-/// Macro definitions and durable token lists leave their publisher through
-/// generation-branded shared owners. Glue and provenance remain compact
-/// direct-index values owned by this bundle.
+/// Macro definitions remain in structurally owned regions behind compact
+/// generation-branded keys. Durable token lists leave their publisher through
+/// generation-branded shared owners. Glue and provenance remain compact direct
+/// values owned by this bundle.
 pub(crate) struct Generation<G> {
     accounting: MemoryAccounting,
     definitions: DefinitionArena<G>,
@@ -55,14 +58,15 @@ pub(crate) struct Generation<G> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GenerationCursor {
-    definitions: u32,
+    definitions: DefinitionArenaCursor,
     token_lists: u32,
     glue: usize,
     provenance: usize,
 }
 
-pub(crate) struct AcceptedGenerationTail {
+pub(crate) struct AcceptedGenerationTail<G> {
     head: GenerationCursor,
+    definitions: AcceptedDefinitionTail<G>,
     glue: Vec<crate::glue::GlueSpec>,
     provenance: Vec<OriginRecord>,
 }
@@ -71,9 +75,43 @@ pub(crate) struct AcceptedGenerationTail {
 ///
 /// Cloning is deliberately available only at this coarse boundary. The
 /// backing publishers remain private. Ordinary admitted reads borrow this
-/// bundle; macro and token-list carriers retain their own non-atomic owner.
+/// bundle; local macro input rows may retain a coarse definition-region lease,
+/// while token-list carriers retain their exact non-atomic owner.
 pub struct GenerationOwner<G> {
     generation: Arc<RwLock<Generation<G>>>,
+}
+
+/// Coarse generation owner plus the local definition regions reachable from
+/// one state checkpoint.
+#[doc(hidden)]
+pub struct CheckpointGenerationOwner<G> {
+    generation: GenerationOwner<G>,
+    _definitions: DefinitionCheckpointLease<G>,
+}
+
+impl<G> Clone for CheckpointGenerationOwner<G> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: self.generation.clone(),
+            _definitions: self._definitions.clone(),
+        }
+    }
+}
+
+impl<G> CheckpointGenerationOwner<G> {
+    #[must_use]
+    pub(crate) const fn generation(&self) -> &GenerationOwner<G> {
+        &self.generation
+    }
+
+    pub(crate) fn into_generation(self) -> GenerationOwner<G> {
+        self.generation
+    }
+
+    #[must_use]
+    pub(crate) fn checkpoint_owner_id(&self) -> CheckpointOwnerId {
+        self.generation.checkpoint_owner_id()
+    }
 }
 
 /// Process-local identity of one coarse retained-generation owner.
@@ -127,6 +165,14 @@ impl<G> GenerationOwner<G> {
         self.generation
             .write()
             .expect("generation lock poisoned by a failed admitted episode")
+    }
+
+    pub(crate) fn checkpoint_owner(&self) -> CheckpointGenerationOwner<G> {
+        let definitions = self.generation().definitions().checkpoint_lease();
+        CheckpointGenerationOwner {
+            generation: self.clone(),
+            _definitions: definitions,
+        }
     }
 
     /// Returns whether this is the only coarse owner of the generation.
@@ -190,7 +236,7 @@ impl<G> Generation<G> {
     }
 
     pub(crate) fn validates_cursor(&self, cursor: GenerationCursor) -> bool {
-        cursor.definitions <= self.definitions.cursor()
+        self.definitions.validates_cursor(cursor.definitions)
             && cursor.token_lists <= self.token_lists.cursor()
             && cursor.glue <= self.glue.len()
             && cursor.provenance <= self.provenance.len()
@@ -217,15 +263,18 @@ impl<G> Generation<G> {
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         cursor: GenerationCursor,
-    ) -> AcceptedGenerationTail {
+    ) -> AcceptedGenerationTail<G> {
         assert!(self.validates_cursor(cursor));
         let head = self.cursor();
+        let definitions = self
+            .definitions
+            .begin_checkpoint_candidate(cursor.definitions);
         let glue = self.glue.split_off(cursor.glue);
         let provenance = self.provenance.split_off(cursor.provenance);
-        self.definitions.restore_cursor(cursor.definitions);
         self.token_lists.restore_cursor(cursor.token_lists);
         AcceptedGenerationTail {
             head,
+            definitions,
             glue,
             provenance,
         }
@@ -234,7 +283,7 @@ impl<G> Generation<G> {
     pub(crate) fn reject_checkpoint_candidate(
         &mut self,
         cursor: GenerationCursor,
-        mut tail: AcceptedGenerationTail,
+        mut tail: AcceptedGenerationTail<G>,
     ) {
         // Candidate-local publisher coordinates are disposable. They can be
         // lower than the rooted coordinate when initialization abandoned an
@@ -247,9 +296,14 @@ impl<G> Generation<G> {
         self.glue.append_rows(&mut tail.glue);
         self.provenance.append_rows(&mut tail.provenance);
         self.definitions
-            .restore_accepted_cursor(tail.head.definitions);
+            .reject_checkpoint_candidate(cursor.definitions, tail.definitions);
         self.token_lists
             .restore_accepted_cursor(tail.head.token_lists);
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedGenerationTail<G>) {
+        self.definitions
+            .accept_checkpoint_candidate(tail.definitions);
     }
 
     #[must_use]

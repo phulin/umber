@@ -327,7 +327,8 @@ impl DetachedFormatImage {
             .into_iter()
             .map(crate::env::DynamicMemoryRoot::TokenList);
         drop(pdf_node_roots);
-        let (definitions, mut token_lists, mut glue) = core.capture_format_values(pdf_roots);
+        let (definitions, definition_rows, mut token_lists, mut glue) =
+            core.capture_format_values(pdf_roots);
         let fonts = universe
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
@@ -355,7 +356,15 @@ impl DetachedFormatImage {
             .ok_or(FormatError::NonEmptyPdfDocument)?;
         let mut cells = core
             .state()
-            .capture_format_cells(|_| unreachable!("dense metadata has no node owners"))
+            .capture_format_cells(
+                |definition| {
+                    definition_rows
+                        .iter()
+                        .find_map(|(candidate, row)| (*candidate == definition).then_some(*row))
+                        .ok_or_else(|| "live definition is absent from format roots".to_owned())
+                },
+                |_| unreachable!("dense metadata has no node owners"),
+            )
             .map_err(FormatError::InvalidState)?;
         let mut box_cells = Vec::new();
         universe.durable_boxes.visit_current(|index, owner| {

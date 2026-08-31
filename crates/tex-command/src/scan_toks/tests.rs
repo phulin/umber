@@ -553,7 +553,10 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
         );
 
         processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            })
             .expect("EOF recovery closes the definition");
         assert_eq!(
             runaway_partial(&processor.command.semantic_diagnostics),
@@ -724,7 +727,10 @@ fn run_mixed_scan_workload<G>(
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded general scan");
         processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            })
             .expect("definition scan");
         processor
             .scan_toks(ScanToksMode::GeneralFor {
@@ -766,6 +772,11 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
             let measured_operation = command.begin_attempt_operation();
             command.profile_reset_token_collector_path_counters();
+            universe
+                .command_context()
+                .expect("definition arena reserve context")
+                .profile_reserve_definition_arena(rounds, 4 * rounds)
+                .expect("warm definition arena capacity");
             let delivery_owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let scratch_owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
             let delivery_before =
@@ -996,26 +1007,18 @@ fn macro_definition_scan_shares_one_checked_builder_coordinate() {
             &mut diagnostic_effects,
         );
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            })
             .expect("definition scan");
         assert!(!scanned.malformed_parameter);
         let definition = scanned.definition().expect("definition builder result");
-        assert!(
-            !processor
-                .command
-                .attempt
-                .arena()
-                .definition_parameter_words(definition)
-                .expect("parameter words")
-                .is_empty()
-        );
+        let definition = processor.state.definition(definition);
+        assert!(!definition.parameter_text().is_empty());
         assert_eq!(
-            processor
-                .command
-                .attempt
-                .arena()
-                .definition_replacement_words(definition)
-                .expect("replacement words")
+            definition
+                .replacement_text()
                 .last()
                 .map(|word| word.semantic_token()),
             Some(Token::Param(1))
@@ -1050,28 +1053,24 @@ fn macro_definition_hash_brace_shares_one_checked_builder_boundary() {
         );
 
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            })
             .expect("hash-brace definition scan");
         let definition = scanned.definition().expect("definition builder result");
+        let definition = processor.state.definition(definition);
         assert_eq!(
-            processor
-                .command
-                .attempt
-                .arena()
-                .definition_parameter_words(definition)
-                .expect("parameter words")
+            definition
+                .parameter_text()
                 .iter()
                 .map(|word| word.semantic_token())
                 .collect::<Vec<_>>(),
             [token('{', Catcode::BeginGroup)]
         );
         assert_eq!(
-            processor
-                .command
-                .attempt
-                .arena()
-                .definition_replacement_words(definition)
-                .expect("replacement words")
+            definition
+                .replacement_text()
                 .iter()
                 .map(|word| word.semantic_token())
                 .collect::<Vec<_>>(),
@@ -1118,26 +1117,14 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
         );
 
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: true })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: true,
+                global: false,
+            })
             .expect("expanded definition scan");
         let definition = scanned.definition().expect("definition builder result");
-        assert!(
-            processor
-                .command
-                .attempt
-                .arena()
-                .definition_parameter_words(definition)
-                .expect("parameter words")
-                .is_empty()
-        );
-        assert_eq!(
-            processor
-                .command
-                .attempt
-                .arena()
-                .definition_replacement_words(definition)
-                .expect("replacement words"),
-            [TokenWord::pack(expansion)]
-        );
+        let definition = processor.state.definition(definition);
+        assert!(definition.parameter_text().is_empty());
+        assert_eq!(definition.replacement_text(), [TokenWord::pack(expansion)]);
     });
 }

@@ -187,6 +187,8 @@ impl<G> Clone for MeaningWord<G> {
     }
 }
 
+impl<G> Copy for MeaningWord<G> {}
+
 impl<G> core::fmt::Debug for MeaningWord<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -304,8 +306,8 @@ impl<G> MeaningWord<G> {
     /// command slot.
     ///
     /// The row borrow ends before this call returns. Static meanings are
-    /// copied into the resident slot, while a macro row acquires exactly the
-    /// one definition owner that slot must retain.
+    /// copied into the resident slot, while a macro row copies only its compact
+    /// non-owning definition key.
     #[inline(always)]
     pub(crate) fn write_command_into(
         &self,
@@ -356,6 +358,8 @@ impl<G> Clone for ResolvedMeaning<G> {
         }
     }
 }
+
+impl<G> Copy for ResolvedMeaning<G> {}
 
 impl<G> core::fmt::Debug for ResolvedMeaning<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

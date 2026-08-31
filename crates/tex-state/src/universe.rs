@@ -15,7 +15,9 @@ use crate::env::{
 };
 use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
 use crate::fork_arena::{CheckpointMark, OperationMark, PageMaterialLane};
-use crate::generation::{GenerationBrand, GenerationCursor, GenerationOwner, with_generation};
+use crate::generation::{
+    CheckpointGenerationOwner, GenerationBrand, GenerationCursor, GenerationOwner, with_generation,
+};
 use crate::glue::GlueSpec;
 use crate::hyphenation::HyphenationCheckpoint;
 use crate::hyphenation::HyphenationTable;
@@ -753,7 +755,7 @@ pub type StateCheckpointMark<G, Input = DenseStateCursor> =
 
 /// Coarse generation owner plus bounded state cursors.
 pub type StateCheckpoint<G, Input = DenseStateCursor> =
-    GenerationCheckpoint<GenerationOwner<G>, StateCheckpointMark<G, Input>>;
+    GenerationCheckpoint<CheckpointGenerationOwner<G>, StateCheckpointMark<G, Input>>;
 
 impl From<PromotionError> for NodePromotionError {
     fn from(error: PromotionError) -> Self {
@@ -854,7 +856,7 @@ impl<G> Universe<G> {
         let Some(core) = self.core.as_ref() else {
             return false;
         };
-        core.owns_generation(checkpoint.state.owner())
+        core.owns_generation(checkpoint.state.owner().generation())
             && core.state().validate_restore(*mark.journal()).is_ok()
             && core.state().validate_checkpoint_cursor(*mark.input())
             && durable_ready
@@ -2053,6 +2055,11 @@ impl<G> Universe<G> {
         &mut self,
         builder: &mut crate::DefinitionBuilder,
     ) -> Result<DefinitionId<G>, PromotionError> {
+        let transient_words = builder
+            .parameter_text()
+            .len()
+            .saturating_add(builder.replacement_text().len())
+            .saturating_add(2);
         let id = self
             .core
             .as_mut()
@@ -2064,13 +2071,8 @@ impl<G> Universe<G> {
             })?
             .publish_definition_builder(builder)
             .map_err(PromotionError::from)?;
-        self.engine_usage.observe_transient_memory(
-            0,
-            id.parameter_text()
-                .len()
-                .saturating_add(id.replacement_text().len())
-                .saturating_add(2),
-        );
+        self.engine_usage
+            .observe_transient_memory(0, transient_words);
         Ok(id)
     }
 
@@ -2591,7 +2593,7 @@ impl<G> Universe<G> {
         page: CheckpointMark<PageMaterialLane>,
     ) -> Result<StateCheckpoint<G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let owner = core.generation_owner();
+        let owner = core.checkpoint_generation_owner();
         let journal = core.state_mut().journal_cursor();
         let dense = core.state().checkpoint_cursor();
         Ok(GenerationCheckpoint::new(
@@ -2681,7 +2683,7 @@ impl<G> Universe<G> {
             *live_mark.page(),
             *live_mark.input(),
         );
-        let owner = live_core.generation_owner();
+        let owner = live_core.checkpoint_generation_owner();
         let core_owner = owner.checkpoint_owner_id();
         let generation = live_core.generation_cursor();
         let source_mark = self.sources.watermark();
@@ -3031,7 +3033,18 @@ impl<G> Universe<G> {
         kind: GroupKind,
         entered_line: u32,
     ) -> Result<GroupFrame, UniverseError> {
-        let frame = self.live_state_mut()?.begin_group(kind, entered_line)?;
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        let mut admitted = core.admit_mut()?;
+        admitted
+            .begin_definition_group()
+            .map_err(|_| StateError::GroupDepthExhausted)?;
+        let frame = match admitted.state().begin_group(kind, entered_line) {
+            Ok(frame) => frame,
+            Err(error) => {
+                admitted.end_definition_group();
+                return Err(error.into());
+            }
+        };
         self.durable_boxes.begin_group(frame.level());
         Ok(frame)
     }
@@ -3040,7 +3053,13 @@ impl<G> Universe<G> {
         &mut self,
         kind: GroupKind,
     ) -> Result<crate::GroupRestorationReceipt<G>, UniverseError> {
-        let mut receipt = self.live_state_mut()?.end_group(kind)?;
+        let mut receipt = {
+            let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+            let mut admitted = core.admit_mut()?;
+            let receipt = admitted.state().end_group(kind)?;
+            admitted.end_definition_group();
+            receipt
+        };
         let trace = self
             .core
             .as_ref()
@@ -3365,17 +3384,17 @@ impl<G> ShipoutTransaction<'_, G> {
     }
 }
 
-impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G> {
+impl<G> RestoreTarget<CheckpointGenerationOwner<G>, StateCheckpointMark<G>> for Universe<G> {
     type Error = UniverseError;
     type Output = ();
 
     fn validate_restore(
         &self,
-        owner: &GenerationOwner<G>,
+        owner: &CheckpointGenerationOwner<G>,
         mark: &StateCheckpointMark<G>,
     ) -> Result<(), Self::Error> {
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
-        if !core.owns_generation(owner) || self.restore_owner.is_some() {
+        if !core.owns_generation(owner.generation()) || self.restore_owner.is_some() {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         core.state().validate_restore(*mark.journal())?;
@@ -3395,9 +3414,9 @@ impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G
         Ok(())
     }
 
-    fn acquire_target_owner(&mut self, owner: GenerationOwner<G>) {
+    fn acquire_target_owner(&mut self, owner: CheckpointGenerationOwner<G>) {
         debug_assert!(self.restore_owner.is_none());
-        self.restore_owner = Some(owner);
+        self.restore_owner = Some(owner.into_generation());
     }
 
     fn restore_dense_state(&mut self, mark: &StateCheckpointMark<G>) {

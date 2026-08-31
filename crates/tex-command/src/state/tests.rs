@@ -681,9 +681,13 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        let context = universe.command_context().expect("definition context");
         for (index, definition) in published.iter().enumerate() {
             let definition = definition.as_ref().expect("measured publication");
-            assert_eq!(definition.replacement_text(), [word('x').token_word()]);
+            assert_eq!(
+                context.definition(*definition).replacement_text(),
+                [word('x').token_word()]
+            );
             for other in &published[..index] {
                 assert_ne!(
                     definition,
@@ -694,9 +698,8 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
         }
 
         let final_definition = published[7].take().expect("last durable definition");
-        drop(published);
         assert_eq!(
-            final_definition.replacement_text(),
+            context.definition(final_definition).replacement_text(),
             [word('x').token_word()],
             "dropping the other durable ids cannot release this definition"
         );
@@ -875,9 +878,14 @@ fn operation_rollback_restores_the_opening_macro_depth() {
             .scratch
             .commit_macro_match(matching)
             .expect("sealed empty frame");
+        let definition_region = universe
+            .command_context()
+            .expect("command context")
+            .definition_region_lease(definition);
         state.parameters.push_activation(
             name,
             definition,
+            definition_region,
             crate::macro_call::MacroArguments::new(frame),
             OriginId::UNKNOWN,
         );
@@ -977,9 +985,14 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .scratch
             .commit_macro_match(matching)
             .expect("sealed empty frame");
+        let definition_region = universe
+            .command_context()
+            .expect("command context")
+            .definition_region_lease(definition);
         let level = state.push_macro_activation(
             name,
             definition,
+            definition_region,
             crate::macro_call::MacroArguments::new(frame),
             OriginId::UNKNOWN,
             0,
@@ -1011,7 +1024,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
 }
 
 #[test]
-fn warmed_macro_activations_retain_one_definition_owner_each() {
+fn warmed_macro_activations_copy_only_compact_definition_keys() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
             .allocate_definition(&[], &[])
@@ -1031,6 +1044,7 @@ fn warmed_macro_activations_retain_one_definition_owner_each() {
                 let level = state.push_macro_activation(
                     name,
                     definition.clone(),
+                    context.definition_region_lease(definition),
                     crate::macro_call::MacroArguments::new(frame),
                     OriginId::UNKNOWN,
                     0,
@@ -1040,7 +1054,7 @@ fn warmed_macro_activations_retain_one_definition_owner_each() {
                     .activations
                     .last()
                     .expect("live macro activation");
-                assert_eq!(activation.definition.semantic_owner_count(), 2);
+                assert_eq!(activation.definition.semantic_owner_count(), 0);
                 assert!(matches!(
                     state.input.levels.last(),
                     Some(crate::input::InputLevel::Tokens(
@@ -1060,12 +1074,12 @@ fn warmed_macro_activations_retain_one_definition_owner_each() {
                 state
                     .retire_exhausted_input(level)
                     .expect("empty macro body retirement");
-                assert_eq!(definition.semantic_owner_count(), 1);
+                assert_eq!(definition.semantic_owner_count(), 0);
             }
             assert_eq!(
                 tex_state::definition_retain_count() - retained_before,
-                activations,
-                "the caller creates the activation owner and the span retains none"
+                0,
+                "compact definition keys do not retain per-definition owners"
             );
         };
 

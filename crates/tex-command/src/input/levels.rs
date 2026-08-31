@@ -282,8 +282,12 @@ impl<G> TokenCursor<G> {
 
     /// Peeks without advancing for stack-conservation and lifecycle checks.
     #[inline(always)]
-    pub(crate) fn token_at(&self, sources: PackedTokenSources<'_, G>) -> Option<PackedTokenAt> {
-        sources.token_at(&self.span, self.behavior, self.position())
+    pub(crate) fn token_at(
+        &self,
+        sources: PackedTokenSources<'_, G>,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Option<PackedTokenAt> {
+        sources.token_at(&self.span, self.behavior, self.position(), state)
     }
 
     /// Delivers the canonical word at the fixed frame's scalar position.
@@ -308,7 +312,11 @@ impl<G> TokenCursor<G> {
                 sources
                     .parameters
                     .active_activation(activation)
-                    .and_then(|activation| activation.definition.replacement_word(index))
+                    .and_then(|activation| {
+                        state
+                            .definition(activation.definition)
+                            .replacement_word(index)
+                    })
                     .map(|word| (word, OriginId::UNKNOWN))
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => sources
@@ -422,6 +430,8 @@ pub(crate) struct PackedTokenSources<'a, G> {
     replay: &'a ReplayLane<G>,
     attempt: &'a crate::attempt::AttemptArena<G>,
     parameters: &'a crate::macro_call::ParameterState<G>,
+    #[cfg(any(test, feature = "profiling"))]
+    benchmark_macro: Option<&'a [TokenWord]>,
 }
 
 impl<'a, G> PackedTokenSources<'a, G> {
@@ -434,6 +444,41 @@ impl<'a, G> PackedTokenSources<'a, G> {
             replay,
             attempt,
             parameters,
+            #[cfg(any(test, feature = "profiling"))]
+            benchmark_macro: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    const fn with_benchmark_macro(mut self, words: &'a [TokenWord]) -> Self {
+        self.benchmark_macro = Some(words);
+        self
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    fn benchmark_token_at(
+        &self,
+        span: &PackedTokenSpanHandle<G>,
+        index: usize,
+    ) -> Option<PackedTokenAt> {
+        match span {
+            PackedTokenSpanHandle::Replay { replay, .. } => self
+                .replay
+                .get(*replay, index)
+                .map(|word| (word.token_word(), word.origin())),
+            PackedTokenSpanHandle::MacroReplacement { .. } => self
+                .benchmark_macro?
+                .get(index)
+                .copied()
+                .map(|word| (word, OriginId::UNKNOWN)),
+            PackedTokenSpanHandle::AttemptList { list, .. } => self
+                .attempt
+                .token_word(*list, index)
+                .ok()
+                .map(|word| (word.token_word(), word.origin())),
+            PackedTokenSpanHandle::DurableList { list, .. } => {
+                list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
+            }
         }
     }
 
@@ -443,6 +488,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         span: &PackedTokenSpanHandle<G>,
         behavior: TokenBehavior,
         index: usize,
+        state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
         match span {
             PackedTokenSpanHandle::Replay { replay, .. } => self
@@ -455,7 +501,11 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 };
                 self.parameters
                     .activation(identity)
-                    .and_then(|activation| activation.definition.replacement_word(index))
+                    .and_then(|activation| {
+                        state
+                            .definition(activation.definition)
+                            .replacement_word(index)
+                    })
                     .map(|word| (word, OriginId::UNKNOWN))
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => self
@@ -1705,6 +1755,7 @@ pub struct MixedPackedCursorBenchmark<G> {
     attempt: crate::attempt::AttemptArena<G>,
     parameters: crate::macro_call::ParameterState<G>,
     scratch: crate::execution_scratch::ExecutionScratch<G>,
+    semantic: [TokenWord; 4],
 }
 
 /// Absolute work receipt from one warmed mixed-source cursor run.
@@ -1735,9 +1786,12 @@ impl<G> MixedPackedCursorBenchmark<G> {
         let durable = universe
             .allocate_token_list(&semantic)
             .expect("mixed-cursor durable list");
-        let durable = {
+        let (durable, definition_region) = {
             let context = universe.command_context().expect("command context");
-            PackedTokenSpanHandle::durable(context.token_list(durable))
+            (
+                PackedTokenSpanHandle::durable(context.token_list(durable)),
+                context.definition_region_lease(definition),
+            )
         };
 
         let mut replay = ReplayLane::default();
@@ -1787,6 +1841,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
         let activation = parameters.push_activation(
             name,
             definition,
+            definition_region,
             crate::macro_call::MacroArguments::new(frame),
             OriginId::UNKNOWN,
         );
@@ -1817,6 +1872,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
             attempt,
             parameters,
             scratch,
+            semantic,
         }
     }
 
@@ -1824,18 +1880,19 @@ impl<G> MixedPackedCursorBenchmark<G> {
     /// scalar cursors after every source has crossed real span ends.
     pub fn run(&mut self, rounds: u32) -> MixedPackedCursorReceipt {
         let opening = self.positions;
-        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.parameters);
+        let sources = PackedTokenSources::new(&self.replay, &self.attempt, &self.parameters)
+            .with_benchmark_macro(&self.semantic);
         let mut checksum = 0_u64;
         let mut retirements = 0_u64;
         for _ in 0..rounds {
-            for ((span, behavior), position) in self
+            for ((span, _behavior), position) in self
                 .spans
                 .iter()
                 .zip(self.behaviors)
                 .zip(&mut self.positions[..4])
             {
                 let (word, origin) = sources
-                    .token_at(span, behavior, *position as usize)
+                    .benchmark_token_at(span, *position as usize)
                     .expect("mixed packed cursor remains within its span");
                 debug_assert_eq!(origin, OriginId::UNKNOWN);
                 checksum = checksum.wrapping_add(u64::from(word.raw()));
@@ -1858,14 +1915,14 @@ impl<G> MixedPackedCursorBenchmark<G> {
             }
         }
         self.positions = opening;
-        for ((span, behavior), position) in self
+        for ((span, _behavior), position) in self
             .spans
             .iter()
             .zip(self.behaviors)
             .zip(self.positions[..4].iter().copied())
         {
             let _ = sources
-                .token_at(span, behavior, position as usize)
+                .benchmark_token_at(span, position as usize)
                 .expect("rollback restores the exact packed cursor");
         }
         let _ = self

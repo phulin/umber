@@ -96,9 +96,13 @@ pub(crate) enum ScanToksMode {
     /// spelling enters its final backed-up input owner.
     CaseShift { uppercase: bool },
     /// Collect a macro parameter text followed by its replacement text.
-    MacroDefinition { expanded: bool },
+    MacroDefinition { expanded: bool, global: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
-    MacroDefinitionFor { expanded: bool, target: Symbol },
+    MacroDefinitionFor {
+        expanded: bool,
+        target: Symbol,
+        global: bool,
+    },
 }
 
 /// Parsed grammar of one canonical token-list collection.
@@ -112,6 +116,7 @@ enum ScanToksGrammar {
 enum ScanToksDestination {
     Attempt,
     ReplayInput { transform: ReplayWordTransform },
+    Definition { global: bool },
 }
 
 /// How the collector reaches the opening delimiter of its body.
@@ -135,6 +140,12 @@ enum ScanToksExpansion {
 impl ScanToksExpansion {
     const fn is_expanded(self) -> bool {
         matches!(self, Self::Expanded)
+    }
+}
+
+impl ScanToksConfig {
+    const fn permits_resource_continuation(self) -> bool {
+        !matches!(self.grammar, ScanToksGrammar::MacroDefinition) || self.expansion.is_expanded()
     }
 }
 
@@ -187,7 +198,8 @@ enum ScannedToksStorage<G> {
         parameter: AttemptTokenListId,
         replacement: AttemptTokenListId,
     },
-    Definition(AttemptDefinitionId),
+    Definition(tex_state::DefinitionId<G>),
+    AttemptDefinition(AttemptDefinitionId),
     ReplayInputBuilder {
         builder: crate::input::ReplayInputBuilderId<G>,
         len: u32,
@@ -467,18 +479,22 @@ impl ScanToksConfig {
                 purpose: ScanToksPurpose::Balanced,
                 status_visibility: ScannerStatusVisibility::Observed,
             },
-            ScanToksMode::MacroDefinition { expanded } => Self {
+            ScanToksMode::MacroDefinition { expanded, global } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
-                destination: ScanToksDestination::Attempt,
+                destination: ScanToksDestination::Definition { global },
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(None),
                 purpose: ScanToksPurpose::MacroReplacement,
                 status_visibility: ScannerStatusVisibility::Observed,
             },
-            ScanToksMode::MacroDefinitionFor { expanded, target } => Self {
+            ScanToksMode::MacroDefinitionFor {
+                expanded,
+                target,
+                global,
+            } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
-                destination: ScanToksDestination::Attempt,
+                destination: ScanToksDestination::Definition { global },
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(Some(target)),
@@ -526,11 +542,12 @@ pub(crate) struct ScannedToksBuffers<G> {
 }
 
 impl<G> ScannedToksBuffers<G> {
-    pub(crate) fn definition(self) -> Option<AttemptDefinitionId> {
+    pub(crate) fn definition(self) -> Option<tex_state::DefinitionId<G>> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
             ScannedToksStorage::Tokens { .. }
             | ScannedToksStorage::ReplayInputBuilder { .. }
+            | ScannedToksStorage::AttemptDefinition(_)
             | ScannedToksStorage::ReplayInput { .. } => None,
         }
     }
@@ -542,6 +559,7 @@ impl<G> ScannedToksBuffers<G> {
             }
             ScannedToksStorage::Tokens { .. }
             | ScannedToksStorage::Definition(_)
+            | ScannedToksStorage::AttemptDefinition(_)
             | ScannedToksStorage::ReplayInputBuilder { .. } => None,
         }
     }
@@ -685,6 +703,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 TokenCollector::token_buffers(parameter, replacement)
             }
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
+                let definition = self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .allocate_definition_builder(self.state.definition_identity_policy())
+                    .map_err(attempt_command_error)?;
+                TokenCollector::attempt_definition(definition)
+            }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
                 let builder = self
                     .command
@@ -695,16 +722,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(scratch_command_error)?;
                 TokenCollector::replay_input(builder, transform, observed)
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition { global }) => {
                 let definition = self
-                    .command
-                    .attempt
-                    .arena_mut()
-                    .allocate_definition_builder(self.state.definition_identity_policy())
-                    .map_err(attempt_command_error)?;
+                    .state
+                    .begin_definition_build(global, OriginId::UNKNOWN)
+                    .map_err(definition_allocation_command_error)?;
                 TokenCollector::definition(definition)
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. }) => {
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. })
+            | (ScanToksGrammar::General, ScanToksDestination::Definition { .. }) => {
                 return Err(CommandError::input_invariant());
             }
         };
@@ -729,6 +755,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .discard_input_builder(*builder)
                 .map_err(scratch_command_error)?;
         }
+        if let TokenCollectorDestination::Definition { definition, .. } = collector.destination() {
+            self.state.abort_definition_build(*definition);
+        }
         Ok(())
     }
 
@@ -751,12 +780,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                 definition,
                 writing_replacement: false,
             } => self
+                .state
+                .push_definition_parameter(*definition, word.token_word())
+                .map_err(definition_build_command_error),
+            TokenCollectorDestination::AttemptDefinition {
+                definition,
+                writing_replacement: false,
+            } => self
                 .command
                 .attempt
                 .arena_mut()
                 .push_definition_parameter(*definition, word.token_word())
                 .map_err(attempt_command_error),
             TokenCollectorDestination::Definition {
+                definition,
+                writing_replacement: true,
+            } => self
+                .state
+                .push_definition_replacement(*definition, word.token_word())
+                .map_err(definition_build_command_error),
+            TokenCollectorDestination::AttemptDefinition {
                 definition,
                 writing_replacement: true,
             } => self
@@ -852,6 +895,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 definition,
                 writing_replacement,
             } if !*writing_replacement => {
+                self.state
+                    .finish_definition_parameters(*definition)
+                    .map_err(definition_build_command_error)?;
+                *writing_replacement = true;
+            }
+            TokenCollectorDestination::AttemptDefinition {
+                definition,
+                writing_replacement,
+            } if !*writing_replacement => {
                 self.command
                     .attempt
                     .arena_mut()
@@ -897,12 +949,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                 definition,
                 writing_replacement: true,
             } => {
+                let definition = self
+                    .state
+                    .seal_definition_build(*definition)
+                    .map_err(definition_build_command_error)?;
+                ScannedToksStorage::Definition(definition)
+            }
+            TokenCollectorDestination::AttemptDefinition {
+                definition,
+                writing_replacement: true,
+            } => {
                 self.command
                     .attempt
                     .arena_mut()
                     .finish_definition(*definition)
                     .map_err(attempt_command_error)?;
-                ScannedToksStorage::Definition(*definition)
+                ScannedToksStorage::AttemptDefinition(*definition)
             }
             TokenCollectorDestination::ReplayInput { builder, .. } => {
                 let len = self
@@ -939,7 +1001,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_words(parameter)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::Definition(definition) => arena
+            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::Semantic(
+                self.state.definition(definition).parameter_text(),
+            )),
+            ScannedToksStorage::AttemptDefinition(definition) => arena
                 .definition_parameter_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
@@ -958,7 +1023,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_words(replacement)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::Definition(definition) => arena
+            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::Semantic(
+                self.state.definition(definition).replacement_text(),
+            )),
+            ScannedToksStorage::AttemptDefinition(definition) => arena
                 .definition_replacement_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
@@ -1086,7 +1154,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         let mut result = match result {
             Ok(result) => result,
-            Err(error) if error.is_resource_suspension() => {
+            Err(error)
+                if error.is_resource_suspension()
+                    && pending.config.permits_resource_continuation() =>
+            {
                 if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
                     self.settle_failed_scan_toks(pending)?;
                     return Err(error);
@@ -2233,7 +2304,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         })?;
         let direct_destination = match collector.destination() {
             TokenCollectorDestination::TokenBuffers { writer, .. } => Some(*writer),
-            TokenCollectorDestination::Definition { .. } => None,
+            TokenCollectorDestination::Definition { .. }
+            | TokenCollectorDestination::AttemptDefinition { .. } => None,
             TokenCollectorDestination::MacroArgument { .. }
             | TokenCollectorDestination::ReplayInput { .. } => {
                 return Err(CommandError::input_invariant());
@@ -2453,6 +2525,32 @@ pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     }
 }
 
+fn definition_allocation_command_error(
+    error: tex_state::DefinitionAllocationError,
+) -> CommandError {
+    match error {
+        tex_state::DefinitionAllocationError::AllocationFailed
+        | tex_state::DefinitionAllocationError::CapacityOverflow => {
+            CommandError::Fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+        }
+        tex_state::DefinitionAllocationError::InvalidDefinition
+        | tex_state::DefinitionAllocationError::IdentityPolicyMismatch => {
+            CommandError::input_invariant()
+        }
+    }
+}
+
+fn definition_build_command_error(error: tex_state::DefinitionBuildError) -> CommandError {
+    match error {
+        tex_state::DefinitionBuildError::AllocationFailed
+        | tex_state::DefinitionBuildError::CapacityOverflow => {
+            CommandError::Fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+        }
+        tex_state::DefinitionBuildError::InvalidPhase
+        | tex_state::DefinitionBuildError::InvalidProgram(_) => CommandError::input_invariant(),
+    }
+}
+
 pub(crate) fn scratch_command_error(error: crate::execution_scratch::ScratchError) -> CommandError {
     match error {
         crate::execution_scratch::ScratchError::CapacityOverflow
@@ -2563,7 +2661,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.is_observed(),
             )?;
             let definition = match collector.destination() {
-                TokenCollectorDestination::Definition {
+                TokenCollectorDestination::AttemptDefinition {
                     definition,
                     writing_replacement: false,
                 } => *definition,
@@ -2578,7 +2676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // meaning mutation, whose macro body includes §482's leading
             // `end_match_token`.
             match self.finish_scan_toks_collector(&mut collector)? {
-                ScannedToksStorage::Definition(completed) if completed == definition => {}
+                ScannedToksStorage::AttemptDefinition(completed) if completed == definition => {}
                 _ => return Err(CommandError::input_invariant()),
             }
             self.command
@@ -2840,7 +2938,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let definition = match (collector.destination(), collector.phase()) {
             (
-                TokenCollectorDestination::Definition {
+                TokenCollectorDestination::AttemptDefinition {
                     definition,
                     writing_replacement: true,
                 },

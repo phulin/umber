@@ -162,11 +162,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             match level {
                 InputLevel::Tokens(cursor) => {
                     if cursor
-                        .token_at(PackedTokenSources::new(
-                            &self.command.input.replay,
-                            self.command.attempt.arena(),
-                            &self.command.parameters,
-                        ))
+                        .token_at(
+                            PackedTokenSources::new(
+                                &self.command.input.replay,
+                                self.command.attempt.arena(),
+                                &self.command.parameters,
+                            ),
+                            self.state,
+                        )
                         .is_some()
                     {
                         break;

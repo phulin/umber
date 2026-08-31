@@ -61,7 +61,7 @@ fn admitted_meanings_are_direct_dense_slots() {
 }
 
 #[test]
-fn borrowed_meaning_row_acquires_one_owner_only_when_resolved() {
+fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
     crate::generation::with_generation(|mut generation| {
         let definition = generation
             .definitions_mut()
@@ -80,22 +80,22 @@ fn borrowed_meaning_row_acquires_one_owner_only_when_resolved() {
                 AssignmentScope::Global,
             )
             .expect("assign macro");
-        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(definition.semantic_owner_count(), 0);
 
         let word = state.meaning_word(selector.symbol()).expect("borrow row");
         assert_eq!(
             definition.semantic_owner_count(),
-            2,
-            "borrowing the dense row must not acquire the macro owner"
+            0,
+            "borrowing the dense row performs no region retain"
         );
         let resolved = word.resolve();
         assert_eq!(
             definition.semantic_owner_count(),
-            3,
-            "resolving into the owned delivery acquires exactly one owner"
+            0,
+            "delivery copies only the compact definition key"
         );
-        drop(resolved);
-        assert_eq!(definition.semantic_owner_count(), 2);
+        let _ = resolved;
+        assert_eq!(definition.semantic_owner_count(), 0);
     });
 }
 
@@ -128,11 +128,11 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
-        assert_eq!(definition.semantic_owner_count(), 2);
+        assert_eq!(definition.semantic_owner_count(), 0);
         assert_eq!(tokens.semantic_owner_count(), 2);
 
         state.restore(before).expect("rollback");
-        assert_eq!(definition.semantic_owner_count(), 1);
+        assert_eq!(definition.semantic_owner_count(), 0);
         assert_eq!(tokens.semantic_owner_count(), 1);
     });
 }

@@ -270,7 +270,11 @@ fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
                 .expect("live activation");
             assert_eq!(activation.definition.semantic_owner_count(), owners_before);
             assert_eq!(
-                activation.definition.replacement_text().len(),
+                processor
+                    .state
+                    .definition(activation.definition)
+                    .replacement_text()
+                    .len(),
                 expected_replacement_len
             );
             assert!(matches!(

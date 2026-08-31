@@ -976,10 +976,10 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         .nth(1)
         .and_then(|tail| tail.split("fn scan_if_relation(").next())
         .expect("locate borrowed ifx meaning comparison");
-    assert!(ifx_comparison.contains("first_definition.parameter_text()"));
-    assert!(ifx_comparison.contains("second_definition.replacement_text()"));
+    assert!(ifx_comparison.contains("first.parameter_text()"));
+    assert!(ifx_comparison.contains("second.replacement_text()"));
     assert!(!ifx_comparison.contains(".clone()"));
-    assert!(!ifx_comparison.contains("self.state.definition("));
+    assert_eq!(ifx_comparison.matches("self.state.definition(").count(), 2);
     assert!(conditionals.contains("fn expand_unless("));
     assert!(conditionals.contains("inverted"));
     assert!(!input.contains("ConditionStack"));

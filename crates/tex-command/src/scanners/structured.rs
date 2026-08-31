@@ -775,25 +775,14 @@ pub struct ExpandedWriteText {
 
 /// One checked attempt-local macro-definition builder.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedMacroDefinition {
+pub struct ScannedMacroDefinition<G> {
     /// The raw control-sequence (or active-character) target accepted by
     /// TeX82's `prefixed_command`.  Target delivery is command-owned so the
     /// executor never has to reopen raw input between the primitive and its
     /// single-builder parameter/replacement scan.
     pub target: Symbol,
-    pub definition: AttemptDefinitionId,
+    pub definition: tex_state::DefinitionId<G>,
     pub provenance: StructuredProvenance,
-}
-
-/// A completed TeX82 `\let` or `\futurelet` assignment.
-///
-/// The command processor owns every raw operand delivery, including the
-/// optional equals sign and `\futurelet`'s lookahead replay. Replay receives
-/// only the target and its already-resolved source meaning.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScannedLetAssignment<G> {
-    pub target: Symbol,
-    pub meaning: ResolvedMeaning<G>,
 }
 
 /// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.
@@ -8293,7 +8282,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_macro_definition(
         &mut self,
         expanded: bool,
-    ) -> Result<ScannedMacroDefinition, CommandError> {
+        global: bool,
+    ) -> Result<ScannedMacroDefinition<G>, CommandError> {
         let target = if let Some(target) = self
             .pending_scanner_frame()
             .map_err(|_| CommandError::input_invariant())?
@@ -8313,14 +8303,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.scan_definition_target()?
             }
         };
-        let scanned =
-            self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor { expanded, target })?;
+        let scanned = self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor {
+            expanded,
+            target,
+            global,
+        })?;
         let provenance = StructuredProvenance {
             primary: scanned.primary,
         };
         let definition = scanned
             .definition()
             .ok_or(CommandError::input_invariant())?;
+        self.state
+            .set_definition_origin(definition, provenance.primary)
+            .map_err(|_| CommandError::input_invariant())?;
         Ok(ScannedMacroDefinition {
             target,
             definition,
@@ -8340,7 +8336,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_let_assignment(
         &mut self,
         future: bool,
-    ) -> Result<ScannedLetAssignment<G>, CommandError> {
+    ) -> Result<(Symbol, ResolvedMeaning<G>), CommandError> {
         let mut destination = None;
         if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
@@ -8410,7 +8406,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             source.into_meaning()
         };
-        Ok(ScannedLetAssignment { target, meaning })
+        Ok((target, meaning))
     }
 
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input

@@ -150,7 +150,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
                     ) => 2,
                     (2 | 6, ResolvedMeaning::Macro { flags, definition })
                         if *flags == MeaningFlags::LONG
-                            && definition.replacement_word(0)
+                            && state.definition(*definition).replacement_word(0)
                                 == Some(TokenWord::pack(Token::Char {
                                     ch: 'm',
                                     cat: Catcode::Letter,

@@ -145,11 +145,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     InputLevel::Tokens(cursor) => {
                         (!matches!(cursor.behavior, TokenBehavior::VTemplate)
                             && cursor
-                                .token_at(PackedTokenSources::new(
-                                    &self.command.input.replay,
-                                    self.command.attempt.arena(),
-                                    &self.command.parameters,
-                                ))
+                                .token_at(
+                                    PackedTokenSources::new(
+                                        &self.command.input.replay,
+                                        self.command.attempt.arena(),
+                                        &self.command.parameters,
+                                    ),
+                                    self.state,
+                                )
                                 .is_none())
                         .then(|| cursor.identity())
                     }
@@ -231,11 +234,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
             InputLevel::Tokens(cursor) => cursor
-                .token_at(PackedTokenSources::new(
-                    &self.command.input.replay,
-                    self.command.attempt.arena(),
-                    &self.command.parameters,
-                ))
+                .token_at(
+                    PackedTokenSources::new(
+                        &self.command.input.replay,
+                        self.command.attempt.arena(),
+                        &self.command.parameters,
+                    ),
+                    self.state,
+                )
                 .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
             InputLevel::MacroArgument(_) => unreachable!("output replay is not an argument"),
@@ -252,7 +258,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
                                     &self.command.parameters,
-                                ))
+                                ), self.state)
                             .is_none()
                 )
             });
@@ -278,11 +284,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     {
                         Some(
                             cursor
-                                .token_at(PackedTokenSources::new(
-                                    &self.command.input.replay,
-                                    self.command.attempt.arena(),
-                                    &self.command.parameters,
-                                ))
+                                .token_at(
+                                    PackedTokenSources::new(
+                                        &self.command.input.replay,
+                                        self.command.attempt.arena(),
+                                        &self.command.parameters,
+                                    ),
+                                    self.state,
+                                )
                                 .is_some(),
                         )
                     }
@@ -319,11 +328,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
             || cursor
-                .token_at(PackedTokenSources::new(
-                    &self.command.input.replay,
-                    self.command.attempt.arena(),
-                    &self.command.parameters,
-                ))
+                .token_at(
+                    PackedTokenSources::new(
+                        &self.command.input.replay,
+                        self.command.attempt.arena(),
+                        &self.command.parameters,
+                    ),
+                    self.state,
+                )
                 .is_some()
             || !matches!(
                 match cursor.span {
@@ -535,11 +547,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
                         && cursor
-                            .token_at(PackedTokenSources::new(
-                                &self.command.input.replay,
-                                self.command.attempt.arena(),
-                                &self.command.parameters,
-                            ))
+                            .token_at(
+                                PackedTokenSources::new(
+                                    &self.command.input.replay,
+                                    self.command.attempt.arena(),
+                                    &self.command.parameters,
+                                ),
+                                self.state,
+                            )
                             .is_none() =>
                 {
                     Some(cursor.identity())

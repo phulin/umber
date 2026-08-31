@@ -1293,16 +1293,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         let (first, second) = operands?;
         let first = first.expect("command status initializes destination");
         let second = second.expect("command status initializes destination");
-        Ok(Self::ifx_meaning_eq(
-            first.meaning_ref(),
-            second.meaning_ref(),
-        ))
+        Ok(self.ifx_meaning_eq(first.meaning_ref(), second.meaning_ref()))
     }
 
     /// TeX compares macro meanings by their defining token lists, not by the
     /// engine's allocation identity for the macro definition. All other
     /// meanings retain their direct raw-meaning equality.
-    fn ifx_meaning_eq(first: &ResolvedMeaning<G>, second: &ResolvedMeaning<G>) -> bool {
+    fn ifx_meaning_eq(&self, first: &ResolvedMeaning<G>, second: &ResolvedMeaning<G>) -> bool {
         let (
             ResolvedMeaning::Macro {
                 flags: first_flags,
@@ -1320,8 +1317,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         if first_flags != second_flags {
             return false;
         }
-        first_definition.parameter_text() == second_definition.parameter_text()
-            && first_definition.replacement_text() == second_definition.replacement_text()
+        let first = self.state.definition(*first_definition);
+        let second = self.state.definition(*second_definition);
+        first.parameter_text() == second.parameter_text()
+            && first.replacement_text() == second.replacement_text()
     }
 
     /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the

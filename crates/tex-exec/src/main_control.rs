@@ -7050,11 +7050,6 @@ impl<G> MainControl<G> {
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let fires_afterassignment = operation.fires_afterassignment();
-        hot_apply::prepare(operation, &mut self.command, stores).map_err(|_| {
-            ExecError::MissingToken {
-                context: "hot operation root preparation",
-            }
-        })?;
         // TeX82 §1211's measured definition, let, and catcode arms reach
         // §1269's `done` label without an intervening host transition. Admit
         // their authoritative state directly in this callback's stack slot,

@@ -578,6 +578,7 @@ impl<G> DenseState<G> {
 
     pub(crate) fn capture_format_cells(
         &self,
+        mut definition_row: impl FnMut(crate::DefinitionId<G>) -> Result<u32, String>,
         _node_row: impl FnMut(DurableNodeMetadata) -> Result<u32, String>,
     ) -> Result<Vec<crate::format::schema::FormatCell>, String> {
         use crate::format::schema::{FormatCell, FormatMeaning};
@@ -590,7 +591,7 @@ impl<G> DenseState<G> {
                 MeaningWord::Font(font) => FormatMeaning::Font(font.raw()),
                 MeaningWord::Macro { flags, definition } => FormatMeaning::Macro {
                     flags: flags.bits(),
-                    definition: definition.format_index(),
+                    definition: definition_row(definition)?,
                 },
             };
             cells.push(FormatCell::Meaning(index as u32, meaning));

@@ -8,7 +8,8 @@ use crate::env::{
     AcceptedDenseStateTail, DenseState, DenseStateCursor, DynamicMemoryRoot, StateError,
 };
 use crate::generation::{
-    AcceptedGenerationTail, Generation, GenerationCursor, GenerationOwner, GenerationRetirement,
+    AcceptedGenerationTail, CheckpointGenerationOwner, Generation, GenerationCursor,
+    GenerationOwner, GenerationRetirement,
 };
 use crate::glue::GlueSpec;
 use crate::provenance::OriginRecord;
@@ -53,7 +54,7 @@ pub(crate) struct StateCore<G> {
 
 pub(crate) struct AcceptedStateCoreTail<G> {
     dense: AcceptedDenseStateTail<G>,
-    generation: AcceptedGenerationTail,
+    generation: AcceptedGenerationTail<G>,
 }
 
 impl<G> StateCore<G> {
@@ -106,15 +107,25 @@ impl<G> StateCore<G> {
         extra_roots: impl IntoIterator<Item = DynamicMemoryRoot<G>>,
     ) -> (
         Vec<crate::format::schema::FormatDefinition>,
+        Vec<(DefinitionId<G>, u32)>,
         Vec<Vec<u32>>,
         Vec<crate::format::schema::FormatGlue>,
     ) {
         let generation = self.generation.generation();
-        let mut definitions = vec![None; generation.definitions().len()];
+        let mut definitions = Vec::new();
+        let mut definition_rows = Vec::new();
         let mut token_lists = vec![None; generation.token_lists().len()];
         let mut capture_root = |root| match root {
             DynamicMemoryRoot::Definition(definition) => {
-                definitions[definition.format_index() as usize] = Some(definition.capture_format());
+                if definition_rows
+                    .iter()
+                    .any(|(candidate, _)| *candidate == definition)
+                {
+                    return;
+                }
+                let row = u32::try_from(definitions.len()).expect("format definitions fit u32");
+                definitions.push(generation.definitions().get(definition).capture_format());
+                definition_rows.push((definition, row));
             }
             DynamicMemoryRoot::TokenList(tokens) => {
                 token_lists[tokens.format_index() as usize] = Some(tokens.capture_format());
@@ -125,15 +136,8 @@ impl<G> StateCore<G> {
             capture_root(root);
         }
         (
-            definitions
-                .into_iter()
-                .map(|row| {
-                    row.unwrap_or(crate::format::schema::FormatDefinition {
-                        parameter_text: Vec::new(),
-                        replacement_text: Vec::new(),
-                    })
-                })
-                .collect(),
+            definitions,
+            definition_rows,
             token_lists
                 .into_iter()
                 .map(|row| row.unwrap_or_default())
@@ -219,7 +223,9 @@ impl<G> StateCore<G> {
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedStateCoreTail<G>) {
         self.state.accept_checkpoint_candidate(tail.dense);
-        drop(tail.generation);
+        self.generation
+            .generation_mut()
+            .accept_checkpoint_candidate(tail.generation);
     }
 
     /// Retires the complete generation after all admitted borrows end.
@@ -242,6 +248,11 @@ impl<G> StateCore<G> {
     #[must_use]
     pub(crate) fn generation_owner(&self) -> GenerationOwner<G> {
         self.generation.clone()
+    }
+
+    #[must_use]
+    pub(crate) fn checkpoint_generation_owner(&self) -> CheckpointGenerationOwner<G> {
+        self.generation.checkpoint_owner()
     }
 
     #[must_use]
@@ -268,7 +279,7 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
         self.generation.definitions().get(id)
     }
 
@@ -308,8 +319,15 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<G> {
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
         self.generation.definitions().get(id)
+    }
+
+    pub(crate) fn definition_region_lease(
+        &self,
+        id: DefinitionId<G>,
+    ) -> crate::DefinitionRegionLease<G> {
+        self.generation.definitions().lease(id)
     }
 
     #[inline(always)]
@@ -364,6 +382,88 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     pub(crate) fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
         self.generation.definitions().identity_policy()
+    }
+
+    pub(crate) fn begin_definition_build(
+        &mut self,
+        destination: crate::DefinitionDestination,
+        origin: crate::token::OriginId,
+    ) -> Result<crate::DefinitionBuildKey<G>, DefinitionAllocationError> {
+        self.generation
+            .definitions_mut()
+            .begin_build(destination, origin)
+    }
+
+    pub(crate) fn push_definition_parameter(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        word: TokenWord,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.generation
+            .definitions_mut()
+            .push_parameter(build, word)
+    }
+
+    pub(crate) fn finish_definition_parameters(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.generation.definitions_mut().finish_parameters(build)
+    }
+
+    pub(crate) fn push_definition_replacement(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        word: TokenWord,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.generation
+            .definitions_mut()
+            .push_replacement(build, word)
+    }
+
+    pub(crate) fn seal_definition_build(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+    ) -> Result<DefinitionId<G>, crate::DefinitionBuildError> {
+        self.generation.definitions_mut().seal_build(build)
+    }
+
+    pub(crate) fn abort_definition_build(&mut self, build: crate::DefinitionBuildKey<G>) {
+        self.generation.definitions_mut().abort_build(build);
+    }
+
+    pub(crate) fn promote_definition_global(
+        &mut self,
+        definition: DefinitionId<G>,
+    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+        self.generation.definitions_mut().promote_global(definition)
+    }
+
+    pub(crate) fn set_definition_origin(
+        &mut self,
+        definition: DefinitionId<G>,
+        origin: crate::token::OriginId,
+    ) -> Result<(), DefinitionAllocationError> {
+        self.generation
+            .definitions_mut()
+            .set_origin(definition, origin)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn reserve_definition_arena(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), DefinitionAllocationError> {
+        self.generation.definitions_mut().reserve_batch(rows, words)
+    }
+
+    pub(crate) fn begin_definition_group(&mut self) -> Result<(), DefinitionAllocationError> {
+        self.generation.definitions_mut().begin_group()
+    }
+
+    pub(crate) fn end_definition_group(&mut self) {
+        self.generation.definitions_mut().end_group();
     }
 
     pub(crate) fn allocate_token_list(
@@ -630,7 +730,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// Admits validated format rows directly into their final arenas.
     ///
     /// Dead compatibility rows in a detached image remain validated wire data
-    /// but do not become live shared owners. All final capacities and
+    /// but do not become live format-region rows. All final capacities and
     /// relocation tables are reserved before the first value is published.
     pub(crate) fn promote_format_values(
         &mut self,
@@ -686,7 +786,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
         self.generation
             .definitions_mut()
-            .reserve_batch(definition_rows, definition_words)?;
+            .reserve_format_batch(definition_rows, definition_words)?;
         self.generation
             .token_lists_mut()
             .reserve_batch(token_lists.len(), token_words)?;
@@ -715,7 +815,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             let id = self
                 .generation
                 .definitions_mut()
-                .publish_prevalidated(definition.as_mut().expect("live builder was staged"));
+                .publish_format_prevalidated(definition.as_mut().expect("live builder was staged"));
             promoted_definitions[row] = Some(id);
         }
         for words in token_lists {

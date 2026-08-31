@@ -31,10 +31,10 @@ pub use structured::{
     ScannedCharacterDefinition, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedEquationNumber, ScannedFileName, ScannedGeneratedFontDefinition,
     ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
-    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
-    ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
+    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
+    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
+    ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath,
+    ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub(crate) use structured::{PendingAlignmentPreamble, PendingStructuredScanner};
 pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

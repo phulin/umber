@@ -20,13 +20,13 @@ use super::*;
 pub(super) enum HotOperation<G> {
     MacroDefinition {
         target: Symbol,
-        definition: HotDefinitionRoot<G>,
+        definition: tex_state::DefinitionId<G>,
         flags: MeaningFlags,
         global: bool,
     },
     Let {
         target: Symbol,
-        meaning: Option<tex_state::meaning::ResolvedMeaning<G>>,
+        meaning: tex_state::meaning::ResolvedMeaning<G>,
         global: bool,
     },
     CatCode {
@@ -39,34 +39,6 @@ pub(super) enum HotOperation<G> {
         kind: GroupKind,
         context: &'static str,
     },
-}
-
-pub(super) enum HotDefinitionRoot<G> {
-    Attempt(tex_command::AttemptDefinitionId),
-    Prepared(Option<tex_state::DefinitionId<G>>),
-}
-
-impl<G> HotDefinitionRoot<G> {
-    fn prepare(
-        &mut self,
-        command: &mut tex_command::CommandState<G>,
-        stores: &mut Universe<G>,
-    ) -> Result<(), tex_command::AttemptError> {
-        let Self::Attempt(attempt) = self else {
-            panic!("hot definition root is prepared exactly once")
-        };
-        *self = Self::Prepared(Some(command.promote_attempt_definition(stores, *attempt)?));
-        Ok(())
-    }
-
-    fn take_prepared(&mut self) -> tex_state::DefinitionId<G> {
-        match self {
-            Self::Prepared(definition) => definition
-                .take()
-                .expect("prepared hot definition root is consumed exactly once"),
-            Self::Attempt(_) => panic!("hot definition root must be prepared before application"),
-        }
-    }
 }
 
 impl<G> HotOperation<G> {
@@ -87,18 +59,6 @@ impl<G> HotOperation<G> {
             Self::MacroDefinition { .. } | Self::Let { .. } | Self::CatCode { .. }
         )
     }
-}
-
-/// Promotes every declared hot-operation root before command-state admission.
-pub(super) fn prepare<G>(
-    operation: &mut HotOperation<G>,
-    command: &mut tex_command::CommandState<G>,
-    stores: &mut Universe<G>,
-) -> Result<(), tex_command::AttemptError> {
-    if let HotOperation::MacroDefinition { definition, .. } = operation {
-        definition.prepare(command, stores)?;
-    }
-    Ok(())
 }
 
 /// Scans a ranked common command after §1211's prefix loop and all contextual
@@ -141,14 +101,17 @@ pub(super) fn scan<G>(
             | UnexpandablePrimitive::Xdef),
         )) => {
             let definition = processor
-                .scan_macro_definition(matches!(
-                    primitive,
-                    UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
-                ))
+                .scan_macro_definition(
+                    matches!(
+                        primitive,
+                        UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
+                    ),
+                    global,
+                )
                 .map_err(command_error)?;
             HotOperation::MacroDefinition {
                 target: definition.target,
-                definition: HotDefinitionRoot::Attempt(definition.definition),
+                definition: definition.definition,
                 flags,
                 global,
             }
@@ -156,12 +119,12 @@ pub(super) fn scan<G>(
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet),
         )) => {
-            let assignment = processor
+            let (target, meaning) = processor
                 .scan_let_assignment(primitive == UnexpandablePrimitive::FutureLet)
                 .map_err(command_error)?;
             HotOperation::Let {
-                target: assignment.target,
-                meaning: Some(assignment.meaning),
+                target,
+                meaning,
                 global,
             }
         }
@@ -253,27 +216,12 @@ pub(super) fn apply<G>(
             definition,
             flags,
             global,
-        } => apply_macro_definition(
-            *target,
-            definition.take_prepared(),
-            *flags,
-            *global,
-            stores,
-            command,
-        ),
+        } => apply_macro_definition(*target, *definition, *flags, *global, stores, command),
         HotOperation::Let {
             target,
             meaning,
             global,
-        } => apply_let(
-            *target,
-            meaning
-                .take()
-                .expect("prepared hot let meaning is consumed exactly once"),
-            *global,
-            stores,
-            command,
-        ),
+        } => apply_let(*target, *meaning, *global, stores, command),
         HotOperation::CatCode {
             character,
             value,
@@ -354,11 +302,18 @@ fn apply_macro_definition<G>(
 
 fn apply_let<G>(
     target: Symbol,
-    meaning: tex_state::meaning::ResolvedMeaning<G>,
+    mut meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
+    if global && let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &mut meaning {
+        *definition = stores.promote_definition_global(*definition).map_err(|_| {
+            ExecError::Command(tex_command::CommandError::Fatal(
+                tex_command::FatalError::overflow("definition arena", i32::MAX),
+            ))
+        })?;
+    }
     // TeX82 §§277/1221 always route `\let` through `eq_define`. e-TeX change
     // [19.277] (retained by pdftex.web §277) alone suppresses an identical
     // local definition while extended mode is active.

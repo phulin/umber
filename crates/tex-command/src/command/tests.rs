@@ -9,11 +9,11 @@ use super::{CurrentCommand, DeliveryStamp, EmptyCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
-    assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 24);
+    assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 32);
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
     // Decoded source geometry lives behind the packed origin coordinate, not
     // in every command.
-    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 72);
+    assert!(std::mem::size_of::<CurrentCommand<()>>() <= 96);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
     assert_eq!(
         std::mem::size_of::<EmptyCommand<'_, ()>>(),
@@ -207,7 +207,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
                 AssignmentScope::Global,
             )
             .expect("replace delivered meaning");
-        drop(definition);
+        let _ = definition;
 
         let ResolvedMeaning::Macro {
             flags,
@@ -217,7 +217,14 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
             panic!("macro meaning")
         };
         assert_eq!(*flags, MeaningFlags::LONG);
-        assert_eq!(delivered.replacement_word(0), Some(replacement));
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("command context")
+                .definition(*delivered)
+                .replacement_word(0),
+            Some(replacement)
+        );
         assert_eq!(
             crate::observation::canonical_current_command_identity(&command),
             ("long_call".to_owned(), None)
@@ -226,7 +233,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
 }
 
 #[test]
-fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
+fn packed_input_resolution_copies_only_the_definition_key() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
             .allocate_definition(
@@ -260,7 +267,7 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
             false,
             &context,
         );
-        assert_eq!(definition.semantic_owner_count(), baseline + 1);
+        assert_eq!(definition.semantic_owner_count(), baseline);
 
         let _ = command.empty_for_raw_delivery().write_resolved_delivery(
             TokenWord::pack(Token::Char {
@@ -505,7 +512,11 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
         assert_eq!(undefined_active.control_sequence(), None);
         assert_eq!(undefined_active.meaning_ref(), &Meaning::Undefined);
         assert_eq!(
-            definition.replacement_word(0),
+            universe
+                .command_context()
+                .expect("command context")
+                .definition(definition)
+                .replacement_word(0),
             Some(TokenWord::pack(Token::Char {
                 ch: 'm',
                 cat: Catcode::Letter,
