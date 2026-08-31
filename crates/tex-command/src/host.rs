@@ -227,12 +227,13 @@ pub enum LastNodeItem {
     MuGlue(GlueSpec),
 }
 
-/// Opaque capability set installed by the executor for one bounded operation.
+/// Long-lived immutable-resource capabilities owned by the executor.
 ///
-/// The fields remain private so host access can only be introduced as typed
-/// command-core operations. This value is intentionally neither serializable
-/// nor cloneable.
-#[derive(Debug)]
+/// Live mode and list facts deliberately do not live here. They are sampled
+/// through [`CommandHostFacts`] at the exact scanner or conditional that
+/// consumes them, so ordinary command delivery writes no cold fact cache.
+/// This value is intentionally neither serializable nor cloneable.
+#[derive(Debug, Default)]
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
     unavailable_input: BTreeSet<String>,
@@ -243,36 +244,6 @@ pub struct CommandHostCapabilities {
     font_resources: HostFontResources,
     images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
-    conditional_state: ConditionalState,
-    space_factor: Option<i32>,
-    prev_depth: Option<Scaled>,
-    prev_graf: Option<i32>,
-    last_node: Option<LastNodeItem>,
-    last_node_type: i32,
-}
-
-impl Default for CommandHostCapabilities {
-    fn default() -> Self {
-        Self {
-            input: BTreeMap::new(),
-            unavailable_input: BTreeSet::new(),
-            unavailable_input_requests: BTreeSet::new(),
-            input_probes: BTreeMap::new(),
-            unavailable_input_probes: BTreeSet::new(),
-            font_paths: BTreeMap::new(),
-            font_resources: HostFontResources::default(),
-            images: Vec::new(),
-            job_name: String::new(),
-            // A processor outside main control observes TeX's initial outer
-            // vertical mode. Real execution replaces this per operation.
-            conditional_state: ConditionalState::new(ConditionalMode::Vertical, false),
-            space_factor: None,
-            prev_depth: None,
-            prev_graf: None,
-            last_node: None,
-            last_node_type: -1,
-        }
-    }
 }
 
 impl CommandHostCapabilities {
@@ -443,45 +414,54 @@ impl CommandHostCapabilities {
         let name = leaf.rsplit_once('.').map_or(leaf, |(stem, _)| stem);
         self.set_job_name(name);
     }
+}
 
-    /// Installs the current executor-owned mode query result for this command
-    /// operation. It is deliberately capability state rather than a field of
-    /// `CommandState`, so snapshots never duplicate the mode nest.
-    pub fn set_conditional_state(&mut self, state: ConditionalState) {
-        self.conditional_state = state;
+/// Borrowed executor authority for live mode and effective-tail enquiries.
+///
+/// Each method is one semantic fact request. Implementations sample the live
+/// owner when called; they must not prefill a whole-operation cache. The
+/// command processor retains this borrow only for its synchronous episode, so
+/// no mode/list owner or fact payload can enter command state or suspension.
+pub trait CommandHostFacts<G> {
+    fn conditional_state(&mut self) -> ConditionalState;
+    fn space_factor(&mut self) -> Option<i32>;
+    fn prev_depth(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<Scaled>;
+    fn prev_graf(&mut self) -> Option<i32>;
+    fn last_node(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<LastNodeItem>;
+    fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32;
+}
+
+/// Exact initial outer-vertical facts for command processors without an
+/// executor mode nest, such as tokenizer/scanner fixtures and stream tools.
+///
+/// This zero-sized provider is not a cache: every method directly describes
+/// TeX's initial mode and empty list.
+#[derive(Debug, Default)]
+struct InitialCommandHostFacts;
+
+impl<G> CommandHostFacts<G> for InitialCommandHostFacts {
+    fn conditional_state(&mut self) -> ConditionalState {
+        ConditionalState::new(ConditionalMode::Vertical, false)
     }
 
-    /// Installs the current horizontal-list space factor for one command
-    /// operation. `None` records that the executor is not in horizontal mode,
-    /// where TeX does not expose this internal quantity.
-    pub fn set_space_factor(&mut self, space_factor: Option<i32>) {
-        self.space_factor = space_factor;
+    fn space_factor(&mut self) -> Option<i32> {
+        None
     }
 
-    /// Installs the current vertical list's `prev_depth` for one command
-    /// operation. `None` records that the executor is not in vertical mode,
-    /// where tex.web's §418 reports "Improper \prevdepth" and reads zero.
-    pub fn set_prev_depth(&mut self, prev_depth: Option<Scaled>) {
-        self.prev_depth = prev_depth;
+    fn prev_depth(&mut self, _state: &tex_state::CommandContext<'_, G>) -> Option<Scaled> {
+        None
     }
 
-    /// Installs the nearest enclosing vertical level's `prev_graf` for one
-    /// command operation, for `\prevgraf` (tex.web §422). `None` records
-    /// tex.web's `mode=0` case, which reads zero.
-    pub fn set_prev_graf(&mut self, prev_graf: Option<i32>) {
-        self.prev_graf = prev_graf;
+    fn prev_graf(&mut self) -> Option<i32> {
+        Some(0)
     }
 
-    /// Installs the current list's tail-node classification for one command
-    /// operation, for `\lastpenalty`/`\lastkern`/`\lastskip`. `None` records
-    /// that the tail matches none of the three tracked node shapes.
-    pub fn set_last_node(&mut self, last_node: Option<LastNodeItem>) {
-        self.last_node = last_node;
+    fn last_node(&mut self, _state: &tex_state::CommandContext<'_, G>) -> Option<LastNodeItem> {
+        None
     }
 
-    /// Supplies e-TeX 2.6 `etex.ch` [26.424]'s effective-tail node code.
-    pub fn set_last_node_type(&mut self, last_node_type: i32) {
-        self.last_node_type = last_node_type;
+    fn last_node_type(&mut self, _state: &tex_state::CommandContext<'_, G>) -> i32 {
+        -1
     }
 }
 
@@ -512,39 +492,59 @@ fn trim_current_directory_prefix(mut name: &str) -> &str {
 ///
 /// The mutable borrow makes the capability scope explicit and prevents the
 /// context from entering owned command state, snapshots, or formats.
-#[derive(Debug)]
-pub struct CommandHostContext<'a> {
-    _capabilities: &'a mut CommandHostCapabilities,
+pub struct CommandHostContext<'a, G> {
+    capabilities: &'a mut CommandHostCapabilities,
+    facts: CommandHostFactAccess<'a, G>,
 }
 
-impl<'a> CommandHostContext<'a> {
-    /// Borrows the capabilities installed for one bounded operation.
+enum CommandHostFactAccess<'a, G> {
+    Initial(InitialCommandHostFacts),
+    Borrowed(&'a mut dyn CommandHostFacts<G>),
+}
+
+impl<'a, G> CommandHostContext<'a, G> {
+    /// Borrows resource capabilities for a processor outside an executor.
+    /// Such processors observe TeX's exact initial outer-vertical facts.
     #[must_use]
     pub fn new(capabilities: &'a mut CommandHostCapabilities) -> Self {
         Self {
-            _capabilities: capabilities,
+            capabilities,
+            facts: CommandHostFactAccess::Initial(InitialCommandHostFacts),
+        }
+    }
+
+    /// Borrows resource capabilities and the live executor fact provider for
+    /// one synchronous processor episode.
+    #[must_use]
+    pub fn with_facts(
+        capabilities: &'a mut CommandHostCapabilities,
+        facts: &'a mut dyn CommandHostFacts<G>,
+    ) -> Self {
+        Self {
+            capabilities,
+            facts: CommandHostFactAccess::Borrowed(facts),
         }
     }
 
     pub(crate) fn input(&self, name: &str) -> Option<SourceRegistration> {
-        self._capabilities.input.get(name).cloned()
+        self.capabilities.input.get(name).cloned()
     }
 
     pub(crate) fn input_is_unavailable(&self, name: &str) -> bool {
-        self._capabilities.unavailable_input.contains(name)
+        self.capabilities.unavailable_input.contains(name)
     }
 
     pub(crate) fn input_probe(&self, name: &str) -> Option<FileEnquiryResource> {
-        self._capabilities.input_probe_resource(name)
+        self.capabilities.input_probe_resource(name)
     }
 
     pub(crate) fn input_probe_is_unavailable(&self, name: &str) -> bool {
-        self._capabilities.input_probe_is_unavailable(name)
+        self.capabilities.input_probe_is_unavailable(name)
     }
 
     pub(crate) fn initialize_job_name(&mut self, filename: &str) {
-        if self._capabilities.job_name.is_empty() {
-            self._capabilities.set_startup_job_name(filename);
+        if self.capabilities.job_name.is_empty() {
+            self.capabilities.set_startup_job_name(filename);
         }
     }
 
@@ -552,45 +552,75 @@ impl<'a> CommandHostContext<'a> {
     /// is borrowed by a bounded replay operation.
     #[must_use]
     pub fn font(&self, path: &Path) -> Option<&FontResource> {
-        self._capabilities.font(path)
+        self.capabilities.font(path)
     }
 
     #[must_use]
     pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
-        self._capabilities.pdf_image(request)
+        self.capabilities.pdf_image(request)
     }
 
     pub(crate) fn job_name(&self) -> &str {
-        &self._capabilities.job_name
+        &self.capabilities.job_name
     }
 
-    pub(crate) const fn conditional_state(&self) -> ConditionalState {
-        self._capabilities.conditional_state
-    }
-
-    #[must_use]
-    pub(crate) const fn space_factor(&self) -> Option<i32> {
-        self._capabilities.space_factor
-    }
-
-    #[must_use]
-    pub(crate) const fn prev_depth(&self) -> Option<Scaled> {
-        self._capabilities.prev_depth
+    pub(crate) fn conditional_state(&mut self) -> ConditionalState {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => {
+                <InitialCommandHostFacts as CommandHostFacts<G>>::conditional_state(facts)
+            }
+            CommandHostFactAccess::Borrowed(facts) => facts.conditional_state(),
+        }
     }
 
     #[must_use]
-    pub(crate) const fn prev_graf(&self) -> Option<i32> {
-        self._capabilities.prev_graf
+    pub(crate) fn space_factor(&mut self) -> Option<i32> {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => {
+                <InitialCommandHostFacts as CommandHostFacts<G>>::space_factor(facts)
+            }
+            CommandHostFactAccess::Borrowed(facts) => facts.space_factor(),
+        }
     }
 
     #[must_use]
-    pub(crate) const fn last_node(&self) -> Option<LastNodeItem> {
-        self._capabilities.last_node
+    pub(crate) fn prev_depth(
+        &mut self,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Option<Scaled> {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => facts.prev_depth(state),
+            CommandHostFactAccess::Borrowed(facts) => facts.prev_depth(state),
+        }
     }
 
     #[must_use]
-    pub(crate) const fn last_node_type(&self) -> i32 {
-        self._capabilities.last_node_type
+    pub(crate) fn prev_graf(&mut self) -> Option<i32> {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => {
+                <InitialCommandHostFacts as CommandHostFacts<G>>::prev_graf(facts)
+            }
+            CommandHostFactAccess::Borrowed(facts) => facts.prev_graf(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn last_node(
+        &mut self,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Option<LastNodeItem> {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => facts.last_node(state),
+            CommandHostFactAccess::Borrowed(facts) => facts.last_node(state),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32 {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => facts.last_node_type(state),
+            CommandHostFactAccess::Borrowed(facts) => facts.last_node_type(state),
+        }
     }
 }
 

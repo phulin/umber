@@ -88,7 +88,7 @@ impl<G> PersistentInterpreter<G> {
     pub(crate) fn processor<'episode, 'admission>(
         &'episode mut self,
         state: &'episode mut CommandContext<'admission, G>,
-        host: CommandHostContext<'episode>,
+        host: CommandHostContext<'episode, G>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,

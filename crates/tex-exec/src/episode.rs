@@ -82,7 +82,7 @@ pub struct EpisodeTelemetry {
     semantic_barriers: [u64; SemanticEpisodeBarrier::COUNT],
     slice_limits: u64,
     terminals: u64,
-    host_preparations: u64,
+    host_fact_queries: u64,
     effective_tail_traversals: u64,
     effective_tail_descriptor_visits: u64,
     last_commit: Option<EpisodeCommit>,
@@ -98,7 +98,7 @@ impl Default for EpisodeTelemetry {
             semantic_barriers: [0; SemanticEpisodeBarrier::COUNT],
             slice_limits: 0,
             terminals: 0,
-            host_preparations: 0,
+            host_fact_queries: 0,
             effective_tail_traversals: 0,
             effective_tail_descriptor_visits: 0,
             last_commit: None,
@@ -111,12 +111,15 @@ impl EpisodeTelemetry {
         self.attempts = self.attempts.saturating_add(1);
     }
 
-    pub(crate) fn record_host_preparation(
+    pub(crate) fn record_host_fact_query(&mut self) {
+        self.host_fact_queries = self.host_fact_queries.saturating_add(1);
+    }
+
+    pub(crate) fn record_effective_tail_traversal(
         &mut self,
         traversed_effective_tail: bool,
         descriptor_visits: usize,
     ) {
-        self.host_preparations = self.host_preparations.saturating_add(1);
         self.effective_tail_traversals = self
             .effective_tail_traversals
             .saturating_add(u64::from(traversed_effective_tail));
@@ -206,11 +209,11 @@ impl EpisodeTelemetry {
         self.terminals
     }
 
-    /// Number of call-local executor host projections prepared for command
-    /// processing. Suspension and rollback do not retain or refund them.
+    /// Number of exact executor facts requested by command processing.
+    /// Ordinary delivery and commands without host enquiries leave this zero.
     #[must_use]
-    pub const fn host_preparations(self) -> u64 {
-        self.host_preparations
+    pub const fn host_fact_queries(self) -> u64 {
+        self.host_fact_queries
     }
 
     /// Number of authoritative effective-tail traversals used to prepare host

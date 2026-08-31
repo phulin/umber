@@ -65,8 +65,8 @@ fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
         let telemetry = control.episode_telemetry();
         assert_eq!(telemetry.commits(), 1);
         assert_eq!(telemetry.operations(), 256);
-        assert_eq!(telemetry.host_preparations(), 256);
-        assert_eq!(telemetry.effective_tail_traversals(), 256);
+        assert_eq!(telemetry.host_fact_queries(), 0);
+        assert_eq!(telemetry.effective_tail_traversals(), 0);
         assert_eq!(telemetry.slice_limits(), 1);
         assert_eq!(
             telemetry.last_commit().expect("one commit").boundary(),
@@ -90,7 +90,7 @@ fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
 }
 
 #[test]
-fn growing_list_tail_direct_chunk_work_is_linear_in_operations() {
+fn growing_list_without_tail_enquiries_performs_no_tail_work() {
     let mut source = br"\setbox0=\vbox{".to_vec();
     for _ in 0..2_048 {
         source.extend_from_slice(br"\kern1pt");
@@ -106,18 +106,58 @@ fn growing_list_tail_direct_chunk_work_is_linear_in_operations() {
             }
         }
         let telemetry = control.episode_telemetry();
-        assert!(telemetry.host_preparations() >= 2_048);
+        assert_eq!(telemetry.host_fact_queries(), 0);
         assert_eq!(
             telemetry.effective_tail_descriptor_visits(),
             0,
             "direct ChunkCursor roots perform no descriptor lookup: {telemetry:?}"
         );
-        assert_eq!(
-            telemetry.effective_tail_traversals(),
-            telemetry.host_preparations(),
-            "each preparation performs exactly one authoritative tail traversal"
-        );
+        assert_eq!(telemetry.effective_tail_traversals(), 0);
     });
+}
+
+#[test]
+fn scanner_host_facts_are_counted_only_at_the_consuming_primitive() {
+    with_control(br"\ifvmode\fi\end", |conditional, stores| {
+        conditional
+            .advance_episode(stores)
+            .expect("conditional episode commits");
+        let telemetry = conditional.episode_telemetry();
+        assert_eq!(telemetry.host_fact_queries(), 1);
+        assert_eq!(telemetry.effective_tail_traversals(), 0);
+    });
+
+    with_control(br"\count0=\lastpenalty\end", |last_item, stores| {
+        last_item
+            .advance_episode(stores)
+            .expect("last-item episode commits");
+        let telemetry = last_item.episode_telemetry();
+        assert_eq!(telemetry.host_fact_queries(), 1);
+        assert_eq!(telemetry.effective_tail_traversals(), 1);
+    });
+
+    // Deferred write expansion is a genuine nested processor episode after
+    // semantic application has released and later reacquired live mode facts.
+    // It must query through that new borrow instead of retaining the earlier
+    // command's projection in the whatsit or suspension frame.
+    with_control(
+        br"A\write16{\the\spacefactor}\par\end",
+        |deferred_write, stores| {
+            loop {
+                if matches!(
+                    deferred_write
+                        .advance_episode(stores)
+                        .expect("deferred write job advances"),
+                    StepResult::Progress(crate::MainControlStep::End)
+                ) {
+                    break;
+                }
+            }
+            let telemetry = deferred_write.episode_telemetry();
+            assert_eq!(telemetry.host_fact_queries(), 1);
+            assert_eq!(telemetry.effective_tail_traversals(), 0);
+        },
+    );
 }
 
 #[test]

@@ -402,7 +402,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         ("fn commit_direct_operation(", settlement),
         ("fn discard_direct_operation(", settlement),
         ("fn publish_pending_named_boundary(", settlement),
-        ("fn effective_tail_facts(", executor_facts),
+        ("fn effective_tail_facts<G>(", executor_facts),
     ] {
         assert!(owner.contains(authority), "missing owner for {authority}");
         assert!(
@@ -743,66 +743,57 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
 }
 
 #[test]
-fn operation_host_preparation_has_one_effective_tail_authority() {
+fn command_host_facts_are_sampled_only_by_the_consuming_query() {
     let control = include_str!("../src/main_control.rs");
     let executor_facts = include_str!("../src/main_control/executor_facts.rs");
+    let command_host = include_str!("../../tex-command/src/host.rs");
     let ownership_surface = [control, executor_facts].concat();
     assert!(
-        !ownership_surface.contains("refresh_host_capabilities"),
-        "the retired duplicate refresh layer must remain absent"
+        !ownership_surface.contains("prepare_host_capabilities"),
+        "ordinary operation setup must not prefill executor facts"
     );
-    let direct_episode = control
-        .split_once("fn execute_direct_episode(")
-        .expect("direct operation authority")
+    for retired in [
+        "set_conditional_state",
+        "set_space_factor",
+        "set_prev_depth",
+        "set_prev_graf",
+        "set_last_node(",
+        "set_last_node_type",
+    ] {
+        assert!(
+            !command_host.contains(retired),
+            "resource capabilities must not retain cold fact writer {retired}"
+        );
+    }
+    let provider = executor_facts
+        .split_once("impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts")
+        .expect("canonical demand provider")
         .1
-        .split_once("fn execute_operation(")
-        .expect("operation authority boundary")
+        .split_once("fn effective_tail_facts")
+        .expect("provider boundary")
         .0;
     assert_eq!(
-        direct_episode
-            .matches("OperationHostPreparation::new(&mut preparation_scope)")
+        provider
+            .matches("effective_tail_facts(self.modes, stores)")
             .count(),
-        1,
-        "one stationary host-facts owner serves each direct operation"
+        2
     );
-    assert!(direct_episode.contains("&mut host_preparation,"));
-    assert!(!direct_episode.contains("let host_preparation = {"));
+    assert_eq!(provider.matches("record_host_fact_query()").count(), 6);
     let preparation = executor_facts
-        .split_once("fn prepare_host_capabilities(")
-        .expect("host preparation authority")
+        .split_once("struct OperationPreparation")
+        .expect("operation preparation")
         .1
-        .split_once("fn classify_last_node(")
-        .expect("host preparation boundary")
+        .split_once("struct OperationResume")
+        .expect("preparation boundary")
         .0;
-    assert_eq!(
-        preparation
-            .matches("self.effective_tail_facts(stores)")
-            .count(),
-        1,
-        "last-item and last-node-type projections share one tail result"
-    );
-    assert!(preparation.contains("preparation.pdf_output ="));
-    assert!(preparation.contains("preparation.innermost_group ="));
-    let transaction = control
-        .split_once("fn command_requires_transaction(")
-        .expect("transaction classification")
-        .1
-        .split_once("fn execute_direct_episode(")
-        .expect("transaction boundary")
-        .0;
-    assert!(transaction.contains("host_preparation.pdf_output()"));
-    assert!(transaction.contains("host_preparation.innermost_group()"));
-    assert!(!transaction.contains("command_context()"));
+    for cold_fact in ["mode:", "last_node", "pdf_output", "innermost_group"] {
+        assert!(
+            !preparation.contains(cold_fact),
+            "retained cold fact {cold_fact}"
+        );
+    }
     assert!(control.contains("preparation.record_checked_save_stack_words(checked)"));
     assert!(control.contains("preparation.take_checked_save_stack_words()"));
-    let operation = control
-        .split_once("fn dispatch_typed_operation(")
-        .expect("typed operation dispatch authority")
-        .1;
-    assert!(
-        !operation.contains("effective_tail_facts"),
-        "operation preparation must consume sampled facts without rescanning"
-    );
 }
 
 fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {

@@ -683,9 +683,11 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
 /// Traverses an already-created immediate form after the admitted apply
 /// context has been released. Publication remains an outer Universe barrier;
 /// each replay callback admits and returns one short command context.
+#[allow(clippy::too_many_arguments)] // keeps unrelated publication capabilities borrow-typed
 pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
     form: tex_state::PdfFormRecord<G>,
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
     stores: &mut Universe<G>,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
     provenance_demand: tex_state::ProvenanceDemand,
@@ -697,7 +699,13 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
                      _: &mut DiagnosticEffects,
                      _: PrintSink,
                      tokens: tex_state::ShipoutTokenSource<G>| {
-        replay_write_transaction(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
+        replay_write_transaction(
+            &mut command.borrow_mut(),
+            modes,
+            stores,
+            tokens,
+            &mut Vec::new(),
+        )
     };
     let mut replay = |stores: &mut Universe<G>,
                       _: &mut DiagnosticEffects,
@@ -705,6 +713,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
                       tokens: tex_state::ShipoutTokenSource<G>| {
         replay_text_transaction(
             &mut command.borrow_mut(),
+            modes,
             stores,
             kind,
             tokens,
@@ -742,6 +751,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
 
 pub(in crate::main_control) fn replay_text<G>(
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     kind: crate::shipout::ReplayTextKind,
     tokens: tex_state::TokenListId<G>,
@@ -752,20 +762,14 @@ pub(in crate::main_control) fn replay_text<G>(
     // events, but they must never advance or replace the surrounding source
     // cursor. This also gives a failing nested form replay an exact command
     // rollback boundary independent of the artifact/resource transaction.
-    let expanded = {
-        let mut processor = command.processor(stores);
+    let (expanded, pending) = command.with_processor_for_modes(stores, modes, |processor| {
         let result = processor
             .expand_output_replay(tokens)
             .map_err(command_error);
-        diagnostics.extend(
-            processor
-                .take_semantic_diagnostics()
-                .into_iter()
-                .map(PendingDiagnostic::Command),
-        );
-        processor.retire();
-        result
-    };
+        let pending = processor.take_semantic_diagnostics();
+        (result, pending)
+    });
+    diagnostics.extend(pending.into_iter().map(PendingDiagnostic::Command));
     let expanded = expanded?;
     let mut text = String::new();
     let expanded = command
@@ -803,24 +807,19 @@ pub(in crate::main_control) fn replay_text<G>(
 
 pub(in crate::main_control) fn replay_write<G>(
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
-    let expanded = {
-        let mut processor = command.processor(stores);
+    let (expanded, pending) = command.with_processor_for_modes(stores, modes, |processor| {
         let result = processor
             .expand_durable_write_text(tokens)
             .map_err(command_error);
-        diagnostics.extend(
-            processor
-                .take_semantic_diagnostics()
-                .into_iter()
-                .map(PendingDiagnostic::Command),
-        );
-        processor.retire();
-        result
-    };
+        let pending = processor.take_semantic_diagnostics();
+        (result, pending)
+    });
+    diagnostics.extend(pending.into_iter().map(PendingDiagnostic::Command));
     let expanded = expanded?;
     if expanded.unbalanced {
         crate::error_report::report_error(
@@ -854,6 +853,7 @@ pub(in crate::main_control) fn replay_write<G>(
 
 fn replay_text_transaction<G>(
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
     stores: &mut Universe<G>,
     kind: crate::shipout::ReplayTextKind,
     tokens: tex_state::ShipoutTokenSource<G>,
@@ -875,7 +875,7 @@ fn replay_text_transaction<G>(
         let tokens = context
             .admit_shipout_tokens(tokens)
             .expect("output replay fits admitted durable storage");
-        replay_text(command, &mut context, kind, tokens, diagnostics)
+        replay_text(command, modes, &mut context, kind, tokens, diagnostics)
     };
     command
         .state
@@ -888,6 +888,7 @@ fn replay_text_transaction<G>(
 
 fn replay_write_transaction<G>(
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
     stores: &mut Universe<G>,
     tokens: tex_state::ShipoutTokenSource<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
@@ -908,7 +909,7 @@ fn replay_write_transaction<G>(
         let tokens = context
             .admit_shipout_tokens(tokens)
             .expect("write replay fits admitted durable storage");
-        replay_write(command, &mut context, tokens, diagnostics)
+        replay_write(command, modes, &mut context, tokens, diagnostics)
     };
     command
         .state
@@ -1479,6 +1480,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     shipout: PreparedShipout,
     stores: &mut Universe<G>,
     command: &mut CommandMachine<'_, G>,
+    modes: &ModeNest,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     let PreparedShipout { source, region } = shipout;
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
@@ -1595,19 +1597,25 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                 let durable = context
                     .admit_shipout_tokens(tokens)
                     .expect("deferred write fits admitted durable storage");
-                let mut processor =
-                    command.processor_with_diagnostic_effects(&mut context, diagnostic_effects);
-                processor.set_command_trace_mode_prefix(mode_prefix);
-                let result = processor
-                    .expand_durable_write_text(durable)
-                    .map_err(command_error);
-                let command_trace_printed = processor.command_trace_printed();
-                let diagnostics = processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command)
-                    .collect();
-                processor.retire();
+                let (result, command_trace_printed, diagnostics) = command
+                    .with_processor_for_modes_and_diagnostics(
+                        &mut context,
+                        modes,
+                        diagnostic_effects,
+                        |processor| {
+                            processor.set_command_trace_mode_prefix(mode_prefix);
+                            let result = processor
+                                .expand_durable_write_text(durable)
+                                .map_err(command_error);
+                            let command_trace_printed = processor.command_trace_printed();
+                            let diagnostics = processor
+                                .take_semantic_diagnostics()
+                                .into_iter()
+                                .map(PendingDiagnostic::Command)
+                                .collect();
+                            (result, command_trace_printed, diagnostics)
+                        },
+                    );
                 drop(context);
                 // TeX82 §1370 performs expansion and then writes the
                 // resulting token list on one live `write_out` call stack.
@@ -1710,8 +1718,9 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                              tokens: tex_state::ShipoutTokenSource<G>| {
         let mut command = command_cell.borrow_mut();
         let mut diagnostics = Vec::new();
-        let result = replay_text_transaction(&mut command, stores, kind, tokens, &mut diagnostics)
-            .map(crate::shipout::ExpandedReplayText);
+        let result =
+            replay_text_transaction(&mut command, modes, stores, kind, tokens, &mut diagnostics)
+                .map(crate::shipout::ExpandedReplayText);
         replay_diagnostics.borrow_mut().extend(diagnostics);
         result
     };

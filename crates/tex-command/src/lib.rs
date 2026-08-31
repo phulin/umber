@@ -105,9 +105,9 @@ pub use fuel::{
     DEFAULT_COMMAND_FUEL_LIMIT, MAX_COMMAND_FUEL_LIMIT,
 };
 pub use host::{
-    CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState,
-    FileEnquiryIntent, FileEnquiryRequest, FileEnquiryResource, FontResource, LastNodeItem,
-    PdfImageResource,
+    CommandHostCapabilities, CommandHostContext, CommandHostFacts, ConditionalMode,
+    ConditionalState, FileEnquiryIntent, FileEnquiryRequest, FileEnquiryResource, FontResource,
+    LastNodeItem, PdfImageResource,
 };
 pub use input::{
     CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,

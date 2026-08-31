@@ -5030,7 +5030,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // number would change every `\ifdim\prevdepth>-1000pt` vertical
             // spacing decision.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-                let value = self.host.prev_depth();
+                let value = self.host.prev_depth(self.state);
                 if value.is_none() {
                     self.improper_auxiliary_error("prevdepth")?;
                 }
@@ -5056,19 +5056,19 @@ impl<G> CommandProcessor<'_, '_, G> {
             // here plays that same role for every one of the three
             // primitives.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastPenalty) => {
-                InternalValue::Integer(match self.host.last_node() {
+                InternalValue::Integer(match self.host.last_node(self.state) {
                     Some(crate::LastNodeItem::Penalty(value)) => value,
                     _ => 0,
                 })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
-                InternalValue::Dimension(match self.host.last_node() {
+                InternalValue::Dimension(match self.host.last_node(self.state) {
                     Some(crate::LastNodeItem::Kern(value)) => value,
                     _ => Scaled::from_raw(0),
                 })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
-                match self.host.last_node() {
+                match self.host.last_node(self.state) {
                     Some(crate::LastNodeItem::Glue(value)) => InternalValue::Glue(value),
                     Some(crate::LastNodeItem::MuGlue(value)) => InternalValue::MuGlue(value),
                     _ => InternalValue::Glue(GlueSpec::ZERO),
@@ -5125,12 +5125,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(Some(value))
     }
 
-    fn fetch_internal_integer(&self, integer: InternalInteger) -> i32 {
+    fn fetch_internal_integer(&mut self, integer: InternalInteger) -> i32 {
         match integer {
             InternalInteger::InputLineNumber => self.command.input.current_file_line_number(),
             // e-TeX 2.6 `etex.ch` [26.424] reads the effective tail of the
             // current list, not merely the page builder's remembered tail.
-            InternalInteger::LastNodeType => self.host.last_node_type(),
+            InternalInteger::LastNodeType => self.host.last_node_type(self.state),
             InternalInteger::CurrentGroupLevel => self.state.current_group_values().0,
             InternalInteger::CurrentGroupType => self.state.current_group_values().1,
             InternalInteger::CurrentIfLevel => self.command.conditions.current_etex_values().0,

@@ -9,7 +9,7 @@ fn main() {
     require_clone::<CommandHostCapabilities>();
     require_deserialize::<CommandHostCapabilities>();
     require_serialize::<CommandHostCapabilities>();
-    require_clone::<CommandHostContext<'static>>();
-    require_deserialize::<CommandHostContext<'static>>();
-    require_serialize::<CommandHostContext<'static>>();
+    require_clone::<CommandHostContext<'static, ()>>();
+    require_deserialize::<CommandHostContext<'static, ()>>();
+    require_serialize::<CommandHostContext<'static, ()>>();
 }

@@ -120,7 +120,8 @@ mod settlement;
 use cold::*;
 use command_episode::*;
 use delivery::*;
-use executor_facts::{OperationHostPreparation, OperationPreparationScope};
+use executor_facts::ExecutorHostFacts;
+use executor_facts::{OperationPreparation, OperationPreparationScope};
 use settlement::*;
 
 type PreparedDviPages = Vec<crate::dispatch::PreparedDviPage>;
@@ -821,6 +822,7 @@ struct CommandMachine<'a, G> {
     state: &'a mut PersistentInterpreter<G>,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
+    host_facts: CommandMachineHostFacts<'a, G>,
     observations: &'a mut ObservationSlot,
     assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
     diagnostic_effects: &'a mut DiagnosticEffects,
@@ -837,12 +839,207 @@ struct CommandMachine<'a, G> {
     output_routine_active: bool,
 }
 
+enum CommandMachineHostFacts<'a, G> {
+    Live(ExecutorHostFacts<'a, G>),
+    /// Semantic application can perform source-only command operations while
+    /// mutating the mode nest. A nested expansion explicitly lends that nest
+    /// through `with_processor_for_modes`, so no stale projection is cached.
+    Detached {
+        pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
+        telemetry: &'a mut crate::EpisodeTelemetry,
+    },
+    /// Hot semantic application cannot scan or expand. Keeping that boundary
+    /// explicit lets it borrow the mode nest mutably without manufacturing a
+    /// stale projection merely to fill an unused provider.
+    Forbidden,
+}
+
+impl<G> tex_command::CommandHostFacts<G> for CommandMachineHostFacts<'_, G> {
+    fn conditional_state(&mut self) -> tex_command::ConditionalState {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::conditional_state(facts),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+
+    fn space_factor(&mut self) -> Option<i32> {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::space_factor(facts),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+
+    fn prev_depth(&mut self, state: &CommandContext<'_, G>) -> Option<Scaled> {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::prev_depth(facts, state),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+
+    fn prev_graf(&mut self) -> Option<i32> {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::prev_graf(facts),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+
+    fn last_node(&mut self, state: &CommandContext<'_, G>) -> Option<tex_command::LastNodeItem> {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::last_node(facts, state),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+
+    fn last_node_type(&mut self, state: &CommandContext<'_, G>) -> i32 {
+        match self {
+            Self::Live(facts) => tex_command::CommandHostFacts::last_node_type(facts, state),
+            Self::Detached { .. } => {
+                panic!("nested expansion must lend its live mode facts")
+            }
+            Self::Forbidden => panic!("semantic application cannot query command host facts"),
+        }
+    }
+}
+
 struct PendingShowCompletion {
     long: bool,
     context: String,
 }
 
 impl<G> CommandMachine<'_, G> {
+    fn with_processor_for_modes<R>(
+        &mut self,
+        context: &mut tex_state::CommandContext<'_, G>,
+        modes: &ModeNest,
+        use_processor: impl FnOnce(&mut InterpreterProcessor<'_, '_, G>) -> R,
+    ) -> R {
+        let Self {
+            state,
+            fuel,
+            capabilities,
+            host_facts,
+            observations,
+            diagnostic_effects,
+            output_routine_active,
+            ..
+        } = self;
+        match host_facts {
+            CommandMachineHostFacts::Live(facts) => {
+                let observer = observations
+                    .as_mut()
+                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let mut processor = state.processor(
+                    context,
+                    CommandHostContext::with_facts(capabilities, facts),
+                    fuel,
+                    observer,
+                    diagnostic_effects,
+                );
+                processor.set_output_routine_active(*output_routine_active);
+                use_processor(&mut processor)
+            }
+            CommandMachineHostFacts::Detached {
+                pdf_ignore_depth,
+                telemetry,
+            } => {
+                let observer = observations
+                    .as_mut()
+                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let mut facts = ExecutorHostFacts {
+                    modes,
+                    pdf_ignore_depth: *pdf_ignore_depth,
+                    telemetry,
+                };
+                let mut processor = state.processor(
+                    context,
+                    CommandHostContext::with_facts(capabilities, &mut facts),
+                    fuel,
+                    observer,
+                    diagnostic_effects,
+                );
+                processor.set_output_routine_active(*output_routine_active);
+                use_processor(&mut processor)
+            }
+            CommandMachineHostFacts::Forbidden => {
+                panic!("hot semantic application cannot construct a processor")
+            }
+        }
+    }
+
+    fn with_processor_for_modes_and_diagnostics<R>(
+        &mut self,
+        context: &mut tex_state::CommandContext<'_, G>,
+        modes: &ModeNest,
+        diagnostic_effects: &mut DiagnosticEffects,
+        use_processor: impl FnOnce(&mut InterpreterProcessor<'_, '_, G>) -> R,
+    ) -> R {
+        let Self {
+            state,
+            fuel,
+            capabilities,
+            host_facts,
+            observations,
+            output_routine_active,
+            ..
+        } = self;
+        match host_facts {
+            CommandMachineHostFacts::Live(facts) => {
+                let observer = observations
+                    .as_mut()
+                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let mut processor = state.processor(
+                    context,
+                    CommandHostContext::with_facts(capabilities, facts),
+                    fuel,
+                    observer,
+                    diagnostic_effects,
+                );
+                processor.set_output_routine_active(*output_routine_active);
+                use_processor(&mut processor)
+            }
+            CommandMachineHostFacts::Detached {
+                pdf_ignore_depth,
+                telemetry,
+            } => {
+                let observer = observations
+                    .as_mut()
+                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let mut facts = ExecutorHostFacts {
+                    modes,
+                    pdf_ignore_depth: *pdf_ignore_depth,
+                    telemetry,
+                };
+                let mut processor = state.processor(
+                    context,
+                    CommandHostContext::with_facts(capabilities, &mut facts),
+                    fuel,
+                    observer,
+                    diagnostic_effects,
+                );
+                processor.set_output_routine_active(*output_routine_active);
+                use_processor(&mut processor)
+            }
+            CommandMachineHostFacts::Forbidden => {
+                panic!("hot semantic application cannot construct a processor")
+            }
+        }
+    }
+
     fn publish_named_token_list_pushes(&mut self, context: &mut tex_state::CommandContext<'_, G>) {
         let observer = self
             .observations
@@ -870,30 +1067,10 @@ impl<G> CommandMachine<'_, G> {
             .map(|buffer| buffer as &mut dyn CommandObserver);
         let mut processor = self.state.processor(
             context,
-            CommandHostContext::new(self.capabilities),
+            CommandHostContext::with_facts(self.capabilities, &mut self.host_facts),
             self.fuel,
             observer,
             self.diagnostic_effects,
-        );
-        processor.set_output_routine_active(self.output_routine_active);
-        processor
-    }
-
-    fn processor_with_diagnostic_effects<'episode, 'admission>(
-        &'episode mut self,
-        context: &'episode mut tex_state::CommandContext<'admission, G>,
-        diagnostic_effects: &'episode mut DiagnosticEffects,
-    ) -> InterpreterProcessor<'episode, 'admission, G> {
-        let observer = self
-            .observations
-            .as_mut()
-            .map(|buffer| buffer as &mut dyn CommandObserver);
-        let mut processor = self.state.processor(
-            context,
-            CommandHostContext::new(self.capabilities),
-            self.fuel,
-            observer,
-            diagnostic_effects,
         );
         processor.set_output_routine_active(self.output_routine_active);
         processor
@@ -951,6 +1128,7 @@ fn command_processor<'episode, 'admission, G>(
     command: &'episode mut PersistentInterpreter<G>,
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,
+    host_facts: &'episode mut dyn tex_command::CommandHostFacts<G>,
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: &'episode mut CommandContext<'admission, G>,
@@ -960,7 +1138,7 @@ fn command_processor<'episode, 'admission, G>(
         .map(|buffer| buffer as &mut dyn CommandObserver);
     command.processor(
         stores,
-        CommandHostContext::new(capabilities),
+        CommandHostContext::with_facts(capabilities, host_facts),
         fuel,
         observer,
         diagnostic_effects,
@@ -1297,13 +1475,16 @@ impl<G> MainControl<G> {
         self.ensure_primitive_handles(stores);
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut command_context = stores.command_context().expect("live generation");
-        let mut preparation_scope = OperationPreparationScope;
-        let mut preparation = OperationHostPreparation::new(&mut preparation_scope);
-        self.prepare_host_capabilities(&command_context, &mut preparation);
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             &mut diagnostic_effects,
             &mut command_context,
@@ -2290,6 +2471,11 @@ impl<G> MainControl<G> {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
+            host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            }),
             observations: &mut self.operation_observations,
             assignment_receipts: None,
             diagnostic_effects,
@@ -2803,10 +2989,16 @@ impl<G> MainControl<G> {
             let mut diagnostics = Vec::new();
             {
                 let mut context = stores.command_context().expect("live generation");
+                let mut host_facts = ExecutorHostFacts {
+                    modes: &self.modes,
+                    pdf_ignore_depth: self.pdf_ignore_depth,
+                    telemetry: &mut self.episode_telemetry,
+                };
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
+                    &mut host_facts,
                     &mut self.operation_observations,
                     diagnostic_effects,
                     &mut context,
@@ -2952,7 +3144,7 @@ impl<G> MainControl<G> {
     /// Captures TeX's checked save-stack projection into the resident
     /// operation facts while semantic admission is still live.
     fn capture_save_stack_usage(
-        preparation: &mut OperationHostPreparation<'_, G>,
+        preparation: &mut OperationPreparation<'_, G>,
         stores: &CommandContext<'_, G>,
         boxes: &ReplayBoxes<G>,
         command: &tex_command::CommandState<G>,
@@ -2984,7 +3176,7 @@ impl<G> MainControl<G> {
     fn settle_save_stack_usage(
         &mut self,
         stores: &mut Universe<G>,
-        preparation: &mut OperationHostPreparation<'_, G>,
+        preparation: &mut OperationPreparation<'_, G>,
     ) {
         let checked = if let Some(checked) = preparation.take_checked_save_stack_words() {
             checked
@@ -3007,17 +3199,48 @@ impl<G> MainControl<G> {
     #[allow(clippy::too_many_arguments)]
     fn command_requires_transaction(
         &self,
-        host_preparation: &OperationHostPreparation<'_, G>,
+        stores: &mut Universe<G>,
         preflight: &crate::transaction_protocol::CommandPreflight,
         frame: &CommandEpisode<G>,
     ) -> bool {
+        let crate::transaction_protocol::CommandPreflight::Ordinary(ordinary) = preflight else {
+            return true;
+        };
+        let pdf_output = if ordinary
+            .mutation()
+            .contains(crate::transaction_protocol::StateOwners::PDF)
+        {
+            stores
+                .command_context()
+                .expect("transaction classification admission")
+                .int_param(IntParam::PDF_OUTPUT)
+        } else {
+            1
+        };
+        let end_group_can_package_box = frame.current_option().is_some_and(|command| {
+            matches!(
+                command.meaning(),
+                ResolvedMeaning::Static(Meaning::CharToken {
+                    cat: Catcode::EndGroup,
+                    ..
+                })
+            )
+        }) && !self.boxes.active_boxes.is_empty();
+        let innermost_group = end_group_can_package_box
+            .then(|| {
+                stores
+                    .command_context()
+                    .expect("group classification admission")
+                    .innermost_group_kind()
+            })
+            .flatten();
         command_requires_transaction_from_facts(
-            host_preparation.mode(),
+            self.modes.current_mode(),
             &self.boxes,
             preflight,
             frame,
-            host_preparation.pdf_output(),
-            host_preparation.innermost_group(),
+            pdf_output,
+            innermost_group,
         )
     }
 
@@ -3064,7 +3287,7 @@ impl<G> MainControl<G> {
 
         loop {
             let mut preparation_scope = OperationPreparationScope;
-            let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
+            let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
             if operations != 0
                 && let Some(boundary) = self.publish_pending_named_boundary(stores)?
             {
@@ -3232,11 +3455,10 @@ impl<G> MainControl<G> {
                 return Ok(StepResult::Progress(step));
             }
             if host_preparation.has_preflight() {
-                let context = stores.command_context().expect("live generation");
-                self.prepare_host_capabilities(&context, &mut host_preparation);
+                // A retry reuses only its typed delivery/scanner owners. Live
+                // executor facts are sampled by the resumed processor if and
+                // when that scanner requests one.
             } else if let Some(delivery) = initial_delivery.take() {
-                let context = stores.command_context().expect("live generation");
-                self.prepare_host_capabilities(&context, &mut host_preparation);
                 host_preparation.fill_preflight(
                     delivery,
                     crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
@@ -3463,7 +3685,7 @@ impl<G> MainControl<G> {
                 host_preparation.preflight(),
                 crate::transaction_protocol::CommandPreflight::Transaction(_)
             ) || self.command_requires_transaction(
-                &host_preparation,
+                stores,
                 host_preparation.preflight(),
                 &command_episode,
             ) {
@@ -4013,7 +4235,7 @@ impl<G> MainControl<G> {
         let mut command_episode = CommandEpisode::default();
         let mut cold_operation = ColdOperationSlot::default();
         let mut preparation_scope = OperationPreparationScope;
-        let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
+        let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
         let retained_attempt = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
@@ -4045,18 +4267,20 @@ impl<G> MainControl<G> {
         };
         let operation_mark = self.begin_direct_operation(stores, retained_attempt);
         let mut diagnostic_effects = DiagnosticEffects::new();
-        {
-            let context = stores.command_context().expect("live generation");
-            self.prepare_host_capabilities(&context, &mut host_preparation);
-        }
         if !host_preparation.has_preflight() {
             self.ensure_primitive_handles(stores);
             let (command, cursor, retry_expansion, source_provenance) = {
                 let mut context = stores.command_context().expect("live generation");
+                let mut host_facts = ExecutorHostFacts {
+                    modes: &self.modes,
+                    pdf_ignore_depth: self.pdf_ignore_depth,
+                    telemetry: &mut self.episode_telemetry,
+                };
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
+                    &mut host_facts,
                     &mut self.operation_observations,
                     &mut diagnostic_effects,
                     &mut context,
@@ -4351,10 +4575,16 @@ impl<G> MainControl<G> {
         loop {
             let outcome = {
                 let mut context = stores.command_context().expect("live generation");
+                let mut host_facts = ExecutorHostFacts {
+                    modes: &self.modes,
+                    pdf_ignore_depth: self.pdf_ignore_depth,
+                    telemetry: &mut self.episode_telemetry,
+                };
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
+                    &mut host_facts,
                     &mut self.operation_observations,
                     diagnostic_effects,
                     &mut context,
@@ -4467,6 +4697,11 @@ impl<G> MainControl<G> {
                         state: &mut self.command,
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
+                        host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
+                            modes: &self.modes,
+                            pdf_ignore_depth: self.pdf_ignore_depth,
+                            telemetry: &mut self.episode_telemetry,
+                        }),
                         observations: &mut self.operation_observations,
                         assignment_receipts: None,
                         diagnostic_effects,
@@ -4479,7 +4714,7 @@ impl<G> MainControl<G> {
                         pending_outer_page_build_context: None,
                         output_routine_active: self.boxes.output_routine_active,
                     };
-                    let publication = shipout_replay_box(page, stores, &mut command)?;
+                    let publication = shipout_replay_box(page, stores, &mut command, &self.modes)?;
                     // Detached output no longer owns runtime nodes. Establish
                     // the complete next-page owner before allowing the old
                     // region to retire; the outer vertical mode is rootless
@@ -4507,10 +4742,16 @@ impl<G> MainControl<G> {
                             &mut self.operation_observations,
                         );
                     }
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
+                        &mut host_facts,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         &mut context,
@@ -5252,9 +5493,6 @@ impl<G> MainControl<G> {
         let mut context = stores
             .command_context()
             .expect("display-end scan requires a live generation");
-        let mut preparation_scope = OperationPreparationScope;
-        let mut preparation = OperationHostPreparation::new(&mut preparation_scope);
-        self.prepare_host_capabilities(&context, &mut preparation);
         let mut machine = self.command_machine(diagnostic_effects);
         let mut processor = machine.processor(&mut context);
         prepare_command_trace(&mut processor, mode, shown_mode);
@@ -5981,10 +6219,16 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut context = stores.command_context().expect("live generation");
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,
@@ -6001,10 +6245,16 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
         let mut context = stores.command_context().expect("live generation");
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,
@@ -6021,10 +6271,16 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<bool, ExecError> {
         let mut context = stores.command_context().expect("live generation");
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,
@@ -6210,11 +6466,7 @@ impl<G> MainControl<G> {
             OperationDelivery::Replay
         };
         let mut preparation_scope = OperationPreparationScope;
-        let mut host_preparation = OperationHostPreparation::new(&mut preparation_scope);
-        {
-            let context = stores.command_context().expect("live generation");
-            self.prepare_host_capabilities(&context, &mut host_preparation);
-        }
+        let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
         host_preparation.fill_preflight(
             delivery,
             crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
@@ -6243,10 +6495,16 @@ impl<G> MainControl<G> {
         let mut context = stores
             .command_context()
             .expect("error-stop transition has a live generation");
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,
@@ -6264,7 +6522,7 @@ impl<G> MainControl<G> {
     fn execute_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -6288,7 +6546,7 @@ impl<G> MainControl<G> {
     fn dispatch_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -6313,8 +6571,7 @@ impl<G> MainControl<G> {
         } else {
             frame.assert_empty();
         }
-        let mode = host_preparation.mode();
-        let last_node_type = host_preparation.last_node_type();
+        let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let source_role = frame.operation_source_role();
         if matches!(delivery, OperationDelivery::ResidentHot) {
@@ -6368,6 +6625,13 @@ impl<G> MainControl<G> {
             // Advance their conservative generation once per observed outer
             // operation so validation always compares the canonical value
             // after another operation has had a chance to mutate the nest.
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
+            let last_node_type =
+                tex_command::CommandHostFacts::last_node_type(&mut host_facts, &context);
             context.observe_changed_command_projection(
                 mode_key,
                 DependencyValue::Projection {
@@ -6430,10 +6694,16 @@ impl<G> MainControl<G> {
             let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
                 tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
             );
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
+                &mut host_facts,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -6688,7 +6958,7 @@ impl<G> MainControl<G> {
     fn execute_scanned_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -6812,7 +7082,7 @@ impl<G> MainControl<G> {
     fn apply_hot_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         operation: &mut hot_apply::HotOperation<G>,
         output_start: OperationOutputStart,
@@ -6851,6 +7121,7 @@ impl<G> MainControl<G> {
                         state: &mut self.command,
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
+                        host_facts: CommandMachineHostFacts::Forbidden,
                         observations: &mut self.operation_observations,
                         assignment_receipts: assignment_receipts.as_mut(),
                         diagnostic_effects,
@@ -6906,10 +7177,16 @@ impl<G> MainControl<G> {
                 );
                 // §1269 publishes the completed assignment mutation before
                 // §325 observes the replay-level push of the saved token.
+                let mut host_facts = ExecutorHostFacts {
+                    modes: &self.modes,
+                    pdf_ignore_depth: self.pdf_ignore_depth,
+                    telemetry: &mut self.episode_telemetry,
+                };
                 if let Err(error) = schedule_afterassignment(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
+                    &mut host_facts,
                     &mut self.operation_observations,
                     diagnostic_effects,
                     context,
@@ -6970,10 +7247,16 @@ impl<G> MainControl<G> {
         if result.is_ok() && fires_afterassignment && !settled_in_admission {
             stores
                 .with_command_context(|context| {
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
                     schedule_afterassignment(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
+                        &mut host_facts,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         context,
@@ -7011,7 +7294,7 @@ impl<G> MainControl<G> {
     fn execute_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         episode: ColdExecutionEpisode<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
@@ -7273,6 +7556,10 @@ impl<G> MainControl<G> {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
+            host_facts: CommandMachineHostFacts::Detached {
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            },
             observations: &mut self.operation_observations,
             assignment_receipts: assignment_receipts.as_mut(),
             diagnostic_effects,
@@ -7330,6 +7617,7 @@ impl<G> MainControl<G> {
             publish_immediate_pdf_form(
                 form,
                 &mut command,
+                &self.modes,
                 stores,
                 &source_resolver,
                 provenance_demand,
@@ -7459,8 +7747,9 @@ impl<G> MainControl<G> {
                 stores
                     .world_mut()
                     .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
-                if let Some(receipt) = shipout_replay_box(shipout, stores, &mut command)?
-                    .and_then(|publication| publication.dvi)
+                if let Some(receipt) =
+                    shipout_replay_box(shipout, stores, &mut command, &self.modes)?
+                        .and_then(|publication| publication.dvi)
                 {
                     push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                 }
@@ -7665,10 +7954,16 @@ impl<G> MainControl<G> {
         if result.is_ok() && fires_afterassignment {
             stores
                 .with_command_context(|context| {
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
                     schedule_afterassignment(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
+                        &mut host_facts,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         context,
@@ -7722,10 +8017,16 @@ impl<G> MainControl<G> {
     ) -> Result<String, ExecError> {
         let filename = {
             let mut context = stores.command_context().expect("live generation");
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
+                &mut host_facts,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -7781,10 +8082,16 @@ impl<G> MainControl<G> {
         // omitted observer at the construction site.
         let silenced = self.operation_observations.take();
         let mut context = stores.command_context().expect("live generation");
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
+            &mut host_facts,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,

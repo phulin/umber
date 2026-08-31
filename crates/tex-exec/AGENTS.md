@@ -47,13 +47,13 @@ Command operands are scanned by `tex-command` into typed request and result valu
   semantic/effect/artifact/boundary publication. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
   attempt coordinate remains in `CommandState`.
-- `src/main_control/executor_facts.rs`: the one stack-branded stationary mode,
-  effective-tail, transaction, checked-save, and delivery preparation. The
-  caller-owned preparation slot is filled and drained fieldwise across
-  admitted delivery, availability checks, scanning, and application; no
-  by-value preflight aggregate crosses those stages. Live executor owners fill
-  or drain individual fields through borrow-scoped views; no admitted context
-  or preparation survives the operation loan.
+- `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
+  effective-tail provider plus the stack-branded checked-save and delivery
+  preparation. A scanner or conditional invokes only the exact fact method it
+  consumes; ordinary delivery writes no mode/tail cache and performs no
+  effective-tail traversal. The caller-owned preparation slot retains only
+  delivery, retry, and checked-save state across admitted stages; no live fact
+  or provider survives a processor episode or enters suspension.
 - The resident `CommandEpisode` owns the admitted current command, parked
   expansion, scalar phase, delivery cursor, scanner child, partial direct scan,
   and the completed hot-family operand. An adjacent caller-owned typed cold
@@ -65,12 +65,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   when resource, diagnostic, or exact rollback suspension must outlive the
   call. Do not recreate a nested preflight command, generic operation payload,
   readiness status, or prepare/apply handoff.
-- Each topology-stable operation prepares executor host capabilities once from
-  the authoritative live list. A stack-branded preparation carries the mode
-  and shared effective-tail result plus the compact delivery/retry fields
-  through scanning into application. Application drains those fields in the
-  same caller slot; suspension and error re-entry recompute host facts while
-  moving only the genuine typed continuation.
+- Executor host facts are demand-only borrows of the authoritative live mode
+  and page state. Conditional mode, auxiliary values, and effective-tail
+  quantities are sampled at their consuming scanner/primitive; only the
+  scanner's already-consumed typed value can cross a genuine suspension.
+  Delivery/retry fields remain in the same caller slot and no fact cache,
+  compatibility preparation path, or per-token payload exists.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; the scanner

@@ -602,10 +602,16 @@ impl<G> MainControl<G> {
             let attempt = self.command.begin_attempt_operation();
             let retirement = {
                 let mut context = stores.command_context().expect("named-boundary admission");
+                let mut host_facts = ExecutorHostFacts {
+                    modes: &self.modes,
+                    pdf_ignore_depth: self.pdf_ignore_depth,
+                    telemetry: &mut self.episode_telemetry,
+                };
                 let mut processor = command_processor(
                     &mut self.command,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
+                    &mut host_facts,
                     &mut self.operation_observations,
                     &mut diagnostic_effects,
                     &mut context,

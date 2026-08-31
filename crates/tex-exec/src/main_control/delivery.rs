@@ -12,7 +12,7 @@ pub(super) struct PreparedAlignmentPreamble<G> {
 
 pub(super) fn fill_preflight_delivery_from_frame<G>(
     frame: &CommandEpisode<G>,
-    preparation: &mut OperationHostPreparation<'_, G>,
+    preparation: &mut OperationPreparation<'_, G>,
     retained_preflight: Option<crate::transaction_protocol::CommandPreflight>,
 ) {
     let preflight = retained_preflight.unwrap_or_else(|| {
@@ -117,7 +117,7 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationHostPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -128,8 +128,7 @@ impl<G> MainControl<G> {
         let raw_main_loop_delivery = self.main_loop_active;
         let context_readiness = stores
             .with_command_context(|context| {
-                self.prepare_host_capabilities(context, host_preparation);
-                let mode = host_preparation.mode();
+                let mode = self.modes.current_mode();
                 if self.active_alignment.is_some()
                     || (mode == Mode::DisplayMath
                         && self.modes.current_list().has_display_alignment())
@@ -158,10 +157,16 @@ impl<G> MainControl<G> {
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
                 {
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
                     let mut processor = command_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
+                        &mut host_facts,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         context,
@@ -369,19 +374,12 @@ impl<G> MainControl<G> {
         if context_readiness == PreflightReadiness::Failed {
             return PreflightReadiness::Failed;
         }
-        let mode = host_preparation.mode();
-        let refresh_transaction_facts = !diagnostics.is_empty();
+        let mode = self.modes.current_mode();
         self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
         if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
             frame.error = Some(error);
             return PreflightReadiness::Failed;
-        }
-        if refresh_transaction_facts {
-            let context = stores
-                .command_context()
-                .expect("diagnostic retry admission");
-            host_preparation.refresh_transaction_facts(&context);
         }
         if frame.error.is_some() {
             return PreflightReadiness::Failed;
@@ -436,10 +434,16 @@ impl<G> MainControl<G> {
             );
         if !continues_main_loop && !trace_reported {
             let mut context = stores.command_context().expect("live generation");
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
+                &mut host_facts,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,

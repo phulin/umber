@@ -176,7 +176,7 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) command: &'episode mut CommandState<G>,
     pub(crate) state: &'episode mut CommandContext<'admission, G>,
-    pub(crate) host: CommandHostContext<'episode>,
+    pub(crate) host: CommandHostContext<'episode, G>,
     observer: Option<&'episode mut dyn CommandObserver>,
     fuel: &'episode mut CommandFuel,
     diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
@@ -609,7 +609,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub fn new(
         command: &'episode mut CommandState<G>,
         state: &'episode mut CommandContext<'admission, G>,
-        host: CommandHostContext<'episode>,
+        host: CommandHostContext<'episode, G>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,

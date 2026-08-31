@@ -71,6 +71,10 @@ collector (see `src/conditionals.rs`).
   `scan_toks` wrapper, and PDF string-compare migrations remain separate
   reviewed cutovers.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
+  Long-lived immutable resources remain in `CommandHostCapabilities`; live
+  executor mode, auxiliary, and effective-tail facts cross the synchronous
+  `CommandHostFacts` provider only when their exact scanner or conditional
+  consumes them. No fact cache enters command state or suspension.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable

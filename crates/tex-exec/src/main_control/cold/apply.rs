@@ -2934,6 +2934,7 @@ pub(in crate::main_control) fn apply<G>(
                     command.state,
                     command.fuel,
                     command.capabilities,
+                    &mut command.host_facts,
                     command.observations,
                     command.diagnostic_effects,
                     stores,
