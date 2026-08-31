@@ -2,15 +2,16 @@
 
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
-    PdfContentOperation, PdfContentRectangle, PdfContentTextRun, PdfDestinationAction,
-    PdfDestinationActionKind, PdfDestinationNameTree, PdfDestinationNameTreeChildren,
-    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView,
-    PdfDictionary, PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontProgramInput,
-    PdfImageColorSpace, PdfImageFilter, PdfImageGammaInput, PdfImageMetadataInput, PdfImageXObject,
-    PdfIndirectObject, PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId,
-    PdfOutlineItemObject, PdfOutlineObject, PdfPageRotationInput, PdfRasterColorSpaceInput,
-    PdfRasterFormatInput, PdfSerializeError, PdfThreadObject, PdfTrailer, PdfValue, PdfVersion,
-    UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfContentOperation, PdfContentRectangle, PdfContentTextRaster, PdfContentTextRun,
+    PdfDestinationAction, PdfDestinationActionKind, PdfDestinationNameTree,
+    PdfDestinationNameTreeChildren, PdfDestinationPage, PdfDestinationStructure,
+    PdfDestinationTarget, PdfDestinationView, PdfDictionary, PdfExplicitDestination,
+    PdfFinalizationInput, PdfFontInput, PdfFontProgramInput, PdfImageColorSpace, PdfImageFilter,
+    PdfImageGammaInput, PdfImageMetadataInput, PdfImageXObject, PdfIndirectObject, PdfModelError,
+    PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId, PdfOutlineItemObject,
+    PdfOutlineObject, PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput,
+    PdfSerializeError, PdfThreadObject, PdfTrailer, PdfValue, PdfVersion, UnvalidatedPdfDocument,
+    ordered_page_content, page_content,
 };
 use crate::positioned::{BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage};
 use crate::{ContentHash, PageArtifact, PageNode};
@@ -613,8 +614,8 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             .ok_or(PdfBuildError::PageGeometryOverflow)?,
                         parameters.decimal_digits,
                     );
-                    let font_size = scaled_to_bp_f32(font.at_size, parameters.decimal_digits);
-                    let positioning_font_size = pdftex_positioning_font_size(font.at_size);
+                    let font_size = pdftex_font_size(font.at_size);
+                    let positioning_font_size = pdftex_font_size_f64(font.at_size);
                     let horizontal_scale = font_horizontal_scale(&font.construction);
                     let explicit_space = font_has_explicit_space(resource);
                     let mut segment = Vec::new();
@@ -641,16 +642,22 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                         positioning_font_size,
                                         horizontal_scale,
                                     );
+                                    let anchor = segment_x
+                                        .take()
+                                        .expect("nonempty segment has an anchor")
+                                        .checked_add(record.h_origin())
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
                                     content_operations.push(PdfContentOperation::Text(
                                         PdfContentTextRun {
-                                            x: scaled_to_bp_f32(
-                                                segment_x
-                                                    .take()
-                                                    .expect("nonempty segment has an anchor")
-                                                    .checked_add(record.h_origin())
-                                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                                                parameters.decimal_digits,
-                                            ),
+                                            x: scaled_to_bp_f32(anchor, parameters.decimal_digits),
+                                            raster: Some(PdfContentTextRaster {
+                                                serialized_x: scaled_to_bp_f64(
+                                                    anchor,
+                                                    parameters.decimal_digits,
+                                                ),
+                                                position_x: scaled_to_bp_unrounded_f64(anchor),
+                                                font_size: positioning_font_size,
+                                            }),
                                             baseline,
                                             font_name: resource_name.clone(),
                                             font_size,
@@ -682,6 +689,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                                     .ok_or(PdfBuildError::PageGeometryOverflow)?,
                                                 parameters.decimal_digits,
                                             ),
+                                            raster: None,
                                             baseline,
                                             font_name,
                                             font_size: space_size,
@@ -695,14 +703,17 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         }
                     }
                     if !segment.is_empty() {
+                        let anchor = segment_x
+                            .expect("nonempty segment has an anchor")
+                            .checked_add(record.h_origin())
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
                         content_operations.push(PdfContentOperation::Text(PdfContentTextRun {
-                            x: scaled_to_bp_f32(
-                                segment_x
-                                    .expect("nonempty segment has an anchor")
-                                    .checked_add(record.h_origin())
-                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                                parameters.decimal_digits,
-                            ),
+                            x: scaled_to_bp_f32(anchor, parameters.decimal_digits),
+                            raster: Some(PdfContentTextRaster {
+                                serialized_x: scaled_to_bp_f64(anchor, parameters.decimal_digits),
+                                position_x: scaled_to_bp_unrounded_f64(anchor),
+                                font_size: positioning_font_size,
+                            }),
                             baseline,
                             font_name: resource_name,
                             font_size,
@@ -741,6 +752,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                     .ok_or(PdfBuildError::PageGeometryOverflow)?,
                                 parameters.decimal_digits,
                             ),
+                            raster: None,
                             baseline: scaled_to_bp_f32(
                                 page_height
                                     .checked_sub(control.y)
@@ -1201,6 +1213,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             .collect::<Result<Vec<_>, _>>()?;
                     operations.push(PdfContentOperation::Text(PdfContentTextRun {
                         x: scaled_to_bp_f32(run.x, parameters.decimal_digits),
+                        raster: None,
                         baseline: scaled_to_bp_f32(
                             total_height
                                 .checked_sub(run.baseline)
@@ -1208,7 +1221,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             parameters.decimal_digits,
                         ),
                         font_name: resource_name,
-                        font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
+                        font_size: pdftex_font_size(font.at_size),
                         horizontal_scale: font_horizontal_scale(&font.construction),
                         advance: None,
                         bytes,
@@ -2893,16 +2906,16 @@ fn scalable_text_advance(
     input: &PdfFontInput,
     font: &crate::FontResource,
     bytes: &[u8],
-    font_size: f32,
+    font_size: f64,
     horizontal_scale: f32,
-) -> Option<f32> {
+) -> Option<f64> {
     input.map_entry.as_ref()?;
     let denominator = i64::from(font.at_size.raw()).max(1);
     let width_units = bytes.iter().try_fold(0_i64, |total, &code| {
         let width = i64::from(input.metrics.widths[usize::from(code)].raw());
         total.checked_add((width * 1000 + denominator / 2) / denominator)
     })?;
-    Some(width_units as f32 * font_size * horizontal_scale / 1000.0)
+    Some(width_units as f64 * font_size * f64::from(horizontal_scale) / 1000.0)
 }
 
 fn pdf_font_objects(
@@ -4374,11 +4387,25 @@ fn scaled_to_bp_f32(value: Scaled, decimal_digits: i32) -> f32 {
     scaled_to_bp_coefficient(value, decimal_digits) as f32 / scale
 }
 
-pub(super) fn pdftex_positioning_font_size(value: Scaled) -> f32 {
-    // pdftex.web §690 (`pdf_use_font` and `adv_char_width`) retains a
-    // font-size raster independent of `\pdfdecimaldigits`; its `Tf` display
-    // precision does not control cumulative character-width accounting.
+fn scaled_to_bp_f64(value: Scaled, decimal_digits: i32) -> f64 {
+    let scale = 10_f64.powi(decimal_digits);
+    scaled_to_bp_coefficient(value, decimal_digits) as f64 / scale
+}
+
+pub(super) fn pdftex_font_size(value: Scaled) -> f32 {
+    // pdftex.web §690 (`pdf_set_font`, `pdf_use_font`, and
+    // `adv_char_width`) uses one four-place font-size raster for both the
+    // serialized `Tf` operand and cumulative character-width accounting,
+    // independently of `\pdfdecimaldigits`.
     scaled_to_bp_f32(value, 4)
+}
+
+fn pdftex_font_size_f64(value: Scaled) -> f64 {
+    scaled_to_bp_coefficient(value, 4) as f64 / 10_000.0
+}
+
+fn scaled_to_bp_unrounded_f64(value: Scaled) -> f64 {
+    f64::from(value.raw()) * 7_200.0 / (7_227.0 * 65_536.0)
 }
 
 fn scaled_to_bp_number(value: Scaled, decimal_digits: i32) -> Result<PdfNumber, PdfModelError> {

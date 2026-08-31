@@ -47,9 +47,23 @@ pub struct PdfContentRectangle {
 }
 
 /// One absolutely positioned byte-encoded PDF text run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfContentTextRaster {
+    /// Exact decimal value written for the run's initial `x`.
+    pub serialized_x: f64,
+    /// Unrounded TeX position used by the next pdfTeX raster adjustment.
+    pub position_x: f64,
+    /// Exact decimal value of the serialized four-place pdfTeX font size.
+    pub font_size: f64,
+}
+
+/// One absolutely positioned byte-encoded PDF text run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PdfContentTextRun {
     pub x: f32,
+    /// Exact pdfTeX raster state. `None` uses the serialized scalar values for
+    /// independently constructed content operations.
+    pub raster: Option<PdfContentTextRaster>,
     pub baseline: f32,
     pub font_name: Vec<u8>,
     pub font_size: f32,
@@ -60,7 +74,7 @@ pub struct PdfContentTextRun {
     /// Advance produced by the emitted PDF `/Widths` entries, in user-space
     /// points. `None` keeps the run independently positioned when the font
     /// program does not expose the same scalable-width raster as pdfTeX.
-    pub advance: Option<f32>,
+    pub advance: Option<f64>,
 }
 
 /// One ordered page-content operation. Generated PDF syntax is lowered only

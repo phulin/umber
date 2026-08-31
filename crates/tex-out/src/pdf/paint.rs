@@ -58,7 +58,7 @@ struct PdfPainter {
 
 #[derive(Clone, Copy)]
 struct PdfTextCursor {
-    x: f32,
+    x: f64,
     baseline: f32,
     horizontal_scale: f32,
 }
@@ -144,6 +144,14 @@ impl PdfPainter {
             self.in_text = true;
         }
         let (x, baseline) = self.relative_position(run.x, run.baseline);
+        let serialized_x = run
+            .raster
+            .map(|raster| raster.serialized_x - f64::from(self.origin.0))
+            .unwrap_or_else(|| f64::from(x));
+        let positioning_x = run
+            .raster
+            .map(|raster| raster.position_x - f64::from(self.origin.0))
+            .unwrap_or_else(|| f64::from(x));
         self.content.set_font(Name(&run.font_name), run.font_size);
         if let (Some(cursor), Some(advance)) = (self.text_cursor, run.advance)
             && cursor.baseline == baseline
@@ -153,9 +161,14 @@ impl PdfPainter {
             // position across character, kern, glue, and direct-color nodes.
             // Express the next TeX anchor as a TJ adjustment in the current
             // font raster instead of resetting Tm for every positioned run.
-            let text_unit = run.font_size * run.horizontal_scale / 1000.0;
+            let text_unit = run
+                .raster
+                .map(|raster| raster.font_size)
+                .unwrap_or_else(|| f64::from(run.font_size))
+                * f64::from(run.horizontal_scale)
+                / 1000.0;
             if text_unit > 0.0 {
-                let adjustment = (-(x - cursor.x) / text_unit).round();
+                let adjustment = (-(positioning_x - cursor.x) / text_unit).round();
                 if adjustment.abs() < 32_768.0 {
                     if adjustment == 0.0 {
                         self.content.show(Str(&run.bytes));
@@ -163,7 +176,7 @@ impl PdfPainter {
                         self.content
                             .show_positioned()
                             .items()
-                            .adjust(adjustment)
+                            .adjust(adjustment as f32)
                             .show(Str(&run.bytes));
                     }
                     self.text_cursor = Some(PdfTextCursor {
@@ -179,7 +192,7 @@ impl PdfPainter {
             .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline])
             .show(Str(&run.bytes));
         self.text_cursor = run.advance.map(|advance| PdfTextCursor {
-            x: x + advance,
+            x: serialized_x + advance,
             baseline,
             horizontal_scale: run.horizontal_scale,
         });

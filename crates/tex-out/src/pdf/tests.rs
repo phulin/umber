@@ -71,6 +71,7 @@ fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
         },
         PdfContentOperation::Text(PdfContentTextRun {
             x: 30.0,
+            raster: None,
             baseline: 40.0,
             font_name: b"F1".to_vec(),
             font_size: 10.0,
@@ -121,6 +122,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
     let text = |bytes: &[u8]| {
         PdfContentOperation::Text(PdfContentTextRun {
             x: 0.0,
+            raster: None,
             baseline: 0.0,
             font_name: b"F1".to_vec(),
             font_size: 10.0,
@@ -156,6 +158,7 @@ fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
     let text = |x, byte| {
         PdfContentOperation::Text(PdfContentTextRun {
             x,
+            raster: None,
             baseline: 20.0,
             font_name: b"F1".to_vec(),
             font_size: 10.0,
@@ -190,10 +193,47 @@ fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
 }
 
 #[test]
+fn mapped_text_starts_its_raster_at_the_serialized_position() {
+    // pdftex.web §690: `pdf_set_text_pos` assigns `pdf_h` from the rounded
+    // position written to the PDF, while the next `pdf_begin_string` compares
+    // the unrounded TeX anchor against that raster. Keeping the unrounded
+    // initial anchor instead changes this boundary adjustment from 772 to 773.
+    let font_size = 8.9664;
+    let advance = 525.0 * font_size / 1000.0;
+    let text = |x, serialized_x, position_x, byte| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x,
+            raster: Some(PdfContentTextRaster {
+                serialized_x,
+                position_x,
+                font_size,
+            }),
+            baseline: 20.0,
+            font_name: b"F1".to_vec(),
+            font_size: font_size as f32,
+            horizontal_scale: 1.0,
+            bytes: vec![byte],
+            advance: Some(advance),
+        })
+    };
+    let bytes = ordered_page_content(&[
+        text(67.649, 67.649, 67.6485, b'#'),
+        text(79.282, 79.282, 79.282_455_68, b'D'),
+    ]);
+    assert!(
+        String::from_utf8(bytes)
+            .expect("ASCII content")
+            .contains("[-772 (D)] TJ"),
+        "the retained cursor must start at the rounded serialized position"
+    );
+}
+
+#[test]
 fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
     let payload = (u8::MIN..=u8::MAX).collect::<Vec<_>>();
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 0.0,
+        raster: None,
         baseline: 0.0,
         font_name: b"F1".to_vec(),
         font_size: 10.0,
@@ -224,14 +264,10 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
         ratio: -20,
     };
     assert_eq!(super::finalize::font_horizontal_scale(&construction), 0.98);
-    assert_eq!(
-        super::finalize::pdftex_positioning_font_size(Scaled::from_raw(10 * 65_536)),
-        9.9626,
-        "pdftex.web §690 keeps the four-place font raster for cursor advances"
-    );
 
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 12.0,
+        raster: None,
         baseline: 34.0,
         font_name: b"F1".to_vec(),
         font_size: 10.0,
@@ -244,6 +280,32 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
             .expect("ASCII content")
             .contains("0.98 0 0 1 12 34 Tm"),
         "expanded text must carry the canonical horizontal scale"
+    );
+}
+
+#[test]
+fn pdftex_font_size_uses_four_places_for_tf_and_cursor_advances() {
+    // pdftex.web §690: `pdf_set_font` emits the font size with four
+    // decimal places, and `pdf_use_font` retains that raster for
+    // `adv_char_width`, independently of `\pdfdecimaldigits`.
+    let font_size = super::finalize::pdftex_font_size(Scaled::from_raw(9 * 65_536));
+    assert_eq!(font_size, 8.9664);
+
+    let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
+        x: 0.0,
+        raster: None,
+        baseline: 0.0,
+        font_name: b"F1".to_vec(),
+        font_size,
+        horizontal_scale: 1.0,
+        bytes: b"A".to_vec(),
+        advance: Some(4.5),
+    })]);
+    assert!(
+        String::from_utf8(bytes)
+            .expect("ASCII content")
+            .contains("/F1 8.9664 Tf"),
+        "the serialized Tf operand must preserve pdfTeX's four-place raster"
     );
 }
 
