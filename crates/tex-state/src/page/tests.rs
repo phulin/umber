@@ -84,6 +84,39 @@ fn page_buffers_mutate_directly_without_cow_roots() {
 }
 
 #[test]
+fn page_list_accounting_walks_direct_chunks_once_without_index_recovery() {
+    let mut pool = NodePool::with_chunk_bytes(1);
+    let mut region = PageMaterialRegion::new(&mut pool);
+    let mut arena = PageMaterialArena::new(&mut pool, &mut region);
+    let root = publish_nodes(&mut arena, (0..64).map(Node::Penalty));
+    let span = arena.admit_span(root).expect("admit measured span");
+    let before = arena
+        .span_list(span)
+        .expect("measured span remains live")
+        .traversal_counters();
+    let mut page = PageBuilderState::default();
+
+    page.push_current_page_list(&mut arena, root);
+
+    let after = arena
+        .span_list(span)
+        .expect("measured span remains live")
+        .traversal_counters();
+    assert_eq!(after.0 - before.0, 0, "accounting performs no indexing");
+    assert_eq!(
+        after.1 - before.1,
+        0,
+        "accounting performs no repeated predecessor recovery"
+    );
+    assert_eq!(
+        after.2 - before.2,
+        63,
+        "one forward traversal crosses each packed block once"
+    );
+    assert_eq!(page.current_page_len(), 64);
+}
+
+#[test]
 fn scalar_and_class_marks_store_handle_free_page_values() {
     let mut page = PageBuilderState::default();
     let scalar = tokens(&[Token::param(3)]);

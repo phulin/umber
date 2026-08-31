@@ -5300,7 +5300,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         self.list.is_empty()
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn traversal_counters(&self) -> (u64, u64, u64) {
         (
             self.pool.payload.admitted_index_resolutions(),
@@ -5312,6 +5312,27 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&'a T> {
         let cursor = self.cursor_at_node(index)?;
+        self.get_cursor(cursor)
+    }
+
+    /// Returns the first value directly from the admitted head coordinate.
+    #[must_use]
+    pub fn first(&self) -> Option<&'a T> {
+        if self.is_empty() {
+            None
+        } else {
+            self.get_cursor(self.root.head)
+        }
+    }
+
+    /// Returns the last value directly from the admitted tail coordinate.
+    #[must_use]
+    pub fn last(&self) -> Option<&'a T> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut cursor = self.root.tail;
+        cursor.offset = cursor.offset.checked_sub(1)?;
         self.get_cursor(cursor)
     }
 

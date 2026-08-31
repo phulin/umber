@@ -5007,9 +5007,7 @@ fn page_list_semantic_id<G>(
                 .get(root)
                 .expect("PDF form root belongs to the live page arena");
             self.hasher.usize(list.nodes().len());
-            for node in list.iter() {
-                self.node(node);
-            }
+            list.for_each(|node| self.node(node));
         }
 
         fn font(&mut self, font: crate::ids::FontId) {

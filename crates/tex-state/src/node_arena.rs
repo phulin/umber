@@ -3089,13 +3089,17 @@ impl<'a> NodeCursor<'a> {
     }
     #[must_use]
     pub fn first(&self) -> Option<&'a Node> {
-        self.owned_node(0)
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.first(),
+            NodeCursorSource::Fork(view) => view.first(),
+        }
     }
     #[must_use]
     pub fn last(&self) -> Option<&'a Node> {
-        self.len()
-            .checked_sub(1)
-            .and_then(|index| self.owned_node(index))
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.last(),
+            NodeCursorSource::Fork(view) => view.last(),
+        }
     }
     #[must_use]
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {

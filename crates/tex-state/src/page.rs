@@ -3572,14 +3572,9 @@ impl PageBuilderState {
         self.advance_progress();
         self.resume_after_output = true;
         let current = arena
-            .span_list(self.current_page)
+            .span_node_cursor(self.current_page)
             .expect("current page root belongs to the live arena");
-        let released = dynamic_words(current.iter());
-        let released_page_roots = current
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
-        let _ = current;
+        let (released, released_page_roots) = list_dynamic_usage(current);
         if !self.checkpoint_journal.frames.is_empty() {
             let current_page = std::mem::take(&mut self.current_page);
             let insertions = std::mem::take(&mut self.insertions);
@@ -3707,14 +3702,9 @@ impl PageBuilderState {
             .slice_span(self.contribution, end..self.contribution.len())
             .expect("contribution suffix belongs to the live arena");
         let removed_view = arena
-            .span_list(removed)
+            .span_node_cursor(removed)
             .expect("removed contribution remains live");
-        let words = dynamic_words(removed_view.iter());
-        let roots = removed_view
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
-        let _ = removed_view;
+        let (words, roots) = list_dynamic_usage(removed_view);
         self.release_dynamic_word_totals(words);
         self.page_node_root_count = self
             .page_node_root_count
@@ -3793,14 +3783,9 @@ impl PageBuilderState {
             .admit_span(nodes)
             .expect("heldover page contribution belongs to the live owner");
         let view = arena
-            .span_list(nodes)
+            .span_node_cursor(nodes)
             .expect("heldover page contribution is live");
-        let words = dynamic_words(view.iter());
-        let roots = view
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
-        let _ = view;
+        let (words, roots) = list_dynamic_usage(view);
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
@@ -3819,13 +3804,9 @@ impl PageBuilderState {
             .admit_span(nodes)
             .expect("page contribution list belongs to the live owner");
         let view = arena
-            .span_list(nodes)
+            .span_node_cursor(nodes)
             .expect("page contribution list is live");
-        let words = dynamic_words(view.iter());
-        let roots = view
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
+        let (words, roots) = list_dynamic_usage(view);
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
@@ -3849,13 +3830,9 @@ impl PageBuilderState {
             .admit_span(list)
             .expect("unique contribution belongs to the live owner");
         let view = arena
-            .span_list(span)
+            .span_node_cursor(span)
             .expect("unique contribution remains live");
-        let words = dynamic_words(view.iter());
-        let roots = view
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
+        let (words, roots) = list_dynamic_usage(view);
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.contribution = arena
@@ -3945,7 +3922,10 @@ impl PageBuilderState {
     }
 
     pub(crate) fn current_page_tail<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
-        self.current_page(arena).next_back()
+        arena
+            .span_node_cursor(self.current_page)
+            .expect("current page root belongs to the live arena")
+            .last()
     }
 
     pub(crate) fn current_page_len(&self) -> usize {
@@ -3986,12 +3966,10 @@ impl PageBuilderState {
         let list = arena
             .admit_span(list)
             .expect("current-page list belongs to the live owner");
-        let view = arena.span_list(list).expect("current-page list is live");
-        let words = dynamic_words(view.iter());
-        let roots = view
-            .iter()
-            .filter(|node| node_retains_page_handle(node))
-            .count();
+        let nodes = arena
+            .span_node_cursor(list)
+            .expect("current-page list is live");
+        let (words, roots) = list_dynamic_usage(nodes);
         self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self.page_node_root_count.saturating_add(roots);
         self.current_page = arena
@@ -4160,32 +4138,26 @@ impl PageBuilderState {
     }
 
     fn allocate_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
-        let view = arena
-            .span_list(list)
+        let nodes = arena
+            .span_node_cursor(list)
             .expect("page list belongs to the live arena");
-        self.allocate_dynamic_word_totals(dynamic_words(view.iter()));
+        let (words, roots) = list_dynamic_usage(nodes);
+        self.allocate_dynamic_word_totals(words);
         self.page_node_root_count = self
             .page_node_root_count
-            .checked_add(
-                view.iter()
-                    .filter(|node| node_retains_page_handle(node))
-                    .count(),
-            )
+            .checked_add(roots)
             .expect("page root accounting overflow");
     }
 
     fn release_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
-        let view = arena
-            .span_list(list)
+        let nodes = arena
+            .span_node_cursor(list)
             .expect("page list belongs to the live arena");
-        self.release_dynamic_word_totals(dynamic_words(view.iter()));
+        let (words, roots) = list_dynamic_usage(nodes);
+        self.release_dynamic_word_totals(words);
         self.page_node_root_count = self
             .page_node_root_count
-            .checked_sub(
-                view.iter()
-                    .filter(|node| node_retains_page_handle(node))
-                    .count(),
-            )
+            .checked_sub(roots)
             .expect("released more page roots than were live");
     }
 
@@ -4328,13 +4300,15 @@ fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenList) -> u64 {
     hasher.finish()
 }
 
-fn dynamic_words<'a>(nodes: impl Iterator<Item = &'a Node>) -> (usize, usize) {
-    nodes.fold((0_usize, 0_usize), |words, node| {
-        (
-            words.0.saturating_add(node.tex_memory_words(false).1),
-            words.1.saturating_add(node.tex_memory_words(true).1),
-        )
-    })
+fn list_dynamic_usage(nodes: NodeCursor<'_>) -> ((usize, usize), usize) {
+    let mut words = (0_usize, 0_usize);
+    let mut roots = 0_usize;
+    nodes.for_each(|node| {
+        words.0 = words.0.saturating_add(node.tex_memory_words(false).1);
+        words.1 = words.1.saturating_add(node.tex_memory_words(true).1);
+        roots = roots.saturating_add(usize::from(node_retains_page_handle(node)));
+    });
+    (words, roots)
 }
 
 trait PageListRoot {

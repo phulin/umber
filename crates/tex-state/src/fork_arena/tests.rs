@@ -534,6 +534,33 @@ fn direct_chunk_visit_is_linear_and_allocation_free_at_one_sixty_four_and_four_t
 }
 
 #[test]
+fn admitted_endpoint_reads_use_direct_root_cursors() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let root = {
+        let mut builder = arena.begin_builder(&mut pool).expect("builder");
+        for value in 0..4_096 {
+            builder.push(value).expect("one-node direct block");
+        }
+        builder.seal().expect("direct root")
+    };
+    let view = arena.list(&pool, root).expect("admitted view");
+    let resolutions_before = pool.payload.admitted_index_resolutions();
+    let predecessor_steps_before = pool.payload.admitted_index_predecessor_steps();
+
+    assert_eq!(view.first(), Some(&0));
+    assert_eq!(view.last(), Some(&4_095));
+    assert_eq!(
+        pool.payload.admitted_index_resolutions() - resolutions_before,
+        0
+    );
+    assert_eq!(
+        pool.payload.admitted_index_predecessor_steps() - predecessor_steps_before,
+        0
+    );
+}
+
+#[test]
 fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_required_sizes() {
     const ALLOCATION_OWNER: usize = 15;
 
