@@ -431,7 +431,10 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         {
             Search::Skip
         }
-        Node::Glue { spec, .. } if spec.width.raw() == 0 => Search::Skip,
+        // pdftex.web's `cp_skipable` recognizes only `zero_glue`. A glue
+        // node whose natural width is zero but whose stretch or shrink is
+        // nonzero (notably terminal `\parfillskip`) blocks edge discovery.
+        Node::Glue { spec, .. } if *spec == tex_state::glue::GlueSpec::ZERO => Search::Skip,
         Node::Penalty(_)
         | Node::MarginKern { .. }
         | Node::Mark { .. }

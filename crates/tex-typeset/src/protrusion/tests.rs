@@ -68,6 +68,32 @@ fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
 }
 
 #[test]
+fn zero_width_stretch_glue_blocks_edge_discovery() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 700);
+    let par_fill = GlueSpec {
+        stretch: sp(65_536),
+        stretch_order: tex_state::glue::Order::Fil,
+        ..GlueSpec::ZERO
+    };
+
+    let protrusion = line_protrusion(
+        &state,
+        &[
+            character(font, '.'),
+            Node::Glue {
+                spec: par_fill,
+                kind: GlueKind::ParFillSkip,
+                leader: None,
+            },
+        ],
+    );
+
+    assert_eq!(protrusion.right, sp(0));
+}
+
+#[test]
 fn margin_variation_uses_left_codes_only_for_expandable_ligature_edges() {
     let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
