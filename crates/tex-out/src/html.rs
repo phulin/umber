@@ -4,17 +4,19 @@
 mod tests;
 
 pub mod incremental;
+mod markup;
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use tex_arith::Scaled;
 use umber_hash::{AHash64, HashDomain};
 
 use crate::positioned::{BoxKind, PositionedError, PositionedPage, TextUnit};
 use crate::{FontResource, PageArtifact};
+
+use markup::{base64, check_html_size, escape_attr, escape_text, hex};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct HtmlFontKey {
@@ -415,13 +417,12 @@ pub fn write_render_document(
     html.push_str("\"><head><meta charset=\"utf-8\"><meta name=\"generator\" content=\"umber-html/1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:\"><title>");
     escape_text(&document.revision.title, &mut html);
     html.push_str("</title><style>\n");
-    check_html_size(&html, &options)?;
+    check_html_size(&html, options.max_html_bytes)?;
     write_render_font_css(&mut html, document, &resources, &options)?;
-    html.push_str(BASE_CSS);
+    html.push_str(markup::BASE_CSS);
     html.push_str("</style></head><body>\n<main class=\"umber-document\">\n");
     for page in &document.revision.pages {
-        write_render_page(&mut html, page, &options)?;
-        check_html_size(&html, &options)?;
+        markup::write_render_page(&mut html, page, &options)?;
     }
     html.push_str("</main></body></html>\n");
     if html.len() > options.max_html_bytes {
@@ -528,365 +529,10 @@ fn write_render_font_css(
             }
         }
         out.push_str("') format('woff2');font-display:block;font-style:normal;font-weight:400}\n");
-        check_html_size(out, options)?;
+        check_html_size(out, options.max_html_bytes)?;
     }
     Ok(())
 }
-
-fn write_render_page(
-    out: &mut String,
-    page: &incremental::RenderPage,
-    options: &HtmlOptions,
-) -> Result<(), HtmlError> {
-    out.push_str("<section class=\"umber-page\" data-umber-page=\"");
-    out.push_str(&page.ordinal.to_string());
-    out.push_str("\" data-umber-revision=\"");
-    out.push_str(&options.revision.to_string());
-    out.push_str("\" data-umber-output=\"");
-    out.push_str(&options.output_id.to_string());
-    out.push('"');
-    attr_sp(out, "width", page.width);
-    attr_sp(out, "height", page.height);
-    attr_sp(out, "origin-x", page.origin_x);
-    attr_sp(out, "origin-y", page.origin_y);
-    out.push_str(" data-umber-mag=\"");
-    out.push_str(&page.mag.to_string());
-    out.push_str("\" style=\"width:");
-    css_px(out, page.width, page.mag);
-    out.push_str(";height:");
-    css_px(out, page.height, page.mag);
-    out.push_str("\">\n<div class=\"umber-page-content\" style=\"left:");
-    css_px(out, page.origin_x, page.mag);
-    out.push_str(";top:");
-    css_px(out, page.origin_y, page.mag);
-    out.push_str("\">\n");
-    let mut accessible = AccessiblePage::default();
-    let mut math_open = false;
-    for node in &page.nodes {
-        match &node.value {
-            incremental::RenderNodeValue::Box(value) => {
-                out.push_str("<div class=\"umber-box\" aria-hidden=\"true\" data-umber-event=\"");
-                out.push_str(&node.event_ordinal.to_string());
-                out.push_str("\" data-umber-kind=\"");
-                out.push_str(match value.kind {
-                    BoxKind::Horizontal => "hbox",
-                    BoxKind::Vertical => "vbox",
-                });
-                out.push('"');
-                geometry_attrs(out, value.x, value.y, value.width, value.height);
-                attr_sp(out, "baseline", value.baseline);
-                geometry_style(out, value.x, value.y, value.width, value.height, page.mag);
-                out.push_str("\"></div>\n");
-            }
-            incremental::RenderNodeValue::Rule(value) => {
-                out.push_str("<div class=\"umber-rule\" aria-hidden=\"true\" data-umber-event=\"");
-                out.push_str(&node.event_ordinal.to_string());
-                out.push('"');
-                geometry_attrs(out, value.x, value.y, value.width, value.height);
-                geometry_style(out, value.x, value.y, value.width, value.height, page.mag);
-                if let Some(color) = &value.color {
-                    out.push_str(";color:");
-                    out.push_str(color);
-                }
-                out.push_str("\"></div>\n");
-            }
-            incremental::RenderNodeValue::Text(value) => {
-                accessible.push_run(value.accessibility_line, &value.text, value.link.as_deref());
-                write_render_text(out, value, node.event_ordinal, page.mag);
-            }
-            incremental::RenderNodeValue::Special(value) => {
-                out.push_str(
-                    "<span class=\"umber-special\" aria-hidden=\"true\" data-umber-event=\"",
-                );
-                out.push_str(&node.event_ordinal.to_string());
-                out.push('"');
-                attr_sp(out, "x", value.x);
-                attr_sp(out, "y", value.y);
-                out.push_str(" data-umber-special-class=\"");
-                escape_attr(&value.class, out);
-                out.push_str("\" data-umber-special-hex=\"");
-                out.push_str(&hex(&value.payload));
-                match &value.action {
-                    incremental::RenderSpecialAction::Destination(id) => {
-                        out.push_str("\" id=\"");
-                        escape_attr(id, out);
-                    }
-                    incremental::RenderSpecialAction::Inert => {
-                        out.push_str("\" data-umber-special-policy=\"inert");
-                    }
-                    _ => out.push_str("\" data-umber-special-policy=\"applied"),
-                }
-                out.push_str("\" style=\"left:");
-                css_px(out, value.x, page.mag);
-                out.push_str(";top:");
-                css_px(out, value.y, page.mag);
-                out.push_str("\"></span>\n");
-            }
-            incremental::RenderNodeValue::MathStart(value) => {
-                math_open = true;
-                out.push_str("<svg class=\"umber-math\" aria-hidden=\"true\" data-umber-math=\"");
-                out.push_str(&value.id.to_string());
-                out.push('"');
-                attr_sp(out, "x", value.x);
-                attr_sp(out, "baseline", value.baseline);
-                attr_sp(out, "width", value.width);
-                attr_sp(out, "height", value.height);
-                attr_sp(out, "depth", value.depth);
-                out.push_str("><rect class=\"umber-math-baseline\" x=\"");
-                css_px(out, value.x, page.mag);
-                out.push_str("\" y=\"");
-                css_px(out, value.baseline, page.mag);
-                out.push_str("\" width=\"1\" height=\"1\"></rect>");
-            }
-            incremental::RenderNodeValue::MathGlyph(value) => {
-                write_render_math_glyph(out, value, node.event_ordinal, page.mag);
-            }
-            incremental::RenderNodeValue::MathRule(value) => {
-                out.push_str("<rect class=\"umber-math-rule\" data-umber-math-event=\"");
-                out.push_str(&node.event_ordinal.to_string());
-                out.push('"');
-                geometry_attrs(out, value.x, value.y, value.width, value.height);
-                out.push_str(" x=\"");
-                css_px(out, value.x, page.mag);
-                out.push_str("\" y=\"");
-                css_px(out, value.y, page.mag);
-                out.push_str("\" width=\"");
-                css_px(out, value.width, page.mag);
-                out.push_str("\" height=\"");
-                css_px(out, value.height, page.mag);
-                out.push_str("\"></rect>");
-            }
-            incremental::RenderNodeValue::MathEnd => {
-                math_open = false;
-                out.push_str("</svg>\n");
-            }
-        }
-        check_html_size(out, options)?;
-    }
-    debug_assert!(!math_open);
-    accessible.finish();
-    out.push_str("</div><div class=\"umber-a11y\" role=\"group\" aria-label=\"Page ");
-    out.push_str(&page.ordinal.to_string());
-    out.push_str("\">");
-    out.push_str(&accessible.markup);
-    out.push_str("</div></section>\n");
-    Ok(())
-}
-
-fn write_render_text(out: &mut String, value: &incremental::RenderText, ordinal: u32, mag: i32) {
-    out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
-    out.push_str(&ordinal.to_string());
-    out.push('"');
-    attr_sp(out, "x", value.x);
-    attr_sp(out, "baseline", value.baseline);
-    out.push_str(" data-umber-font=\"");
-    out.push_str(&value.font_id.to_string());
-    if let Some(face_index) = value.face_index {
-        out.push_str("\" data-umber-face-index=\"");
-        out.push_str(&face_index.to_string());
-        if let Some(script) = value.script {
-            out.push_str("\" data-umber-script=\"");
-            escape_attr(&String::from_utf8_lossy(&script), out);
-        }
-    }
-    out.push_str("\" data-umber-codes=\"");
-    write_codes(out, &value.units);
-    out.push_str("\" data-umber-text-kind=\"");
-    out.push_str(if value.mapped_encoding {
-        "encoding"
-    } else {
-        "unicode"
-    });
-    out.push_str("\" style=\"font-family:'");
-    out.push_str(&value.family);
-    out.push_str("';font-size:");
-    css_px(out, Scaled::from_raw(value.font.at_size_raw), mag);
-    if value.face_index.is_some() {
-        out.push_str(";font-feature-settings:");
-        write_render_feature_settings(out, &value.features);
-        out.push_str(";font-variation-settings:");
-        write_render_variation_settings(out, &value.variations);
-    }
-    if let Some(color) = &value.color {
-        out.push_str(";color:");
-        out.push_str(color);
-    }
-    out.push_str("\"><rect class=\"umber-baseline\" x=\"");
-    css_px(out, value.x, mag);
-    out.push_str("\" y=\"");
-    css_px(out, value.baseline, mag);
-    out.push_str("\" width=\"1\" height=\"1\"></rect>");
-    if let Some(link) = &value.link {
-        out.push_str("<a href=\"");
-        escape_attr(link, out);
-        out.push_str("\" rel=\"noreferrer noopener\">");
-    }
-    out.push_str("<text class=\"umber-run-text\" direction=\"");
-    out.push_str(match value.direction {
-        incremental::RenderDirection::LeftToRight => "ltr",
-        incremental::RenderDirection::RightToLeft => "rtl",
-    });
-    if let Some(language) = &value.language {
-        out.push_str("\" lang=\"");
-        escape_attr(language, out);
-    }
-    out.push_str("\" x=\"");
-    if value.exact_character_positions {
-        for (index, position) in value.positions.iter().enumerate() {
-            if index > 0 {
-                out.push(' ');
-            }
-            css_px(out, *position, mag);
-        }
-    } else {
-        css_px(out, value.x, mag);
-    }
-    out.push_str("\" y=\"");
-    css_px(out, value.baseline, mag);
-    out.push_str("\">");
-    escape_text(&value.text, out);
-    out.push_str("</text>");
-    if value.link.is_some() {
-        out.push_str("</a>");
-    }
-    out.push_str("</svg>\n");
-}
-
-fn write_render_math_glyph(
-    out: &mut String,
-    value: &incremental::RenderMathGlyph,
-    ordinal: u32,
-    mag: i32,
-) {
-    let glyph = value.glyph;
-    out.push_str("<g class=\"umber-math-glyph\" data-umber-math-event=\"");
-    out.push_str(&ordinal.to_string());
-    out.push_str("\" data-umber-glyph-id=\"");
-    out.push_str(&glyph.glyph_id.to_string());
-    out.push_str("\" data-umber-font-instance=\"");
-    out.push_str(&hex(&glyph.font_instance.bytes()));
-    out.push_str("\" data-umber-ssty=\"");
-    out.push_str(&glyph.ssty.to_string());
-    out.push('"');
-    attr_sp(out, "x", glyph.x);
-    attr_sp(out, "baseline", glyph.baseline);
-    attr_sp(out, "width", glyph.width);
-    attr_sp(out, "height", glyph.height);
-    attr_sp(out, "depth", glyph.depth);
-    out.push('>');
-    match &value.drawing {
-        incremental::RenderMathDrawing::Text {
-            scalar,
-            family,
-            font_size_raw,
-            variations,
-        } => {
-            out.push_str("<text class=\"umber-math-text\" direction=\"ltr\" x=\"");
-            css_px(out, glyph.x, mag);
-            out.push_str("\" y=\"");
-            css_px(out, glyph.baseline, mag);
-            out.push_str("\" style=\"font-family:'");
-            out.push_str(family);
-            out.push_str("';font-size:");
-            css_px(out, Scaled::from_raw(*font_size_raw), mag);
-            out.push_str(";font-feature-settings:'ssty' ");
-            out.push_str(&glyph.ssty.to_string());
-            out.push_str(";font-variation-settings:");
-            write_render_variation_settings(out, variations);
-            out.push_str("\">");
-            escape_text(&scalar.to_string(), out);
-            out.push_str("</text>");
-        }
-        incremental::RenderMathDrawing::Outline {
-            path,
-            units_per_em,
-            font_size_raw,
-        } => {
-            out.push_str("<path class=\"umber-math-outline\" d=\"");
-            out.push_str(path);
-            out.push_str("\" transform=\"translate(");
-            css_number(out, glyph.x, mag, 1);
-            out.push(' ');
-            css_number(out, glyph.baseline, mag, 1);
-            out.push_str(") scale(");
-            css_number(
-                out,
-                Scaled::from_raw(*font_size_raw),
-                mag,
-                i128::from(*units_per_em),
-            );
-            out.push(' ');
-            css_number(
-                out,
-                Scaled::from_raw(-*font_size_raw),
-                mag,
-                i128::from(*units_per_em),
-            );
-            out.push_str(")\"></path>");
-        }
-    }
-    out.push_str("</g>");
-}
-
-fn write_render_feature_settings(out: &mut String, settings: &[([u8; 4], u32)]) {
-    if settings.is_empty() {
-        out.push_str("normal");
-        return;
-    }
-    for (index, (tag, value)) in settings.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push('\'');
-        write_render_css_tag(out, *tag);
-        out.push_str("' ");
-        out.push_str(&value.to_string());
-    }
-}
-
-fn write_render_variation_settings(out: &mut String, settings: &[([u8; 4], i32)]) {
-    if settings.is_empty() {
-        out.push_str("normal");
-        return;
-    }
-    for (index, (tag, value)) in settings.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push('\'');
-        write_render_css_tag(out, *tag);
-        out.push_str("' ");
-        out.push_str(&(f64::from(*value) / 65_536.0).to_string());
-    }
-}
-
-fn write_render_css_tag(out: &mut String, tag: [u8; 4]) {
-    for byte in tag {
-        match byte {
-            b'\'' => out.push_str("\\27 "),
-            b'\\' => out.push_str("\\5c "),
-            _ => out.push(char::from(byte)),
-        }
-    }
-}
-
-const BASE_CSS: &str = concat!(
-    ".umber-document{margin:0;padding:0;background:#777}\n",
-    ".umber-page{position:relative;contain:strict;overflow:hidden;background:#fff;margin:0 auto 1rem;isolation:isolate}\n",
-    ".umber-page-content{position:absolute;width:0;height:0;overflow:visible}\n",
-    ".umber-box{position:absolute;pointer-events:none}\n",
-    ".umber-rule{position:absolute;background:currentColor}\n",
-    ".umber-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;white-space:pre;unicode-bidi:isolate-override;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
-    ".umber-run-text{white-space:pre;fill:currentColor}\n",
-    ".umber-baseline{fill:transparent;pointer-events:none}\n",
-    ".umber-math{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;color:currentColor}\n",
-    ".umber-math-text,.umber-math-outline,.umber-math-rule{fill:currentColor}\n",
-    ".umber-math-baseline{fill:transparent;pointer-events:none}\n",
-    ".umber-special{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}\n",
-    ".umber-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}\n",
-    ".umber-a11y-line{display:block;margin:0;padding:0}\n",
-    "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
-);
 
 #[derive(Clone)]
 struct ResolvedFont {
@@ -1075,45 +721,6 @@ fn validate_mapped_glyphs(
     Ok(())
 }
 
-#[derive(Default)]
-struct AccessiblePage {
-    markup: String,
-    open_line: Option<u32>,
-    line_is_open: bool,
-}
-
-impl AccessiblePage {
-    fn push_run(&mut self, line: Option<u32>, text: &str, link: Option<&str>) {
-        if !self.line_is_open || self.open_line != line {
-            self.finish_line();
-            self.markup.push_str("<p class=\"umber-a11y-line\">");
-            self.open_line = line;
-            self.line_is_open = true;
-        }
-        if let Some(link) = link {
-            self.markup.push_str("<a href=\"");
-            escape_attr(link, &mut self.markup);
-            self.markup.push_str("\" rel=\"noreferrer noopener\">");
-        }
-        escape_text(text, &mut self.markup);
-        if link.is_some() {
-            self.markup.push_str("</a>");
-        }
-    }
-
-    fn finish(&mut self) {
-        self.finish_line();
-    }
-
-    fn finish_line(&mut self) {
-        if self.line_is_open {
-            self.markup.push_str("</p>");
-            self.open_line = None;
-            self.line_is_open = false;
-        }
-    }
-}
-
 fn accessible_line(box_stack: &[(u32, BoxKind)]) -> Option<u32> {
     box_stack
         .iter()
@@ -1229,17 +836,6 @@ impl ttf_parser::OutlineBuilder for SvgOutline {
     }
     fn close(&mut self) {
         self.path.push('Z');
-    }
-}
-
-fn check_html_size(out: &str, options: &HtmlOptions) -> Result<(), HtmlError> {
-    if out.len() > options.max_html_bytes {
-        Err(HtmlError::HtmlTooLarge {
-            bytes: out.len(),
-            limit: options.max_html_bytes,
-        })
-    } else {
-        Ok(())
     }
 }
 
@@ -1485,129 +1081,4 @@ fn validate_options(options: &HtmlOptions) -> Result<(), HtmlError> {
         return Err(HtmlError::InvalidAssetDirectory);
     }
     Ok(())
-}
-
-fn geometry_attrs(out: &mut String, x: Scaled, y: Scaled, width: Scaled, height: Scaled) {
-    attr_sp(out, "x", x);
-    attr_sp(out, "y", y);
-    attr_sp(out, "width", width);
-    attr_sp(out, "height", height);
-}
-
-fn attr_sp(out: &mut String, name: &str, value: Scaled) {
-    out.push_str(" data-umber-");
-    out.push_str(name);
-    out.push_str("-sp=\"");
-    out.push_str(&value.raw().to_string());
-    out.push('"');
-}
-
-fn geometry_style(out: &mut String, x: Scaled, y: Scaled, width: Scaled, height: Scaled, mag: i32) {
-    out.push_str(" style=\"left:");
-    css_px(out, x, mag);
-    out.push_str(";top:");
-    css_px(out, y, mag);
-    out.push_str(";width:");
-    css_px(out, width, mag);
-    out.push_str(";height:");
-    css_px(out, height, mag);
-}
-
-fn css_px(out: &mut String, value: Scaled, mag: i32) {
-    css_number(out, value, mag, 1);
-    out.push_str("px");
-}
-
-fn css_number(out: &mut String, value: Scaled, mag: i32, extra_denominator: i128) {
-    const DENOMINATOR: i128 = 65_536 * 5 * 7_227;
-    const PLACES: i128 = 100_000_000;
-    let numerator = i128::from(value.raw()) * i128::from(mag) * 48;
-    let negative = numerator < 0;
-    let magnitude = numerator.abs();
-    let denominator = DENOMINATOR * extra_denominator;
-    let mut scaled = magnitude * PLACES / denominator;
-    let remainder = magnitude * PLACES % denominator;
-    if remainder * 2 >= denominator {
-        scaled += 1;
-    }
-    if negative && scaled != 0 {
-        out.push('-');
-    }
-    out.push_str(&(scaled / PLACES).to_string());
-    out.push('.');
-    let fraction = (scaled % PLACES).to_string();
-    for _ in fraction.len()..8 {
-        out.push('0');
-    }
-    out.push_str(&fraction);
-}
-
-fn write_codes(out: &mut String, units: &[TextUnit]) {
-    for (index, unit) in units.iter().enumerate() {
-        if index != 0 {
-            out.push(',');
-        }
-        match unit {
-            TextUnit::Code(code) => {
-                out.push_str("0x");
-                out.push_str(&format!("{code:x}"));
-            }
-            TextUnit::Space => out.push_str("space"),
-        }
-    }
-}
-
-fn escape_text(value: &str, out: &mut String) {
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            _ => out.push(ch),
-        }
-    }
-}
-
-fn escape_attr(value: &str, out: &mut String) {
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut value = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        value.push(DIGITS[usize::from(byte >> 4)] as char);
-        value.push(DIGITS[usize::from(byte & 15)] as char);
-    }
-    value
-}
-
-fn base64(bytes: &[u8], out: &mut String) {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = *chunk.get(1).unwrap_or(&0);
-        let c = *chunk.get(2).unwrap_or(&0);
-        out.push(TABLE[usize::from(a >> 2)] as char);
-        out.push(TABLE[usize::from((a & 3) << 4 | b >> 4)] as char);
-        if chunk.len() > 1 {
-            out.push(TABLE[usize::from((b & 15) << 2 | c >> 6)] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(TABLE[usize::from(c & 63)] as char);
-        } else {
-            out.push('=');
-        }
-    }
 }

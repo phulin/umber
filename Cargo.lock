@@ -1370,6 +1370,7 @@ dependencies = [
  "tex-fonts",
  "ttf-parser",
  "umber-hash",
+ "umber-hot-core-allocator",
  "woff2-patched",
 ]
 
