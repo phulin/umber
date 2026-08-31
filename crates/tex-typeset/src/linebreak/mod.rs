@@ -964,6 +964,10 @@ fn run_pass<S: TypesetState>(
                 let end = bp.protrusion_end.min(nodes.len()).max(start);
                 let protrusion =
                     crate::protrusion::line_protrusion_cursor(state, nodes, start, end);
+                if expansion_steps.is_some() {
+                    let (stretch, shrink) = protrusion.margin_variation();
+                    widths.add_font_variation(stretch, shrink);
+                }
                 target
                     .checked_add(protrusion.total())
                     .expect("pdfTeX protruded line target fits Scaled")

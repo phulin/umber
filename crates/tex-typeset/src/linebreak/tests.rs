@@ -664,6 +664,17 @@ fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
     }
 }
 
+fn microtype_ligature(font: tex_state::ids::FontId, ch: char) -> Node {
+    Node::Lig {
+        font,
+        ch,
+        orig: vec![ch],
+        left_hit: false,
+        right_hit: false,
+        origins: vec![OriginId::UNKNOWN],
+    }
+}
+
 /// pdftex.web §1025: a glue breakpoint itself is not part of the candidate
 /// line. Right-edge discovery therefore starts with the preceding glyph,
 /// whose protrusion can make the nonhyphenating pass feasible.
@@ -784,7 +795,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                     kind: GlueKind::Normal,
                     leader: None,
                 },
-                microtype_char(first, 'C'),
+                microtype_ligature(first, 'C'),
             ],
             [
                 ([4, 5].as_slice(), 22_100),
@@ -795,7 +806,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 ([5].as_slice(), 0),
                 ([5].as_slice(), 2_704),
                 ([5].as_slice(), 2_704),
-                ([5].as_slice(), 225),
+                ([5].as_slice(), 144),
             ],
         ),
         (

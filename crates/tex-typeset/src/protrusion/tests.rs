@@ -2,6 +2,7 @@ use super::*;
 use crate::test_state::TestState;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
+use tex_state::font::FontExpansion;
 use tex_state::glue::GlueSpec;
 use tex_state::node::KernKind;
 
@@ -42,6 +43,17 @@ fn character(font: tex_state::ids::FontId, ch: char) -> Node {
     }
 }
 
+fn ligature(font: tex_state::ids::FontId, ch: char) -> Node {
+    Node::Lig {
+        font,
+        ch,
+        orig: vec![ch],
+        left_hit: false,
+        right_hit: false,
+        origins: vec![tex_state::token::OriginId::UNKNOWN],
+    }
+}
+
 #[test]
 fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
     let mut state = TestState::new();
@@ -53,6 +65,44 @@ fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
     assert_eq!(protrusion.left, sp(5 * 65_536));
     assert_eq!(protrusion.right, sp(7 * 65_536));
     assert_eq!(protrusion.total(), sp(12 * 65_536));
+}
+
+#[test]
+fn margin_variation_uses_left_codes_only_for_expandable_ligature_edges() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state
+        .configure_font_expansion(
+            font,
+            FontExpansion {
+                stretch: 20,
+                shrink: 20,
+                step: 1,
+                auto_expand: true,
+            },
+        )
+        .expect("font expansion configuration is valid");
+    for code in [b'A', b'.'] {
+        state.set_pdf_font_code(PdfFontCode::Ef, font, code, 1000);
+    }
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'.', 300);
+
+    let protrusion = line_protrusion(&state, &[character(font, 'A'), ligature(font, '.')]);
+    assert_eq!(
+        protrusion.margin_variation(),
+        (sp(-3 * 65_536), sp(3 * 65_536))
+    );
+
+    let protrusion = line_protrusion(&state, &[ligature(font, 'A'), ligature(font, '.')]);
+    assert_eq!(
+        protrusion.margin_variation(),
+        (sp(-8 * 65_536), sp(8 * 65_536))
+    );
+
+    state.set_pdf_font_code(PdfFontCode::Ef, font, b'.', 0);
+    let protrusion = line_protrusion(&state, &[character(font, 'A'), ligature(font, '.')]);
+    assert_eq!(protrusion.margin_variation(), (sp(0), sp(0)));
 }
 
 #[test]

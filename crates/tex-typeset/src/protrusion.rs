@@ -12,6 +12,8 @@ use crate::TypesetState;
 pub struct LineProtrusion {
     pub left: Scaled,
     pub right: Scaled,
+    margin_stretch: Scaled,
+    margin_shrink: Scaled,
 }
 
 impl LineProtrusion {
@@ -21,6 +23,12 @@ impl LineProtrusion {
         self.left
             .checked_add(self.right)
             .expect("the two glyph-edge protrusions fit Scaled")
+    }
+
+    /// pdfTeX's expansion-capacity variation for the two marginal kerns.
+    #[must_use]
+    pub(crate) const fn margin_variation(self) -> (Scaled, Scaled) {
+        (self.margin_stretch, self.margin_shrink)
     }
 }
 
@@ -37,16 +45,52 @@ pub(crate) fn line_protrusion_cursor(
     start: usize,
     end: usize,
 ) -> LineProtrusion {
+    let left = edge_glyph_cursor(state, nodes, start, end, Edge::Left);
+    let right = edge_glyph_cursor(state, nodes, start, end, Edge::Right);
+    let zero = Scaled::from_raw(0);
+    let left_variation = left.map_or((zero, zero), |glyph| margin_kern_variation(state, glyph));
+    let right_variation = right.map_or((zero, zero), |glyph| margin_kern_variation(state, glyph));
     LineProtrusion {
-        left: edge_glyph_cursor(state, nodes, start, end, Edge::Left)
-            .map_or(Scaled::from_raw(0), |glyph| {
-                glyph_width(state, glyph, Edge::Left)
-            }),
-        right: edge_glyph_cursor(state, nodes, start, end, Edge::Right)
-            .map_or(Scaled::from_raw(0), |glyph| {
-                glyph_width(state, glyph, Edge::Right)
-            }),
+        left: left.map_or(zero, |glyph| glyph_width(state, glyph, Edge::Left)),
+        right: right.map_or(zero, |glyph| glyph_width(state, glyph, Edge::Right)),
+        margin_stretch: left_variation
+            .0
+            .checked_add(right_variation.0)
+            .expect("the two left-protrusion stretch variations fit Scaled"),
+        margin_shrink: left_variation
+            .1
+            .checked_add(right_variation.1)
+            .expect("the two left-protrusion shrink variations fit Scaled"),
     }
+}
+
+/// pdftex.web §822 deliberately uses `left_pw` for both edge characters when
+/// calculating the marginal-kern variation. For a ligature, `char_pw` records
+/// the embedded `lig_char` word. Re-entering `char_pw` rejects that low-memory
+/// word, while the scratch character built from it is a regular character and
+/// retains its left-protrusion code. Ordinary character rows cancel exactly.
+fn margin_kern_variation(state: &impl TypesetState, glyph: Glyph) -> (Scaled, Scaled) {
+    if !glyph.is_ligature {
+        return (Scaled::from_raw(0), Scaled::from_raw(0));
+    }
+    let Some(spec) = state.font_expansion_spec(glyph.font) else {
+        return (Scaled::from_raw(0), Scaled::from_raw(0));
+    };
+    let efcode = state.pdf_font_code(PdfFontCode::Ef, glyph.font, glyph.code);
+    let amount = glyph_width(state, glyph, Edge::Left);
+    let stretch = if spec.discrete_ratio(1000, efcode) == 0 {
+        Scaled::from_raw(0)
+    } else {
+        amount
+            .checked_neg()
+            .expect("a legal left protrusion can be negated")
+    };
+    let shrink = if spec.discrete_ratio(-1000, efcode) == 0 {
+        Scaled::from_raw(0)
+    } else {
+        amount
+    };
+    (stretch, shrink)
 }
 
 /// Inserts pdfTeX's final signed margin-kern nodes around line material.
@@ -290,6 +334,7 @@ enum Edge {
 struct Glyph {
     font: tex_state::ids::FontId,
     code: u8,
+    is_ligature: bool,
 }
 
 enum Search {
@@ -342,10 +387,20 @@ fn edge_glyph_cursor(
 
 fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
     match node {
-        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => u8::try_from(*ch as u32)
-            .map_or(Search::Block, |code| {
-                Search::Glyph(Glyph { font: *font, code })
-            }),
+        Node::Char { font, ch, .. } => u8::try_from(*ch as u32).map_or(Search::Block, |code| {
+            Search::Glyph(Glyph {
+                font: *font,
+                code,
+                is_ligature: false,
+            })
+        }),
+        Node::Lig { font, ch, .. } => u8::try_from(*ch as u32).map_or(Search::Block, |code| {
+            Search::Glyph(Glyph {
+                font: *font,
+                code,
+                is_ligature: true,
+            })
+        }),
         Node::HList(box_node) => {
             let children = state.page_nodes(box_node.children);
             edge_glyph_cursor(state, children, 0, children.len(), edge).map_or_else(

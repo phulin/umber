@@ -55,6 +55,11 @@ impl Widths {
         );
     }
 
+    pub(super) fn add_font_variation(&mut self, stretch: Scaled, shrink: Scaled) {
+        self.font_stretch = add_scaled(self.font_stretch, stretch);
+        self.font_shrink = add_scaled(self.font_shrink, shrink);
+    }
+
     pub(super) fn normal_shrink(self) -> WideScaled {
         self.shrink[Order::Normal as usize]
     }
