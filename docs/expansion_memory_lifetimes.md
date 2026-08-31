@@ -320,11 +320,12 @@ durable lifetime.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
-`EmptyCommand` and `ResolvedCommand` borrows prove that resident input and
-delivery settlement mutate that one slot in order. The resolved proof never
-crosses the `CommandState` transition: that owner consumes the resolver's
-already-decoded literal catcode for required brace handling, applies
-one-delivery suppression, and returns only a copy-small ready/outer result. The input row passes its
+`EmptyCommand` reborrows prove that resident input writes only that slot. Each
+source returns only the scalar packed-resolution fact, so no command reference
+crosses the input-top transition. `CommandState` reclaims its original
+destination, consumes the resolver's already-decoded literal catcode for
+required brace handling, applies one-delivery suppression, and returns only a
+copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; no semantic-token
 value or raw-command phase crosses from resident advancement to a second
@@ -818,13 +819,14 @@ variant chosen at admission, project the resident packed word into final
 meaning and spelling fields, and advance their packed frame in place. Source
 levels write the same destination after tokenization. Parameter interception
 remains a local status before resolution and may push a literal argument level
-before the resident transition returns. The reference-only phase proof retains no
-backing handle or cursor, needs no rollback record, and is never moved into a
-typed suspension; cold input transitions return only copy-small facts after
-the proof has ended.
+before the resident transition returns. The reference-only empty-slot proof
+retains no backing handle or cursor, needs no rollback record, and is never
+moved into a typed suspension; cold input transitions return only copy-small
+facts after its reborrow has ended.
 
-Resolution consumes the raw proof and returns a resolved borrow of the same
-caller-owned command slot. One settlement applies noexpand, outer validity,
+Resolution consumes the empty-slot reborrow and returns only packed scalar
+facts. The resident transition then borrows the same caller-owned command slot
+directly. One settlement applies noexpand, outer validity,
 alignment classification, and optional observation in canonical order;
 the singular command-state transition first-touches the `align_state` rollback
 scalar only for a literal brace, immediately before its adjustment, and stores

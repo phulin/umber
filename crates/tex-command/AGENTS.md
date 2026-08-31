@@ -112,12 +112,13 @@ collector (see `src/conditionals.rs`).
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   resident input writes its packed spelling and resolved meaning together
-  through one `EmptyCommand` to `ResolvedCommand` handoff. The packed-token
+  through one reborrow of the caller's `EmptyCommand`. The packed-token
   resolver receives that actual command as its in-place target, indexes the
   canonical dense eqtb row once, and writes the final static payload or sole
-  macro owner without a projection carrier. That reference-only proof ends
-  inside the `CommandState` resident transition after suppression and required
-  alignment treatment; the processor receives only a copy-small
+  macro owner without a projection carrier. Input returns only the scalar
+  packed-resolution fact; the `CommandState` resident transition reclaims its
+  original destination for suppression and required alignment treatment, and
+  the processor receives only a copy-small
   ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
@@ -217,8 +218,9 @@ collector (see `src/conditionals.rs`).
   source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
-  caller's final `CurrentCommand` through a reference-only `EmptyCommand` to
-  `ResolvedCommand` phase proof, resolves the resident packed word directly,
+  caller's final `CurrentCommand` through a reference-only `EmptyCommand`
+  reborrow, resolves the resident packed word directly, returns only the
+  scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
   and advances only the packed frame scalar. A
   source frame installs its external-source identity in the common packed
@@ -275,7 +277,7 @@ collector (see `src/conditionals.rs`).
   v-templates, source EOF, recovery, and parameter results retain
   no command-slot borrow; an ordinary final result has already resolved
   meaning, applied one-delivery suppression, classified only required
-  alignment work, and ended the resolved borrow. The files also own the singular
+  alignment work, and returned no command reference. The files also own the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
   macro-activation cleanup, borrowed source-ancestry comparison with copy-only
@@ -289,7 +291,7 @@ collector (see `src/conditionals.rs`).
 - `src/processor/`: public borrow-only processor facade with const-specialized
   raw and expanded entries into one destination-directed state machine,
   expansion, scanner-status, and alignment orchestration. The fused
-  Empty-to-Resolved pipeline advances resident input and inspects the command
+  destination pipeline advances resident input and inspects the command
   in place; its sole delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
   has ended. The two specializations share canonical

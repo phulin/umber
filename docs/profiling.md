@@ -856,12 +856,12 @@ two post-c167 integration fixes, so the symbol reductions and focused controls,
 not that whole-run wall delta, are the issue-local CPU evidence.
 
 Issue `umber2-66p0.8.40.17` then fused the remaining resident command stages.
-The authoritative `CommandState` transition now ends its resolved borrow only
-after one-delivery suppression and required alignment treatment, returns only a
-copy-small ready/outer result, and skips processor observation work entirely
-when no observer is present. Dense packed meaning resolution also returns the
-literal catcode it already decoded, so ordinary brace classification does not
-decode the spelling a second time.
+The authoritative `CommandState` transition applies one-delivery suppression
+and required alignment treatment against the caller-owned destination, returns
+only a copy-small ready/outer result, and skips processor observation work
+entirely when no observer is present. Dense packed meaning resolution also
+returns the literal catcode it already decoded, so ordinary brace
+classification does not decode the spelling a second time.
 
 Seven same-host, order-balanced one-million-token full raw-delivery pairs all
 favored the candidate. Median latency fell from 65.95 to 54.70 ns/token

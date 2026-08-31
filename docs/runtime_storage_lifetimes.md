@@ -402,8 +402,10 @@ slice directly. Admission acquires one guard for the episode, not one lock or
 heap allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
-Reference-only `EmptyCommand` and `ResolvedCommand` typestates
-prove its in-place progression without adding storage or moving the command.
+Reference-only `EmptyCommand` reborrows prove that input writes its final
+meaning into that slot without adding storage or moving the command. Input
+returns only packed scalar resolution facts, and resident settlement reclaims
+the original caller-owned destination directly.
 The input stack ends its raw borrow before a cold line, EOF, parameter push, or
 suspension transition; meaning resolution ends its dense-state borrow before
 outer recovery, alignment settlement, observation, or delivery. Raw delivery

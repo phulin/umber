@@ -187,18 +187,18 @@ methods remain as thin entry points; they do not own alternate fetch loops.
 
 The driver is destination-directed. Its caller provides the one final
 `Option<CurrentCommand<G>>` slot for that active request. The private
-`next_command_into` pipeline advances that value through reference-only
-`EmptyCommand` and `ResolvedCommand` typestates: the resident input row passes
-its packed word directly to the dense meaning lookup, which writes spelling,
-resolved meaning, and delivery facts into the same address before delivery
-policy settles it once. The reference-only resolved proof ends inside the
-authoritative `CommandState` resident transition: it applies one-delivery
+`next_command_into` pipeline lends that value through one reference-only
+`EmptyCommand`: the resident input row passes its packed word directly to the
+dense meaning lookup, which writes spelling, resolved meaning, and delivery
+facts into the same address and returns only the scalar packed-resolution fact.
+The authoritative `CommandState` resident transition then reclaims its
+original destination: it applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
 can require it. That transition borrows the semantic top, discriminates its
 level kind once, advances the resident cursor, and settles fuel, alignment, or
 parameter replay before returning one final status. No intermediate delivery
-result, semantic-token value, unresolved command, or resolved borrow crosses
+result, semantic-token value, unresolved command, or command reference crosses
 that ownership boundary. The processor receives a copy-small
 ready/outer result, and its public return is only a compact `DeliveryStatus` naming end of input,
 command completion, replay completion, pending observation, or an alignment
@@ -268,12 +268,13 @@ Assignment level remains solely in the dense bank, so delivered-command
 ownership does not duplicate journaling or reinterpret a meaning after
 delivery.
 
-Consuming `EmptyCommand::write_resolved_delivery` writes and resolves the
-resident packed spelling directly in the caller destination and returns the
-only `ResolvedCommand` proof plus the literal catcode already decoded by dense
-resolution. The enclosing `CommandState` transition consumes both immediately:
-it applies `\noexpand`, identifies the exceptional outer-recovery branch, and
-performs only required brace or live-cell alignment classification. The
+Consuming a reborrow in `EmptyCommand::write_resolved_delivery` writes and
+resolves the resident packed spelling directly in the caller destination and
+returns only the meaning-lookup and literal-catcode scalars already decided by
+dense resolution. The enclosing `CommandState` transition reclaims its
+original destination immediately: it applies `\noexpand`, identifies the
+exceptional outer-recovery branch, and performs only required brace or
+live-cell alignment classification. The
 processor then owns outer recovery and demand-only observation in canonical
 order without a second ordinary settlement stage.
 The singular `CommandState` alignment transition classifies that resident
