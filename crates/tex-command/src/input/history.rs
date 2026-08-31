@@ -1035,7 +1035,11 @@ impl<G> crate::CommandState<G> {
         }
     }
 
-    #[inline(never)]
+    /// Completes the one destination-owned resident transition in the caller's
+    /// hot frame. Keeping this tail fused is load-bearing: an out-of-line
+    /// boundary repeats the per-token result handoff after the typed branch
+    /// has already written the final command.
+    #[inline(always)]
     fn settle_resident_delivery(
         &mut self,
         fuel: &mut crate::fuel::CommandFuel,

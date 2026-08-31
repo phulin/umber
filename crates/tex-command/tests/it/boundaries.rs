@@ -178,6 +178,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(input_history.contains("ResidentInputTop::Source(ResidentSourceTop"));
     assert!(input_history.contains("ResidentInputTop::StoredToken(ResidentStoredTokenTop"));
     assert!(input_history.contains("ResidentInputTop::MacroArgument(ResidentMacroArgumentTop"));
+    assert!(input_history.contains("#[inline(always)]\n    fn settle_resident_delivery("));
     assert_eq!(
         command.matches("fn write_resolved_delivery(").count(),
         1,
