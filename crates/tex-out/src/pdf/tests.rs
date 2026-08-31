@@ -53,6 +53,67 @@ fn origin_literal_moves_but_page_and_direct_literals_do_not() {
 }
 
 #[test]
+fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 10.0,
+            y: 20.0,
+            bytes: b"ORIGIN".to_vec(),
+        },
+        PdfContentOperation::ImageXObject {
+            x: 10.0,
+            y: 20.0,
+            width: 2.0,
+            height: 3.0,
+            name: b"Im1".to_vec(),
+        },
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 30.0,
+            baseline: 40.0,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            bytes: b"A".to_vec(),
+        }),
+        PdfContentOperation::Rectangle(PdfContentRectangle {
+            x: 50.0,
+            y: 60.0,
+            width: 7.0,
+            height: 8.0,
+        }),
+        PdfContentOperation::FormXObject {
+            x: 70.0,
+            y: 80.0,
+            name: b"Fm1".to_vec(),
+        },
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        concat!(
+            "1 0 0 1 10 20 cm\n",
+            "ORIGIN\n",
+            "q\n",
+            "2 0 0 3 0 0 cm\n",
+            "/Im1 Do\n",
+            "Q\n",
+            "BT\n",
+            "/F1 10 Tf\n",
+            "1 0 0 1 20 20 Tm\n",
+            "(A) Tj\n",
+            "ET\n",
+            "q\n",
+            "40 40 7 8 re\n",
+            "f\n",
+            "Q\n",
+            "q\n",
+            "1 0 0 1 60 60 cm\n",
+            "/Fm1 Do\n",
+            "Q",
+        )
+    );
+}
+
+#[test]
 fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
     let text = |bytes: &[u8]| {
         PdfContentOperation::Text(PdfContentTextRun {

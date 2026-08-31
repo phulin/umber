@@ -123,8 +123,9 @@ impl PdfPainter {
     }
 
     fn rectangle(&mut self, rectangle: &PdfContentRectangle) {
+        let (x, y) = self.relative_position(rectangle.x, rectangle.y);
         self.content
-            .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
+            .rect(x, y, rectangle.width, rectangle.height)
             .fill_nonzero();
     }
 
@@ -133,9 +134,10 @@ impl PdfPainter {
             self.content.begin_text();
             self.in_text = true;
         }
+        let (x, baseline) = self.relative_position(run.x, run.baseline);
         self.content
             .set_font(Name(&run.font_name), run.font_size)
-            .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
+            .set_text_matrix([1.0, 0.0, 0.0, 1.0, x, baseline])
             .show(Str(&run.bytes));
     }
 
@@ -148,11 +150,18 @@ impl PdfPainter {
         }
     }
 
-    fn xobject(&mut self, matrix: [f32; 6], name: &[u8]) {
+    fn xobject(&mut self, mut matrix: [f32; 6], name: &[u8]) {
         self.end_text();
+        (matrix[4], matrix[5]) = self.relative_position(matrix[4], matrix[5]);
         self.save();
         self.content.transform(matrix).x_object(Name(name));
         self.restore();
+    }
+
+    fn relative_position(&self, x: f32, y: f32) -> (f32, f32) {
+        // pdfTeX §690 retains its translated PDF origin, so every later
+        // absolute page position is emitted as a delta from that origin.
+        (x - self.origin.0, y - self.origin.1)
     }
 
     fn set_origin(&mut self, x: f32, y: f32) {
