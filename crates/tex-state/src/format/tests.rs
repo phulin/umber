@@ -71,6 +71,82 @@ fn validated_copy(image: &DetachedFormatImage) -> DetachedFormatImage {
 }
 
 #[test]
+fn materialized_candidate_can_admit_epoch_only_active_character() {
+    struct InternActive;
+
+    impl RetainedStateOperation for InternActive {
+        type Output = crate::interner::Symbol;
+
+        fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
+            admitted
+                .universe()
+                .command_context()
+                .expect("command context")
+                .intern_active_character('~')
+        }
+    }
+
+    struct CheckCandidateActive;
+
+    impl RetainedStateOperation for CheckCandidateActive {
+        type Output = (crate::interner::Symbol, bool);
+
+        fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
+            let mut context = admitted
+                .universe()
+                .command_context()
+                .expect("command context");
+            let admitted = context.intern_active_character('~');
+            let undefined = matches!(
+                context.meaning(admitted),
+                ResolvedMeaning::Static(Meaning::Undefined)
+            );
+            (admitted, undefined)
+        }
+    }
+
+    let image = image();
+    let store = ReachabilityStore::new(budget());
+    let mut accepted =
+        RetainedStateGeneration::from_format_owned(store, World::memory(), validated_copy(&image))
+            .expect("accepted format materialization");
+    let epoch_symbol = accepted.with_admitted(InternActive);
+    let mut candidate = accepted
+        .materialize_independent_format_candidate(World::memory(), validated_copy(&image), false)
+        .expect("candidate format materialization");
+
+    let (admitted, undefined) = candidate.with_admitted(CheckCandidateActive);
+    assert_eq!(
+        admitted, epoch_symbol,
+        "the session coordinate remains stable"
+    );
+    assert!(undefined, "lazy admission installs the undefined meaning");
+}
+
+#[test]
+fn materialized_empty_format_can_rearm_fresh_initex_patterns() {
+    let image = image();
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            let context = universe.command_context().expect("command context");
+            assert!(!context.hyphenation_patterns_open());
+            drop(context);
+            assert!(universe.reopen_empty_hyphenation_patterns_for_initex_job_start());
+            assert!(
+                universe
+                    .command_context()
+                    .expect("rearmed command context")
+                    .hyphenation_patterns_open()
+            );
+        },
+    )
+    .expect("materialized format");
+}
+
+#[test]
 fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
     let (image, before_capacity) = with_universe(budget(), |universe| {
         let mut context = universe.command_context().expect("command context");

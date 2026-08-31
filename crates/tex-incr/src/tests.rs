@@ -537,6 +537,28 @@ fn loaded_job_start_round_trip_preserves_dense_hyphenation_and_pdf_identity() {
 }
 
 #[test]
+fn fresh_initex_job_start_rearms_patterns_and_readmits_active_source_symbols() {
+    let source = r"\catcode`\~=13 \def~{ACTIVE}\patterns{a1b}\message{~}\shipout\vbox{}\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    let first = incremental.cold().expect("fresh INITEX baseline");
+    assert!(terminal_effect_text(&first).contains("ACTIVE"));
+
+    let mut fallback = incremental
+        .start_advance_candidate_from_job_start(RevisionId::new(2), edit(&incremental, 0..0, ""))
+        .expect("forced fresh JobStart fallback");
+    drive_synchronous_candidate(&mut fallback, &mut DirectResourceHost)
+        .expect("drive fresh JobStart fallback");
+    let transaction = incremental
+        .prepare_revision_candidate(fallback)
+        .expect("prepare fresh JobStart acceptance");
+    let accepted = incremental
+        .accept_revision(transaction)
+        .expect("accept fresh JobStart fallback");
+
+    assert_detached_output_eq(&accepted, &first);
+}
+
+#[test]
 fn semantic_edit_matches_a_fresh_cold_execution() {
     let original = page_source(10);
     let replacement = page_source(24);

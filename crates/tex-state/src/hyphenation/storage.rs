@@ -46,6 +46,17 @@ impl PatternOwner {
         };
         *self = Self::Initialized(Arc::new(languages));
     }
+
+    pub(super) fn reopen_empty(&mut self) -> bool {
+        match self {
+            Self::Building(languages) => languages.is_empty(),
+            Self::Initialized(languages) if languages.is_empty() => {
+                *self = Self::Building(BTreeMap::new());
+                true
+            }
+            Self::Initialized(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

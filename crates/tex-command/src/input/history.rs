@@ -202,6 +202,18 @@ impl<G> ResidentSourceTop<'_, G> {
                 {
                     Err(())
                 } else {
+                    // The session epoch outlives one materialized JobStart
+                    // generation, but its dense meaning bank does not. Admit
+                    // an active source spelling before direct row lookup just
+                    // as escaped source control sequences are admitted while
+                    // their packed token is formed.
+                    if let tex_state::token::Token::Char {
+                        ch,
+                        cat: tex_state::token::Catcode::Active,
+                    } = token.word.semantic_token()
+                    {
+                        state.intern_active_character(ch);
+                    }
                     let range = token.provenance.range();
                     let origin = if range.end().saturating_sub(range.start()) == 1 {
                         state.source_token_origin(range.source(), range.start(), range.end())

@@ -1648,6 +1648,15 @@ impl<G> Universe<G> {
         self.world.begin_retained_session()
     }
 
+    /// Restores the sole fresh-INITEX distinction erased by portable format
+    /// encoding: an entirely empty pattern table is still open before the
+    /// root job starts. Nonempty format-owned hyphenation is never reopened.
+    #[doc(hidden)]
+    pub fn reopen_empty_hyphenation_patterns_for_initex_job_start(&mut self) -> bool {
+        self.hyphenation
+            .reopen_empty_patterns_for_initex_job_start()
+    }
+
     /// Materializes a retained destination after its detached completion has
     /// been accepted. The effect cursor remains solely World-owned.
     pub fn export_retained_effects(&mut self) -> Result<(), crate::WorldError> {

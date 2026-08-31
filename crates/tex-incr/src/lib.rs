@@ -2055,6 +2055,14 @@ fn prepare_candidate_control<G>(
     control: &mut Option<MainControl<G>>,
     materialized_job_start: bool,
 ) -> Result<(), SessionError> {
+    if materialized_job_start
+        && options.initex
+        && !universe.reopen_empty_hyphenation_patterns_for_initex_job_start()
+    {
+        return Err(SessionError::Format(tex_state::FormatError::InvalidState(
+            "fresh INITEX JobStart anchor contains initialized hyphenation data".to_owned(),
+        )));
+    }
     if control.is_none() && options.initex && !materialized_job_start {
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);

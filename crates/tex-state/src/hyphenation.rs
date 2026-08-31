@@ -238,6 +238,21 @@ impl HyphenationTable {
         self.patterns.initialize();
     }
 
+    pub(crate) fn reopen_empty_patterns_for_initex_job_start(&mut self) -> bool {
+        if self.runtime.exception_occupied != 0
+            || !self.runtime.exceptions.is_empty()
+            || !self.runtime.hyphen_codes.is_empty()
+            || !self.patterns.reopen_empty()
+        {
+            return false;
+        }
+        if let Some(root) = &mut self.reachable_state_identity {
+            root.replace(2, Some(1), Some(0));
+        }
+        self.dependency_fingerprints = OnceLock::new();
+        true
+    }
+
     pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(self.pattern_retained_bytes)
