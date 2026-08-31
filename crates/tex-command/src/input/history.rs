@@ -149,7 +149,6 @@ impl<G> ResidentSourceTop<'_, G> {
         state: &mut tex_state::CommandContext<'_, G>,
         create_control_sequences: bool,
         mut destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
     ) -> Result<ResidentSourceAdvance, ()> {
         record_source_lex_slot_borrow();
         if state.tracked_region_is_active() {
@@ -211,7 +210,6 @@ impl<G> ResidentSourceTop<'_, G> {
                         origin,
                         identity.0,
                         position,
-                        sequence,
                         active_source,
                         true,
                         direct_source_line,
@@ -249,7 +247,6 @@ impl<G> ResidentStoredTokenTop<'_, G> {
         self,
         sources: super::PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<super::levels::StoredTokenAdvance, ()> {
         let Self {
@@ -258,7 +255,7 @@ impl<G> ResidentStoredTokenTop<'_, G> {
             context_revision,
         } = self;
         recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-        let result = cursor.deliver_into(sources, destination, sequence, state);
+        let result = cursor.deliver_into(sources, destination, state);
         *context_revision = context_revision.wrapping_add(1).max(1);
         result
     }
@@ -276,7 +273,6 @@ impl<G> ResidentMacroArgumentTop<'_, G> {
         self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<super::levels::MacroArgumentAdvance, ()> {
         let Self {
@@ -288,7 +284,7 @@ impl<G> ResidentMacroArgumentTop<'_, G> {
             cursor.frame,
             super::RetirementBehavior::Pop,
         ));
-        let result = cursor.deliver_into(scratch, destination, sequence, state);
+        let result = cursor.deliver_into(scratch, destination, state);
         *context_revision = context_revision.wrapping_add(1).max(1);
         result
     }
@@ -866,7 +862,6 @@ impl<G> crate::CommandState<G> {
         fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
         mut destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
         retirement_publication: (
             &mut Option<&mut dyn CommandObserver>,
             &mut Option<super::InputLevelId>,
@@ -893,7 +888,6 @@ impl<G> crate::CommandState<G> {
                         state,
                         create_control_sequences,
                         destination.reborrow(),
-                        sequence,
                     )? {
                         ResidentSourceAdvance::Delivered(resolution, location) => {
                             #[cfg(test)]
@@ -923,7 +917,7 @@ impl<G> crate::CommandState<G> {
                         self.attempt.arena(),
                         &self.roots.parameters,
                     );
-                    match top.advance_into(sources, destination.reborrow(), sequence, state)? {
+                    match top.advance_into(sources, destination.reborrow(), state)? {
                         super::levels::StoredTokenAdvance::Delivered(resolution) => {
                             #[cfg(test)]
                             {
@@ -961,12 +955,7 @@ impl<G> crate::CommandState<G> {
                     }
                 }
                 ResidentInputTop::MacroArgument(top) => {
-                    match top.advance_into(
-                        &self.scratch,
-                        destination.reborrow(),
-                        sequence,
-                        state,
-                    )? {
+                    match top.advance_into(&self.scratch, destination.reborrow(), state)? {
                         super::levels::MacroArgumentAdvance::Delivered(resolution) => {
                             #[cfg(test)]
                             {

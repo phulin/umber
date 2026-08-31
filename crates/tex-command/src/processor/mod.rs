@@ -187,9 +187,9 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     immediate_write_retirement: Option<InputLevelId>,
     pending_file_warning_context: Option<(InputLevelId, String)>,
     /// Episode-local proof that one resident command is still the immediately
-    /// preceding raw delivery. The command itself owns the sole full stamp;
-    /// backup and alignment handoff need only its episode-unique sequence.
-    immediate_delivery_sequence: Option<u64>,
+    /// preceding raw delivery. Observation order is `next_delivery_sequence -
+    /// 1`; it has no second per-delivery storage.
+    immediate_delivery_stamp: Option<crate::DeliveryStamp>,
     #[cfg(feature = "profiling")]
     delivery_freshness_writes: u64,
     /// The non-numeric command that completed the most recent integer scan.
@@ -269,10 +269,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.scratch.match_word_reads()
     }
 
-    /// Number of scalar immediate-delivery freshness publications.
+    /// Number of compact immediate-delivery freshness publications.
     ///
-    /// This profiling-only census proves that command delivery publishes one
-    /// scalar sequence fact without materializing a second full stamp.
+    /// This profiling-only census proves that command delivery publishes only
+    /// the coordinate needed to reject a stale move-only command. Observation
+    /// order is derived from the cursor and has no second publication.
     #[cfg(feature = "profiling")]
     pub const fn delivery_freshness_writes(&self) -> u64 {
         self.delivery_freshness_writes
@@ -300,29 +301,32 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// later than the resumed stamp.
     pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
         let stamp = command.delivery_stamp();
-        self.publish_delivery_freshness(stamp.sequence());
-        self.next_delivery_sequence = self
-            .next_delivery_sequence
-            .max(stamp.sequence().wrapping_add(1));
+        self.immediate_delivery_stamp = Some(stamp);
     }
 
     #[inline(always)]
-    pub(super) fn delivery_is_fresh(&self, sequence: u64) -> bool {
-        self.immediate_delivery_sequence == Some(sequence)
+    pub(super) fn delivery_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
+        self.immediate_delivery_stamp == Some(stamp)
     }
 
     #[inline(always)]
     pub(super) fn invalidate_delivery_freshness(&mut self) {
-        self.immediate_delivery_sequence = None;
+        self.immediate_delivery_stamp = None;
     }
 
     #[inline(always)]
-    pub(super) fn publish_delivery_freshness(&mut self, sequence: u64) {
-        self.immediate_delivery_sequence = Some(sequence);
+    pub(super) fn publish_delivery_freshness(&mut self, stamp: crate::DeliveryStamp) {
+        self.immediate_delivery_stamp = Some(stamp);
         #[cfg(feature = "profiling")]
         {
             self.delivery_freshness_writes = self.delivery_freshness_writes.saturating_add(1);
         }
+    }
+
+    #[inline(always)]
+    pub(super) const fn current_delivery_sequence(&self) -> u64 {
+        debug_assert!(self.immediate_delivery_stamp.is_some());
+        self.next_delivery_sequence.wrapping_sub(1)
     }
 
     pub(crate) fn pending_scanner_frame(
@@ -617,7 +621,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
-            immediate_delivery_sequence: None,
+            immediate_delivery_stamp: None,
             #[cfg(feature = "profiling")]
             delivery_freshness_writes: 0,
             last_integer_terminator: None,

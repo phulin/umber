@@ -90,13 +90,14 @@ impl PartialEq for CommandProvenance {
 impl CommandProvenance {
     pub(crate) fn from_stamp(
         stamp: DeliveryStamp,
+        delivery_sequence: u64,
         origin: OriginId,
         source_provenance: Option<SourceProvenance>,
     ) -> Self {
         Self {
             input_level: stamp.input_level(),
             position: stamp.position(),
-            delivery_sequence: stamp.sequence(),
+            delivery_sequence,
             has_origin: origin != OriginId::UNKNOWN,
             origin,
             source_range: source_provenance.map(SourceProvenance::range),

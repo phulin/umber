@@ -305,6 +305,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 semantic_operand,
                 provenance: CommandProvenance::from_stamp(
                     command.delivery_stamp(),
+                    self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance(command),
                 ),

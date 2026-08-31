@@ -118,7 +118,6 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    7,
                     (&mut None, &mut None),
                 )
                 .expect("token delivery succeeds");
@@ -184,7 +183,6 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    11,
                     (&mut None, &mut None),
                 )
                 .expect("macro-argument delivery succeeds");
@@ -385,7 +383,7 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             {
                 let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                for sequence in 0..operations {
+                for _ in 0..operations {
                     let mut command = crate::command::CurrentCommand::empty();
                     let transition = state
                         .advance_resident_command_into(
@@ -393,7 +391,6 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                             fuel.fuel_mut(),
                             true,
                             command.empty_for_raw_delivery(),
-                            u64::try_from(sequence).expect("sequence fits u64"),
                             (&mut None, &mut None),
                         )
                         .expect("resident delivery succeeds");

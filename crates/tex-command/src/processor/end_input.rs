@@ -73,7 +73,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         stamp: DeliveryStamp,
     ) -> Result<(), CommandError> {
-        if !self.delivery_is_fresh(stamp.sequence()) {
+        if !self.delivery_is_fresh(stamp) {
             return Err(CommandError::StaleDelivery);
         }
         self.invalidate_delivery_freshness();

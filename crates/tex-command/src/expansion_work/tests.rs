@@ -454,7 +454,7 @@ fn parking_and_consuming_macro_command_clones_no_command_or_definition_owner() {
             .expect("macro meaning");
         let command = CurrentCommand::resolve(
             TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN),
-            crate::DeliveryStamp::new(1, 2, 3),
+            crate::DeliveryStamp::new(1, 2),
             None,
             false,
             None,

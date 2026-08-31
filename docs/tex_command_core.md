@@ -1661,7 +1661,7 @@ pub struct CurrentCommand {
 }
 ```
 
-The production value is one cache line or less for a static meaning. It keeps
+The production value is 72 bytes. It keeps
 the packed spelling, resolved static meaning or sole macro owner, control-
 sequence identity, immediate-delivery coordinate, compact source role, and
 alignment/recovery flags. It does not repeat a decoded physical source range,
@@ -1693,11 +1693,15 @@ by `\noexpand`. The immediate-delivery coordinate proves the exact live input
 level and position that delivered the token. It is ephemeral, excluded from
 summaries, and never reconstructed from semantic token equality. The
 processor's episode-local sequence remains observation ordering, not
-provenance. Only a command that crosses preflight, backup, an exact stopper
-retirement, or a genuine typed suspension retains the coordinate; internal
-ordinary expansion consumes the resident cursor fact directly. A genuine
-suspension materializes its existing typed frame and cursor then. No ordinary
-command constructs a suspension/checkpoint carrier speculatively.
+provenance, and the current observation sequence is derived as the preceding
+position of that cursor rather than stored again. While a move-only command is
+eligible for exact backup, the processor mirrors its compact coordinate only
+to reject a stale command; the mirror is cleared on input movement. Only a
+command that crosses preflight, backup, an exact stopper retirement, or a
+genuine typed suspension retains the coordinate; internal ordinary expansion
+consumes the resident cursor fact directly. A genuine suspension materializes
+its existing typed frame and cursor then. No ordinary command constructs a
+suspension/checkpoint carrier speculatively.
 
 Meaning resolution occurs once at raw delivery. An ordinary character resolves
 to its literal character-token meaning, while a control sequence reads its
@@ -2478,9 +2482,9 @@ outside the hot delivery chain.
 
 `back_input` implements TeX82 §325 in that section's order:
 
-1. validates that the nonce-bearing delivery stamp still identifies the most
-   recent raw transition in the live processor episode (not merely an equal
-   token at an equal cursor position);
+1. validates that the stable input-level/position coordinate still identifies
+   the most recent raw transition in the live processor episode (not merely an
+   equal token spelling);
 2. runs §325's stack-conservation loop (§15.1 below) so every depleted
    token-list level retires _before_ the backup exists;
 3. undoes exactly one literal-brace alignment adjustment made by that

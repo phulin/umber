@@ -13,7 +13,7 @@ fn command_delivery_layout_stays_compact() {
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
     // Decoded source geometry lives behind the packed origin coordinate, not
     // in every command.
-    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 80);
+    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 72);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
     assert_eq!(
         std::mem::size_of::<EmptyCommand<'_, ()>>(),
@@ -24,7 +24,7 @@ fn command_delivery_layout_stays_compact() {
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, OriginId::UNKNOWN),
-        DeliveryStamp::new(17, 23, 29),
+        DeliveryStamp::new(17, 23),
         None,
         false,
         None,
@@ -57,7 +57,7 @@ fn delivered_command_keeps_the_resolved_meaning_and_exact_spelling() {
             Token::Cs(symbol.symbol())
         );
         assert_eq!(command.meaning(), Meaning::CharGiven('A'));
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23, 29));
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23));
     });
 }
 
@@ -100,7 +100,6 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
             spelling.origin(),
             17,
             23,
-            29,
             None,
             false,
             None,
@@ -119,7 +118,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         }
         assert_eq!(prepare(&command), slot);
         assert_eq!(execute(&command), slot);
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23, 29));
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23));
         assert_eq!(
             command.meaning_ref(),
             &ResolvedMeaning::Static(Meaning::CharToken {
@@ -152,7 +151,6 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
             OriginId::UNKNOWN,
             31,
             37,
-            41,
             None,
             false,
             None,
@@ -256,7 +254,6 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
             OriginId::UNKNOWN,
             3,
             5,
-            7,
             None,
             false,
             None,
@@ -273,7 +270,6 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
             OriginId::UNKNOWN,
             11,
             13,
-            17,
             None,
             false,
             None,
@@ -283,7 +279,7 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
         // The next destination-directed write replaces the sole prior owner;
         // no intermediate resolved carrier acquires another one.
         assert_eq!(definition.semantic_owner_count(), baseline);
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13, 17));
+        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13));
     });
 }
 

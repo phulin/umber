@@ -347,10 +347,11 @@ observation payloads are resolved from immutable source/provenance owners only
 at backup, observation, tracing, diagnostic, or publication demand. The
 executor keeps the compact source role only because operand scanning may
 retire the originating input frame before application. `CommandProcessor`
-retains one scalar sequence solely for observation order; a genuine typed
-retry readmits its command/cursor explicitly. No second stamp, decoded
-provenance copy, command projection, or delivery owner is stored in executor
-preparation.
+derives observation order from its next-delivery cursor and temporarily
+mirrors only the current command's compact coordinate to reject a stale
+move-only backup. A genuine typed retry readmits its command/cursor explicitly.
+No decoded provenance copy, command projection, or delivery owner is stored in
+executor preparation.
 
 Resident source tokens and literal macro arguments return directly from input
 delivery. Stored-token access projects an out-parameter slot from the packed

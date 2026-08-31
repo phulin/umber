@@ -358,7 +358,6 @@ impl<G> CurrentCommand<G> {
             spelling.origin(),
             delivery.input_level,
             delivery.position,
-            delivery.sequence,
             active_source,
             direct_source,
             direct_source_line,
@@ -390,7 +389,7 @@ impl<G> CurrentCommand<G> {
             meaning: ResolvedMeaning::Static(Meaning::Undefined),
             identity: CommandIdentity::Ordinary,
             control_sequence: None,
-            delivery: DeliveryStamp::new(0, 0, 0),
+            delivery: DeliveryStamp::new(0, 0),
             active_source_role: None,
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
@@ -680,7 +679,6 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         origin: tex_state::token::OriginId,
         input_level: u64,
         position: u64,
-        sequence: u64,
         active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
@@ -694,7 +692,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         });
         let command = self.0;
         command.spelling = TracedTokenWord::from_parts(word, origin);
-        command.delivery = DeliveryStamp::new(input_level, position, sequence);
+        command.delivery = DeliveryStamp::new(input_level, position);
         command.active_source_role = active_source.map(|source| source.role());
         command.direct_source_line = direct_source_line.unwrap_or(0);
         command.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
@@ -724,18 +722,16 @@ impl<'slot, G> EmptyCommand<'slot, G> {
 pub struct DeliveryStamp {
     input_level: u64,
     position: u64,
-    sequence: u64,
 }
 
 impl DeliveryStamp {
     /// Constructs the stamp for the input-level position consumed by this
     /// delivery. Only the canonical raw-delivery loop may mint stamps.
     #[allow(dead_code)] // minted by the ordered canonical raw-delivery implementation
-    pub(crate) const fn new(input_level: u64, position: u64, sequence: u64) -> Self {
+    pub(crate) const fn new(input_level: u64, position: u64) -> Self {
         Self {
             input_level,
             position,
-            sequence,
         }
     }
 
@@ -749,12 +745,6 @@ impl DeliveryStamp {
     #[must_use]
     pub const fn position(&self) -> u64 {
         self.position
-    }
-
-    /// Returns the unique sequence within the live processor episode.
-    #[must_use]
-    pub const fn sequence(&self) -> u64 {
-        self.sequence
     }
 }
 

@@ -330,7 +330,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             origin,
         );
-        let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
+        let stamp = DeliveryStamp::new(0, 0);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, self.state);
         let mut destination = None;
@@ -826,7 +826,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .as_mut()
                                 .expect("delivery machine owns its reusable command slot")
                                 .empty_for_raw_delivery(),
-                            self.next_delivery_sequence,
                             (&mut self.observer, &mut self.immediate_write_retirement),
                         )
                         .map_err(|()| CommandError::input_invariant());
@@ -1009,7 +1008,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             OriginId::UNKNOWN,
                                             level.0,
                                             u64::from(index),
-                                            self.next_delivery_sequence,
                                             active_source,
                                             false,
                                             None,
@@ -1036,9 +1034,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let command = destination
                         .as_mut()
                         .expect("resident delivery initializes the command slot");
-                    let delivery_sequence = command.delivery_stamp().sequence();
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                    self.publish_delivery_freshness(delivery_sequence);
+                    self.publish_delivery_freshness(command.delivery_stamp());
                     if matches!(interception, ResidentCommandInterception::Outer)
                         && let Err(failure) = self.check_outer_validity_entry(command)
                     {
@@ -1251,6 +1248,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 semantic_operand,
                 provenance: CommandProvenance::from_stamp(
                     command.delivery_stamp(),
+                    self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance(command),
                 ),

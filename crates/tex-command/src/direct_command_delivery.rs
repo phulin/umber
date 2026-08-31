@@ -133,7 +133,6 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
                         OriginId::UNKNOWN,
                         1,
                         self.sequence,
-                        self.sequence,
                         None,
                         false,
                         None,

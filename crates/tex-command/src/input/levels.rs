@@ -236,7 +236,6 @@ impl<G> MacroArgumentCursor<G> {
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<MacroArgumentAdvance, ()> {
         let position = self.frame.position();
@@ -254,7 +253,6 @@ impl<G> MacroArgumentCursor<G> {
             word.origin(),
             identity,
             u64::from(position),
-            sequence,
             active_source,
             false,
             None,
@@ -294,7 +292,6 @@ impl<G> TokenCursor<G> {
         &mut self,
         sources: PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Result<StoredTokenAdvance, ()> {
         let position = self.frame.position();
@@ -342,7 +339,6 @@ impl<G> TokenCursor<G> {
                 origin,
                 self.frame.identity(),
                 u64::from(position),
-                sequence,
                 self.frame.source_context(),
                 false,
                 None,
