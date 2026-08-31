@@ -1,8 +1,8 @@
-use tex_command::{CommandFuel, CommandWorkCounters};
+use tex_command::CommandFuel;
 
 fn main() {
     let _ = CommandFuel {
         limit: 1,
-        work: CommandWorkCounters::default(),
+        remaining: 1,
     };
 }
