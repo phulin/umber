@@ -862,21 +862,30 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
     }
 
     let main_control =
-        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/operation_frame.rs"))
+        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/command_episode.rs"))
             .expect("read main-control continuation architecture");
+    let command_episode = main_control
+        .split("struct CommandEpisode<G>")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
+        .expect("locate singular resident command episode");
+    assert!(command_episode.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(command_episode.contains("hot: Option<hot_apply::HotOperation<G>>"));
+    assert!(command_episode.contains("phase: Option<PreflightCommandPhase>"));
+    assert!(command_episode.contains("scanner: Option<tex_command::ScannerFrameKey<G>>"));
+    assert!(command_episode.contains("operation_scan: Option<PendingOperationScanPhase>"));
+    assert!(!command_episode.contains("OperationPayload"));
+    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
+        assert!(!command_episode.contains(forbidden));
+    }
     let operation_frame = main_control
         .split("struct OperationFrame<G>")
         .nth(1)
-        .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
-        .expect("locate singular in-place operation owner");
-    assert!(operation_frame.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(operation_frame.contains("payload: Option<OperationPayload<G>>"));
-    assert!(operation_frame.contains("phase: Option<PreflightCommandPhase>"));
-    assert!(operation_frame.contains("scanner: Option<tex_command::ScannerFrameKey<G>>"));
-    assert!(operation_frame.contains("operation_scan: Option<PendingOperationScanPhase>"));
-    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
-        assert!(!operation_frame.contains(forbidden));
-    }
+        .and_then(|tail| tail.split("impl<G> OperationFrame<G>").next())
+        .expect("locate suspension-only operation frame");
+    assert!(operation_frame.contains("episode: Option<CommandEpisode<G>>"));
+    assert!(operation_frame.contains("cold: Option<ColdOperationSlot<G>>"));
+    assert!(!operation_frame.contains("CurrentCommand"));
 }
 
 #[test]

@@ -662,8 +662,8 @@ one address from completion through preparation and application; a by-value
 moves the occupied slot with its singular operation frame.
 
 The physical executor split follows those same ownership transitions without
-splitting the interpreter. `main_control/operation_frame.rs` owns the resident
-frame, adjacent cold slot, and genuine suspension carriers;
+splitting the interpreter. `main_control/command_episode.rs` owns the resident
+command episode, adjacent cold slot, and genuine suspension carriers;
 `main_control/delivery.rs` mutates those destinations through delivery,
 preflight, and retry; `main_control/settlement.rs` owns commit, rollback, and
 publication settlement; and `main_control/executor_facts.rs` owns the one

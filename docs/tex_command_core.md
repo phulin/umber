@@ -4219,31 +4219,30 @@ the command merely for the command core to write it back. For an ordinary
 non-barrier command, tracing, capability classification, prefix handling, and
 the general operand scanner continue in the same `CommandProcessor` and
 admitted `CommandContext`. There is no hand-picked command-family scanner at
-this boundary. Its scanned hot or cold operand then bypasses operation
-preparation's command-context front; cold resource resolution and rooting own
-no command processor or command context. Resource, transaction, diagnostic,
-alignment, and tracked-region boundaries retain the existing explicit
-preparation path. No path backs up or redelivers a settled preflight command.
+this boundary. Its completed hot or cold operand enters the canonical typed
+executor directly after that borrow ends; cold resource resolution and rooting
+own no command processor or command context. Resource, transaction,
+diagnostic, alignment, and tracked-region boundaries retain their explicit
+typed continuation. No path backs up or redelivers a settled preflight command.
 Replay completion and alignment events remain compact status variants and
 leave no command-bearing return envelope.
 
-The executor's caller-loop `OperationFrame` in
-`main_control/operation_frame.rs` owns those command, parked
-expansion, delivery-cursor, scanner-child, operation-scan, and scalar-phase
-fields directly beside its singular compact payload. There is no nested
-preflight-command projection. A completed hot scan is installed once in that
-payload; a completed cold scan installs its uncommon leaf once in an adjacent
-caller-owned typed slot while the payload records only cold occupancy. Both are
-represented between phases only by a compact tag. Preparation lends the
-resident cold leaf to one checked promotion writer, which preflights all
-attempt roots and writes each prepared owner directly into its final field
-without a temporary builder batch or aggregate receipt. Both the cold leaf and
-its enclosing operation remain at the same addresses. Application consumes
-semantic leaves through mutable borrows and then clears the occupied slot. A
-genuinely suspended typed scanner writes its rebuilt leaf directly into those
-same destinations; a real suspension moves the frame and occupied cold slot
-into the typed retry owner, and resumption restores them without reconstructing
-an equivalent command carrier.
+The executor's caller-loop `CommandEpisode` in
+`main_control/command_episode.rs` owns the command, parked expansion, delivery
+cursor, scanner child, operation-scan phase, scalar destination, and completed
+hot operand directly. There is no nested preflight-command projection or
+generic operation payload. A completed cold scan installs its uncommon leaf
+once in an adjacent caller-owned typed slot. Canonical dispatch then enters hot
+execution directly or constructs a borrow-typed `ColdExecutionEpisode`; the
+former prepare/readiness/apply handoff is absent. The cold promotion writer
+preflights all attempt roots and writes each prepared owner directly into its
+final field without a temporary builder batch or aggregate receipt. Execution
+consumes semantic leaves through mutable borrows and clears the occupied branch
+slot after commit. A genuinely suspended typed scanner writes its rebuilt leaf
+directly into those same resident destinations. Only a real suspension
+constructs a move-only `OperationFrame` which packages the command episode and
+occupied cold slot for the typed retry owner; resumption restores them without
+reconstructing an equivalent command carrier.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core
