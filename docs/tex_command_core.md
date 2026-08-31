@@ -3993,6 +3993,15 @@ operation commits; rollback and resource suspension discard them before retry.
 Optimized span paths decompose into the same scalar events when an observer is
 attached.
 
+Executor-requested named token-list pushes follow that same singular commit
+path. Command state drains each queued semantic push directly into the existing
+optional operation observer; it never materializes an `InputRecord` vector or a
+second `CommandObservation` vector. With no observer, it constructs no detached
+record and allocates nothing, regardless of queued depth. TeX82
+`\tracingmacros` output remains unconditional on observation and is rendered
+while the named token-list identity and live command context are still
+available.
+
 ### 31.3 Fixture tiers
 
 The conformance hierarchy is:

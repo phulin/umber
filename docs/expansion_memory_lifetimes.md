@@ -597,7 +597,10 @@ batch or duplicate owner receipt; application
 admits one semantic `CommandContext`, consumes semantic leaves through a mutable
 borrow while that context stays resident, then clears and immediately reuses
 both slots. Named token-list push receipts produced during semantic apply drain
-through the same admission before detached evidence crosses settlement. Only a
+directly into the existing optional operation observer through the same
+admission before detached evidence crosses settlement. They construct no
+intermediate input-record or observation vector, and an unobserved publication
+constructs no record and allocates nothing. Only a
 genuine host boundary releases that context and admits the narrow host-specific
 continuation context. Resource suspension moves that exact frame and occupied cold
 slot into the attempt instead of boxing a prepared

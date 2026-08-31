@@ -1,6 +1,6 @@
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
-    CommandRestoreError, CommandState,
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+    CommandProcessor, CommandProfile, CommandRestoreError, CommandState,
 };
 use tex_state::env::AssignmentScope;
 use tex_state::interner::InternerBudget;
@@ -23,6 +23,15 @@ fn retained_store() -> ReachabilityStore {
         InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
             .expect("checkpoint test interner budget"),
     )
+}
+
+#[derive(Default)]
+struct ObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for ObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
 }
 
 struct CaptureModeCheckpoint {
@@ -311,11 +320,17 @@ fn retained_checkpoint_restores_command_tokens_and_scalar_mode_state() {
             &universe.command_context().expect("command context"),
             command_root,
         );
-        let pushes = command.publish_named_token_list_pushes(
+        let mut observations = ObservationRecorder::default();
+        command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
             &mut diagnostic_effects,
+            Some(&mut observations),
         );
-        assert_eq!(pushes.len(), 1, "everypar publishes one retained push");
+        assert_eq!(
+            observations.0.len(),
+            1,
+            "everypar publishes one retained push"
+        );
         let mut modes = ModeNest::new();
         modes.current_list_mutation().set_prev_graf(7);
         let checkpoint = EngineCheckpoint::capture_checkpoint(
@@ -339,9 +354,10 @@ fn retained_checkpoint_restores_command_tokens_and_scalar_mode_state() {
             &universe.command_context().expect("command context"),
             later_command_root,
         );
-        let _ = command.publish_named_token_list_pushes(
+        command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
             &mut diagnostic_effects,
+            None,
         );
         modes.current_list_mutation().set_prev_graf(9);
         checkpoint

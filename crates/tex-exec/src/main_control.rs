@@ -843,6 +843,15 @@ struct PendingShowCompletion {
 }
 
 impl<G> CommandMachine<'_, G> {
+    fn publish_named_token_list_pushes(&mut self, context: &mut tex_state::CommandContext<'_, G>) {
+        let observer = self
+            .observations
+            .as_mut()
+            .map(|buffer| buffer as &mut dyn CommandObserver);
+        self.state
+            .publish_named_token_list_pushes(context, self.diagnostic_effects, observer);
+    }
+
     fn defer_show_completion(&mut self, long: bool, context: String) {
         assert!(
             self.pending_show_completion.is_none(),
@@ -956,6 +965,18 @@ fn command_processor<'episode, 'admission, G>(
         observer,
         diagnostic_effects,
     )
+}
+
+fn publish_named_token_list_pushes<G>(
+    command: &mut PersistentInterpreter<G>,
+    context: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    observations: &mut ObservationSlot,
+) {
+    let observer = observations
+        .as_mut()
+        .map(|buffer| buffer as &mut dyn CommandObserver);
+    command.publish_named_token_list_pushes(context, diagnostic_effects, observer);
 }
 
 impl<G> Default for MainControl<G> {
@@ -4470,18 +4491,12 @@ impl<G> MainControl<G> {
                     let enclosing = self.operation_observations.take();
                     if enclosing.is_some() {
                         self.operation_observations = Some(ObservationBuffer::default());
-                        self.operation_observations
-                            .as_mut()
-                            .expect("observed page-output episode has a buffer")
-                            .extend(
-                                self.command
-                                    .publish_named_token_list_pushes(
-                                        &mut context,
-                                        diagnostic_effects,
-                                    )
-                                    .into_iter()
-                                    .map(CommandObservation::Input),
-                            );
+                        publish_named_token_list_pushes(
+                            &mut self.command,
+                            &mut context,
+                            diagnostic_effects,
+                            &mut self.operation_observations,
+                        );
                     }
                     let mut processor = command_processor(
                         &mut self.command,
@@ -6404,13 +6419,12 @@ impl<G> MainControl<G> {
             // §1030's prologue precedes `big_switch`, so its push is published
             // ahead of the first command this step delivers rather than with
             // the step's own applied records.
-            let entry_records: Vec<CommandObservation> = self
-                .command
-                .publish_named_token_list_pushes(&mut context, diagnostic_effects)
-                .into_iter()
-                .map(CommandObservation::Input)
-                .collect();
-            self.observe_committed(entry_records);
+            publish_named_token_list_pushes(
+                &mut self.command,
+                &mut context,
+                diagnostic_effects,
+                &mut self.operation_observations,
+            );
         }
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let (innermost_group, job_is_all_over) = (
@@ -6865,20 +6879,19 @@ impl<G> MainControl<G> {
                 let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
                     tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
                 );
-                let mut records = self
-                    .command
-                    .publish_named_token_list_pushes(context, diagnostic_effects)
-                    .into_iter()
-                    .map(CommandObservation::Input)
-                    .collect::<Vec<_>>();
-                records.extend(
+                publish_named_token_list_pushes(
+                    &mut self.command,
+                    context,
+                    diagnostic_effects,
+                    &mut self.operation_observations,
+                );
+                self.observe_committed(
                     assignment_receipts
                         .take()
                         .into_iter()
                         .flatten()
                         .map(CommandObservation::Mutation),
                 );
-                self.observe_committed(records);
                 // §1269 publishes the completed assignment mutation before
                 // §325 observes the replay-level push of the saved token.
                 if let Err(error) = schedule_afterassignment(
@@ -6909,15 +6922,17 @@ impl<G> MainControl<G> {
             tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
         );
         if result.is_ok() && !settled_in_admission {
-            let mut records = stores
+            stores
                 .with_command_context(|context| {
-                    self.command
-                        .publish_named_token_list_pushes(context, diagnostic_effects)
+                    publish_named_token_list_pushes(
+                        &mut self.command,
+                        context,
+                        diagnostic_effects,
+                        &mut self.operation_observations,
+                    );
                 })
-                .expect("live generation")
-                .into_iter()
-                .map(CommandObservation::Input)
-                .collect::<Vec<_>>();
+                .expect("live generation");
+            let mut records = Vec::new();
             records.extend(
                 assignment_receipts
                     .into_iter()
@@ -7266,7 +7281,7 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let (mut result, named_token_list_pushes, mut post_apply_facts) = if matches!(
+        let (mut result, mut post_apply_facts) = if matches!(
             &*operation,
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(_))
         ) {
@@ -7323,7 +7338,7 @@ impl<G> MainControl<G> {
                     geometry,
                 );
             }
-            (Ok(ReplayStep::Continue), Vec::new(), post_apply_facts)
+            (Ok(ReplayStep::Continue), post_apply_facts)
         } else {
             let result = apply_cold_operation(
                 operation,
@@ -7340,13 +7355,9 @@ impl<G> MainControl<G> {
                 &self.active_math_shifts,
                 &mut self.prepared_dvi_pages,
             );
-            let named_token_list_pushes = if result.is_ok() {
-                command
-                    .state
-                    .publish_named_token_list_pushes(&mut context, command.diagnostic_effects)
-            } else {
-                Vec::new()
-            };
+            if result.is_ok() {
+                command.publish_named_token_list_pushes(&mut context);
+            }
             Self::capture_save_stack_usage(
                 host_preparation,
                 &context,
@@ -7357,7 +7368,7 @@ impl<G> MainControl<G> {
             let post_apply_facts =
                 PostApplyFacts::capture(parking, self.modes.current_mode(), &context);
             drop(context);
-            (result, named_token_list_pushes, post_apply_facts)
+            (result, post_apply_facts)
         };
         frame.clear_cold(cold);
         if result.is_ok()
@@ -7564,21 +7575,10 @@ impl<G> MainControl<G> {
         );
         if result.is_ok() {
             // These records are produced by applying the step, after the
-            // command-processor episode's own borrow has ended. They are
-            // collected first and appended to the operation's commit buffer
-            // in one place, so that the buffer is never borrowed while
-            // command state is still being read.
+            // command-processor episode's own borrow has ended. Named token
+            // pushes were already sent directly to this operation's optional
+            // commit sink while their live command context was admitted.
             let mut records: Vec<CommandObservation> = Vec::new();
-            // tex.web observes a named token-list level inside
-            // `begin_token_list`, which runs in the middle of the transition
-            // that installs it (`new_graf`, `box_end`, `init_math`). Command
-            // state holds the push until the transition's borrow ends, so it
-            // is published ahead of the transition's own committed records.
-            records.extend(
-                named_token_list_pushes
-                    .into_iter()
-                    .map(CommandObservation::Input),
-            );
             let effects = committed_stream_effect_observations(
                 output_start.effect_count,
                 output_start.prepared_page_count,

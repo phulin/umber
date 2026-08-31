@@ -25,53 +25,54 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 }
 
 impl<G> CommandState<G> {
-    /// Takes the pushes of executor-requested named token lists, in order.
+    /// Publishes the pushes of executor-requested named token lists, in order.
     ///
     /// The executor publishes them with the rest of the operation's committed
     /// records, which is where tex.web's own trace has them: inside the
     /// `new_graf`/`box_end`/`init_math` transition that installed the level.
-    #[must_use]
     pub fn publish_named_token_list_pushes(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    ) -> Vec<crate::InputRecord> {
-        self.named_token_list_pushes
-            .drain(..)
-            .map(|(level, reason, tokens)| {
-                // TeX82 §§323 and 1145 trace a named token list at
-                // `begin_token_list`, while its token_type still identifies
-                // the list.  Publishing at the executor/command-state seam
-                // preserves that context even when the list has one token
-                // and is exhausted by the next main-control delivery.
-                if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
-                    let mut text = String::new();
-                    crate::processor::expand_render::append_print_esc_text(
-                        state,
-                        stored_replay_name(reason),
-                        &mut text,
+        observer: Option<&mut dyn crate::CommandObserver>,
+    ) {
+        let mut observer = observer;
+        for (level, reason, tokens) in self.named_token_list_pushes.drain(..) {
+            // TeX82 §§323 and 1145 trace a named token list at
+            // `begin_token_list`, while its token_type still identifies
+            // the list. Publishing at the executor/command-state seam
+            // preserves that context even when the list has one token and is
+            // exhausted by the next main-control delivery. This trace is TeX
+            // output and remains unconditional on detached observation.
+            if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
+                let mut text = String::new();
+                crate::processor::expand_render::append_print_esc_text(
+                    state,
+                    stored_replay_name(reason),
+                    &mut text,
+                );
+                text.push_str("->");
+                for word in state.token_list(tokens) {
+                    let token = word.token().expect("durable token word is valid");
+                    crate::processor::expand_render::append_token_list_token_text(
+                        state, token, &mut text,
                     );
-                    text.push_str("->");
-                    for word in state.token_list(tokens) {
-                        let token = word.token().expect("durable token word is valid");
-                        crate::processor::expand_render::append_token_list_token_text(
-                            state, token, &mut text,
-                        );
-                    }
-                    let mut output = state.begin_diagnostic(diagnostic_effects);
-                    output.print_nl(&text);
-                    output.end(false);
                 }
-                crate::InputRecord {
+                let mut output = state.begin_diagnostic(diagnostic_effects);
+                output.print_nl(&text);
+                output.end(false);
+            }
+            if let Some(observer) = observer.as_deref_mut() {
+                observer.committed(crate::CommandObservation::Input(crate::InputRecord {
                     transition: crate::InputTransition::Push,
                     reason: crate::processor::stored_input_reason(reason),
                     source_name: None,
                     source: None,
                     level: level.0,
                     position: 0,
-                }
-            })
-            .collect()
+                }));
+            }
+        }
     }
 
     /// Transfers semantic diagnostics committed by completed command episodes.

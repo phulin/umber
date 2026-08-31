@@ -547,7 +547,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .map(|(body, _)| body)
         .expect("locate callback-scoped hot command admission");
     assert!(hot_admission.contains("hot_apply::apply("));
-    assert!(hot_admission.contains("publish_named_token_list_pushes(context"));
+    assert!(hot_admission.contains("publish_named_token_list_pushes("));
     assert!(hot_admission.contains("schedule_afterassignment("));
     assert!(!hot_application.contains("stores.command_context()"));
     assert!(cold_support.contains("stores: &mut tex_state::CommandContext<'_, G>"));

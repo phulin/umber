@@ -145,13 +145,12 @@ impl<G> MainControl<G> {
                 }
 
                 if self.enter_main_control(context) {
-                    let entry_records: Vec<CommandObservation> = self
-                        .command
-                        .publish_named_token_list_pushes(context, diagnostic_effects)
-                        .into_iter()
-                        .map(CommandObservation::Input)
-                        .collect();
-                    self.observe_committed(entry_records);
+                    publish_named_token_list_pushes(
+                        &mut self.command,
+                        context,
+                        diagnostic_effects,
+                        &mut self.operation_observations,
+                    );
                 }
                 let innermost_group = context.innermost_group_kind();
                 let tracked_region_is_active = context.tracked_region_is_active();

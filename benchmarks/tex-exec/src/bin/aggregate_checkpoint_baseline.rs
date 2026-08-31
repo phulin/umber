@@ -326,9 +326,10 @@ fn fixture<G>(
         command.push_everypar(&context, token_root.clone());
     }
     let mut diagnostic_effects = DiagnosticEffects::new();
-    let _ = command.publish_named_token_list_pushes(
+    command.publish_named_token_list_pushes(
         &mut universe.command_context().expect("command context"),
         &mut diagnostic_effects,
+        None,
     );
 
     for level in 0..units.min(32) {

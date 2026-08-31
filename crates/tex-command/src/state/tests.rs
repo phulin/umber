@@ -8,7 +8,8 @@ use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
 use crate::processor::AlignmentIdentity;
 use crate::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptTokenListId,
+    AttemptProvenanceId, AttemptTokenListId, CommandObservation, CommandObserver, InputReason,
+    InputTransition,
 };
 
 enum ResidentRoot<Attempt, Durable> {
@@ -403,6 +404,96 @@ fn semantic_diagnostic_transfer_moves_the_ordered_allocation_without_allocating(
             CommandSemanticDiagnostic::PdfExpansionMessage { text: pdf_text },
         ] if text == "first" && context == "second" && pdf_text == "third"
     ));
+}
+
+#[derive(Default)]
+struct NamedPushObserver(Vec<CommandObservation>);
+
+impl CommandObserver for NamedPushObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+#[test]
+fn named_token_list_pushes_publish_directly_to_the_optional_observer_in_order() {
+    crate::test_harness::with_universe(|universe| {
+        let tokens = universe
+            .command_context()
+            .expect("named-push token context")
+            .allocate_token_list(&[word('x').token_word()])
+            .expect("named-push token list");
+        let mut state = CommandState::default();
+        let context = universe
+            .command_context()
+            .expect("named-push installation context");
+        state.push_everypar(&context, tokens.clone());
+        state.push_everymath(&context, tokens, false);
+        drop(context);
+
+        let mut observer = NamedPushObserver::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        state.publish_named_token_list_pushes(
+            &mut universe
+                .command_context()
+                .expect("named-push publication context"),
+            &mut diagnostic_effects,
+            Some(&mut observer),
+        );
+
+        let reasons: Vec<_> = observer
+            .0
+            .iter()
+            .map(|observation| match observation {
+                CommandObservation::Input(record) => {
+                    assert_eq!(record.transition, InputTransition::Push);
+                    record.reason
+                }
+                other => panic!("named push emitted non-input observation: {other:?}"),
+            })
+            .collect();
+        assert_eq!(reasons, [InputReason::EveryPar, InputReason::EveryMath]);
+        assert!(state.named_token_list_pushes.is_empty());
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn unobserved_named_token_list_publication_allocates_nothing_at_depth_4096() {
+    crate::test_harness::with_universe(|universe| {
+        let tokens = universe
+            .command_context()
+            .expect("unobserved named-push token context")
+            .allocate_token_list(&[word('x').token_word()])
+            .expect("unobserved named-push token list");
+        let mut state = CommandState::default();
+        let context = universe
+            .command_context()
+            .expect("unobserved named-push installation context");
+        for _ in 0..4_096 {
+            state.push_everypar(&context, tokens.clone());
+        }
+        drop(context);
+
+        let owner = tex_state::measurement::HotCoreAllocationOwner::EvidencePublication;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            state.publish_named_token_list_pushes(
+                &mut universe
+                    .command_context()
+                    .expect("unobserved named-push publication context"),
+                &mut diagnostic_effects,
+                None,
+            );
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        assert!(state.named_token_list_pushes.is_empty());
+    });
 }
 
 #[test]

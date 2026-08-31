@@ -491,16 +491,14 @@ impl<G> MainControl<G> {
             // command is fetched. Leaving the push queued until an ordinary
             // step reverses those events: the hook's final command is traced
             // and executed before its own `begin_token_list` trace.
-            let mut records: Vec<CommandObservation> = self
-                .command
-                .publish_named_token_list_pushes(
-                    &mut stores.command_context().expect("live generation"),
-                    diagnostic_effects,
-                )
-                .into_iter()
-                .map(CommandObservation::Input)
-                .collect();
+            publish_named_token_list_pushes(
+                &mut self.command,
+                &mut stores.command_context().expect("live generation"),
+                diagnostic_effects,
+                &mut self.operation_observations,
+            );
             if opens_output_batch {
+                let mut records = Vec::new();
                 // Same order as the ordinary tail: the named token-list push
                 // command state held across the transition, then the shipouts
                 // it committed, then the episode's own records.
@@ -520,8 +518,8 @@ impl<G> MainControl<G> {
                     .map(CommandObservation::Effect),
                 );
                 self.page_output_observations.append_to(&mut records);
+                self.observe_committed(records);
             }
-            self.observe_committed(records);
             self.page_output_observations.clear();
         }
         self.finish_shipout_publication(
