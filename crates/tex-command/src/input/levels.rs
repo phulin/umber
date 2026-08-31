@@ -232,13 +232,13 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(crate) fn deliver_into(
+    pub(super) fn deliver_into(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::InputTopTransition, ()> {
+    ) -> Result<MacroArgumentAdvance, ()> {
         let position = self.frame.position();
         let identity = self.frame.identity();
         let active_source = self.frame.source_context();
@@ -247,7 +247,7 @@ impl<G> MacroArgumentCursor<G> {
             .flags()
             .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE);
         let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
-            return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
+            return Ok(MacroArgumentAdvance::Exhausted(self.identity()));
         };
         let resolution = destination.write_resolved_delivery(
             word.token_word(),
@@ -265,8 +265,13 @@ impl<G> MacroArgumentCursor<G> {
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(super::InputTopTransition::Delivered { resolution })
+        Ok(MacroArgumentAdvance::Delivered(resolution))
     }
+}
+
+pub(super) enum MacroArgumentAdvance {
+    Delivered(tex_state::token::PackedMeaningResolution),
+    Exhausted(InputLevelId),
 }
 
 impl<G> TokenCursor<G> {
@@ -286,13 +291,13 @@ impl<G> TokenCursor<G> {
 
     /// Delivers the canonical word at the fixed frame's scalar position.
     #[inline(always)]
-    pub(crate) fn deliver_into(
+    pub(super) fn deliver_into(
         &mut self,
         sources: PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'_, G>,
         sequence: u64,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::InputTopTransition, ()> {
+    ) -> Result<StoredTokenAdvance, ()> {
         let position = self.frame.position();
         let index = position as usize;
         let Some((word, origin, source_provenance)) = (match &self.span {
@@ -319,12 +324,12 @@ impl<G> TokenCursor<G> {
                 .word_at(index)
                 .map(|word| (word, OriginId::UNKNOWN, None)),
         }) else {
-            return Ok(super::InputTopTransition::TokenExhausted(self.identity()));
+            return Ok(StoredTokenAdvance::Exhausted(self.identity()));
         };
         let delivery = if !matches!(self.behavior, TokenBehavior::Parameter)
             && let Some(slot) = word.out_parameter_slot()
         {
-            super::InputTopTransition::OutParameter {
+            StoredTokenAdvance::OutParameter {
                 slot,
                 has_macro_lineage: self
                     .frame
@@ -348,13 +353,23 @@ impl<G> TokenCursor<G> {
                     .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
                 state,
             );
-            super::InputTopTransition::Delivered { resolution }
+            StoredTokenAdvance::Delivered(resolution)
         };
         if self.frame.advance() != Some(position) {
             return Err(());
         }
         Ok(delivery)
     }
+}
+
+pub(super) enum StoredTokenAdvance {
+    Delivered(tex_state::token::PackedMeaningResolution),
+    OutParameter {
+        slot: u8,
+        has_macro_lineage: bool,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+    },
+    Exhausted(InputLevelId),
 }
 
 /// Canonical packed word plus its storage-independent diagnostic coordinates.

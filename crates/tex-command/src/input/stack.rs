@@ -13,23 +13,6 @@ use super::{
     StoredReplayReason, TokenBehavior, TokenCursor,
 };
 
-/// Result of one admission of the current input top.
-pub(crate) enum InputTopTransition {
-    Delivered {
-        resolution: tex_state::token::PackedMeaningResolution,
-    },
-    OutParameter {
-        slot: u8,
-        has_macro_lineage: bool,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-    },
-    InvalidCharacter,
-    NeedLine(InputLevelId),
-    SourceExhausted(InputLevelId),
-    TokenExhausted(InputLevelId),
-    Empty,
-}
-
 /// Completed command-state outcome of one resident input transition.
 ///
 /// Ordinary commands have already committed their exact work facts, received

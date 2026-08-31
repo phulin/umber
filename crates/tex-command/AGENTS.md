@@ -257,9 +257,13 @@ collector (see `src/conditionals.rs`).
   per checkpoint-visible row and interval; rows admitted in the interval need
   no inverse. Alternate owners live only in checked reusable slabs; there is no
   generic logical-stack adapter or second input representation.
-  Typed cold source operations and one `CommandState`-owned resident-top
-  transition are the only mutable access. Source, token-list, and macro-
-  argument cursors share its single top access, matching first-touch
+  Typed cold source operations and one `CommandState`-owned resident front
+  are the only mutable access. That front selects the semantic top once into
+  a source, stored-token, or macro-argument view; each view borrows only its
+  cursor and matching first-touch journal fields. The three branches share
+  direct final-command writing and common post-borrow settlement, while
+  preserving their distinct storage owners. Source, token-list, and macro-
+  argument cursors therefore share a single top access, matching first-touch
   transition, direct final-command write, fuel/alignment/parameter settlement,
   restartable exhaustion pop, retirement observation/alignment/replay settlement,
   and diagnostic revision without a callback or returned exhaustion result.

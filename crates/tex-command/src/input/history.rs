@@ -40,6 +40,9 @@ pub(crate) struct InputSourceContextCounters {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct InputCursorMutationCounters {
     pub(crate) typed_top_accesses: u64,
+    pub(crate) source_branch_entries: u64,
+    pub(crate) stored_token_branch_entries: u64,
+    pub(crate) macro_argument_branch_entries: u64,
     pub(crate) first_touch_transitions: u64,
     pub(crate) coalesced_transitions: u64,
     pub(crate) closure_dispatches: u64,
@@ -49,8 +52,8 @@ struct InlineCursorRecorder<'a, G> {
     recording: bool,
     interval: u64,
     index: usize,
-    touched: &'a mut [u64],
-    partially_captured: &'a mut [u64],
+    touched: &'a mut u64,
+    partially_captured: &'a mut u64,
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     coalesced_mutations: &'a mut u64,
     #[cfg(any(test, feature = "profiling"))]
@@ -63,7 +66,7 @@ impl<G> InlineCursorRecorder<'_, G> {
         if !self.recording {
             return;
         }
-        if self.touched[self.index] == self.interval {
+        if *self.touched == self.interval {
             *self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
             #[cfg(any(test, feature = "profiling"))]
             {
@@ -72,8 +75,8 @@ impl<G> InlineCursorRecorder<'_, G> {
             }
             return;
         }
-        self.touched[self.index] = self.interval;
-        self.partially_captured[self.index] = self.interval;
+        *self.touched = self.interval;
+        *self.partially_captured = self.interval;
         self.undo.append(InputUndo::Inline {
             index: u32::try_from(self.index).expect("input row index fits u32"),
             state,
@@ -83,6 +86,211 @@ impl<G> InlineCursorRecorder<'_, G> {
             self.counters.first_touch_transitions =
                 self.counters.first_touch_transitions.saturating_add(1);
         }
+    }
+}
+
+enum ResidentInputTop<'a, G> {
+    Source(ResidentSourceTop<'a, G>),
+    StoredToken(ResidentStoredTokenTop<'a, G>),
+    MacroArgument(ResidentMacroArgumentTop<'a, G>),
+}
+
+struct ResidentSourceTop<'a, G> {
+    index: usize,
+    source: &'a mut SourceLevel<G>,
+    slot: &'a mut SourceSlot<G>,
+    recording: bool,
+    interval: u64,
+    touched: &'a mut u64,
+    partially_captured: &'a mut u64,
+    undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
+    source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
+    coalesced_mutations: &'a mut u64,
+    source_lex_captures: &'a mut u64,
+    context_revision: &'a mut u64,
+    #[cfg(any(test, feature = "profiling"))]
+    counters: &'a mut InputCursorMutationCounters,
+}
+
+enum ResidentSourceAdvance {
+    Delivered(tex_state::token::PackedMeaningResolution),
+    InvalidCharacter,
+    NeedLine(super::InputLevelId),
+    Exhausted(super::InputLevelId),
+}
+
+impl<G> ResidentSourceTop<'_, G> {
+    #[inline(always)]
+    fn force_eof(&self, requested: bool) -> bool {
+        requested && self.slot.name_class == super::SourceNameClass::File
+    }
+
+    #[inline(always)]
+    fn record_first_touch(&mut self) {
+        let needs_inverse = self.recording && *self.touched != self.interval;
+        if self.recording && !needs_inverse {
+            *self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                self.counters.coalesced_transitions =
+                    self.counters.coalesced_transitions.saturating_add(1);
+            }
+        }
+        if needs_inverse {
+            *self.source_lex_captures = self.source_lex_captures.saturating_add(1);
+            let payload = self
+                .source_lex_states
+                .insert(SourceLexExecutionState::capture(self.source, self.slot));
+            self.undo.append(InputUndo::SourceLex {
+                index: u32::try_from(self.index).expect("input row index fits u32"),
+                payload,
+            });
+            *self.touched = self.interval;
+            *self.partially_captured = self.interval;
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                self.counters.first_touch_transitions =
+                    self.counters.first_touch_transitions.saturating_add(1);
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn advance_into(
+        mut self,
+        profile: crate::CommandProfile,
+        force_eof: bool,
+        state: &mut tex_state::CommandContext<'_, G>,
+        create_control_sequences: bool,
+        mut destination: crate::command::EmptyCommand<'_, G>,
+        sequence: u64,
+    ) -> Result<ResidentSourceAdvance, ()> {
+        record_source_lex_slot_borrow();
+        if state.tracked_region_is_active() {
+            super::observe_immutable_source(state, self.source, self.slot);
+        }
+        self.record_first_touch();
+        let identity = self.source.identity();
+        let position = self.slot.cursor.next_physical_offset;
+        let active_source = self.source.frame.source_context();
+        let step = {
+            let mut queries = super::stack::LiveSourceQueries {
+                state,
+                create_control_sequences,
+            };
+            match profile.character_mode() {
+                crate::CharacterMode::EightBitExact => self
+                    .slot
+                    .cursor
+                    .next_compact_exact_byte_step(force_eof, &mut queries),
+                crate::CharacterMode::UnicodeExtended => self
+                    .slot
+                    .cursor
+                    .next_compact_unicode_step(force_eof, &mut queries),
+            }
+        };
+        let direct_source_line = self
+            .slot
+            .cursor
+            .line
+            .as_ref()
+            .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
+        let result = match step {
+            CompactSourceTokenizationStep::Token(token) => {
+                if self.source.frame.identity() != identity.0
+                    || self.source.frame.advance().is_none()
+                {
+                    Err(())
+                } else {
+                    let range = token.provenance.range();
+                    let origin = if range.end().saturating_sub(range.start()) == 1 {
+                        state.source_token_origin(range.source(), range.start(), range.end())
+                    } else {
+                        state.source_range_origin(range.source(), range.start(), range.end())
+                    };
+                    let resolution = destination.reborrow().write_resolved_delivery(
+                        token.word,
+                        origin,
+                        identity.0,
+                        position,
+                        sequence,
+                        Some(token.provenance),
+                        active_source,
+                        true,
+                        direct_source_line,
+                        false,
+                        state,
+                    );
+                    Ok(ResidentSourceAdvance::Delivered(resolution))
+                }
+            }
+            CompactSourceTokenizationStep::InvalidCharacter => {
+                Ok(ResidentSourceAdvance::InvalidCharacter)
+            }
+            CompactSourceTokenizationStep::NeedLine => {
+                Ok(ResidentSourceAdvance::NeedLine(identity))
+            }
+            CompactSourceTokenizationStep::End => Ok(ResidentSourceAdvance::Exhausted(identity)),
+        };
+        *self.context_revision = self.context_revision.wrapping_add(1).max(1);
+        result
+    }
+}
+
+struct ResidentStoredTokenTop<'a, G> {
+    cursor: &'a mut super::TokenCursor<G>,
+    recorder: InlineCursorRecorder<'a, G>,
+    context_revision: &'a mut u64,
+}
+
+impl<G> ResidentStoredTokenTop<'_, G> {
+    #[inline(never)]
+    fn advance_into(
+        self,
+        sources: super::PackedTokenSources<'_, G>,
+        destination: crate::command::EmptyCommand<'_, G>,
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Result<super::levels::StoredTokenAdvance, ()> {
+        let Self {
+            cursor,
+            mut recorder,
+            context_revision,
+        } = self;
+        recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
+        let result = cursor.deliver_into(sources, destination, sequence, state);
+        *context_revision = context_revision.wrapping_add(1).max(1);
+        result
+    }
+}
+
+struct ResidentMacroArgumentTop<'a, G> {
+    cursor: &'a mut super::MacroArgumentCursor<G>,
+    recorder: InlineCursorRecorder<'a, G>,
+    context_revision: &'a mut u64,
+}
+
+impl<G> ResidentMacroArgumentTop<'_, G> {
+    #[inline(never)]
+    fn advance_into(
+        self,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+        destination: crate::command::EmptyCommand<'_, G>,
+        sequence: u64,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Result<super::levels::MacroArgumentAdvance, ()> {
+        let Self {
+            cursor,
+            mut recorder,
+            context_revision,
+        } = self;
+        recorder.record(InputLevelInlineState::new(
+            cursor.frame,
+            super::RetirementBehavior::Pop,
+        ));
+        let result = cursor.deliver_into(scratch, destination, sequence, state);
+        *context_revision = context_revision.wrapping_add(1).max(1);
+        result
     }
 }
 
@@ -325,6 +533,106 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
+    /// Selects the semantic top once and turns that discrimination into a
+    /// branch-owned mutable view. Each view contains only the cursor and
+    /// first-touch journal fields its input kind can use.
+    #[inline(always)]
+    fn select_resident_top(&mut self) -> Option<(usize, ResidentInputTop<'_, G>)> {
+        let index = self.top.checked_sub(1)?;
+        #[cfg(any(test, feature = "profiling"))]
+        {
+            self.cursor_mutations.typed_top_accesses =
+                self.cursor_mutations.typed_top_accesses.saturating_add(1);
+        }
+        let recording = self.recording;
+        let interval = self.interval;
+        match &mut self.rows[index] {
+            InputLevel::Source(source) => {
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.source_branch_entries = self
+                        .cursor_mutations
+                        .source_branch_entries
+                        .saturating_add(1);
+                }
+                let slot = self.source_slots.resident_value_mut(source.slot.0.slot);
+                Some((
+                    index,
+                    ResidentInputTop::Source(ResidentSourceTop {
+                        index,
+                        source,
+                        slot,
+                        recording,
+                        interval,
+                        touched: &mut self.touched[index],
+                        partially_captured: &mut self.partially_captured[index],
+                        undo: &mut self.undo,
+                        source_lex_states: &mut self.source_lex_states,
+                        coalesced_mutations: &mut self.coalesced_mutations,
+                        source_lex_captures: &mut self.source_lex_captures,
+                        context_revision: &mut self.context_revision,
+                        #[cfg(any(test, feature = "profiling"))]
+                        counters: &mut self.cursor_mutations,
+                    }),
+                ))
+            }
+            InputLevel::Tokens(cursor) => {
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.stored_token_branch_entries = self
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                Some((
+                    index,
+                    ResidentInputTop::StoredToken(ResidentStoredTokenTop {
+                        cursor,
+                        recorder: InlineCursorRecorder {
+                            recording,
+                            interval,
+                            index,
+                            touched: &mut self.touched[index],
+                            partially_captured: &mut self.partially_captured[index],
+                            undo: &mut self.undo,
+                            coalesced_mutations: &mut self.coalesced_mutations,
+                            #[cfg(any(test, feature = "profiling"))]
+                            counters: &mut self.cursor_mutations,
+                        },
+                        context_revision: &mut self.context_revision,
+                    }),
+                ))
+            }
+            InputLevel::MacroArgument(cursor) => {
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.macro_argument_branch_entries = self
+                        .cursor_mutations
+                        .macro_argument_branch_entries
+                        .saturating_add(1);
+                }
+                Some((
+                    index,
+                    ResidentInputTop::MacroArgument(ResidentMacroArgumentTop {
+                        cursor,
+                        recorder: InlineCursorRecorder {
+                            recording,
+                            interval,
+                            index,
+                            touched: &mut self.touched[index],
+                            partially_captured: &mut self.partially_captured[index],
+                            undo: &mut self.undo,
+                            coalesced_mutations: &mut self.coalesced_mutations,
+                            #[cfg(any(test, feature = "profiling"))]
+                            counters: &mut self.cursor_mutations,
+                        },
+                        context_revision: &mut self.context_revision,
+                    }),
+                ))
+            }
+        }
+    }
+
     fn note_context_mutation(&mut self) {
         self.context_revision = self.context_revision.wrapping_add(1).max(1);
     }
@@ -574,13 +882,117 @@ impl<G> crate::CommandState<G> {
     ) -> Result<super::ResidentCommandTransition, ()> {
         let (observer, immediate_write_retirement) = retirement_publication;
         loop {
-            let transition = self.advance_resident_top_into(
-                state,
-                fuel,
-                create_control_sequences,
-                destination.reborrow(),
-                sequence,
-            )?;
+            let Some((resident_index, top)) = self.roots.input.levels.select_resident_top() else {
+                return Ok(super::ResidentCommandTransition::Empty);
+            };
+            #[cfg(test)]
+            {
+                self.raw_delivery_path_counters.resident_transitions = self
+                    .raw_delivery_path_counters
+                    .resident_transitions
+                    .saturating_add(1);
+            }
+            let transition = match top {
+                ResidentInputTop::Source(top) => {
+                    let force_eof = top.force_eof(self.roots.input.force_eof);
+                    match top.advance_into(
+                        self.roots.expansion.profile,
+                        force_eof,
+                        state,
+                        create_control_sequences,
+                        destination.reborrow(),
+                        sequence,
+                    )? {
+                        ResidentSourceAdvance::Delivered(resolution) => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.source_direct = self
+                                    .raw_delivery_path_counters
+                                    .source_direct
+                                    .saturating_add(1);
+                            }
+                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                        }
+                        ResidentSourceAdvance::InvalidCharacter => {
+                            super::ResidentCommandTransition::InvalidCharacter
+                        }
+                        ResidentSourceAdvance::NeedLine(identity) => {
+                            super::ResidentCommandTransition::NeedLine(identity)
+                        }
+                        ResidentSourceAdvance::Exhausted(identity) => {
+                            super::ResidentCommandTransition::SourceExhausted(identity)
+                        }
+                    }
+                }
+                ResidentInputTop::StoredToken(top) => {
+                    let sources = super::PackedTokenSources::new(
+                        &self.roots.input.replay,
+                        self.attempt.arena(),
+                        &self.roots.parameters,
+                    );
+                    match top.advance_into(sources, destination.reborrow(), sequence, state)? {
+                        super::levels::StoredTokenAdvance::Delivered(resolution) => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.stored_direct = self
+                                    .raw_delivery_path_counters
+                                    .stored_direct
+                                    .saturating_add(1);
+                            }
+                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                        }
+                        super::levels::StoredTokenAdvance::OutParameter {
+                            slot,
+                            has_macro_lineage,
+                            active_source,
+                        } => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.out_parameter_interceptions = self
+                                    .raw_delivery_path_counters
+                                    .out_parameter_interceptions
+                                    .saturating_add(1);
+                            }
+                            self.push_resident_parameter_level(
+                                slot,
+                                has_macro_lineage,
+                                active_source,
+                            )?
+                        }
+                        super::levels::StoredTokenAdvance::Exhausted(identity) => {
+                            super::ResidentCommandTransition::TokenExhausted {
+                                identity,
+                                resident_index,
+                            }
+                        }
+                    }
+                }
+                ResidentInputTop::MacroArgument(top) => {
+                    match top.advance_into(
+                        &self.scratch,
+                        destination.reborrow(),
+                        sequence,
+                        state,
+                    )? {
+                        super::levels::MacroArgumentAdvance::Delivered(resolution) => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.macro_argument_direct = self
+                                    .raw_delivery_path_counters
+                                    .macro_argument_direct
+                                    .saturating_add(1);
+                            }
+                            self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
+                        }
+                        super::levels::MacroArgumentAdvance::Exhausted(identity) => {
+                            super::ResidentCommandTransition::TokenExhausted {
+                                identity,
+                                resident_index,
+                            }
+                        }
+                    }
+                }
+            };
             let super::ResidentCommandTransition::TokenExhausted {
                 identity,
                 resident_index,
@@ -611,6 +1023,79 @@ impl<G> crate::CommandState<G> {
         }
     }
 
+    #[inline(never)]
+    fn settle_resident_delivery(
+        &mut self,
+        fuel: &mut crate::fuel::CommandFuel,
+        destination: crate::command::EmptyCommand<'_, G>,
+        resolution: tex_state::token::PackedMeaningResolution,
+    ) -> super::ResidentCommandTransition {
+        let scanner_active = !matches!(
+            self.roots.scanner.status(),
+            crate::processor::ScannerStatus::Normal
+        );
+        let command = destination.into_resident();
+        if command.suppresses_expandable_control_sequence() {
+            command.suppress_expandable();
+        }
+        fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
+        let interception = if command.is_outer() && scanner_active {
+            super::ResidentCommandInterception::Outer
+        } else {
+            self.roots.alignment.classify_delivery(
+                &mut self.timeline,
+                command,
+                resolution.literal_catcode(),
+            );
+            super::ResidentCommandInterception::Ready
+        };
+        super::ResidentCommandTransition::Delivered { interception }
+    }
+
+    #[inline(never)]
+    fn push_resident_parameter_level(
+        &mut self,
+        slot: u8,
+        has_macro_lineage: bool,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+    ) -> Result<super::ResidentCommandTransition, ()> {
+        if !(1..=9).contains(&slot) || !has_macro_lineage {
+            return Err(());
+        }
+        let owner = self.scratch.active_macro_frame().ok_or(())?;
+        let range = self
+            .scratch
+            .argument_range(owner, slot)
+            .map_err(|_| ())?
+            .ok_or(())?;
+        let identity = super::InputLevelId(self.roots.input.next_level_identity);
+        self.timeline
+            .record_next_input_level_identity(self.roots.input.next_level_identity);
+        self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
+        let trace = super::ReplayTrace::MacroParameter { slot };
+        let mut frame = super::packed_token_frame(
+            identity,
+            range.len() as usize,
+            &super::TokenBehavior::Parameter,
+            super::RetirementBehavior::Pop,
+            &trace,
+        );
+        frame.set_source_context(active_source);
+        self.stack_usage.input_stack = self
+            .stack_usage
+            .input_stack
+            .max(self.roots.input.levels.len());
+        self.roots
+            .input
+            .levels
+            .push(InputLevel::MacroArgument(super::MacroArgumentCursor {
+                range,
+                slot,
+                frame,
+            }));
+        Ok(super::ResidentCommandTransition::ParameterPushed(identity))
+    }
+
     #[inline(always)]
     fn settle_resident_ordinary_retirement(
         &mut self,
@@ -620,286 +1105,6 @@ impl<G> crate::CommandState<G> {
     ) -> Option<crate::CommandReplayEpisode> {
         debug_assert!(retirement.is_resident_restart());
         self.settle_input_retirement(retirement, observer, immediate_write_retirement)
-    }
-
-    fn advance_resident_top_into(
-        &mut self,
-        state: &mut tex_state::CommandContext<'_, G>,
-        fuel: &mut crate::fuel::CommandFuel,
-        create_control_sequences: bool,
-        mut destination: crate::command::EmptyCommand<'_, G>,
-        sequence: u64,
-    ) -> Result<super::ResidentCommandTransition, ()> {
-        let profile = self.profile();
-        let force_eof = self.source_force_eof();
-        let scanner_active = !matches!(
-            self.roots.scanner.status(),
-            crate::processor::ScannerStatus::Normal
-        );
-        let attempt = self.attempt.arena();
-        let scratch = &self.scratch;
-        let roots = &mut self.roots;
-        let timeline = &mut self.timeline;
-        let stack_usage = &mut self.stack_usage;
-        #[cfg(test)]
-        let path_counters = &mut self.raw_delivery_path_counters;
-        let parameters = &roots.parameters;
-        let input = &mut roots.input;
-        let sources = super::PackedTokenSources::new(&input.replay, attempt, parameters);
-        let levels = &mut input.levels;
-
-        let Some(index) = levels.top.checked_sub(1) else {
-            return Ok(super::ResidentCommandTransition::Empty);
-        };
-        #[cfg(test)]
-        {
-            path_counters.resident_transitions =
-                path_counters.resident_transitions.saturating_add(1);
-        }
-        #[cfg(any(test, feature = "profiling"))]
-        {
-            levels.cursor_mutations.typed_top_accesses =
-                levels.cursor_mutations.typed_top_accesses.saturating_add(1);
-        }
-        let delivery = match &mut levels.rows[index] {
-            InputLevel::Source(source) => {
-                // This authoritative resident row prevents its slot from
-                // being released or reused until the row itself retires. ABA
-                // validation belongs to cold history coordinates, not every
-                // ordinary token delivered through the live row.
-                let slot = levels.source_slots.resident_value_mut(source.slot.0.slot);
-                record_source_lex_slot_borrow();
-                if state.tracked_region_is_active() {
-                    super::observe_immutable_source(state, source, slot);
-                }
-                let needs_inverse = levels.recording && levels.touched[index] != levels.interval;
-                if levels.recording && !needs_inverse {
-                    levels.coalesced_mutations = levels.coalesced_mutations.saturating_add(1);
-                    #[cfg(any(test, feature = "profiling"))]
-                    {
-                        levels.cursor_mutations.coalesced_transitions = levels
-                            .cursor_mutations
-                            .coalesced_transitions
-                            .saturating_add(1);
-                    }
-                }
-                if needs_inverse {
-                    levels.source_lex_captures = levels.source_lex_captures.saturating_add(1);
-                    let payload = levels
-                        .source_lex_states
-                        .insert(SourceLexExecutionState::capture(source, slot));
-                    levels.undo.append(InputUndo::SourceLex {
-                        index: u32::try_from(index).expect("input row index fits u32"),
-                        payload,
-                    });
-                    levels.touched[index] = levels.interval;
-                    levels.partially_captured[index] = levels.interval;
-                    #[cfg(any(test, feature = "profiling"))]
-                    {
-                        levels.cursor_mutations.first_touch_transitions = levels
-                            .cursor_mutations
-                            .first_touch_transitions
-                            .saturating_add(1);
-                    }
-                }
-                let identity = source.identity();
-                let position = slot.cursor.next_physical_offset;
-                let active_source = source.frame.source_context();
-                let step = {
-                    let mut queries = super::stack::LiveSourceQueries {
-                        state,
-                        create_control_sequences,
-                    };
-                    match profile.character_mode() {
-                        crate::CharacterMode::EightBitExact => slot
-                            .cursor
-                            .next_compact_exact_byte_step(force_eof, &mut queries),
-                        crate::CharacterMode::UnicodeExtended => slot
-                            .cursor
-                            .next_compact_unicode_step(force_eof, &mut queries),
-                    }
-                };
-                let direct_source_line = slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-                match step {
-                    CompactSourceTokenizationStep::Token(token) => {
-                        if source.frame.identity() != identity.0 || source.frame.advance().is_none()
-                        {
-                            Err(())
-                        } else {
-                            let range = token.provenance.range();
-                            let origin = if range.end().saturating_sub(range.start()) == 1 {
-                                state.source_token_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            } else {
-                                state.source_range_origin(
-                                    range.source(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            };
-                            let resolution = destination.reborrow().write_resolved_delivery(
-                                token.word,
-                                origin,
-                                identity.0,
-                                position,
-                                sequence,
-                                Some(token.provenance),
-                                active_source,
-                                true,
-                                direct_source_line,
-                                false,
-                                state,
-                            );
-                            #[cfg(test)]
-                            {
-                                path_counters.source_direct =
-                                    path_counters.source_direct.saturating_add(1);
-                            }
-                            Ok(super::InputTopTransition::Delivered { resolution })
-                        }
-                    }
-                    CompactSourceTokenizationStep::InvalidCharacter => {
-                        Ok(super::InputTopTransition::InvalidCharacter)
-                    }
-                    CompactSourceTokenizationStep::NeedLine => {
-                        Ok(super::InputTopTransition::NeedLine(identity))
-                    }
-                    CompactSourceTokenizationStep::End => {
-                        Ok(super::InputTopTransition::SourceExhausted(identity))
-                    }
-                }
-            }
-            InputLevel::Tokens(cursor) => {
-                let mut recorder = InlineCursorRecorder {
-                    recording: levels.recording,
-                    interval: levels.interval,
-                    index,
-                    touched: &mut levels.touched,
-                    partially_captured: &mut levels.partially_captured,
-                    undo: &mut levels.undo,
-                    coalesced_mutations: &mut levels.coalesced_mutations,
-                    #[cfg(any(test, feature = "profiling"))]
-                    counters: &mut levels.cursor_mutations,
-                };
-                recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-                let delivery =
-                    cursor.deliver_into(sources, destination.reborrow(), sequence, state);
-                #[cfg(test)]
-                match &delivery {
-                    Ok(super::InputTopTransition::Delivered { .. }) => {
-                        path_counters.stored_direct = path_counters.stored_direct.saturating_add(1);
-                    }
-                    Ok(super::InputTopTransition::OutParameter { .. }) => {
-                        path_counters.out_parameter_interceptions =
-                            path_counters.out_parameter_interceptions.saturating_add(1);
-                    }
-                    Ok(_) | Err(()) => {}
-                }
-                delivery
-            }
-            InputLevel::MacroArgument(cursor) => {
-                let mut recorder = InlineCursorRecorder {
-                    recording: levels.recording,
-                    interval: levels.interval,
-                    index,
-                    touched: &mut levels.touched,
-                    partially_captured: &mut levels.partially_captured,
-                    undo: &mut levels.undo,
-                    coalesced_mutations: &mut levels.coalesced_mutations,
-                    #[cfg(any(test, feature = "profiling"))]
-                    counters: &mut levels.cursor_mutations,
-                };
-                recorder.record(InputLevelInlineState::new(
-                    cursor.frame,
-                    super::RetirementBehavior::Pop,
-                ));
-                let delivery =
-                    cursor.deliver_into(scratch, destination.reborrow(), sequence, state);
-                #[cfg(test)]
-                if matches!(&delivery, Ok(super::InputTopTransition::Delivered { .. })) {
-                    path_counters.macro_argument_direct =
-                        path_counters.macro_argument_direct.saturating_add(1);
-                }
-                delivery
-            }
-        };
-        levels.note_context_mutation();
-        match delivery? {
-            super::InputTopTransition::Delivered { resolution } => {
-                let command = destination.into_resident();
-                if command.suppresses_expandable_control_sequence() {
-                    command.suppress_expandable();
-                }
-                fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup());
-                let interception = if command.is_outer() && scanner_active {
-                    super::ResidentCommandInterception::Outer
-                } else {
-                    roots.alignment.classify_delivery(
-                        timeline,
-                        command,
-                        resolution.literal_catcode(),
-                    );
-                    super::ResidentCommandInterception::Ready
-                };
-                Ok(super::ResidentCommandTransition::Delivered { interception })
-            }
-            super::InputTopTransition::OutParameter {
-                slot,
-                has_macro_lineage,
-                active_source,
-            } => {
-                if !(1..=9).contains(&slot) || !has_macro_lineage {
-                    return Err(());
-                }
-                let owner = scratch.active_macro_frame().ok_or(())?;
-                let range = scratch
-                    .argument_range(owner, slot)
-                    .map_err(|_| ())?
-                    .ok_or(())?;
-                let identity = super::InputLevelId(input.next_level_identity);
-                timeline.record_next_input_level_identity(input.next_level_identity);
-                input.next_level_identity = input.next_level_identity.wrapping_add(1);
-                let trace = super::ReplayTrace::MacroParameter { slot };
-                let mut frame = super::packed_token_frame(
-                    identity,
-                    range.len() as usize,
-                    &super::TokenBehavior::Parameter,
-                    super::RetirementBehavior::Pop,
-                    &trace,
-                );
-                frame.set_source_context(active_source);
-                stack_usage.input_stack = stack_usage.input_stack.max(levels.len());
-                levels.push(InputLevel::MacroArgument(super::MacroArgumentCursor {
-                    range,
-                    slot,
-                    frame,
-                }));
-                Ok(super::ResidentCommandTransition::ParameterPushed(identity))
-            }
-            super::InputTopTransition::InvalidCharacter => {
-                Ok(super::ResidentCommandTransition::InvalidCharacter)
-            }
-            super::InputTopTransition::NeedLine(identity) => {
-                Ok(super::ResidentCommandTransition::NeedLine(identity))
-            }
-            super::InputTopTransition::SourceExhausted(identity) => {
-                Ok(super::ResidentCommandTransition::SourceExhausted(identity))
-            }
-            super::InputTopTransition::TokenExhausted(identity) => {
-                Ok(super::ResidentCommandTransition::TokenExhausted {
-                    identity,
-                    resident_index: index,
-                })
-            }
-            super::InputTopTransition::Empty => Ok(super::ResidentCommandTransition::Empty),
-        }
     }
 
     pub(crate) fn settle_input_retirement(

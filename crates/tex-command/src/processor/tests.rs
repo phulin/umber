@@ -1197,6 +1197,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct Evidence {
         path: (u64, u64, u64, u64),
+        branches: (u64, u64, u64, u64),
         transitions: (u64, u64, u64),
         retirements: (u64, u64, u64, u64, u64, u64, u64),
         allocation_calls: u64,
@@ -1204,8 +1205,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         whole_frame_copies: u64,
         whole_command_copies: u64,
         resolved_writes: u64,
-        transition_bytes: usize,
-        transition_needs_drop: bool,
     }
 
     fn run(operations: usize) -> Evidence {
@@ -1227,10 +1226,13 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
 
             let mut command = CommandState::default();
             let source = command
-                .register_source(crate::SourceRegistration::new(
-                    crate::RegisteredSourceKind::Generated,
-                    std::sync::Arc::<[u8]>::from(vec![b'x'; operations]),
-                ))
+                .register_source(
+                    crate::SourceRegistration::new(
+                        crate::RegisteredSourceKind::Generated,
+                        std::sync::Arc::<[u8]>::from(vec![b'x'; operations]),
+                    )
+                    .with_role(crate::SourceRole::UserDocumentInclude),
+                )
                 .expect("mixed delivery source registration");
             command
                 .open_registered_source(source)
@@ -1295,7 +1297,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let retirement = RetirementBehavior::Pop;
             let trace = ReplayTrace::MacroParameter { slot: 1 };
             let mut frame = packed_token_frame(identity, operations, &behavior, retirement, &trace);
-            frame.set_source_context(Some(source));
+            frame.set_source_context(command.input.levels.current_source_context());
             command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor {
                 range,
                 slot: 1,
@@ -1329,13 +1331,12 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                             .expect("mixed raw delivery"),
                         DeliveryStatus::Command
                     );
+                    let delivered = destination.take().expect("mixed resident command");
+                    assert_eq!(delivered.spelling().semantic_token(), token);
+                    assert_eq!(delivered.active_source_id(), Some(source));
                     assert_eq!(
-                        destination
-                            .take()
-                            .expect("mixed resident command")
-                            .spelling()
-                            .semantic_token(),
-                        token
+                        delivered.active_source_role(),
+                        Some(crate::SourceRole::UserDocumentInclude)
                     );
                 }
             }
@@ -1355,7 +1356,12 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                         .expect("normalized source terminator delivery"),
                     DeliveryStatus::Command
                 );
-                destination.take().expect("normalized source terminator");
+                let terminator = destination.take().expect("normalized source terminator");
+                assert_eq!(terminator.active_source_id(), Some(source));
+                assert_eq!(
+                    terminator.active_source_role(),
+                    Some(crate::SourceRole::UserDocumentInclude)
+                );
                 assert_eq!(
                     processor
                         .get_next_into(&mut destination)
@@ -1367,6 +1373,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let timeline_after = command.profile_timeline_counters();
             Evidence {
                 path: command.profile_raw_delivery_path_counters(),
+                branches: command.profile_resident_input_branch_counters(),
                 transitions: command.profile_resident_delivery_transition_counters(),
                 retirements: command.profile_resident_retirement_counters(),
                 allocation_calls: allocations_after.calls - allocations_before.calls,
@@ -1383,8 +1390,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                             .saturating_sub(commands_before.backup_copies),
                     ),
                 resolved_writes: commands_after.resolved_writes - commands_before.resolved_writes,
-                transition_bytes: std::mem::size_of::<crate::input::InputTopTransition>(),
-                transition_needs_drop: std::mem::needs_drop::<crate::input::InputTopTransition>(),
             }
         })
     }
@@ -1394,6 +1399,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         one,
         Evidence {
             path: (2, 3, 1, 0),
+            branches: (11, 3, 6, 2),
             transitions: (11, 0, 0),
             retirements: (4, 0, 0, 0, 0, 1, 0),
             allocation_calls: 0,
@@ -1401,12 +1407,11 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             whole_frame_copies: 0,
             whole_command_copies: 0,
             resolved_writes: 6,
-            transition_bytes: 16,
-            transition_needs_drop: false,
         }
     );
     let four_k = run(4_096);
     assert_eq!(four_k.path, (4_097, 12_288, 4_096, 0));
+    assert_eq!(four_k.branches, (20_486, 4_098, 12_291, 4_097));
     assert_eq!(four_k.transitions, (20_486, 0, 0));
     assert_eq!(four_k.retirements, (4, 0, 0, 0, 0, 1, 0));
     assert_eq!(four_k.allocation_calls, 0);
@@ -1414,8 +1419,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(four_k.whole_frame_copies, 0);
     assert_eq!(four_k.whole_command_copies, 0);
     assert_eq!(four_k.resolved_writes, 20_481);
-    assert_eq!(four_k.transition_bytes, 16);
-    assert!(!four_k.transition_needs_drop);
 }
 
 #[test]

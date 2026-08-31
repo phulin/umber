@@ -1825,7 +1825,10 @@ authoritative line remains singular and there is no parallel mutable
 character-index representation.
 
 Ordinary delivery selects and discriminates the semantic top once inside the
-authoritative `InputStack`. Exhausted ordinary token and macro-argument rows
+authoritative `InputStack`, producing a branch-owned source, stored-token, or
+macro-argument view that borrows only that kind's cursor and first-touch
+journal fields. Shared fuel, alignment, and final-command settlement begins
+only after that typed branch borrow ends. Exhausted ordinary token and macro-argument rows
 are popped from that already-selected resident coordinate, their macro/replay/
 alignment and observation effects settle there, and the same transition
 continues immediately from the new top. TeX82 §357 applies that same resident

@@ -26,12 +26,6 @@ fn retirement_receipt_is_copy_small_and_owns_no_replay_trace() {
 }
 
 #[test]
-fn delivered_input_transition_is_a_drop_free_scalar_fact() {
-    assert!(std::mem::size_of::<super::InputTopTransition>() <= 16);
-    assert!(!std::mem::needs_drop::<super::InputTopTransition>());
-}
-
-#[test]
 fn one_exhausted_token_level_retires_once_with_its_semantic_reason() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

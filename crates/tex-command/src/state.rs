@@ -1165,6 +1165,21 @@ impl<G> CommandState<G> {
         )
     }
 
+    /// Returns `(top selections, source entries, stored-token entries,
+    /// macro-argument entries)` for the typed resident-input front.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_resident_input_branch_counters(&self) -> (u64, u64, u64, u64) {
+        let counters = self.input.levels.cursor_mutation_counters();
+        (
+            counters.typed_top_accesses,
+            counters.source_branch_entries,
+            counters.stored_token_branch_entries,
+            counters.macro_argument_branch_entries,
+        )
+    }
+
     /// Resets the focused ordinary raw-delivery path counters.
     #[doc(hidden)]
     #[cfg(test)]
