@@ -115,7 +115,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         let (saved_delimiter, delimiter_line) = match event {
             AlignmentDeliveryEvent::EndTemplate(delimiter) => {
-                if self.last_delivery != Some(delimiter.delivery_stamp())
+                if !self.delivery_is_fresh(delimiter.delivery_stamp().sequence())
                     || !matches!(
                         delimiter.meaning(),
                         tex_state::ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
@@ -125,7 +125,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Err(CommandError::StaleDelivery);
                 }
-                self.last_delivery = None;
+                self.invalidate_delivery_freshness();
                 (
                     Self::saved_alignment_delimiter(&delimiter)?,
                     delimiter
@@ -275,10 +275,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         let delimiter_line = command
             .direct_source_line_number()
             .unwrap_or_else(|| self.command.current_file_line_number());
-        if self.last_delivery != Some(command.delivery_stamp()) {
+        if !self.delivery_is_fresh(command.delivery_stamp().sequence()) {
             return Err(CommandError::StaleDelivery);
         }
-        self.last_delivery = None;
+        self.invalidate_delivery_freshness();
         self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 }

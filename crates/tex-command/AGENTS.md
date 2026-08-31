@@ -156,7 +156,10 @@ collector (see `src/conditionals.rs`).
   conversion rendering. These contain no expansion driver or semantic owner.
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
-  restores observation ordering but owns no command/input semantics.
+  restores observation ordering but owns no command/input semantics. The
+  processor's immediate-delivery freshness proof is only the episode-local
+  sequence scalar; `CurrentCommand` remains the sole owner of the full
+  input-level/position/sequence stamp.
   Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no

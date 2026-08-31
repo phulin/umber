@@ -1667,7 +1667,12 @@ allocation, provenance arena, or alternate fast representation.
 The spelling and effective meaning may differ for the one delivery suppressed
 by `\noexpand`. `DeliveryStamp` proves the exact live input level and position
 that delivered the token. It is ephemeral, excluded from summaries, and never
-reconstructed from semantic token equality.
+reconstructed from semantic token equality. `CurrentCommand::delivery` is its
+sole full representation. `CommandProcessor` retains only an episode-local
+optional sequence for immediate-delivery freshness; backup and alignment
+handoff compare that scalar, cursor-only resume clears it, retained-command
+resume readmits it, and endwrite retirement reads the exact input level from
+the resident stopper's own stamp before clearing freshness.
 
 Meaning resolution occurs once at raw delivery. An ordinary character resolves
 to its literal character-token meaning, while a control sequence reads its

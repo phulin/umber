@@ -3,6 +3,7 @@
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::token::{Catcode, Token};
 
+use crate::DeliveryStamp;
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
@@ -68,8 +69,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// after `scan_toks` has restored scanner status.  The stopper's level
     /// must retire before the caller publishes the write effect, but the
     /// following source token must remain untouched (§53).
-    pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
-        let stamp = self.last_delivery.ok_or(CommandError::input_invariant())?;
+    pub(crate) fn retire_delivery_level(
+        &mut self,
+        stamp: DeliveryStamp,
+    ) -> Result<(), CommandError> {
+        if !self.delivery_is_fresh(stamp.sequence()) {
+            return Err(CommandError::StaleDelivery);
+        }
+        self.invalidate_delivery_freshness();
         match self.retire_input_top(InputLevelId(stamp.input_level()))? {
             RetirementHandoff::Continue | RetirementHandoff::Completed(_) => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {

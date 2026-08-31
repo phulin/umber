@@ -21,6 +21,7 @@ pub(crate) struct CommandOwnershipCounters {
     pub(crate) expansion_moves_out: u64,
     pub(crate) slot_initializations: u64,
     pub(crate) resolved_writes: u64,
+    pub(crate) delivery_stamp_writes: u64,
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -33,6 +34,7 @@ thread_local! {
             expansion_moves_out: 0,
             slot_initializations: 0,
             resolved_writes: 0,
+            delivery_stamp_writes: 0,
         }) };
 }
 
@@ -738,6 +740,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         #[cfg(any(test, feature = "profiling"))]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
+            counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
         });
         let command = self.0;
         command.spelling = TracedTokenWord::from_parts(word, origin);

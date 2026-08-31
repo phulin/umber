@@ -676,7 +676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         policy: DeliveryPolicy,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.last_delivery = None;
+        self.invalidate_delivery_freshness();
         let mut error = DeliveryErrorSlot::empty();
         let result = match policy.mode {
             DeliveryMode::Raw => {
@@ -697,7 +697,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // raw delivery started, and a later episode must mint a fresh
                 // delivery proof.
                 destination.take();
-                self.last_delivery = None;
+                self.invalidate_delivery_freshness();
                 Err(error.take(failure))
             }
         }
@@ -795,7 +795,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut fetch = destination.is_none();
         loop {
             if fetch {
-                self.last_delivery = None;
+                self.invalidate_delivery_freshness();
                 if let Err(failure) = self.charge_command_action() {
                     return error.fail(failure);
                 }
@@ -1018,12 +1018,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let command = destination
                         .as_mut()
                         .expect("resident delivery initializes the command slot");
-                    let delivery_stamp = command.delivery_stamp();
+                    let delivery_sequence = command.delivery_stamp().sequence();
                     if let Some(location) = command.source_location() {
                         self.command.last_diagnostic_location = Some(location);
                     }
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                    self.last_delivery = Some(delivery_stamp);
+                    self.publish_delivery_freshness(delivery_sequence);
                     if matches!(interception, ResidentCommandInterception::Outer)
                         && let Err(failure) = self.check_outer_validity_entry(command)
                     {

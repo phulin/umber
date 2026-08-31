@@ -6566,7 +6566,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             stopper = destination.take().ok_or(CommandError::input_invariant())?;
         }
-        self.retire_last_delivery_level()?;
+        self.retire_delivery_level(stopper.delivery_stamp())?;
         if unbalanced {
             self.retire_exhausted_through(stopper_level)?;
         }

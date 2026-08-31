@@ -257,7 +257,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
         let stamp = command.delivery_stamp();
-        if self.last_delivery != Some(stamp) {
+        if !self.delivery_is_fresh(stamp.sequence()) {
             return Err(CommandError::StaleDelivery);
         }
         self.back_input_unchecked(command, treatment)
@@ -288,7 +288,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        self.last_delivery = None;
+        self.invalidate_delivery_freshness();
         // §325 runs the stack-conservation loop before it touches
         // `align_state` and before it pushes the `backed_up` list, so every
         // depleted level retires ahead of the backup.
