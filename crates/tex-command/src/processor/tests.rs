@@ -518,6 +518,397 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
     });
 }
 
+#[test]
+fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
+    crate::test_harness::with_universe(|universe| {
+        let first_token = Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        };
+        let second_token = Token::Char {
+            ch: 'b',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [first_token, second_token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let first = processor
+            .get_token()
+            .expect("first raw delivery")
+            .expect("first command");
+        let saved_first = first.copy_for_backup();
+        let second = processor
+            .get_token()
+            .expect("second raw delivery")
+            .expect("second command");
+        assert_eq!(
+            processor.back_input(first),
+            Err(crate::CommandError::StaleDelivery),
+            "a later raw delivery invalidates ordinary backup"
+        );
+
+        processor
+            .back_input(second)
+            .expect("fresh second delivery backs up");
+        processor
+            .back_input_saved(saved_first)
+            .expect("TeX82 §326 saved first token backs up without freshness");
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("saved first replay")
+                .expect("saved first command")
+                .spelling()
+                .semantic_token(),
+            first_token
+        );
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("fresh second replay")
+                .expect("fresh second command")
+                .spelling()
+                .semantic_token(),
+            second_token
+        );
+    });
+}
+
+#[test]
+fn cursor_resume_rejects_delivery_until_retained_command_is_readmitted() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'r',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+
+        let (delivered, cursor) = {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let delivered = processor
+                .get_token()
+                .expect("raw delivery")
+                .expect("resident command");
+            let cursor = processor.delivery_cursor();
+            (delivered, cursor)
+        };
+        let stale_copy = delivered.copy_for_backup();
+
+        {
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            processor.resume_delivery_cursor(cursor);
+            assert_eq!(
+                processor.back_input(stale_copy),
+                Err(crate::CommandError::StaleDelivery),
+                "cursor-only resume admits no current command"
+            );
+        }
+
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        processor.resume_delivery_cursor(cursor);
+        processor.resume_current_command(&delivered);
+        processor
+            .back_input(delivered)
+            .expect("retained current command is explicitly readmitted");
+        assert!(processor.immediate_delivery_sequence.is_none());
+    });
+}
+
+#[test]
+fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
+    crate::test_harness::with_universe(|universe| {
+        crate::install_tex82_unexpandable_primitives(universe);
+        let endwrite = universe.primitive_token("endwrite").expect("write stopper");
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [endwrite]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let stopper = processor
+            .get_token()
+            .expect("stopper delivery")
+            .expect("resident stopper");
+        let stale = stopper.copy_for_backup();
+        processor
+            .retire_delivery_level(stopper.delivery_stamp())
+            .expect("resident stamp retires its exact exhausted level");
+        assert!(processor.immediate_delivery_sequence.is_none());
+        assert_eq!(
+            processor.back_input(stale),
+            Err(crate::CommandError::StaleDelivery)
+        );
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_delivery_census_has_zero_full_stamp_shadow_writes_and_allocations() {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct Evidence {
+        full_stamp_shadow_writes: usize,
+        full_stamp_command_writes: u64,
+        scalar_freshness_writes: u64,
+        resolved_command_writes: u64,
+        work: crate::CommandWorkCounters,
+        allocation_calls: u64,
+        requested_bytes: u64,
+    }
+
+    fn census(deliveries: usize) -> Evidence {
+        crate::test_harness::with_universe(|universe| {
+            let token = Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            };
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, std::iter::repeat_n(token, deliveries));
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let commands_before = crate::command::command_ownership_counters();
+            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+            let allocations_before =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let scalar_freshness_writes = {
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                let mut destination = None;
+                {
+                    let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                    for _ in 0..deliveries {
+                        assert_eq!(
+                            processor
+                                .get_next_into(&mut destination)
+                                .expect("resident raw delivery"),
+                            DeliveryStatus::Command
+                        );
+                        assert_eq!(
+                            destination
+                                .take()
+                                .expect("resident command")
+                                .spelling()
+                                .semantic_token(),
+                            token
+                        );
+                    }
+                }
+                processor.delivery_freshness_writes()
+            };
+            let allocations_after =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let commands_after = crate::command::command_ownership_counters();
+            let full_stamp_shadow_writes = include_str!("mod.rs")
+                .matches("Option<DeliveryStamp>")
+                .count()
+                + include_str!("expand.rs")
+                    .matches("last_delivery = Some(delivery_stamp)")
+                    .count();
+            Evidence {
+                full_stamp_shadow_writes,
+                full_stamp_command_writes: commands_after.delivery_stamp_writes
+                    - commands_before.delivery_stamp_writes,
+                scalar_freshness_writes,
+                resolved_command_writes: commands_after.resolved_writes
+                    - commands_before.resolved_writes,
+                work: fuel.work(),
+                allocation_calls: allocations_after.calls - allocations_before.calls,
+                requested_bytes: allocations_after.requested_bytes
+                    - allocations_before.requested_bytes,
+            }
+        })
+    }
+
+    for deliveries in [1_usize, 4_096] {
+        let count = deliveries as u64;
+        assert_eq!(
+            census(deliveries),
+            Evidence {
+                full_stamp_shadow_writes: 0,
+                full_stamp_command_writes: count,
+                scalar_freshness_writes: count,
+                resolved_command_writes: count,
+                work: crate::CommandWorkCounters {
+                    fuel_charges: count,
+                    token_frame_steps: count,
+                    expanded_deliveries: 0,
+                    meaning_lookups: 0,
+                    scanner_tokens: 0,
+                    write_expansions: 0,
+                },
+                allocation_calls: 0,
+                requested_bytes: 0,
+            }
+        );
+    }
+}
+
+#[test]
+fn scalar_and_surface_alignment_handoffs_consume_sequence_freshness() {
+    crate::test_harness::with_universe(|universe| {
+        let tab = Token::Char {
+            ch: '&',
+            cat: Catcode::AlignmentTab,
+        };
+        let empty_template = universe
+            .command_context()
+            .expect("template context")
+            .allocate_token_list(&[])
+            .expect("empty v-template");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+        let mut scalar_command = CommandState::default();
+        let scalar_alignment = AlignmentIdentity::new(31);
+        scalar_command.begin_alignment(scalar_alignment);
+        scalar_command
+            .begin_prepared_alignment_cell(
+                scalar_alignment,
+                crate::PreparedAlignmentCellTemplates {
+                    u_template: None,
+                    v_template: empty_template.clone(),
+                },
+            )
+            .expect("scalar active cell");
+        scalar_command
+            .install_alignment_omit_cell_template(scalar_alignment)
+            .expect("scalar cell base");
+        crate::test_harness::push(&mut scalar_command, [tab]);
+        {
+            let mut context = universe.command_context().expect("scalar context");
+            let mut processor = crate::test_harness::processor(
+                &mut scalar_command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let delimiter = match processor
+                .get_next_with_replay_completion()
+                .expect("scalar delimiter delivery")
+                .expect("scalar delimiter command")
+            {
+                crate::CommandReplayDelivery::Command(delimiter) => delimiter,
+                crate::CommandReplayDelivery::Completed(_) => {
+                    panic!("scalar control expects a command")
+                }
+            };
+            assert!(matches!(
+                delimiter.alignment_adjustment(),
+                super::AlignmentDeliveryAdjustment::Delimiter(_)
+            ));
+            processor
+                .begin_scalar_alignment_v_template(&delimiter)
+                .expect("fresh scalar delimiter handoff");
+            assert!(processor.immediate_delivery_sequence.is_none());
+            assert_eq!(
+                processor.begin_scalar_alignment_v_template(&delimiter),
+                Err(crate::CommandError::StaleDelivery)
+            );
+        }
+
+        let mut surface_command = CommandState::default();
+        let surface_alignment = AlignmentIdentity::new(32);
+        surface_command.begin_alignment(surface_alignment);
+        surface_command
+            .begin_prepared_alignment_cell(
+                surface_alignment,
+                crate::PreparedAlignmentCellTemplates {
+                    u_template: None,
+                    v_template: empty_template,
+                },
+            )
+            .expect("surface active cell");
+        surface_command
+            .install_alignment_omit_cell_template(surface_alignment)
+            .expect("surface cell base");
+        crate::test_harness::push(&mut surface_command, [tab]);
+        let mut context = universe.command_context().expect("surface context");
+        let mut processor = crate::test_harness::processor(
+            &mut surface_command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let event = match processor
+            .get_x_alignment_delivery(false)
+            .expect("surface delimiter delivery")
+            .expect("surface delimiter event")
+        {
+            crate::AlignmentDelivery::Event(event) => event,
+            crate::AlignmentDelivery::Command(_) | crate::AlignmentDelivery::Completed(_) => {
+                panic!("surface control expects an alignment event")
+            }
+        };
+        let stale_event = match &event {
+            crate::AlignmentDeliveryEvent::EndTemplate(delimiter) => {
+                crate::AlignmentDeliveryEvent::EndTemplate(delimiter.copy_for_backup())
+            }
+            crate::AlignmentDeliveryEvent::ClosingBrace(_) => {
+                panic!("surface control expects end-template")
+            }
+        };
+        processor
+            .begin_alignment_v_template(surface_alignment, event)
+            .expect("fresh surface delimiter handoff");
+        assert!(processor.immediate_delivery_sequence.is_none());
+        assert_eq!(
+            processor.begin_alignment_v_template(surface_alignment, stale_event),
+            Err(crate::CommandError::StaleDelivery)
+        );
+    });
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
@@ -690,7 +1081,7 @@ fn failed_raw_delivery_clears_its_partially_written_final_slot() {
             Err(crate::CommandError::InputInvariant(_))
         ));
         assert!(destination.is_none());
-        assert!(processor.last_delivery.is_none());
+        assert!(processor.immediate_delivery_sequence.is_none());
     });
 }
 
