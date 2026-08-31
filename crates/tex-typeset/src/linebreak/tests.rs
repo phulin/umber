@@ -28,6 +28,7 @@ fn active_candidate_reuses_break_site_metrics_compactly() {
     let sites = [BreakSite {
         breakpoint: Breakpoint {
             position: 5,
+            protrusion_end: 4,
             penalty: 0,
             hyphenated: false,
             add_width: Widths::zero(),
@@ -663,6 +664,73 @@ fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
     }
 }
 
+/// pdftex.web §1025: a glue breakpoint itself is not part of the candidate
+/// line. Right-edge discovery therefore starts with the preceding glyph,
+/// whose protrusion can make the nonhyphenating pass feasible.
+#[test]
+fn pdftex_protrusion_scores_the_glyph_before_breakpoint_glue() {
+    let mut universe = TestState::new();
+    let font = universe.intern_font(microtype_font("punctuation-edge", 100));
+    universe.set_pdf_font_code(tex_state::PdfFontCode::Rp, font, b'B', 100);
+    let finite = GlueSpec {
+        width: sp(10),
+        stretch: sp(20),
+        stretch_order: Order::Normal,
+        shrink: sp(4),
+        shrink_order: Order::Normal,
+    };
+    let break_glue = GlueSpec {
+        width: sp(10),
+        ..GlueSpec::ZERO
+    };
+    let par_fill = GlueSpec {
+        stretch: sp(1),
+        stretch_order: Order::Fill,
+        ..GlueSpec::ZERO
+    };
+    let nodes = vec![
+        microtype_char(font, 'A'),
+        Node::Glue {
+            spec: finite,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        microtype_char(font, 'B'),
+        Node::Glue {
+            spec: break_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        microtype_char(font, 'C'),
+        Node::Penalty(INF_PENALTY),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+
+    let mut without = params(205);
+    without.pdf_protrude_chars = 1;
+    assert_eq!(
+        try_line_break_without_hyphenation(&universe, &nodes, &without),
+        None,
+        "without scoring protrusion, five units exceed four units of shrink"
+    );
+
+    let mut with = without;
+    with.pdf_protrude_chars = 2;
+    let plan = try_line_break_without_hyphenation(&universe, &nodes, &with)
+        .expect("B's ten-unit protrusion makes the first pass feasible");
+    assert_eq!(
+        plan.breaks
+            .iter()
+            .map(|decision| decision.position)
+            .collect::<Vec<_>>(),
+        vec![4, nodes.len()]
+    );
+}
+
 /// pdftex.web §§20580--21220 and §§24321--26029: adjustment/protrusion mode
 /// 1 affects only selected-line materialization, while mode 2 participates in
 /// `try_break`. Keep exact winners and demerits for finite stretch, finite
@@ -757,10 +825,10 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             [
                 ([4, 7].as_slice(), 22_100),
                 ([4, 7].as_slice(), 22_100),
-                ([6, 7].as_slice(), 0),
+                ([6, 7].as_slice(), 144),
                 ([4, 7].as_slice(), 22_100),
                 ([4, 7].as_slice(), 22_100),
-                ([6, 7].as_slice(), 0),
+                ([6, 7].as_slice(), 144),
                 ([7].as_slice(), 100),
                 ([7].as_slice(), 100),
                 ([7].as_slice(), 1_600),
@@ -795,7 +863,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 ([5].as_slice(), 0),
                 ([2, 5].as_slice(), 19_700),
                 ([2, 5].as_slice(), 19_700),
-                ([2, 5].as_slice(), 2_600),
+                ([2, 5].as_slice(), 8_084),
             ],
         ),
         (
@@ -2612,6 +2680,7 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
     };
     let terminal = Breakpoint {
         position: 1,
+        protrusion_end: 1,
         penalty: EJECT_PENALTY,
         hyphenated: false,
         add_width: Widths::zero(),

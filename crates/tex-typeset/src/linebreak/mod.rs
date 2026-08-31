@@ -862,6 +862,11 @@ struct PassiveRoute {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Breakpoint {
     position: usize,
+    /// Exclusive source boundary of material visible at this line's right
+    /// edge. pdfTeX §1025 starts protrusion discovery immediately before the
+    /// current breakpoint, except that a discretionary exposes its pre-break
+    /// list as the line tail.
+    protrusion_end: usize,
     penalty: i32,
     hyphenated: bool,
     add_width: Widths,
@@ -956,7 +961,7 @@ fn run_pass<S: TypesetState>(
                 let start = active_candidate
                     .width_position(&tape.break_sites)
                     .min(nodes.len());
-                let end = bp.position.min(nodes.len()).max(start);
+                let end = bp.protrusion_end.min(nodes.len()).max(start);
                 let protrusion =
                     crate::protrusion::line_protrusion_cursor(state, nodes, start, end);
                 target
@@ -1796,6 +1801,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             output.push(BreakSite {
                 breakpoint: Breakpoint {
                     position: nodes.len(),
+                    protrusion_end: nodes.len(),
                     penalty: EJECT_PENALTY,
                     hyphenated: false,
                     add_width: Widths::zero(),
@@ -1869,16 +1875,17 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                     && index > 0
                     && previous.is_some_and(|node| !is_discardable(node)) =>
             {
-                Some((index + 1, 0, false, Widths::zero(), before, None))
+                Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
             Node::Kern {
                 kind: KernKind::Explicit,
                 ..
             } if self.auto_breaking && matches!(next, Some(Node::Glue { .. })) => {
-                Some((index + 1, 0, false, Widths::zero(), before, None))
+                Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
             Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
                 index + 1,
+                index,
                 (*penalty).max(EJECT_PENALTY),
                 false,
                 Widths::zero(),
@@ -1886,6 +1893,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 None,
             )),
             Node::Disc { pre, post, .. } => Some((
+                index + 1,
                 index + 1,
                 discretionary_penalty(pre.is_empty(), self.params),
                 true,
@@ -1901,7 +1909,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             )),
             Node::MathOff(_) if matches!(next, Some(Node::Glue { .. })) => {
                 self.auto_breaking = true;
-                Some((index + 1, 0, false, Widths::zero(), before, None))
+                Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
             Node::MathOn(_) => {
                 self.auto_breaking = false;
@@ -1920,7 +1928,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             _ => MaterializationAction::Copy,
         });
         definition.map(
-            |(position, penalty, hyphenated, add_width, line_width, post)| {
+            |(position, protrusion_end, penalty, hyphenated, add_width, line_width, post)| {
                 let (next_position, next_width, awaits_discardable_end) =
                     if let Some(post) = post.filter(|post| !post.is_empty()) {
                         (
@@ -1941,6 +1949,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                     BreakSite {
                         breakpoint: Breakpoint {
                             position,
+                            protrusion_end,
                             penalty,
                             hyphenated,
                             add_width,
