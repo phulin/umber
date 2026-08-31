@@ -339,13 +339,30 @@ are recorded in
 Use `--edit-restart-workload` for the paired synthetic edit cases. Every
 accepted DVI is compared with a fresh cold target. The receipt includes
 latency, RSS, allocation volume, snapshot cost, convergence, and reexecution
-counters:
+counters. The runner uses the native editor's 64 MiB checkpoint-root budget
+and fails if pruning, direct revision ownership, the one-/two-generation
+lifecycle, zero replay retention, cold-DVI identity, or the workload's latency
+gate fails:
 
 ```bash
 (cd benchmarks/edit-restart/workloads && sha256sum -c SHA256SUMS)
 cargo run --release -p umber --bin gentle-profile \
   --features profiling-runner -- \
   --edit-restart-workload prefix --iterations 6 --warmups 2 \
+  --memo-layers none
+```
+
+The fixed generated long acceptance is exactly two measured advances after
+one warmup. Build outside the runtime guard, then run the already-built
+attributed binary under the finite 1 GiB and 1,200-second guard:
+
+```bash
+cargo build --profile profiling -p umber --bin gentle-profile \
+  --features profiling-runner,profiling
+systemd-run --user --scope --quiet -p MemoryMax=1G -p MemorySwapMax=0 \
+  /usr/bin/time -v timeout --signal=TERM --kill-after=10s 1200s \
+  target/profiling/gentle-profile \
+  --edit-restart-workload long --iterations 2 --warmups 1 \
   --memo-layers none
 ```
 

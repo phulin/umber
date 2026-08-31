@@ -9,13 +9,14 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
 use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
-use tex_exec::{CheckpointSink, EngineCheckpoint};
+use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint};
 use tex_incr::{
-    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, SameHistoryStop, Session,
-    new_reachability_store,
+    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
+    SameHistoryStop, Session, new_reachability_store,
 };
 use tex_state::{ContentHash, JobClock, PureMemoRecordingPolicy, PureMemoStats, World};
 use tex_state::{MemoLayerStats, PureMemoLayer};
@@ -32,6 +33,14 @@ const JOB_DIR: &str = "/gentle-profile";
 const JOB_FILE: &str = "profile-job.tex";
 const DEFAULT_ITERATIONS: usize = 50;
 const DEFAULT_WARMUPS: usize = 1;
+/// Match the native editor's default retained-input/checkpoint-root budget.
+/// An unlimited benchmark history prevents owner-local journal reclamation
+/// and measures an unsupported retention policy instead of editor restart.
+const PROFILING_CHECKPOINT_BUDGET: usize = 64 * 1024 * 1024;
+const EDIT_RESTART_LATENCY_RATIO_LIMIT: f64 = 1.25;
+const SUFFIX_FAST_RATIO_LIMIT: f64 = 0.10;
+const LONG_BEFORE_SHA256: &str = "4f666b5cae4caf3443cf621103994c97aad20d534ab5fc34f7ab8c380ae8b24c";
+const LONG_AFTER_SHA256: &str = "2b482038cfc1bf12112ecd8a7f36107e39f4cf5516416569f5c96bcaca022b37";
 const GENTLE_EDIT_OLD: &str = "There are ten characters which, like the backslash, are used";
 const GENTLE_EDIT_SENTENCE: &str = "This deliberately extended explanation adds ordinary words to the same paragraph so that TeX must reconsider many line breaks and carry the resulting vertical material across page boundaries.";
 const GENTLE_EDIT_REPETITIONS: usize = 64;
@@ -417,6 +426,13 @@ struct IncrementalStages {
     dvi_materialization: Duration,
 }
 
+#[derive(Clone, Copy)]
+struct EditRestartSample {
+    elapsed: Duration,
+    target_cold: Duration,
+    reuse: ReuseMetrics,
+}
+
 impl IncrementalStages {
     fn from_step(step: &IncrementalStep) -> Self {
         Self::from_reuse(step.elapsed, step.dvi_latency, step.reuse)
@@ -650,8 +666,11 @@ fn run_edit_restart_workload(
     if options.checkpoints || options.incremental_edit || options.incremental_path.is_some() {
         return Err("--edit-restart-workload cannot be combined with another workload".to_owned());
     }
+    if workload == EditRestartWorkload::Long && (options.iterations != 2 || options.warmups != 1) {
+        return Err("the fixed long acceptance requires --iterations 2 --warmups 1".to_owned());
+    }
     let (before, after) = if workload == EditRestartWorkload::Long {
-        long_edit_restart_workload()
+        long_edit_restart_workload()?
     } else {
         let directory = options.repo_root.join("benchmarks/edit-restart/workloads");
         let before_path = directory.join(format!("{}-before.tex", workload.name()));
@@ -680,27 +699,61 @@ fn run_edit_restart_workload(
         .map_err(|error| format!("prepare {} workload: {error}", workload.name()))?;
     let initial_duration = initial_started.elapsed();
     let before_dvi = initial.dvi_bytes().map_err(|error| error.to_string())?;
+    drop(initial);
+    validate_edit_restart_session(&session, RevisionId::new(1), "initial cold")?;
     let (after_cold_duration, after_cold) =
         execute_cold_sample(template, &after, RevisionId::new(1))?;
     let after_dvi = after_cold.dvi_bytes().map_err(|error| error.to_string())?;
+    drop(after_cold);
     let mut revision = 1_u64;
     let mut on_before = true;
     let mut durations = Vec::with_capacity(options.iterations);
     let mut stages = Vec::with_capacity(options.iterations);
+    let mut samples = Vec::with_capacity(options.iterations);
     let mut last_reuse = ReuseMetrics::default();
     for step in 0..options.warmups.saturating_add(options.iterations) {
-        let (from, to, expected) = if on_before {
-            (before.as_str(), after.as_str(), after_dvi.as_slice())
+        let (from, to, expected, target_cold) = if on_before {
+            (
+                before.as_str(),
+                after.as_str(),
+                after_dvi.as_slice(),
+                after_cold_duration,
+            )
         } else {
-            (after.as_str(), before.as_str(), before_dvi.as_slice())
+            (
+                after.as_str(),
+                before.as_str(),
+                before_dvi.as_slice(),
+                initial_duration,
+            )
         };
         revision += 1;
         let edit = replacement_edit(from, to, session.revision(), session.content_hash());
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
         let started = Instant::now();
+        let mut candidate = session
+            .start_advance_candidate(RevisionId::new(revision), edit)
+            .map_err(|error| format!("start {} workload candidate: {error}", workload.name()))?;
+        validate_edit_restart_generations(&session, 1, 1, "live candidate")?;
+        match candidate
+            .drive_with_resource_resolvers(&mut resolvers, &Cancellation::new())
+            .map_err(|error| format!("drive {} workload candidate: {error}", workload.name()))?
+        {
+            RevisionCandidateResult::Complete => {}
+            RevisionCandidateResult::AwaitingResources(need) => {
+                return Err(format!(
+                    "{} workload candidate made no resource progress: {need:?}",
+                    workload.name(),
+                ));
+            }
+        }
+        let transaction = session
+            .prepare_revision_candidate(candidate)
+            .map_err(|error| format!("prepare {} workload revision: {error}", workload.name()))?;
+        validate_edit_restart_generations(&session, 1, 1, "completed candidate")?;
         let accepted = session
-            .advance_with_resolvers(RevisionId::new(revision), edit, &mut resolvers)
-            .map_err(|error| format!("advance {} workload: {error}", workload.name()))?;
+            .accept_revision(transaction)
+            .map_err(|error| format!("accept {} workload revision: {error}", workload.name()))?;
         let elapsed = started.elapsed();
         let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
@@ -719,22 +772,46 @@ fn run_edit_restart_workload(
                 dvi_latency,
                 accepted.reuse,
             ));
+            samples.push(EditRestartSample {
+                elapsed,
+                target_cold,
+                reuse: accepted.reuse,
+            });
         }
         last_reuse = accepted.reuse;
+        drop(accepted);
+        validate_edit_restart_session(
+            &session,
+            RevisionId::new(revision),
+            &format!("accepted step {}", step + 1),
+        )?;
         on_before = !on_before;
     }
+    let edit_stats = duration_stats(&durations);
+    let fresh_mean_ms = (initial_duration + after_cold_duration).as_secs_f64() * 500.0;
+    let cold_mean_ratio = edit_stats.mean / fresh_mean_ms;
+    let (latency_ratio, latency_limit) =
+        validate_edit_restart_latency(workload, &samples, cold_mean_ratio)?;
+    let retention = session
+        .retention_metrics()
+        .expect("a completed edit-restart session has retention metrics");
+    let before_sha256 = format!("{:x}", Sha256::digest(before.as_bytes()));
+    let after_sha256 = format!("{:x}", Sha256::digest(after.as_bytes()));
     println!(
-        "gentle-profile edit-restart workload: name={} measured_advances={} warmup_advances={} before_content_hash={:?} after_content_hash={:?} memo_layers={:?}",
+        "gentle-profile edit-restart workload: name={} measured_advances={} warmup_advances={} before_sha256={} after_sha256={} before_content_hash={:?} after_content_hash={:?} memo_layers={:?} checkpoint_budget_bytes={}",
         workload.name(),
         options.iterations,
         options.warmups,
+        before_sha256,
+        after_sha256,
         ContentHash::from_bytes(before.as_bytes()),
         ContentHash::from_bytes(after.as_bytes()),
         options.memo_recording,
+        PROFILING_CHECKPOINT_BUDGET,
     );
     print_duration_stats(
         &format!("edit-restart workload {}", workload.name()),
-        duration_stats(&durations),
+        edit_stats,
     );
     println!(
         "gentle-profile edit-restart workload fresh: name={} before_ms={:.3} after_ms={:.3}",
@@ -763,10 +840,113 @@ fn run_edit_restart_workload(
         mean_stages.executor.as_micros(),
         mean_stages.dvi_materialization.as_micros(),
     );
+    println!(
+        "gentle-profile edit-restart acceptance: name={} cold_dvi=true cold_mean_ratio={cold_mean_ratio:.6} gated_latency_ratio={latency_ratio:.6} latency_limit={latency_limit:.2} replay_retained_bytes={} checkpoint_root_bytes={} checkpoint_roots={} protected_overage_bytes={} retained_generations={} candidate_generations={} accepted_revision={} revision_chain_depth=1",
+        workload.name(),
+        retention.memo_result_bytes,
+        retention.checkpoint_root_bytes,
+        session.current_retained_checkpoint_count(),
+        retention.protected_overage_bytes,
+        session.retained_generation_count(),
+        session.current_candidate_generation_count(),
+        session.revision().raw(),
+    );
     Ok(())
 }
 
-fn long_edit_restart_workload() -> (String, String) {
+fn validate_edit_restart_generations(
+    session: &Session<'_>,
+    retained: usize,
+    candidate: usize,
+    stage: &str,
+) -> Result<(), String> {
+    let occupied = retained.saturating_add(candidate);
+    if session.retained_generation_count() != retained
+        || session.current_candidate_generation_count() != candidate
+        || session.occupied_generation_slot_count() != occupied
+        || occupied > 2
+    {
+        return Err(format!(
+            "edit-restart {stage} violates generation lifecycle: retained={} candidate={} occupied={}",
+            session.retained_generation_count(),
+            session.current_candidate_generation_count(),
+            session.occupied_generation_slot_count(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_edit_restart_session(
+    session: &Session<'_>,
+    revision: RevisionId,
+    stage: &str,
+) -> Result<(), String> {
+    validate_edit_restart_generations(session, 1, 0, stage)?;
+    if session.revision() != revision
+        || session
+            .retained_revision_ids()
+            .ne(std::iter::once(revision))
+    {
+        return Err(format!(
+            "edit-restart {stage} does not directly own accepted revision {}",
+            revision.raw(),
+        ));
+    }
+    let retention = session
+        .retention_metrics()
+        .ok_or_else(|| format!("edit-restart {stage} has no accepted retention metrics"))?;
+    if retention.checkpoint_root_bytes > PROFILING_CHECKPOINT_BUDGET
+        || retention.protected_overage_bytes != 0
+    {
+        return Err(format!(
+            "edit-restart {stage} exceeds the checkpoint-root budget: retained={} budget={} protected_overage={}",
+            retention.checkpoint_root_bytes,
+            PROFILING_CHECKPOINT_BUDGET,
+            retention.protected_overage_bytes,
+        ));
+    }
+    if retention.memo_result_bytes != 0 || session.pure_memo_stats() != PureMemoStats::default() {
+        return Err(format!(
+            "edit-restart {stage} retained deleted replay/memo state"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_edit_restart_latency(
+    workload: EditRestartWorkload,
+    samples: &[EditRestartSample],
+    latency_ratio: f64,
+) -> Result<(f64, f64), String> {
+    if workload == EditRestartWorkload::Suffix {
+        if !samples
+            .iter()
+            .any(|sample| sample.reuse.suffixes_adopted > 0)
+        {
+            return Err("suffix workload did not adopt a generic suffix".to_owned());
+        }
+        let fastest = samples
+            .iter()
+            .min_by(|left, right| left.elapsed.cmp(&right.elapsed))
+            .expect("edit-restart requires positive measured iterations");
+        let ratio = fastest.elapsed.as_secs_f64() / fastest.target_cold.as_secs_f64();
+        if ratio > SUFFIX_FAST_RATIO_LIMIT {
+            return Err(format!(
+                "suffix workload fastest measured advance is {ratio:.6}x cold, limit is {SUFFIX_FAST_RATIO_LIMIT:.2}x"
+            ));
+        }
+        return Ok((ratio, SUFFIX_FAST_RATIO_LIMIT));
+    }
+    if latency_ratio > EDIT_RESTART_LATENCY_RATIO_LIMIT {
+        return Err(format!(
+            "{} workload edit mean is {latency_ratio:.6}x cold mean, limit is {EDIT_RESTART_LATENCY_RATIO_LIMIT:.2}x",
+            workload.name(),
+        ));
+    }
+    Ok((latency_ratio, EDIT_RESTART_LATENCY_RATIO_LIMIT))
+}
+
+fn long_edit_restart_workload() -> Result<(String, String), String> {
     const PARAGRAPHS: usize = 384;
     const PARAGRAPH: &str = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega. Ordinary repeated prose gives the line breaker and page builder stable multi-line material for the edit-restart deletion comparison.\n\n";
     let header = "\\input plain.tex\n\\hsize=220pt \\vsize=500pt\n";
@@ -781,7 +961,18 @@ fn long_edit_restart_workload() -> (String, String) {
         .find("Alpha")
         .expect("generated long workload has its prefix edit");
     after.replace_range(edit..edit + "Alpha".len(), "Omega");
-    (before, after)
+    for (name, source, expected) in [
+        ("before", before.as_bytes(), LONG_BEFORE_SHA256),
+        ("after", after.as_bytes(), LONG_AFTER_SHA256),
+    ] {
+        let actual = format!("{:x}", Sha256::digest(source));
+        if actual != expected {
+            return Err(format!(
+                "generated long {name} SHA-256 changed: expected {expected}, got {actual}"
+            ));
+        }
+    }
+    Ok((before, after))
 }
 
 fn mean_incremental_stages(samples: &[IncrementalStages]) -> IncrementalStages {
@@ -1559,7 +1750,7 @@ fn incremental_session<'store>(
         Path::new(JOB_DIR).join(JOB_FILE).to_string_lossy(),
         revision,
         source,
-        usize::MAX,
+        PROFILING_CHECKPOINT_BUDGET,
     )
     .map_err(|error| error.to_string())?;
     template.register_inputs(&mut session)?;

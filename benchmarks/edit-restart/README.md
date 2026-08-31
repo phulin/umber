@@ -34,3 +34,13 @@ before and after sources are both 99,504 bytes and have SHA-256 identities
 and `2b482038cfc1bf12112ecd8a7f36107e39f4cf5516416569f5c96bcaca022b37`.
 Changing the generator text or count changes the workload and requires a new
 baseline rather than an in-place update to these identities.
+
+The runner verifies those generated identities itself and uses the native
+editor's 64 MiB checkpoint-root budget. This keeps retained command/runtime
+journal ownership subject to the same deterministic pruning as a production
+session instead of disabling reclamation with an unlimited benchmark history.
+Every edit-restart row enforces cold-DVI identity, its cold-relative latency
+gate, zero replay retention, direct current-revision ownership, one generation
+at rest, and at most the accepted plus candidate generations during an
+advance. The fixed long row accepts exactly two measured advances after one
+warmup.
