@@ -8172,46 +8172,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// whole section here makes the observed command-processor path the only
     /// path: no executor-side step re-pushes this list behind the observer.
     pub fn shift_case(&mut self, uppercase: bool) -> Result<(), CommandError> {
-        let scanned = self.scan_balanced_text(false)?.tokens;
         // §1288 changes only tokens below `cs_token_flag+single_base`, i.e.
-        // character tokens and active characters (both `Token::Char` here),
-        // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
-        // "no change".  Multiletter control sequences and frozen tokens are
-        // above that bound and are never rewritten.
-        let source = self
-            .command
-            .attempt
-            .arena()
-            .token_words(scanned)
-            .map_err(|_| CommandError::input_invariant())?
-            .to_vec();
-        let mut shifted = Vec::with_capacity(source.len());
-        for word in source {
-            // Copy one immutable word at a time so the source interned lists
-            // remain in place while the case-code lookup records its mutable
-            // dependency read. Only the rewritten backup list needs storage.
-            let token = word.semantic_token();
-            let origin = word.origin();
-            let token = match token {
-                Token::Char { ch, cat } => {
-                    let code = if uppercase {
-                        self.state.uccode(ch)
-                    } else {
-                        self.state.lccode(ch)
-                    };
-                    char::from_u32(code)
-                        .filter(|_| code != 0)
-                        .map_or(token, |ch| Token::Char { ch, cat })
-                }
-                Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
-            };
-            shifted.push(TracedTokenWord::pack(token, origin));
-        }
-        // The backed-up level is a parent-owned input chunk, not a coordinate
-        // into the scanner child. Commit may therefore reclaim the scanner
-        // scope without leaving an attempt id in accepted command roots.
+        // character tokens and active characters, and leaves the category
+        // alone. The canonical collector applies that mapping as each accepted
+        // spelling enters this final generation-owned replay span. It never
+        // creates an attempt list or walks a completed source list.
+        let scanned =
+            self.scan_toks_buffers(crate::scan_toks::ScanToksMode::CaseShift { uppercase })?;
+        let replay = scanned
+            .replay_input()
+            .ok_or_else(CommandError::input_invariant)?;
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient(shifted),
+            replay,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

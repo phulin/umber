@@ -833,13 +833,17 @@ same boundary and validate their completed values before mutation.
 
 For TeX82 §914 `\uppercase` and `\lowercase`, `CommandProcessor` owns the
 unexpanded balanced-text scan, including its opening-brace backup and
-absorbing collection episode. Replay applies the selected current `\uccode`
-or `\lccode` table only to character tokens, retaining each token's original
-category and origin, leaving control-sequence and parameter tokens untouched,
-and leaving a zero table entry unchanged. The resulting immutable list is a
-typed stored command replay level, so normal command-owned retirement occurs
-before the enclosing source resumes; consequently definitions in the shifted
-text are defined only when that replay reaches ordinary main control.
+absorbing collection episode. Its collector writes directly into an isolated
+generation-owned replay builder and applies the selected current `\uccode` or
+`\lccode` table to each accepted character spelling at that final write.
+Categories and origins remain unchanged, control-sequence and parameter tokens
+pass through unchanged, and a zero table entry leaves the character unchanged.
+Sealing moves only the builder header into a backed-up input level; it does not
+publish an attempt list, copy a completed list, or traverse the words again.
+Normal command-owned retirement returns the builder's fixed chunks to its
+reusable high water before the enclosing source resumes. Definitions in the
+shifted text are therefore still defined only when that replay reaches ordinary
+main control.
 
 Likewise, replay publishes a typed `\halign` or `\valign` begin observation
 immediately after applying its executor-selected alignment transition. Command
@@ -2838,6 +2842,11 @@ length and packed provenance at the same boundary; parameter and brace facts
 are updated by the consuming loop, not reconstructed from a second list walk.
 Direct `\the`, `\unexpanded`, and `\detokenize` splices stream their source or
 rendered characters into the active writer without a temporary token vector.
+The case-shift mode selects an escaping replay writer and maps character codes
+at this same append boundary, so its completed result is already the final
+backed-up span. Escaping builders use isolated fixed chunks because nested
+replay can interleave while a scan is live; retirement truncates those chunks
+into a reusable builder-lane pool rather than dropping their allocation.
 Only committed observation output and recovered runaway diagnostics may
 traverse sealed words, and both remain outside the unobserved success path.
 Attempt rollback truncates the exact pre-collector mark and returns its chunks

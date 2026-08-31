@@ -255,7 +255,11 @@ collector (see `src/conditionals.rs`).
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
   reuse, and orthogonal delivery/retirement classifications. A source slot's
   replay words retain their packed origin directly and own no parallel decoded
-  source-provenance lane. A source slot's optional `open_depths` owner is
+  source-provenance lane. Escaping general-text collectors write once into an
+  isolated generation replay builder so nested input cannot interleave their
+  span; sealing moves only its header, and LIFO retirement truncates its chunks
+  into the builder-lane high-water pool for allocation-free reuse. A source
+  slot's optional `open_depths` owner is
   `\tracingnesting`'s own record. Nested source
   opening installs it before the frame becomes visible; retirement borrows it
   before pop and carries only copy-small boundary facts afterward. See

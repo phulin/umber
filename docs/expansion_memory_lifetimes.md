@@ -494,9 +494,16 @@ classification, brace state, delimiter state, pending parameter state, and
 single final publication are common, while the destination variant preserves
 the semantic lifetime boundary. The single classification retains both
 `cur_cmd` and `cur_tok`: macro matching consumes resolved command categories,
-whereas `scan_toks` balance consumes the spelling category. Macro arguments remain generation scratch
-owned; general lists remain attempt-lane owned; definitions write semantic
-words into their attempt builder for later durable publication.
+whereas `scan_toks` balance consumes the spelling category. Macro arguments
+remain generation scratch owned; ordinary general lists remain attempt-lane
+owned; definitions write semantic words into their attempt builder for later
+durable publication. Standalone escaping general text instead owns one
+isolated generation replay builder: nested input cannot interleave its span,
+sealing moves its storage header into the final replay entry, and LIFO
+retirement truncates its fixed chunks into the builder-lane high-water pool.
+Case shifting selects that destination and applies `\uccode` or `\lccode` as
+each accepted traced word is written, so it creates no attempt list,
+publication copy, or completed-list traversal.
 For a general list the collector advances its active writer from the parameter
 branch to the replacement branch. For a macro definition it advances the same
 `AttemptDefinitionId` from parameter validation to replacement writing rather

@@ -28,8 +28,40 @@ use crate::observation::{
     TokenListRecord,
 };
 use crate::token_collector::{
-    PendingParameter, TokenCollector, TokenCollectorDestination, TokenCollectorPhase,
+    PendingParameter, ReplayWordTransform, TokenCollector, TokenCollectorDestination,
+    TokenCollectorPhase,
 };
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CaseShiftPathCounters {
+    final_writes: u64,
+    table_lookups: u64,
+    source_payload_copies: u64,
+    second_traversals: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static CASE_SHIFT_PATH_COUNTERS: std::cell::RefCell<CaseShiftPathCounters> =
+        const { std::cell::RefCell::new(CaseShiftPathCounters {
+            final_writes: 0,
+            table_lookups: 0,
+            source_payload_copies: 0,
+            second_traversals: 0,
+        }) };
+}
+
+#[cfg(test)]
+fn reset_case_shift_path_counters() {
+    CASE_SHIFT_PATH_COUNTERS
+        .with(|counters| *counters.borrow_mut() = CaseShiftPathCounters::default());
+}
+
+#[cfg(test)]
+fn case_shift_path_counters() -> CaseShiftPathCounters {
+    CASE_SHIFT_PATH_COUNTERS.with(|counters| *counters.borrow())
+}
 
 /// The two canonical `scan_toks` collection forms.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -60,6 +92,9 @@ pub(crate) enum ScanToksMode {
     /// A standalone general-text result constructed directly in the
     /// generation-owned inserted-input destination which will replay it.
     EscapingGeneralText { purpose: &'static str },
+    /// TeX82 §1288's unexpanded balanced text, rewritten while each accepted
+    /// spelling enters its final backed-up input owner.
+    CaseShift { uppercase: bool },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
@@ -76,7 +111,7 @@ enum ScanToksGrammar {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ScanToksDestination {
     Attempt,
-    ReplayInput,
+    ReplayInput { transform: ReplayWordTransform },
 }
 
 /// How the collector reaches the opening delimiter of its body.
@@ -408,12 +443,29 @@ impl ScanToksConfig {
             },
             ScanToksMode::EscapingGeneralText { purpose } => Self {
                 grammar: ScanToksGrammar::General,
-                destination: ScanToksDestination::ReplayInput,
+                destination: ScanToksDestination::ReplayInput {
+                    transform: ReplayWordTransform::Identity,
+                },
                 opening: ScanToksOpening::Required,
                 expansion: ScanToksExpansion::Unexpanded,
                 owner: ScanToksOwner::Absorbed(None),
                 purpose: ScanToksPurpose::GeneralText(purpose),
                 status_visibility: ScannerStatusVisibility::Hidden,
+            },
+            ScanToksMode::CaseShift { uppercase } => Self {
+                grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::ReplayInput {
+                    transform: if uppercase {
+                        ReplayWordTransform::Uppercase
+                    } else {
+                        ReplayWordTransform::Lowercase
+                    },
+                },
+                opening: ScanToksOpening::Required,
+                expansion: ScanToksExpansion::Unexpanded,
+                owner: ScanToksOwner::Absorbed(None),
+                purpose: ScanToksPurpose::Balanced,
+                status_visibility: ScannerStatusVisibility::Observed,
             },
             ScanToksMode::MacroDefinition { expanded } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
@@ -480,6 +532,17 @@ impl<G> ScannedToksBuffers<G> {
             ScannedToksStorage::Tokens { .. }
             | ScannedToksStorage::ReplayInputBuilder { .. }
             | ScannedToksStorage::ReplayInput { .. } => None,
+        }
+    }
+
+    pub(crate) fn replay_input(self) -> Option<PackedTokenSpanHandle<G>> {
+        match self.storage {
+            ScannedToksStorage::ReplayInput { replay, len } => {
+                Some(PackedTokenSpanHandle::Replay { replay, len })
+            }
+            ScannedToksStorage::Tokens { .. }
+            | ScannedToksStorage::Definition(_)
+            | ScannedToksStorage::ReplayInputBuilder { .. } => None,
         }
     }
 }
@@ -604,6 +667,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         grammar: ScanToksGrammar,
         destination: ScanToksDestination,
+        observed: bool,
     ) -> Result<TokenCollector<G>, CommandError> {
         let collector = match (grammar, destination) {
             (ScanToksGrammar::General, ScanToksDestination::Attempt) => {
@@ -621,7 +685,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 TokenCollector::token_buffers(parameter, replacement)
             }
-            (ScanToksGrammar::General, ScanToksDestination::ReplayInput) => {
+            (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
                 let builder = self
                     .command
                     .roots
@@ -629,7 +693,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .replay
                     .begin_input_builder()
                     .map_err(scratch_command_error)?;
-                TokenCollector::replay_input(builder)
+                TokenCollector::replay_input(builder, transform, observed)
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
                 let definition = self
@@ -640,7 +704,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 TokenCollector::definition(definition)
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput) => {
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. }) => {
                 return Err(CommandError::input_invariant());
             }
         };
@@ -657,7 +721,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         collector: &TokenCollector<G>,
     ) -> Result<(), CommandError> {
-        if let TokenCollectorDestination::ReplayInput { builder } = collector.destination() {
+        if let TokenCollectorDestination::ReplayInput { builder, .. } = collector.destination() {
             self.command
                 .roots
                 .input
@@ -676,7 +740,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if collector.phase() == TokenCollectorPhase::Complete {
             return Err(CommandError::input_invariant());
         }
-        let result: Result<(), CommandError> = match collector.destination() {
+        let result: Result<(), CommandError> = match collector.destination_mut() {
             TokenCollectorDestination::TokenBuffers { writer, .. } => self
                 .command
                 .attempt
@@ -701,13 +765,55 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .arena_mut()
                 .push_definition_replacement(*definition, word.token_word())
                 .map_err(attempt_command_error),
-            TokenCollectorDestination::ReplayInput { builder } => self
-                .command
-                .roots
-                .input
-                .replay
-                .push_input_builder_word(*builder, word)
-                .map_err(scratch_command_error),
+            TokenCollectorDestination::ReplayInput {
+                builder,
+                transform,
+                observed_source,
+            } => {
+                if let Some(observed_source) = observed_source {
+                    observed_source.push(self.observed_token(word));
+                }
+                let transform = *transform;
+                let token = word.semantic_token();
+                let shifted = match (transform, token) {
+                    (
+                        ReplayWordTransform::Uppercase | ReplayWordTransform::Lowercase,
+                        Token::Char { ch, cat },
+                    ) => {
+                        #[cfg(test)]
+                        CASE_SHIFT_PATH_COUNTERS.with(|counters| {
+                            counters.borrow_mut().table_lookups += 1;
+                        });
+                        let code = if transform == ReplayWordTransform::Uppercase {
+                            self.state.uccode(ch)
+                        } else {
+                            self.state.lccode(ch)
+                        };
+                        char::from_u32(code)
+                            .filter(|_| code != 0)
+                            .map_or(token, |ch| Token::Char { ch, cat })
+                    }
+                    (ReplayWordTransform::Identity, _)
+                    | (
+                        ReplayWordTransform::Uppercase | ReplayWordTransform::Lowercase,
+                        Token::Cs(_) | Token::Param(_) | Token::Frozen(_),
+                    ) => token,
+                };
+                let final_word = TracedTokenWord::pack(shifted, word.origin());
+                self.command
+                    .roots
+                    .input
+                    .replay
+                    .push_input_builder_word(*builder, final_word)
+                    .map_err(scratch_command_error)?;
+                if transform != ReplayWordTransform::Identity {
+                    #[cfg(test)]
+                    CASE_SHIFT_PATH_COUNTERS.with(|counters| {
+                        counters.borrow_mut().final_writes += 1;
+                    });
+                }
+                Ok(())
+            }
             TokenCollectorDestination::MacroArgument { .. } => {
                 return Err(CommandError::input_invariant());
             }
@@ -798,7 +904,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 ScannedToksStorage::Definition(*definition)
             }
-            TokenCollectorDestination::ReplayInput { builder } => {
+            TokenCollectorDestination::ReplayInput { builder, .. } => {
                 let len = self
                     .command
                     .roots
@@ -927,18 +1033,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // to a still-live macro can therefore truncate its suffix
                 // without copying or invalidating the completed result.
                 let attempt_opening = self.command.attempt.arena().mark();
-                let collector =
-                    match self.begin_scan_toks_collector(config.grammar, config.destination) {
-                        Ok(collector) => collector,
-                        Err(error) => {
-                            self.command
-                                .attempt
-                                .arena_mut()
-                                .truncate(attempt_opening)
-                                .map_err(attempt_command_error)?;
-                            return Err(error);
-                        }
-                    };
+                let collector = match self.begin_scan_toks_collector(
+                    config.grammar,
+                    config.destination,
+                    self.is_observed(),
+                ) {
+                    Ok(collector) => collector,
+                    Err(error) => {
+                        self.command
+                            .attempt
+                            .arena_mut()
+                            .truncate(attempt_opening)
+                            .map_err(attempt_command_error)?;
+                        return Err(error);
+                    }
+                };
                 let scope = match self.command.begin_attempt_scanner_scope() {
                     Ok(scope) => scope,
                     Err(error) => {
@@ -1060,6 +1169,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.finish_scanner_episode(pending.episode);
         let completed_tokens = if !self.is_observed() {
             Vec::new()
+        } else if let Some(observed_source) = pending.collector.take_observed_source() {
+            observed_source
         } else if pending.config.purpose.renders_detokenized_result() {
             let words = self.scanned_replacement_words(&result)?;
             let mut text = String::new();
@@ -2449,6 +2560,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut collector = self.begin_scan_toks_collector(
                 ScanToksGrammar::MacroDefinition,
                 ScanToksDestination::Attempt,
+                self.is_observed(),
             )?;
             let definition = match collector.destination() {
                 TokenCollectorDestination::Definition {

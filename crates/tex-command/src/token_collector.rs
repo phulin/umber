@@ -15,6 +15,15 @@ use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
 use crate::input::ReplayInputBuilderId;
 
+/// Per-word rewrite applied only while an escaping general-text collector
+/// writes its final replay owner.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum ReplayWordTransform {
+    Identity,
+    Uppercase,
+    Lowercase,
+}
+
 impl<G> crate::CommandProcessor<'_, '_, G> {
     /// Classifies one raw command once at the shared collector boundary.
     #[inline]
@@ -170,7 +179,13 @@ pub(crate) enum TokenCollectorDestination<G> {
         writing_replacement: bool,
     },
     /// Final generation-owned storage for a standalone escaping inserted list.
-    ReplayInput { builder: ReplayInputBuilderId<G> },
+    ReplayInput {
+        builder: ReplayInputBuilderId<G>,
+        transform: ReplayWordTransform,
+        /// Observation-only source spelling for a non-identity transform.
+        /// The ordinary unobserved path keeps no parallel word owner.
+        observed_source: Option<Vec<crate::observation::ObservedToken>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -237,9 +252,18 @@ impl<G> TokenCollector<G> {
         }
     }
 
-    pub(crate) fn replay_input(builder: ReplayInputBuilderId<G>) -> Self {
+    pub(crate) fn replay_input(
+        builder: ReplayInputBuilderId<G>,
+        transform: ReplayWordTransform,
+        observed: bool,
+    ) -> Self {
         Self {
-            destination: TokenCollectorDestination::ReplayInput { builder },
+            destination: TokenCollectorDestination::ReplayInput {
+                builder,
+                transform,
+                observed_source: (observed && transform != ReplayWordTransform::Identity)
+                    .then(Vec::new),
+            },
             phase: TokenCollectorPhase::Parameter,
             brace_depth: 0,
             pending_parameter: None,
@@ -273,6 +297,19 @@ impl<G> TokenCollector<G> {
 
     pub(crate) const fn destination_mut(&mut self) -> &mut TokenCollectorDestination<G> {
         &mut self.destination
+    }
+
+    pub(crate) fn take_observed_source(
+        &mut self,
+    ) -> Option<Vec<crate::observation::ObservedToken>> {
+        match &mut self.destination {
+            TokenCollectorDestination::ReplayInput {
+                observed_source, ..
+            } => observed_source.take(),
+            TokenCollectorDestination::MacroArgument { .. }
+            | TokenCollectorDestination::TokenBuffers { .. }
+            | TokenCollectorDestination::Definition { .. } => None,
+        }
     }
 
     pub(crate) const fn brace_depth(&self) -> u32 {

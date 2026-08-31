@@ -1065,6 +1065,30 @@ impl OwnedReplayWords {
             index,
         )
     }
+
+    fn clear(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
+        let next_reuse = self
+            .lane
+            .active
+            .len()
+            .checked_add(self.lane.spare.len())
+            .and_then(|len| len.checked_add(1))
+            .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
+        self.lane
+            .active
+            .try_reserve(next_reuse.saturating_sub(self.lane.active.len()))
+            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
+        self.lane
+            .spare
+            .try_reserve(next_reuse.saturating_sub(self.lane.spare.len()))
+            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
+        self.lane.restore(ReplayLaneMark {
+            segments: 0,
+            tail_used: 0,
+        })?;
+        self.len = 0;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -1096,6 +1120,8 @@ impl ReplayEntry {
 pub(crate) struct ReplayLane<G> {
     entries: Vec<ReplayEntry>,
     input_builders: Vec<OwnedReplayWords>,
+    spare_input_builders: Vec<OwnedReplayWords>,
+    input_builder_high_water: usize,
     words: SegmentedReplayLane<TracedTokenWord>,
     transient_depth: u32,
     _generation: PhantomData<fn(&G) -> &G>,
@@ -1106,6 +1132,8 @@ impl<G> Default for ReplayLane<G> {
         Self {
             entries: Vec::new(),
             input_builders: Vec::new(),
+            spare_input_builders: Vec::new(),
+            input_builder_high_water: 0,
             words: SegmentedReplayLane::default(),
             transient_depth: 0,
             _generation: PhantomData,
@@ -1115,9 +1143,17 @@ impl<G> Default for ReplayLane<G> {
 
 impl<G> Clone for ReplayLane<G> {
     fn clone(&self) -> Self {
+        let input_builder_high_water = self
+            .entries
+            .iter()
+            .filter(|entry| matches!(&entry.body_words, ReplayBodyWords::Owned(_)))
+            .count()
+            .saturating_add(self.input_builders.len());
         Self {
             entries: self.entries.clone(),
             input_builders: self.input_builders.clone(),
+            spare_input_builders: Vec::with_capacity(input_builder_high_water),
+            input_builder_high_water,
             words: self.words.clone(),
             transient_depth: 0,
             _generation: PhantomData,
@@ -1154,6 +1190,7 @@ impl<G> ReplayLane<G> {
         let builders = self
             .input_builders
             .iter()
+            .chain(self.spare_input_builders.iter())
             .map(|words| words.lane.retained_bytes())
             .sum::<usize>();
         std::mem::size_of::<Self>()
@@ -1164,6 +1201,11 @@ impl<G> ReplayLane<G> {
             )
             .saturating_add(
                 self.input_builders
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
+            )
+            .saturating_add(
+                self.spare_input_builders
                     .capacity()
                     .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
             )
@@ -1223,10 +1265,24 @@ impl<G> ReplayLane<G> {
         self.input_builders
             .try_reserve(1)
             .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        self.input_builders.push(OwnedReplayWords {
-            lane: SegmentedReplayLane::default(),
-            len: 0,
-        });
+        let words = match self.spare_input_builders.pop() {
+            Some(words) => words,
+            None => {
+                let next_high_water = self
+                    .input_builder_high_water
+                    .checked_add(1)
+                    .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
+                self.spare_input_builders
+                    .try_reserve(next_high_water.saturating_sub(self.spare_input_builders.len()))
+                    .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
+                self.input_builder_high_water = next_high_water;
+                OwnedReplayWords {
+                    lane: SegmentedReplayLane::default(),
+                    len: 0,
+                }
+            }
+        };
+        self.input_builders.push(words);
         Ok(ReplayInputBuilderId {
             slot,
             _generation: PhantomData,
@@ -1306,7 +1362,12 @@ impl<G> ReplayLane<G> {
         if builder.slot as usize + 1 != self.input_builders.len() {
             return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
         }
-        self.input_builders.pop();
+        let mut words = self
+            .input_builders
+            .pop()
+            .expect("validated escaping input builder remains live");
+        words.clear()?;
+        self.spare_input_builders.push(words);
         Ok(())
     }
 
@@ -1429,8 +1490,44 @@ impl<G> ReplayLane<G> {
                 .pop()
                 .expect("released replay suffix remains live");
             self.words.restore(entry.word_mark)?;
+            if let ReplayBodyWords::Owned(mut words) = entry.body_words {
+                words.clear()?;
+                self.spare_input_builders.push(words);
+            }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn input_builder_storage_counts(&self) -> (usize, usize, usize, usize, usize) {
+        let owned_entries = self
+            .entries
+            .iter()
+            .filter(|entry| matches!(&entry.body_words, ReplayBodyWords::Owned(_)))
+            .count();
+        let active_segments = self
+            .input_builders
+            .iter()
+            .chain(self.entries.iter().filter_map(|entry| {
+                let ReplayBodyWords::Owned(words) = &entry.body_words else {
+                    return None;
+                };
+                Some(words)
+            }))
+            .map(|words| words.lane.active.len())
+            .sum();
+        let spare_segments = self
+            .spare_input_builders
+            .iter()
+            .map(|words| words.lane.spare.len())
+            .sum();
+        (
+            self.input_builders.len(),
+            owned_entries,
+            self.spare_input_builders.len(),
+            active_segments,
+            spare_segments,
+        )
     }
 }
 

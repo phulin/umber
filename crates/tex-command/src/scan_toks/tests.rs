@@ -9,6 +9,200 @@ fn token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
+#[cfg(feature = "profiling")]
+fn case_shift_input(body_len: usize) -> Vec<Token> {
+    let mut input = Vec::with_capacity(body_len.saturating_mul(2).saturating_add(5));
+    for _ in 0..2 {
+        input.push(token('{', Catcode::BeginGroup));
+        input.extend(std::iter::repeat_n(token('a', Catcode::Letter), body_len));
+        input.push(token('}', Catcode::EndGroup));
+    }
+    input.push(token('q', Catcode::Letter));
+    input
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
+    use super::{case_shift_path_counters, reset_case_shift_path_counters};
+
+    for body_len in [1_usize, 64, 4096] {
+        crate::test_harness::with_universe(|universe| {
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, case_shift_input(body_len));
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+            let warm_operation = command.begin_attempt_operation();
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                processor.shift_case(true).expect("warm case shift");
+                for _ in 0..body_len {
+                    let shifted = processor
+                        .get_token()
+                        .expect("warm shifted delivery")
+                        .expect("warm shifted token");
+                    assert_eq!(
+                        shifted.spelling().semantic_token(),
+                        token('A', Catcode::Letter)
+                    );
+                }
+                let opening = processor
+                    .get_token()
+                    .expect("next opening delivery")
+                    .expect("next opening token");
+                assert_eq!(
+                    opening.spelling().semantic_token(),
+                    token('{', Catcode::BeginGroup)
+                );
+                processor
+                    .back_input(opening)
+                    .expect("restore measured opening");
+            }
+            command
+                .commit_attempt_operation(warm_operation)
+                .expect("warm operation commit");
+
+            let measured_operation = command.begin_attempt_operation();
+            command.profile_reset_token_collector_path_counters();
+            reset_case_shift_path_counters();
+            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+            let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                processor.shift_case(true).expect("measured case shift");
+            }
+            let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let path = case_shift_path_counters();
+            let collector = command.profile_token_collector_path_counters();
+            assert_eq!(path.final_writes, body_len as u64);
+            assert_eq!(path.table_lookups, body_len as u64);
+            assert_eq!(path.source_payload_copies, 0);
+            assert_eq!(path.second_traversals, 0);
+            assert_eq!(collector.8, 0, "no whole-list copy");
+            assert_eq!(after.calls - before.calls, 0, "warmed allocations");
+            assert_eq!(
+                after.requested_bytes - before.requested_bytes,
+                0,
+                "warmed allocation bytes"
+            );
+
+            {
+                let mut context = universe.command_context().expect("command context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                for _ in 0..body_len {
+                    let shifted = processor
+                        .get_token()
+                        .expect("measured shifted delivery")
+                        .expect("measured shifted token");
+                    assert_eq!(
+                        shifted.spelling().semantic_token(),
+                        token('A', Catcode::Letter)
+                    );
+                }
+                let sentinel = processor
+                    .get_token()
+                    .expect("sentinel delivery")
+                    .expect("sentinel token");
+                assert_eq!(
+                    sentinel.spelling().semantic_token(),
+                    token('q', Catcode::Letter)
+                );
+            }
+            let storage = command.roots.input.replay.input_builder_storage_counts();
+            assert_eq!(storage.0, 0, "no unfinished builder");
+            assert_eq!(storage.1, 0, "no live escaped replay entry");
+            assert_eq!(storage.2, 1, "one recycled builder lane");
+            assert_eq!(storage.3, 0, "retirement truncates all active chunks");
+            assert_eq!(storage.4, body_len.div_ceil(256), "chunks remain reusable");
+            command
+                .commit_attempt_operation(measured_operation)
+                .expect("measured operation commit");
+        });
+    }
+}
+
+#[test]
+fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('{', Catcode::BeginGroup),
+                token('}', Catcode::EndGroup),
+                token('{', Catcode::BeginGroup),
+                token('{', Catcode::BeginGroup),
+                token('a', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+                token('b', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        let operation = command.begin_attempt_operation();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        processor.shift_case(true).expect("empty case shift");
+        processor.shift_case(true).expect("nested case shift");
+        let mut shifted = Vec::new();
+        for _ in 0..4 {
+            shifted.push(
+                processor
+                    .get_token()
+                    .expect("shifted delivery")
+                    .expect("shifted token")
+                    .spelling()
+                    .semantic_token(),
+            );
+        }
+        assert_eq!(
+            shifted,
+            [
+                token('{', Catcode::BeginGroup),
+                token('A', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+                token('B', Catcode::Letter),
+            ]
+        );
+        drop(processor);
+        command
+            .commit_attempt_operation(operation)
+            .expect("case-shift operation commit");
+    });
+}
+
 fn assert_read_failure_is_fully_cleaned(finalize: bool) {
     crate::test_harness::with_universe(|universe| {
         universe
