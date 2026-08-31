@@ -734,16 +734,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::OuterInMacroArgument);
             }
             let token = self.classify_collector_token(&command, paragraph_token);
-            if token.is_space() {
+            if token.spelling_is_space() {
                 continue;
             }
-            if token.is_end_group() {
+            if token.spelling_is_end_group() {
                 return self.recover_extra_right_brace_argument(command);
             }
             break (command, token);
         };
         self.check_argument_paragraph(&first, flags, first_token, None)?;
-        if !first_token.is_begin_group() {
+        if !first_token.spelling_is_begin_group() {
             let mut tokens = self.allocate_argument_buffer(matching)?;
             self.settle_argument_token(&mut tokens, first_token, true)?;
             return Ok(tokens);
@@ -780,7 +780,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let token = self.classify_collector_token(command, paragraph_token);
             self.check_argument_paragraph(command, flags, token, Some((matching, &tokens)))?;
             let depth = self.settle_argument_token(&mut tokens, token, true)?;
-            if token.is_end_group() && depth == 0 {
+            if token.spelling_is_end_group() && depth == 0 {
                 tokens = self.strip_argument_outer_group(matching, tokens)?;
                 return Ok(tokens);
             }
@@ -856,7 +856,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
                     // replay exists yet to provide the balancing delivery.
-                    if token.is_begin_group() {
+                    if token.spelling_is_begin_group() {
                         self.undo_delimiter_begin_group_delivery();
                     }
                     self.command
@@ -915,7 +915,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // TeX82 §394 contributes a failed delimiter prefix first,
                 // then applies §395 to the current token. A top-level `}`
                 // therefore never becomes delimited argument material.
-                if self.match_argument_depth(&tokens) == 0 && token.is_end_group() {
+                if self.match_argument_depth(&tokens) == 0 && token.spelling_is_end_group() {
                     let command = delivered
                         .take()
                         .expect("command destination remains initialized");
@@ -933,7 +933,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
 
-            if self.match_argument_depth(&tokens) == 0 && token.is_end_group() {
+            if self.match_argument_depth(&tokens) == 0 && token.spelling_is_end_group() {
                 let command = delivered
                     .take()
                     .expect("command destination remains initialized");

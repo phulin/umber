@@ -683,7 +683,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
     assert!(splice.contains("self.push_scan_toks_word(collector, word)?"));
-    assert!(scanner.contains("arena.push_definition_replacement(*definition, word.token_word())"));
+    assert!(scanner.contains(".push_definition_replacement(*definition, word.token_word())"));
     for retired_route in ["ScanToksSinks", "ScanToksSink", "ScannedToksPart"] {
         assert!(
             !scanner.contains(retired_route),
@@ -697,9 +697,14 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(token_collector.contains("TokenCollectorDestination::MacroArgument"));
     assert!(token_collector.contains("TokenCollectorDestination::TokenBuffers"));
     assert!(token_collector.contains("TokenCollectorDestination::Definition"));
+    assert!(token_collector.contains("TokenCollectorDestination::ReplayInput"));
     assert!(unexpanded.contains("consume_token_list_into_buffer"));
-    assert!(standalone_unexpanded.contains("PackedTokenSpanHandle::AttemptList"));
+    assert!(standalone_unexpanded.contains("ScanToksMode::EscapingGeneralText"));
+    assert!(standalone_unexpanded.contains("ScannedToksStorage::ReplayInput"));
+    assert!(standalone_unexpanded.contains("PackedTokenSpanHandle::Replay"));
     assert!(!standalone_unexpanded.contains(".to_vec()"));
+    assert!(!standalone_unexpanded.contains("PackedTokenSpanHandle::transient"));
+    assert!(!standalone_unexpanded.contains("PackedTokenSpanHandle::AttemptList"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"

@@ -10,10 +10,10 @@
 use core::marker::PhantomData;
 
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
+use crate::input::ReplayInputBuilderId;
 
 impl<G> crate::CommandProcessor<'_, '_, G> {
     /// Classifies one raw command once at the shared collector boundary.
@@ -35,16 +35,14 @@ impl<G> crate::CommandProcessor<'_, '_, G> {
 
 /// One raw delivered command classified once for every collector decision.
 ///
-/// Token equality and parameter-number matching use the immutable spelling.
-/// Macro matching uses `cur_cmd` for braces and leading space, while
-/// `scan_toks` balance uses the category encoded in `cur_tok`. Retaining both
-/// facets here lets each grammar make its TeX-defined decision without
-/// decoding the spelling again.
+/// Token equality, group balance, parameter-number matching, and leading-space
+/// decisions use the immutable spelling. TeX82's collectors make these
+/// decisions from `cur_tok`; a control sequence whose resolved `cur_cmd` is a
+/// character command remains a control-sequence token in every grammar.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ClassifiedToken {
     word: TracedTokenWord,
     spelling: Token,
-    command_catcode: Option<Catcode>,
     paragraph: bool,
 }
 
@@ -55,14 +53,9 @@ impl ClassifiedToken {
     ) -> Self {
         let word = command.spelling();
         let spelling = word.semantic_token();
-        let command_catcode = match command.meaning_ref() {
-            ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(*cat),
-            _ => None,
-        };
         Self {
             word,
             spelling,
-            command_catcode,
             paragraph: Some(spelling) == paragraph_token,
         }
     }
@@ -70,14 +63,9 @@ impl ClassifiedToken {
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<Token>) -> Self {
         let spelling = word.semantic_token();
-        let command_catcode = match spelling {
-            Token::Char { cat, .. } => Some(cat),
-            _ => None,
-        };
         Self {
             word,
             spelling,
-            command_catcode,
             paragraph: Some(spelling) == paragraph_token,
         }
     }
@@ -88,18 +76,6 @@ impl ClassifiedToken {
 
     pub(crate) const fn spelling(self) -> Token {
         self.spelling
-    }
-
-    pub(crate) const fn is_begin_group(self) -> bool {
-        matches!(self.command_catcode, Some(Catcode::BeginGroup))
-    }
-
-    pub(crate) const fn is_end_group(self) -> bool {
-        matches!(self.command_catcode, Some(Catcode::EndGroup))
-    }
-
-    pub(crate) const fn is_space(self) -> bool {
-        matches!(self.command_catcode, Some(Catcode::Space))
     }
 
     pub(crate) const fn spelling_is_begin_group(self) -> bool {
@@ -117,6 +93,16 @@ impl ClassifiedToken {
             self.spelling,
             Token::Char {
                 cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    }
+
+    pub(crate) const fn spelling_is_space(self) -> bool {
+        matches!(
+            self.spelling,
+            Token::Char {
+                cat: Catcode::Space,
                 ..
             }
         )
@@ -166,7 +152,7 @@ impl PendingArgumentFacts {
     fn settle(&mut self, token: ClassifiedToken, paragraph_checked: bool, brace_depth_before: u32) {
         self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
         if self.word_count == 0 {
-            self.outer_group_candidate = token.is_begin_group();
+            self.outer_group_candidate = token.spelling_is_begin_group();
         } else if brace_depth_before == 0 {
             self.outer_group_candidate = false;
         }
@@ -210,6 +196,8 @@ pub(crate) enum TokenCollectorDestination<G> {
         definition: AttemptDefinitionId,
         writing_replacement: bool,
     },
+    /// Final generation-owned storage for a standalone escaping inserted list.
+    ReplayInput { builder: ReplayInputBuilderId<G> },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -270,6 +258,15 @@ impl<G> TokenCollector<G> {
                 definition,
                 writing_replacement: false,
             },
+            phase: TokenCollectorPhase::Parameter,
+            brace_depth: 0,
+            pending_parameter: None,
+        }
+    }
+
+    pub(crate) fn replay_input(builder: ReplayInputBuilderId<G>) -> Self {
+        Self {
+            destination: TokenCollectorDestination::ReplayInput { builder },
             phase: TokenCollectorPhase::Parameter,
             brace_depth: 0,
             pending_parameter: None,
@@ -337,9 +334,9 @@ impl<G> TokenCollector<G> {
     }
 
     fn advance_brace_depth(&mut self, token: ClassifiedToken) {
-        if token.is_begin_group() {
+        if token.spelling_is_begin_group() {
             self.brace_depth = self.brace_depth.saturating_add(1);
-        } else if token.is_end_group() && self.brace_depth != 0 {
+        } else if token.spelling_is_end_group() && self.brace_depth != 0 {
             self.brace_depth -= 1;
         }
     }

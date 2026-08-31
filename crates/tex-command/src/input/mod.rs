@@ -19,10 +19,10 @@ pub(crate) use history::{input_source_context_counters, reset_input_source_conte
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
     MacroArgumentCursor, PackedInputFrame, PackedTokenOwnership, PackedTokenSources,
-    PackedTokenSpanHandle, PackedTokenSpanSource, ReplayLane, ReplayPayloadId, ReplayTrace,
-    ReplayTransientMark, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
-    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
-    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId, ReplayLane,
+    ReplayPayloadId, ReplayTrace, ReplayTransientMark, RetirementBehavior, SourceLevel,
+    SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
+    SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{

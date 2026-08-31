@@ -3207,6 +3207,30 @@ fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
 }
 
 #[test]
+fn etex_unexpanded_input_survives_the_first_main_control_operation() {
+    // e-TeX change file §27.465 implements `\unexpanded` as `the_toks` plus
+    // `ins_list`. The inserted list remains input after its first
+    // unexpandable command reaches main control, so later tokens must not
+    // borrow the attempt arena retired with that command operation.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\count255=0 \unexpanded{\relax\global\advance\count255 by1}\end",
+        );
+
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        assert_eq!(
+            stores.count(255).expect("count register"),
+            1,
+            "terminal: {}",
+            terminal_text(stores)
+        );
+    });
+}
+
+#[test]
 fn etex_optimized_aftergroup_links_tokens_onto_one_backup_level() {
     // TeX82 §§282/326 create one `backed_up` level per saved token. e-TeX
     // 2.6 etex.ch [15.282] instead applies `back_input` only once, then links

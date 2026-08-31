@@ -57,6 +57,9 @@ pub(crate) enum ScanToksMode {
     /// and the reference instrumentation does not publish the internal
     /// scanner-status scope.
     GeneralText { purpose: &'static str },
+    /// A standalone general-text result constructed directly in the
+    /// generation-owned inserted-input destination which will replay it.
+    EscapingGeneralText { purpose: &'static str },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
@@ -68,6 +71,12 @@ pub(crate) enum ScanToksMode {
 enum ScanToksGrammar {
     General,
     MacroDefinition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ScanToksDestination {
+    Attempt,
+    ReplayInput,
 }
 
 /// How the collector reaches the opening delimiter of its body.
@@ -129,6 +138,7 @@ impl ScanToksPurpose {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ScanToksConfig {
     grammar: ScanToksGrammar,
+    destination: ScanToksDestination,
     opening: ScanToksOpening,
     expansion: ScanToksExpansion,
     owner: ScanToksOwner,
@@ -137,24 +147,38 @@ struct ScanToksConfig {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScannedToksStorage {
+enum ScannedToksStorage<G> {
     Tokens {
         parameter: AttemptTokenListId,
         replacement: AttemptTokenListId,
     },
     Definition(AttemptDefinitionId),
+    ReplayInputBuilder {
+        builder: crate::input::ReplayInputBuilderId<G>,
+        len: u32,
+    },
+    ReplayInput {
+        replay: crate::input::ReplayPayloadId<G>,
+        len: u32,
+    },
 }
 
-enum ScannedWords<'a> {
+enum ScannedWords<'a, G> {
     Traced(crate::attempt::AttemptTokenListView<'a>),
     Semantic(&'a [TokenWord]),
+    ReplayBuilder {
+        lane: &'a crate::input::ReplayLane<G>,
+        builder: crate::input::ReplayInputBuilderId<G>,
+        len: u32,
+    },
 }
 
-impl ScannedWords<'_> {
+impl<G> ScannedWords<'_, G> {
     fn len(&self) -> usize {
         match self {
             Self::Traced(words) => words.len(),
             Self::Semantic(words) => words.len(),
+            Self::ReplayBuilder { len, .. } => *len as usize,
         }
     }
 
@@ -162,6 +186,9 @@ impl ScannedWords<'_> {
         match self {
             Self::Traced(words) => words.get(index).map(|word| word.semantic_token()),
             Self::Semantic(words) => words.get(index).map(|word| word.semantic_token()),
+            Self::ReplayBuilder { lane, builder, .. } => lane
+                .input_builder_get(*builder, index)
+                .map(|word| word.semantic_token()),
         }
     }
 }
@@ -222,9 +249,9 @@ impl<G> PendingScanToks<G> {
     }
 }
 
-// Every pending field is a scalar, a typed attempt coordinate, or an
-// ephemeral current-command value. The arena owner remains on `CommandState`;
-// no continuation borrows its accumulated token buffer.
+// Every pending field is a scalar, a typed attempt or generation coordinate,
+// or an ephemeral current-command value. The storage owners remain on
+// `CommandState`; no continuation borrows its accumulated token buffer.
 // Replacement state stays inline so suspension reuses the scratch lane rather
 // than allocating a box per scanner frame.
 #[allow(clippy::large_enum_variant)]
@@ -341,6 +368,7 @@ impl ScanToksConfig {
         match mode {
             ScanToksMode::General { expanded } => Self {
                 grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::Attempt,
                 opening: ScanToksOpening::Required,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Absorbed(None),
@@ -349,6 +377,7 @@ impl ScanToksConfig {
             },
             ScanToksMode::GeneralFor { expanded, owner } => Self {
                 grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::Attempt,
                 opening: ScanToksOpening::Required,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Absorbed(Some(owner)),
@@ -361,6 +390,7 @@ impl ScanToksConfig {
                 owner,
             } => Self {
                 grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::Attempt,
                 opening: ScanToksOpening::Prevalidated { primary },
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Absorbed(owner),
@@ -369,6 +399,16 @@ impl ScanToksConfig {
             },
             ScanToksMode::GeneralText { purpose } => Self {
                 grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::Attempt,
+                opening: ScanToksOpening::Required,
+                expansion: ScanToksExpansion::Unexpanded,
+                owner: ScanToksOwner::Absorbed(None),
+                purpose: ScanToksPurpose::GeneralText(purpose),
+                status_visibility: ScannerStatusVisibility::Hidden,
+            },
+            ScanToksMode::EscapingGeneralText { purpose } => Self {
+                grammar: ScanToksGrammar::General,
+                destination: ScanToksDestination::ReplayInput,
                 opening: ScanToksOpening::Required,
                 expansion: ScanToksExpansion::Unexpanded,
                 owner: ScanToksOwner::Absorbed(None),
@@ -377,6 +417,7 @@ impl ScanToksConfig {
             },
             ScanToksMode::MacroDefinition { expanded } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
+                destination: ScanToksDestination::Attempt,
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(None),
@@ -385,6 +426,7 @@ impl ScanToksConfig {
             },
             ScanToksMode::MacroDefinitionFor { expanded, target } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
+                destination: ScanToksDestination::Attempt,
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(Some(target)),
@@ -425,17 +467,19 @@ pub(crate) struct ScannedToks {
 
 /// Scanner-completed buffers before an owning publication policy is chosen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ScannedToksBuffers {
-    storage: ScannedToksStorage,
+pub(crate) struct ScannedToksBuffers<G> {
+    storage: ScannedToksStorage<G>,
     pub(crate) primary: OriginId,
     pub(crate) malformed_parameter: bool,
 }
 
-impl ScannedToksBuffers {
+impl<G> ScannedToksBuffers<G> {
     pub(crate) fn definition(self) -> Option<AttemptDefinitionId> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
-            ScannedToksStorage::Tokens { .. } => None,
+            ScannedToksStorage::Tokens { .. }
+            | ScannedToksStorage::ReplayInputBuilder { .. }
+            | ScannedToksStorage::ReplayInput { .. } => None,
         }
     }
 }
@@ -559,9 +603,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn begin_scan_toks_collector(
         &mut self,
         grammar: ScanToksGrammar,
+        destination: ScanToksDestination,
     ) -> Result<TokenCollector<G>, CommandError> {
-        let collector = match grammar {
-            ScanToksGrammar::General => {
+        let collector = match (grammar, destination) {
+            (ScanToksGrammar::General, ScanToksDestination::Attempt) => {
                 let parameter = self
                     .command
                     .attempt
@@ -576,7 +621,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 TokenCollector::token_buffers(parameter, replacement)
             }
-            ScanToksGrammar::MacroDefinition => {
+            (ScanToksGrammar::General, ScanToksDestination::ReplayInput) => {
+                let builder = self
+                    .command
+                    .roots
+                    .input
+                    .replay
+                    .begin_input_builder()
+                    .map_err(scratch_command_error)?;
+                TokenCollector::replay_input(builder)
+            }
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
                 let definition = self
                     .command
                     .attempt
@@ -584,6 +639,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .allocate_definition_builder(self.state.definition_identity_policy())
                     .map_err(attempt_command_error)?;
                 TokenCollector::definition(definition)
+            }
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput) => {
+                return Err(CommandError::input_invariant());
             }
         };
         #[cfg(test)]
@@ -595,6 +653,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(collector)
     }
 
+    fn discard_scan_toks_collector(
+        &mut self,
+        collector: &TokenCollector<G>,
+    ) -> Result<(), CommandError> {
+        if let TokenCollectorDestination::ReplayInput { builder } = collector.destination() {
+            self.command
+                .roots
+                .input
+                .replay
+                .discard_input_builder(*builder)
+                .map_err(scratch_command_error)?;
+        }
+        Ok(())
+    }
+
     fn push_scan_toks_word(
         &mut self,
         collector: &mut TokenCollector<G>,
@@ -603,24 +676,43 @@ impl<G> CommandProcessor<'_, '_, G> {
         if collector.phase() == TokenCollectorPhase::Complete {
             return Err(CommandError::input_invariant());
         }
-        let arena = self.command.attempt.arena_mut();
-        let result = match collector.destination() {
-            TokenCollectorDestination::TokenBuffers { writer, .. } => {
-                arena.push_buffer_token(*writer, word)
-            }
+        let result: Result<(), CommandError> = match collector.destination() {
+            TokenCollectorDestination::TokenBuffers { writer, .. } => self
+                .command
+                .attempt
+                .arena_mut()
+                .push_buffer_token(*writer, word)
+                .map_err(attempt_command_error),
             TokenCollectorDestination::Definition {
                 definition,
                 writing_replacement: false,
-            } => arena.push_definition_parameter(*definition, word.token_word()),
+            } => self
+                .command
+                .attempt
+                .arena_mut()
+                .push_definition_parameter(*definition, word.token_word())
+                .map_err(attempt_command_error),
             TokenCollectorDestination::Definition {
                 definition,
                 writing_replacement: true,
-            } => arena.push_definition_replacement(*definition, word.token_word()),
+            } => self
+                .command
+                .attempt
+                .arena_mut()
+                .push_definition_replacement(*definition, word.token_word())
+                .map_err(attempt_command_error),
+            TokenCollectorDestination::ReplayInput { builder } => self
+                .command
+                .roots
+                .input
+                .replay
+                .push_input_builder_word(*builder, word)
+                .map_err(scratch_command_error),
             TokenCollectorDestination::MacroArgument { .. } => {
                 return Err(CommandError::input_invariant());
             }
         };
-        result.map_err(attempt_command_error)?;
+        result?;
         #[cfg(test)]
         {
             self.command.token_collector_path_counters.collector_appends += 1;
@@ -661,6 +753,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 *writing_replacement = true;
             }
+            TokenCollectorDestination::ReplayInput { .. } => {}
             _ => return Err(CommandError::input_invariant()),
         }
         collector
@@ -676,7 +769,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn finish_scan_toks_collector(
         &mut self,
         collector: &mut TokenCollector<G>,
-    ) -> Result<ScannedToksStorage, CommandError> {
+    ) -> Result<ScannedToksStorage<G>, CommandError> {
         if collector.phase() != TokenCollectorPhase::Replacement {
             return Err(CommandError::input_invariant());
         }
@@ -705,6 +798,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 ScannedToksStorage::Definition(*definition)
             }
+            TokenCollectorDestination::ReplayInput { builder } => {
+                let len = self
+                    .command
+                    .roots
+                    .input
+                    .replay
+                    .input_builder_len(*builder)
+                    .ok_or_else(CommandError::input_invariant)?;
+                ScannedToksStorage::ReplayInputBuilder {
+                    builder: *builder,
+                    len,
+                }
+            }
             _ => return Err(CommandError::input_invariant()),
         };
         collector
@@ -719,8 +825,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scanned_parameter_words(
         &self,
-        scanned: &ScannedToksBuffers,
-    ) -> Result<ScannedWords<'_>, CommandError> {
+        scanned: &ScannedToksBuffers<G>,
+    ) -> Result<ScannedWords<'_, G>, CommandError> {
         let arena = self.command.attempt.arena();
         match scanned.storage {
             ScannedToksStorage::Tokens { parameter, .. } => arena
@@ -731,13 +837,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .definition_parameter_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
+            ScannedToksStorage::ReplayInputBuilder { .. }
+            | ScannedToksStorage::ReplayInput { .. } => Err(CommandError::input_invariant()),
         }
     }
 
     fn scanned_replacement_words(
         &self,
-        scanned: &ScannedToksBuffers,
-    ) -> Result<ScannedWords<'_>, CommandError> {
+        scanned: &ScannedToksBuffers<G>,
+    ) -> Result<ScannedWords<'_, G>, CommandError> {
         let arena = self.command.attempt.arena();
         match scanned.storage {
             ScannedToksStorage::Tokens { replacement, .. } => arena
@@ -748,6 +856,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .definition_replacement_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
+            ScannedToksStorage::ReplayInputBuilder { builder, len } => {
+                Ok(ScannedWords::ReplayBuilder {
+                    lane: &self.command.roots.input.replay,
+                    builder,
+                    len,
+                })
+            }
+            ScannedToksStorage::ReplayInput { .. } => Err(CommandError::input_invariant()),
         }
     }
 
@@ -788,7 +904,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn scan_toks_buffers(
         &mut self,
         mode: ScanToksMode,
-    ) -> Result<ScannedToksBuffers, CommandError> {
+    ) -> Result<ScannedToksBuffers<G>, CommandError> {
         let config = ScanToksConfig::parse(mode);
         let resumed = match self.scanner_resume.take() {
             Some(key) => Some(
@@ -806,25 +922,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
             None => {
-                // The two result sinks belong to the logical parent, not the
-                // scanner's scratch child. Returning a synchronous child to a
-                // still-live macro can therefore truncate its suffix without
-                // copying or invalidating either completed result.
+                // The result destination belongs to the logical parent, not
+                // the scanner's scratch child. Returning a synchronous child
+                // to a still-live macro can therefore truncate its suffix
+                // without copying or invalidating the completed result.
                 let attempt_opening = self.command.attempt.arena().mark();
-                let collector = match self.begin_scan_toks_collector(config.grammar) {
-                    Ok(collector) => collector,
-                    Err(error) => {
-                        self.command
-                            .attempt
-                            .arena_mut()
-                            .truncate(attempt_opening)
-                            .map_err(attempt_command_error)?;
-                        return Err(error);
-                    }
-                };
+                let collector =
+                    match self.begin_scan_toks_collector(config.grammar, config.destination) {
+                        Ok(collector) => collector,
+                        Err(error) => {
+                            self.command
+                                .attempt
+                                .arena_mut()
+                                .truncate(attempt_opening)
+                                .map_err(attempt_command_error)?;
+                            return Err(error);
+                        }
+                    };
                 let scope = match self.command.begin_attempt_scanner_scope() {
                     Ok(scope) => scope,
                     Err(error) => {
+                        self.discard_scan_toks_collector(&collector)?;
                         self.command
                             .attempt
                             .arena_mut()
@@ -857,7 +975,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             &pending.episode,
             &mut pending.phase,
         );
-        let result = match result {
+        let mut result = match result {
             Ok(result) => result,
             Err(error) if error.is_resource_suspension() => {
                 if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
@@ -908,6 +1026,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.abort_continuation(child)?;
                 }
                 self.finish_scanner_episode(pending.episode);
+                self.discard_scan_toks_collector(&pending.collector)?;
                 self.command
                     .discard_attempt_scope_suffix(pending.scope)
                     .map_err(attempt_command_error)?;
@@ -922,6 +1041,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(child) = self.scanner_resume.take() {
             self.abort_continuation(child)?;
             self.finish_scanner_episode(pending.episode);
+            self.discard_scan_toks_collector(&pending.collector)?;
             self.command
                 .discard_attempt_scope_suffix(pending.scope)
                 .map_err(attempt_command_error)?;
@@ -981,6 +1101,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command
             .defer_attempt_scope_retirement(pending.scope)
             .map_err(attempt_command_error)?;
+        if let ScannedToksStorage::ReplayInputBuilder { builder, .. } = result.storage {
+            let span = match self
+                .command
+                .roots
+                .input
+                .replay
+                .finish_input_builder(builder)
+            {
+                Ok(span) => span,
+                Err(error) => {
+                    self.command
+                        .roots
+                        .input
+                        .replay
+                        .discard_input_builder(builder)
+                        .map_err(scratch_command_error)?;
+                    return Err(scratch_command_error(error));
+                }
+            };
+            let PackedTokenSpanHandle::Replay { replay, len } = span else {
+                return Err(CommandError::input_invariant());
+            };
+            result.storage = ScannedToksStorage::ReplayInput { replay, len };
+        }
         Ok(result)
     }
 
@@ -997,6 +1141,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.abort_continuation(child)?;
         }
         self.finish_scanner_episode(pending.episode);
+        self.discard_scan_toks_collector(&pending.collector)?;
         self.command
             .discard_attempt_scope_suffix(pending.scope)
             .map_err(attempt_command_error)?;
@@ -1018,7 +1163,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         config: ScanToksConfig,
         diagnostic_start: usize,
-        result: &ScannedToksBuffers,
+        result: &ScannedToksBuffers<G>,
     ) -> Result<(), CommandError> {
         let expected_heading = match config.grammar {
             ScanToksGrammar::General => "Runaway text?",
@@ -1085,7 +1230,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
         episode: &ScannerEpisode,
         phase: &mut PendingScanToksPhase<G>,
-    ) -> Result<ScannedToksBuffers, CommandError> {
+    ) -> Result<ScannedToksBuffers<G>, CommandError> {
         // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
@@ -1978,7 +2123,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let direct_destination = match collector.destination() {
             TokenCollectorDestination::TokenBuffers { writer, .. } => Some(*writer),
             TokenCollectorDestination::Definition { .. } => None,
-            TokenCollectorDestination::MacroArgument { .. } => {
+            TokenCollectorDestination::MacroArgument { .. }
+            | TokenCollectorDestination::ReplayInput { .. } => {
                 return Err(CommandError::input_invariant());
             }
         };
@@ -2091,26 +2237,34 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub(crate) fn expand_unexpanded(&mut self) -> Result<(), CommandError> {
-        let scanned = self.scan_toks(ScanToksMode::GeneralText {
+        let scanned = self.scan_toks_buffers(ScanToksMode::EscapingGeneralText {
             purpose: "unexpanded",
         })?;
-        let words = self.attempt_words(scanned.replacement_text)?;
-        let len = u32::try_from(words.len()).map_err(|_| CommandError::input_invariant())?;
-        let first = words.first().map(|word| word.semantic_token());
-        self.insert_expansion_list(
-            PackedTokenSpanHandle::AttemptList {
-                list: scanned.replacement_text,
-                len,
-            },
-            first,
-        );
+        // e-TeX change file §27.465 routes `\unexpanded` through `the_toks`
+        // and `ins_list`. Unlike a direct splice into an active collector,
+        // this standalone input may remain live after the executor operation
+        // commits. Its one TokenCollector therefore writes directly into
+        // generation-owned replay storage; publication moves that storage's
+        // header into the final ordered entry and never promotes or copies an
+        // attempt-local list.
+        let ScannedToksStorage::ReplayInput { replay, len } = scanned.storage else {
+            return Err(CommandError::input_invariant());
+        };
+        let first = self
+            .command
+            .roots
+            .input
+            .replay
+            .get(replay, 0)
+            .map(|(word, _)| word.semantic_token());
+        self.insert_expansion_list(PackedTokenSpanHandle::Replay { replay, len }, first);
         Ok(())
     }
 }
 
 fn append_runaway_words<G>(
     state: &tex_state::CommandContext<'_, G>,
-    tokens: &ScannedWords<'_>,
+    tokens: &ScannedWords<'_, G>,
     match_marker: &mut char,
     partial: &mut String,
 ) {
@@ -2292,7 +2446,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.record_alignment_phase();
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         let result = (|| {
-            let mut collector = self.begin_scan_toks_collector(ScanToksGrammar::MacroDefinition)?;
+            let mut collector = self.begin_scan_toks_collector(
+                ScanToksGrammar::MacroDefinition,
+                ScanToksDestination::Attempt,
+            )?;
             let definition = match collector.destination() {
                 TokenCollectorDestination::Definition {
                     definition,

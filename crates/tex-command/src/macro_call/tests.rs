@@ -142,33 +142,29 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
         .collect()
 }
 
+/// TeX82 §394 classifies argument braces and leading spaces from `cur_tok`,
+/// not from the resolved `cur_cmd`. A `\let`-style brace alias is therefore
+/// one undelimited control-sequence argument; this is the form used by
+/// LaTeX's `\@ifnextchar\bgroup\@iinput\@@input` call.
 #[test]
-fn argument_collector_uses_resolved_brace_commands_with_control_sequence_spelling() {
+fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_macro(universe, "aliasedbraces", &[Token::Param(1)]);
         let opening = universe.intern("openingalias").expect("opening alias");
-        let closing = universe.intern("closingalias").expect("closing alias");
-        for (symbol, ch, cat) in [
-            (opening, '{', Catcode::BeginGroup),
-            (closing, '}', Catcode::EndGroup),
-        ] {
-            universe
-                .assign_meaning(
-                    symbol,
-                    MeaningWord::from_static(Meaning::CharToken { ch, cat }),
-                    AssignmentScope::Global,
-                )
-                .expect("brace alias meaning");
-        }
+        universe
+            .assign_meaning(
+                opening,
+                MeaningWord::from_static(Meaning::CharToken {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                }),
+                AssignmentScope::Global,
+            )
+            .expect("brace alias meaning");
         let mut command = CommandState::default();
         crate::test_harness::push(
             &mut command,
-            [
-                macro_token,
-                Token::Cs(opening.symbol()),
-                letter('x'),
-                Token::Cs(closing.symbol()),
-            ],
+            [macro_token, Token::Cs(opening.symbol()), letter('x')],
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -190,11 +186,33 @@ fn argument_collector_uses_resolved_brace_commands_with_control_sequence_spellin
             processor.macro_call(&mut call),
             Ok(MacroCallOutcome::Activated)
         );
-        assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
+        assert_eq!(
+            active_argument_tokens(processor.command),
+            [Token::Cs(opening.symbol())]
+        );
         assert_eq!(
             processor.command.profile_token_collector_path_counters().1,
-            3,
+            1,
             "each raw argument command is classified once"
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("argument replay delivery")
+                .expect("argument replay command")
+                .spelling()
+                .semantic_token(),
+            Token::Cs(opening.symbol())
+        );
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("following source command delivery")
+                .expect("following source command")
+                .spelling()
+                .semantic_token(),
+            letter('x'),
+            "the alias must not absorb following source input as a brace group"
         );
     });
 }

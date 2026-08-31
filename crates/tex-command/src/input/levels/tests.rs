@@ -31,6 +31,47 @@ fn transient_payload_is_read_through_its_replay_coordinate() {
 }
 
 #[test]
+fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
+    let mut lane = ReplayLane::<()>::default();
+    let builder = lane.begin_input_builder().expect("escaping input owner");
+    lane.push_input_builder_word(builder, traced('a'))
+        .expect("first final-owner word");
+    let mut snapshot = lane.clone();
+    lane.push_input_builder_word(builder, traced('b'))
+        .expect("post-snapshot final-owner word");
+
+    let payload = lane
+        .finish_input_builder(builder)
+        .expect("escaping input coordinate");
+    assert_eq!(payload.frame_len(), 2);
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
+        panic!("escaping input replay coordinate")
+    };
+    assert_eq!(lane.get(replay, 0).map(|entry| entry.0), Some(traced('a')));
+    assert_eq!(lane.get(replay, 1).map(|entry| entry.0), Some(traced('b')));
+
+    let snapshot_payload = snapshot
+        .finish_input_builder(builder)
+        .expect("snapshot keeps its admitted prefix");
+    let PackedTokenSpanHandle::Replay {
+        replay: snapshot_replay,
+        ..
+    } = snapshot_payload
+    else {
+        panic!("snapshot replay coordinate")
+    };
+    assert_eq!(
+        snapshot.get(snapshot_replay, 0).map(|entry| entry.0),
+        Some(traced('a'))
+    );
+    assert_eq!(snapshot.get(snapshot_replay, 1), None);
+    assert!(
+        lane.words.active.is_empty(),
+        "escaping words are written only into their final replay entry"
+    );
+}
+
+#[test]
 fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
     let mut lane = ReplayLane::<()>::default();
     let first = PackedTokenSpanHandle::<()>::transient([traced('a')])

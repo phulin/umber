@@ -1010,17 +1010,80 @@ impl<G> Hash for ReplayPayloadId<G> {
     }
 }
 
+/// Generation-branded mutable destination for one escaping inserted list.
+///
+/// The destination is allocated in the replay owner before scanning starts.
+/// Finishing moves its storage header into the ordered replay entries and
+/// publishes only the resulting coordinate; no attempt-local list or token
+/// promotion copy exists.
+#[derive(Debug)]
+pub(crate) struct ReplayInputBuilderId<G> {
+    slot: u32,
+    _generation: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> Copy for ReplayInputBuilderId<G> {}
+impl<G> Clone for ReplayInputBuilderId<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<G> PartialEq for ReplayInputBuilderId<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.slot == other.slot
+    }
+}
+impl<G> Eq for ReplayInputBuilderId<G> {}
+impl<G> Hash for ReplayInputBuilderId<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.slot.hash(state);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ReplaySpan {
     start: ReplayLaneCursor,
     len: u32,
 }
 
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct OwnedReplayWords {
+    lane: SegmentedReplayLane<TracedTokenWord>,
+    len: u32,
+}
+
+impl Clone for OwnedReplayWords {
+    fn clone(&self) -> Self {
+        Self {
+            lane: self.lane.clone(),
+            len: self.len,
+        }
+    }
+}
+
+impl OwnedReplayWords {
+    fn get(&self, index: usize) -> Option<&TracedTokenWord> {
+        self.lane.get(
+            ReplayLaneCursor {
+                segment: 0,
+                offset: 0,
+            },
+            index,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ReplayBodyWords {
+    Segmented(ReplaySpan),
+    Owned(OwnedReplayWords),
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ReplayEntry {
     word_mark: ReplayLaneMark,
     provenance_mark: ReplayLaneMark,
-    body_words: ReplaySpan,
+    body_words: ReplayBodyWords,
     body_provenance: Option<ReplaySpan>,
     prefix_words: Option<ReplaySpan>,
     prefix_provenance: Option<ReplaySpan>,
@@ -1030,13 +1093,18 @@ struct ReplayEntry {
 
 impl ReplayEntry {
     fn len(&self) -> usize {
-        self.prefix_words.map_or(0, |span| span.len as usize) + self.body_words.len as usize
+        let body = match &self.body_words {
+            ReplayBodyWords::Segmented(span) => span.len,
+            ReplayBodyWords::Owned(words) => words.len,
+        };
+        self.prefix_words.map_or(0, |span| span.len as usize) + body as usize
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct ReplayLane<G> {
     entries: Vec<ReplayEntry>,
+    input_builders: Vec<OwnedReplayWords>,
     words: SegmentedReplayLane<TracedTokenWord>,
     provenance: SegmentedReplayLane<Option<SourceProvenance>>,
     transient_depth: u32,
@@ -1047,6 +1115,7 @@ impl<G> Default for ReplayLane<G> {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
+            input_builders: Vec::new(),
             words: SegmentedReplayLane::default(),
             provenance: SegmentedReplayLane::default(),
             transient_depth: 0,
@@ -1059,6 +1128,7 @@ impl<G> Clone for ReplayLane<G> {
     fn clone(&self) -> Self {
         Self {
             entries: self.entries.clone(),
+            input_builders: self.input_builders.clone(),
             words: self.words.clone(),
             provenance: self.provenance.clone(),
             transient_depth: 0,
@@ -1070,6 +1140,7 @@ impl<G> Clone for ReplayLane<G> {
 impl<G> PartialEq for ReplayLane<G> {
     fn eq(&self, other: &Self) -> bool {
         self.entries == other.entries
+            && self.input_builders == other.input_builders
             && self.words == other.words
             && self.provenance == other.provenance
     }
@@ -1078,6 +1149,7 @@ impl<G> Eq for ReplayLane<G> {}
 impl<G> Hash for ReplayLane<G> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entries.hash(state);
+        self.input_builders.hash(state);
         self.words.hash(state);
         self.provenance.hash(state);
     }
@@ -1085,14 +1157,34 @@ impl<G> Hash for ReplayLane<G> {
 
 impl<G> ReplayLane<G> {
     pub(crate) fn retained_bytes(&self) -> usize {
+        let owned = self
+            .entries
+            .iter()
+            .map(|entry| match &entry.body_words {
+                ReplayBodyWords::Owned(words) => words.lane.retained_bytes(),
+                ReplayBodyWords::Segmented(_) => 0,
+            })
+            .sum::<usize>();
+        let builders = self
+            .input_builders
+            .iter()
+            .map(|words| words.lane.retained_bytes())
+            .sum::<usize>();
         std::mem::size_of::<Self>()
             .saturating_add(
                 self.entries
                     .capacity()
                     .saturating_mul(std::mem::size_of::<ReplayEntry>()),
             )
+            .saturating_add(
+                self.input_builders
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
+            )
             .saturating_add(self.words.retained_bytes())
             .saturating_add(self.provenance.retained_bytes())
+            .saturating_add(owned)
+            .saturating_add(builders)
     }
 
     fn push_words(
@@ -1126,10 +1218,10 @@ impl<G> ReplayLane<G> {
         self.entries.push(ReplayEntry {
             word_mark,
             provenance_mark,
-            body_words: ReplaySpan {
+            body_words: ReplayBodyWords::Segmented(ReplaySpan {
                 start: start.unwrap_or(empty),
                 len,
-            },
+            }),
             body_provenance: provenance_start.map(|start| ReplaySpan { start, len }),
             prefix_words: None,
             prefix_provenance: None,
@@ -1145,6 +1237,105 @@ impl<G> ReplayLane<G> {
         })
     }
 
+    /// Allocates the final owner for one escaping inserted token list.
+    pub(crate) fn begin_input_builder(
+        &mut self,
+    ) -> Result<ReplayInputBuilderId<G>, crate::execution_scratch::ScratchError> {
+        let slot = u32::try_from(self.input_builders.len())
+            .map_err(|_| crate::execution_scratch::ScratchError::CapacityOverflow)?;
+        self.input_builders
+            .try_reserve(1)
+            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
+        self.input_builders.push(OwnedReplayWords {
+            lane: SegmentedReplayLane::default(),
+            len: 0,
+        });
+        Ok(ReplayInputBuilderId {
+            slot,
+            _generation: PhantomData,
+        })
+    }
+
+    /// Appends directly to an escaping inserted list's final storage.
+    pub(crate) fn push_input_builder_word(
+        &mut self,
+        builder: ReplayInputBuilderId<G>,
+        word: TracedTokenWord,
+    ) -> Result<(), crate::execution_scratch::ScratchError> {
+        let words = self
+            .input_builders
+            .get_mut(builder.slot as usize)
+            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
+        words.lane.push(word)?;
+        words.len = words
+            .len
+            .checked_add(1)
+            .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
+        Ok(())
+    }
+
+    pub(crate) fn input_builder_get(
+        &self,
+        builder: ReplayInputBuilderId<G>,
+        index: usize,
+    ) -> Option<&TracedTokenWord> {
+        self.input_builders.get(builder.slot as usize)?.get(index)
+    }
+
+    pub(crate) fn input_builder_len(&self, builder: ReplayInputBuilderId<G>) -> Option<u32> {
+        self.input_builders
+            .get(builder.slot as usize)
+            .map(|words| words.len)
+    }
+
+    /// Publishes an escaping list without copying its words.
+    pub(crate) fn finish_input_builder(
+        &mut self,
+        builder: ReplayInputBuilderId<G>,
+    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
+        if builder.slot as usize + 1 != self.input_builders.len() {
+            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
+        }
+        let entry = u32::try_from(self.entries.len())
+            .map_err(|_| crate::execution_scratch::ScratchError::CapacityOverflow)?;
+        self.entries
+            .try_reserve(1)
+            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
+        let words = self
+            .input_builders
+            .pop()
+            .expect("validated escaping input builder remains live");
+        let len = words.len;
+        self.entries.push(ReplayEntry {
+            word_mark: self.words.mark(),
+            provenance_mark: self.provenance.mark(),
+            body_words: ReplayBodyWords::Owned(words),
+            body_provenance: None,
+            prefix_words: None,
+            prefix_provenance: None,
+            ownership: PackedTokenOwnership::Transient,
+            released: false,
+        });
+        Ok(PackedTokenSpanHandle::Replay {
+            replay: ReplayPayloadId {
+                entry,
+                _generation: PhantomData,
+            },
+            len,
+        })
+    }
+
+    pub(crate) fn discard_input_builder(
+        &mut self,
+        builder: ReplayInputBuilderId<G>,
+    ) -> Result<(), crate::execution_scratch::ScratchError> {
+        if builder.slot as usize + 1 != self.input_builders.len() {
+            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
+        }
+        self.input_builders.pop();
+        Ok(())
+    }
+
     pub(crate) fn get(
         &self,
         replay: ReplayPayloadId<G>,
@@ -1158,13 +1349,28 @@ impl<G> ReplayLane<G> {
             return None;
         }
         let prefix_len = entry.prefix_words.map_or(0, |span| span.len as usize);
-        let (words, provenance, local) = if index < prefix_len {
-            (entry.prefix_words?, entry.prefix_provenance, index)
-        } else {
-            (entry.body_words, entry.body_provenance, index - prefix_len)
+        if index < prefix_len {
+            let words = entry.prefix_words?;
+            let provenance = entry.prefix_provenance;
+            return Some((
+                *self.words.get(words.start, index)?,
+                provenance
+                    .and_then(|span| self.provenance.get(span.start, index))
+                    .copied()
+                    .flatten(),
+            ));
+        }
+        let local = index - prefix_len;
+        let spelling = match &entry.body_words {
+            ReplayBodyWords::Segmented(words) => *self.words.get(words.start, local)?,
+            ReplayBodyWords::Owned(words) => *words.get(local)?,
+        };
+        let provenance = match &entry.body_words {
+            ReplayBodyWords::Segmented(_) => entry.body_provenance,
+            ReplayBodyWords::Owned(_) => None,
         };
         Some((
-            *self.words.get(words.start, local)?,
+            spelling,
             provenance
                 .and_then(|span| self.provenance.get(span.start, local))
                 .copied()
