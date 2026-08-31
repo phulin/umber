@@ -13145,6 +13145,45 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
 }
 
 #[test]
+fn etex_signed_internal_glue_is_not_an_identical_pointer_reassignment() {
+    // TeX82 §§430/461 negate all three components of an internal glue
+    // specification. The transformed value no longer has the source register's
+    // pointer identity, so e-TeX §277 must not discard either assignment as a
+    // same-pointer reassignment.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\skip0=1pt plus 2fil minus 3fill \skip0=-\skip0
+               \muskip0=4mu plus 5fill minus 6fil \muskip0=-\muskip0 \end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        admitted!(stores, |context| {
+            let skip = context.glue(
+                context
+                    .glue_register(0)
+                    .expect("skip register")
+                    .expect("assigned skip"),
+            );
+            assert_eq!(skip.width, Scaled::from_raw(-Scaled::UNITY));
+            assert_eq!(skip.stretch, Scaled::from_raw(-2 * Scaled::UNITY));
+            assert_eq!(skip.stretch_order, tex_state::glue::Order::Fil);
+            assert_eq!(skip.shrink, Scaled::from_raw(-3 * Scaled::UNITY));
+            assert_eq!(skip.shrink_order, tex_state::glue::Order::Fill);
+
+            let muskip = context.glue(context.muskip(0).expect("assigned muskip"));
+            assert_eq!(muskip.width, Scaled::from_raw(-4 * Scaled::UNITY));
+            assert_eq!(muskip.stretch, Scaled::from_raw(-5 * Scaled::UNITY));
+            assert_eq!(muskip.stretch_order, tex_state::glue::Order::Fill);
+            assert_eq!(muskip.shrink, Scaled::from_raw(-6 * Scaled::UNITY));
+            assert_eq!(muskip.shrink_order, tex_state::glue::Order::Fil);
+        });
+    });
+}
+
+#[test]
 fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
     // e-TeX expression change [53a.4945--5360] leaves a glue factor's node
     // untouched when no operator requires a copy. Section 277 therefore

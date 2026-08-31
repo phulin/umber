@@ -2941,6 +2941,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if internal.level() != level {
                     self.mu_error()?;
                 }
+                if negative {
+                    // §430 changed the specification, so the physical pointer and
+                    // source-register identity captured while fetching the internal
+                    // value no longer describe the scanned result. Retaining them
+                    // would let e-TeX §277 mistake `\skip0=-\skip0` for an
+                    // identical-pointer reassignment and discard the negation.
+                    self.scanned_glue_identity = None;
+                    self.scanned_glue_register = None;
+                }
                 let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
                     unreachable!("outer pattern restricts the value to a glue specification")
                 };
