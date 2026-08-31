@@ -49,7 +49,7 @@ fn checked_builder(
 
 #[test]
 fn definition_key_fits_the_coordinated_compact_boundary() {
-    assert!(std::mem::size_of::<super::DefinitionId<()>>() <= 16);
+    assert_eq!(std::mem::size_of::<super::DefinitionId<()>>(), 8);
     assert_eq!(std::mem::size_of::<super::DefinitionRegionCoordinate>(), 4);
     assert_eq!(
         std::mem::size_of::<super::DefinitionCheckpointLease<()>>(),

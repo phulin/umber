@@ -41,7 +41,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
-- `src/definition_arena.rs`: Compact generation-branded definition keys and
+- `src/definition_arena.rs`: 8-byte compact generation-branded definition keys and
   borrowed views over one immutable format region, one checkpointed
   revision-global region, and nested forked local-group regions. Ordinary
   definitions scan transactionally into their final region and seal a header

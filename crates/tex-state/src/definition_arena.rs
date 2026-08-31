@@ -279,7 +279,6 @@ impl DefinitionBuilder {
 pub struct DefinitionId<G> {
     region: DefinitionRegionCoordinate,
     row: NonZeroU32,
-    identity: u64,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -345,17 +344,17 @@ impl<G> DefinitionId<G> {
         self.row.get() - 1
     }
 
-    pub(crate) const fn semantic_identity(self) -> Option<u64> {
-        if self.identity == 0 {
-            None
-        } else {
-            Some(self.identity)
-        }
-    }
-
     #[must_use]
     pub(crate) const fn region(self) -> u32 {
         self.region.get()
+    }
+
+    fn new(region: u32, row: NonZeroU32, _semantic_identity: u64) -> Self {
+        Self {
+            region: DefinitionRegionCoordinate::new(region),
+            row,
+            _brand: PhantomData,
+        }
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -1509,12 +1508,7 @@ impl<G> DefinitionArena<G> {
         drop(region);
         accounting.allocate_shared_dynamic(definition_memory_words(builder.words().len()));
         builder.data.phase = DefinitionBuildPhase::Published;
-        DefinitionId {
-            region: DefinitionRegionCoordinate::new(region_id),
-            row,
-            identity: builder.data.sealed_identity,
-            _brand: PhantomData,
-        }
+        DefinitionId::new(region_id, row, builder.data.sealed_identity)
     }
 
     pub(crate) fn validate_builder(
@@ -1913,12 +1907,7 @@ impl<G> DefinitionArena<G> {
             self.local_slots.add_rows(1);
         }
         accounting.allocate_shared_dynamic(definition_memory_words((end - start) as usize));
-        Ok(DefinitionId {
-            region: DefinitionRegionCoordinate::new(region_id),
-            row,
-            identity: semantic_identity,
-            _brand: PhantomData,
-        })
+        Ok(DefinitionId::new(region_id, row, semantic_identity))
     }
 
     pub(crate) fn abort_build(&mut self, key: DefinitionBuildKey<G>) {
@@ -1958,12 +1947,11 @@ impl<G> DefinitionArena<G> {
             .iter()
             .find(|promotion| promotion.source_row == id.format_index())
         {
-            return Ok(DefinitionId {
-                region: DefinitionRegionCoordinate::new(GLOBAL_REGION),
-                row: promotion.destination_row,
-                identity: promotion.destination_identity,
-                _brand: PhantomData,
-            });
+            return Ok(DefinitionId::new(
+                GLOBAL_REGION,
+                promotion.destination_row,
+                promotion.destination_identity,
+            ));
         }
         let source_header = *source_region
             .headers
@@ -2003,16 +1991,11 @@ impl<G> DefinitionArena<G> {
         });
         self.accounting
             .allocate_shared_dynamic(definition_memory_words(source_words.len()));
-        let promoted = DefinitionId {
-            region: DefinitionRegionCoordinate::new(GLOBAL_REGION),
-            row,
-            identity: id.identity,
-            _brand: PhantomData,
-        };
+        let promoted = DefinitionId::new(GLOBAL_REGION, row, source_header.semantic_identity);
         source_region.promotions.push(DefinitionPromotion {
             source_row: id.format_index(),
             destination_row: row,
-            destination_identity: id.identity,
+            destination_identity: source_header.semantic_identity,
         });
         Ok(promoted)
     }
