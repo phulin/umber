@@ -192,16 +192,28 @@ impl std::fmt::Display for CommandError {
                 limit,
                 burned,
                 work,
-            } => write!(
-                formatter,
-                "canonical command fuel exhausted after {burned} actions (limit {limit}); command work: fuel_charges={} token_frame_steps={} expanded_deliveries={} meaning_lookups={} scanner_tokens={} write_expansions={}",
-                work.fuel_charges,
-                work.token_frame_steps,
-                work.expanded_deliveries,
-                work.meaning_lookups,
-                work.scanner_tokens,
-                work.write_expansions,
-            ),
+            } => {
+                write!(
+                    formatter,
+                    "canonical command fuel exhausted after {burned} actions (limit {limit}); command work: fuel_charges={} token_frame_steps={} expanded_deliveries={} meaning_lookups={} scanner_tokens={} write_expansions={}",
+                    work.fuel_charges,
+                    work.token_frame_steps,
+                    work.expanded_deliveries,
+                    work.meaning_lookups,
+                    work.scanner_tokens,
+                    work.write_expansions,
+                )?;
+                #[cfg(feature = "profiling")]
+                write!(
+                    formatter,
+                    " raw_source_deliveries={} raw_stored_token_deliveries={} raw_macro_argument_deliveries={} raw_synthetic_end_v_deliveries={}",
+                    work.raw_delivery_kinds[0],
+                    work.raw_delivery_kinds[1],
+                    work.raw_delivery_kinds[2],
+                    work.raw_delivery_kinds[3],
+                )?;
+                Ok(())
+            }
             Self::InputInvariant(origin) => {
                 write!(
                     formatter,

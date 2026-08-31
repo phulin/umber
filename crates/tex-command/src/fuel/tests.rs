@@ -70,6 +70,13 @@ fn published_work_derives_fuel_without_mutating_detail_counters() {
         fuel.work().token_frame_steps,
     );
     assert_eq!(fuel.remaining, 1);
+    fuel.charge().expect("second charge");
+    let published = fuel.charge().expect_err("third charge exhausts fuel");
+    assert!(
+        published
+            .to_string()
+            .contains("raw_source_deliveries=0 raw_stored_token_deliveries=1 raw_macro_argument_deliveries=0 raw_synthetic_end_v_deliveries=0")
+    );
 }
 
 #[test]
