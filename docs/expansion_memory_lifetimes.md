@@ -529,13 +529,21 @@ publication.
 TeX82 §§310--318 input context has one live owner: `InputState`. Ordinary
 executor scan/apply handoffs do not project that owner into a `String`.
 `DiagnosticContextCoordinate` carries only the command-timeline owner and the
-current input/context incarnations. Capturing it performs no stack walk,
-pseudoprint, allocation, clone, or buffer move. Publication validates both
-incarnations before traversing the live stack; a foreign owner, input advance,
-push/pop, rollback, source-owner swap, or terminal-context replacement is
-stale and is rejected before rendering. The coordinate owns no row or backing,
-so it is neither a cache nor a lifetime registry and cannot cross a detached
-continuation boundary.
+current exposed-row and context-scalar coordinates. A source top contributes
+its packed frame, ABA-checked slot key, immutable backing identities, and
+copy-small current-line/lexer state; stored and direct macro-argument tops
+contribute their packed frame. The existing input-history lineage coordinate,
+row-admission serial, and source-owner lifetime serial reject rollback,
+push/pop ABA, and buried generated-source replacement.
+Retained line, pending-source frontier, `force_eof`, and the runtime-only
+terminal-string owner are compared directly. Capturing performs one top-row
+read and, only for a source top, one owner-slot read; it performs no stack walk,
+pseudoprint, allocation, clone, hash, or buffer move. Publication validates
+that structural coordinate before traversing the live stack. A foreign owner,
+input advance, push/pop, rollback, source-line or source-owner replacement, or
+terminal-context replacement is stale and is rejected before rendering. The
+coordinate owns no row or backing, so it is neither a cache nor a lifetime
+registry and cannot cross a detached continuation boundary.
 
 The context-consumer audit has these publication boundaries:
 
@@ -800,7 +808,11 @@ while its stored and macro-argument branches borrow the admitted span directly;
 each writes the caller's final command and advances the compact position before
 that top borrow ends. The same transition settles fuel, suppression, alignment,
 or parameter replay and returns only its final status. No cursor/token carrier,
-intermediate delivery result, or second top lookup crosses that boundary.
+intermediate delivery result, second top lookup, or diagnostic revision write
+crosses that boundary. Lazy diagnostic invalidation reads the advanced frame
+or source lexer coordinate only if a cold publication coordinate is captured
+or validated; resident source, stored-token, and macro-argument delivery carry
+no diagnostic field.
 Stored and macro-argument cursors read only required packed-frame scalars and
 never copy the complete frame. The
 common packed frame on every row carries the active external-source context;

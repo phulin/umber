@@ -137,6 +137,10 @@ pub struct CommandState<G> {
     /// Retained width of TeX82 §31's bottom terminal buffer. This is live
     /// session accounting used to compose later nested buffer high waters.
     pub(crate) terminal_buffer_slots: usize,
+    /// Runtime lifetime identity of the retained terminal-line owner. It is
+    /// outside semantic roots and changes only when that cold string owner is
+    /// replaced, never during command delivery.
+    pub(crate) diagnostic_terminal_context_owner: u64,
     /// Runtime-only source-owner incarnation allocator. Unlike semantic input
     /// identities, this counter is never rolled back, so an ordered source
     /// inverse cannot name a later occupant of the same physical stack row.
@@ -201,14 +205,15 @@ pub(crate) struct TokenCollectorPathCounters {
 
 /// Compact coordinate for TeX82's live §310 input display.
 ///
-/// It is valid only while both the command timeline owner and authoritative
-/// input-stack revision remain unchanged. It owns no strings, rows, or
-/// backing and therefore cannot prolong any input lifetime.
+/// It is valid only while the command timeline owner, exposed input-row
+/// coordinate, and context-visible scalars still match. It owns no strings,
+/// rows, or backing and therefore cannot prolong any input lifetime.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DiagnosticContextCoordinate {
     owner: u64,
-    input_revision: u64,
-    scalar_revision: u64,
+    input: crate::input::InputStackContextCoordinate,
+    scalar: crate::input::InputScalarContextCoordinate,
+    terminal_context_owner: u64,
 }
 
 /// A diagnostic coordinate no longer names the live input projection it was
@@ -372,6 +377,7 @@ impl<G> Default for CommandState<G> {
             timeline: crate::snapshot::CommandTimeline::default(),
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
+            diagnostic_terminal_context_owner: 0,
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
@@ -1316,8 +1322,9 @@ impl<G> CommandState<G> {
     pub fn diagnostic_context_coordinate(&self) -> DiagnosticContextCoordinate {
         DiagnosticContextCoordinate {
             owner: self.timeline.owner_id(),
-            input_revision: self.input.levels.context_revision(),
-            scalar_revision: self.input.context_revision,
+            input: self.input.levels.diagnostic_context_coordinate(),
+            scalar: self.input.diagnostic_scalar_coordinate(),
+            terminal_context_owner: self.diagnostic_terminal_context_owner,
         }
     }
 
@@ -1328,8 +1335,12 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> Result<String, StaleDiagnosticContext> {
         if coordinate.owner != self.timeline.owner_id()
-            || coordinate.input_revision != self.input.levels.context_revision()
-            || coordinate.scalar_revision != self.input.context_revision
+            || !self
+                .input
+                .levels
+                .validates_diagnostic_context(coordinate.input)
+            || coordinate.scalar != self.input.diagnostic_scalar_coordinate()
+            || coordinate.terminal_context_owner != self.diagnostic_terminal_context_owner
         {
             return Err(StaleDiagnosticContext);
         }
@@ -1348,7 +1359,10 @@ impl<G> CommandState<G> {
         }
         self.terminal_buffer_slots = line.chars().count();
         self.input.terminal_context_line = Some(line);
-        self.input.context_revision = self.input.context_revision.wrapping_add(1).max(1);
+        self.diagnostic_terminal_context_owner = self
+            .diagnostic_terminal_context_owner
+            .checked_add(1)
+            .expect("terminal context owner identity exhausted");
     }
 
     pub(crate) fn open_context_starts_with_print_ln(

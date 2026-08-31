@@ -277,7 +277,9 @@ collector (see `src/conditionals.rs`).
   argument cursors therefore share a single top access, matching first-touch
   transition, direct final-command write, fuel/alignment/parameter settlement,
   restartable exhaustion pop, retirement observation/alignment/replay settlement,
-  and diagnostic revision without a callback or returned exhaustion result.
+  without a callback, returned exhaustion result, or diagnostic invalidation
+  write. A cold diagnostic boundary instead captures the exposed packed frame;
+  source tops add their stable slot and exact line/cursor owner coordinate.
   The resident transition continues immediately from the new top after an
   ordinary token or macro-argument pop, including a v-template that has
   crossed its retained `do_endv` boundary. The

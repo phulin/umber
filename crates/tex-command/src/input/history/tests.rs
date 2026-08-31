@@ -25,7 +25,7 @@ fn assert_exact_direct_transition<G>(
 ) {
     let checkpoint = state.input.levels.mark().expect("input checkpoint");
     state.input.levels.reset_cursor_mutation_counters();
-    let opening_revision = state.input.levels.context_revision();
+    let opening_coordinate = state.input.levels.diagnostic_context_coordinate();
     let before_history = state.input.levels.counters();
     #[cfg(feature = "profiling")]
     let owner = HotCoreAllocationOwner::DeliveryAndScan;
@@ -53,21 +53,34 @@ fn assert_exact_direct_transition<G>(
         }
     );
     assert_eq!(after_history.undo_records - before_history.undo_records, 1);
-    assert_eq!(
-        state.input.levels.context_revision(),
-        opening_revision.wrapping_add(2).max(1)
+    assert_ne!(
+        state.input.levels.diagnostic_context_coordinate(),
+        opening_coordinate
     );
+    let delivered_coordinate = state.input.levels.diagnostic_context_coordinate();
     assert_eq!(
         state.input.levels.as_slice().last().map(cursor_position),
         Some(2)
     );
 
     state.input.levels.begin_checkpoint_candidate(checkpoint);
+    assert!(
+        !state
+            .input
+            .levels
+            .validates_diagnostic_context(delivered_coordinate)
+    );
     assert_eq!(
         state.input.levels.as_slice().last().map(cursor_position),
         Some(0)
     );
     state.input.levels.reject_checkpoint_candidate();
+    assert!(
+        !state
+            .input
+            .levels
+            .validates_diagnostic_context(delivered_coordinate)
+    );
     assert_eq!(
         state.input.levels.as_slice().last().map(cursor_position),
         Some(2)

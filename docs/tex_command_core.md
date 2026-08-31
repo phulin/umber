@@ -1783,12 +1783,17 @@ No `CurrentCommand` is live at a durable named checkpoint.
 
 Diagnostic context follows the same generation rule. An ordinary command
 episode may retain a copy-small `DiagnosticContextCoordinate`, consisting of
-the command-timeline owner and authoritative input/context incarnations, but
-not rendered lines or strings. The executor validates that coordinate and
+the command-timeline owner, exposed packed input frame, source-line owner and
+lexer scalars when the source row is top, structural admission/source-owner
+lifetime serials, the input-history lineage, and the directly compared context
+scalars, but not rendered lines or strings. Source, stored-token, and direct macro-argument delivery do
+not update a diagnostic epoch. The executor validates the coordinate and
 renders TeX82 §§310--318 only when a diagnostic is actually published. Input
 mutation or owner mismatch makes the coordinate stale; detached continuations
-render before detachment and never serialize the coordinate. There is no
-context cache, shared string mirror, compaction pass, or coordinate registry.
+render before detachment and never serialize the coordinate. Capture and
+validation inspect only the top row, never scan or hash the stack. There is no
+context epoch, cache, shared string mirror, compaction pass, or coordinate
+registry.
 
 ## 12. Input levels
 

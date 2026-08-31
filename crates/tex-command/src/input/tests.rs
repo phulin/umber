@@ -88,6 +88,118 @@ fn stored_token_advance_invalidates_a_diagnostic_coordinate() {
     });
 }
 
+#[test]
+fn source_advance_invalidates_a_diagnostic_coordinate() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"A"[..]),
+            ))
+            .expect("source registration");
+        command.open_registered_source(source).expect("source open");
+        let coordinate = command.diagnostic_context_coordinate();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert!(processor.get_next().expect("source delivers").is_some());
+        drop(processor);
+        drop(context);
+        let stores = universe.command_context().expect("diagnostic context");
+        assert_eq!(
+            command.render_diagnostic_context(coordinate, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+    });
+}
+
+#[test]
+fn push_pop_aba_and_context_scalars_reject_old_coordinates() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [tex_state::token::Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            }],
+        );
+        let before_push = command.diagnostic_context_coordinate();
+        crate::test_harness::push(
+            &mut command,
+            [tex_state::token::Token::Char {
+                ch: 'y',
+                cat: Catcode::Other,
+            }],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert!(
+            processor
+                .get_next()
+                .expect("nested token delivers")
+                .is_some()
+        );
+        assert!(
+            processor
+                .get_next()
+                .expect("nested level retires")
+                .is_some()
+        );
+        drop(processor);
+        drop(context);
+        let stores = universe.command_context().expect("diagnostic context");
+        assert_eq!(
+            command.render_diagnostic_context(before_push, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+
+        let before_scalar = command.diagnostic_context_coordinate();
+        command.set_retained_file_line_number(42);
+        assert_eq!(
+            command.render_diagnostic_context(before_scalar, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+
+        let before_force = command.diagnostic_context_coordinate();
+        command.input.force_eof = true;
+        assert_eq!(
+            command.render_diagnostic_context(before_force, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+
+        let before_pending = command.diagnostic_context_coordinate();
+        command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"pending"[..]),
+            ))
+            .expect("pending source registration");
+        assert_eq!(
+            command.render_diagnostic_context(before_pending, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+    });
+}
+
 fn selected_context_levels(level_count: usize, error_context_lines: i32) -> Vec<Option<usize>> {
     let mut selection = ErrorContextSelection::new(error_context_lines);
     let mut selected = Vec::new();

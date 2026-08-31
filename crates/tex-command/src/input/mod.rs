@@ -13,7 +13,9 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use history::{InputStack, InputStackMark, observed_retirement_reason};
+pub(crate) use history::{
+    InputStack, InputStackContextCoordinate, InputStackMark, observed_retirement_reason,
+};
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
@@ -89,8 +91,15 @@ pub(crate) struct InputState<G> {
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.
     pub(crate) force_eof: bool,
-    /// Runtime incarnation for context-visible scalars outside `levels`.
-    pub(crate) context_revision: u64,
+}
+
+/// Copy-small projection of context-relevant state outside the input rows.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct InputScalarContextCoordinate {
+    retained_file_line_number: i32,
+    pending_source_frontier: u64,
+    pending_source_count: usize,
+    force_eof: bool,
 }
 
 #[cfg(test)]
@@ -132,12 +141,20 @@ impl<G> Default for InputState<G> {
             next_level_identity: 0,
             next_source_identity: 0,
             force_eof: false,
-            context_revision: 1,
         }
     }
 }
 
 impl<G> InputState<G> {
+    pub(crate) fn diagnostic_scalar_coordinate(&self) -> InputScalarContextCoordinate {
+        InputScalarContextCoordinate {
+            retained_file_line_number: self.retained_file_line_number,
+            pending_source_frontier: self.next_source_identity,
+            pending_source_count: self.pending_sources.len(),
+            force_eof: self.force_eof,
+        }
+    }
+
     pub(crate) fn begin_transient_replay(&mut self) -> ReplayTransientMark {
         self.replay.begin_transient()
     }

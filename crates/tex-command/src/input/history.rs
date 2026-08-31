@@ -98,7 +98,6 @@ struct ResidentSourceTop<'a, G> {
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
     source_lex_captures: &'a mut u64,
-    context_revision: &'a mut u64,
     #[cfg(any(test, feature = "profiling"))]
     counters: &'a mut InputCursorMutationCounters,
 }
@@ -180,7 +179,7 @@ impl<G> ResidentSourceTop<'_, G> {
             .line
             .as_ref()
             .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-        let result = match step {
+        match step {
             CompactSourceTokenizationStep::Token(token) => {
                 if self.source.frame.identity() != identity.0
                     || self.source.frame.advance().is_none()
@@ -229,16 +228,13 @@ impl<G> ResidentSourceTop<'_, G> {
                 Ok(ResidentSourceAdvance::NeedLine(identity))
             }
             CompactSourceTokenizationStep::End => Ok(ResidentSourceAdvance::Exhausted(identity)),
-        };
-        *self.context_revision = self.context_revision.wrapping_add(1).max(1);
-        result
+        }
     }
 }
 
 struct ResidentStoredTokenTop<'a, G> {
     cursor: &'a mut super::TokenCursor<G>,
     recorder: InlineCursorRecorder<'a, G>,
-    context_revision: &'a mut u64,
 }
 
 impl<G> ResidentStoredTokenTop<'_, G> {
@@ -252,19 +248,15 @@ impl<G> ResidentStoredTokenTop<'_, G> {
         let Self {
             cursor,
             mut recorder,
-            context_revision,
         } = self;
         recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-        let result = cursor.deliver_into(sources, destination, state);
-        *context_revision = context_revision.wrapping_add(1).max(1);
-        result
+        cursor.deliver_into(sources, destination, state)
     }
 }
 
 struct ResidentMacroArgumentTop<'a, G> {
     cursor: &'a mut super::MacroArgumentCursor<G>,
     recorder: InlineCursorRecorder<'a, G>,
-    context_revision: &'a mut u64,
 }
 
 impl<G> ResidentMacroArgumentTop<'_, G> {
@@ -278,15 +270,12 @@ impl<G> ResidentMacroArgumentTop<'_, G> {
         let Self {
             cursor,
             mut recorder,
-            context_revision,
         } = self;
         recorder.record(InputLevelInlineState::new(
             cursor.frame,
             super::RetirementBehavior::Pop,
         ));
-        let result = cursor.deliver_into(scratch, destination, state);
-        *context_revision = context_revision.wrapping_add(1).max(1);
-        result
+        cursor.deliver_into(scratch, destination, state)
     }
 }
 
@@ -390,6 +379,94 @@ pub(crate) struct InputStackMark {
     pub(crate) occupied_source_buffer_slots: usize,
 }
 
+/// Allocation-free identity of the one mutable input row that can affect a
+/// newly captured TeX82 error context.
+///
+/// Rows below the semantic top are immutable while buried. Their source
+/// context is copied into every descendant frame, so a generated-source
+/// rebind is also visible in the top frame. `row_admissions` prevents a
+/// push/pop ABA from making an older coordinate name the exposed row again.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct InputStackContextCoordinate {
+    history_interval: u64,
+    row_admissions: u64,
+    source_owner_swaps: u64,
+    top: DiagnosticInputTop,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum DiagnosticInputTop {
+    Empty,
+    Source {
+        frame: super::PackedInputFrame,
+        slot: SourceSlotKey,
+        name_class: super::SourceNameClass,
+        cursor: DiagnosticSourceCursor,
+    },
+    Stored {
+        frame: super::PackedInputFrame,
+        retirement: super::RetirementBehavior,
+    },
+    MacroArgument {
+        frame: super::PackedInputFrame,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct DiagnosticSourceCursor {
+    physical_backing: DiagnosticBacking,
+    current_backing: DiagnosticBacking,
+    pending_acquired_line: bool,
+    next_physical_offset: u64,
+    next_line_number: u64,
+    line: Option<DiagnosticSourceLine>,
+    end_after_line: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct DiagnosticBacking {
+    source: tex_state::SourceId,
+    bytes: usize,
+    len: usize,
+}
+
+impl DiagnosticBacking {
+    fn capture(source: &super::RegisteredSource) -> Self {
+        Self {
+            source: source.id,
+            bytes: source.bytes.as_ptr() as usize,
+            len: source.bytes.len(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct DiagnosticSourceLine {
+    physical: super::PhysicalLine,
+    retained_end: u64,
+    endline: Option<crate::CharacterCode>,
+    cursor: super::lines::SourceLexCursor,
+}
+
+impl DiagnosticSourceCursor {
+    fn capture(cursor: &super::SourceCursor) -> Self {
+        Self {
+            physical_backing: DiagnosticBacking::capture(&cursor.backing),
+            current_backing: DiagnosticBacking::capture(cursor.current_backing()),
+            pending_acquired_line: cursor.pending_acquired_line,
+            next_physical_offset: cursor.next_physical_offset,
+            next_line_number: cursor.next_line_number,
+            line: cursor.line.as_ref().map(|line| DiagnosticSourceLine {
+                physical: line.physical,
+                retained_end: line.retained_end,
+                endline: line.endline,
+                cursor: line.cursor,
+            }),
+            end_after_line: cursor.end_after_line,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct InputStackFork {
     accepted_top: usize,
@@ -421,9 +498,6 @@ pub(crate) struct InputStack<G> {
     source_owner_swaps: u64,
     #[cfg(any(test, feature = "profiling"))]
     cursor_mutations: InputCursorMutationCounters,
-    /// Monotonic runtime incarnation of the live diagnostic projection.
-    /// Compact publication coordinates validate this before reading rows.
-    context_revision: u64,
 }
 
 impl<G> Default for InputStack<G> {
@@ -448,7 +522,6 @@ impl<G> Default for InputStack<G> {
             source_owner_swaps: 0,
             #[cfg(any(test, feature = "profiling"))]
             cursor_mutations: InputCursorMutationCounters::default(),
-            context_revision: 1,
         }
     }
 }
@@ -527,6 +600,41 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
+    pub(crate) fn diagnostic_context_coordinate(&self) -> InputStackContextCoordinate {
+        let top = match self.rows.get(self.top.saturating_sub(1)) {
+            None => DiagnosticInputTop::Empty,
+            Some(InputLevel::Source(source)) => {
+                let slot = self.source_slot(source.slot);
+                DiagnosticInputTop::Source {
+                    frame: source.frame,
+                    slot: source.slot,
+                    name_class: slot.name_class,
+                    cursor: DiagnosticSourceCursor::capture(&slot.cursor),
+                }
+            }
+            Some(InputLevel::Tokens(cursor)) => DiagnosticInputTop::Stored {
+                frame: cursor.frame,
+                retirement: cursor.retirement,
+            },
+            Some(InputLevel::MacroArgument(cursor)) => DiagnosticInputTop::MacroArgument {
+                frame: cursor.frame,
+            },
+        };
+        InputStackContextCoordinate {
+            history_interval: self.interval,
+            row_admissions: self.row_admissions,
+            source_owner_swaps: self.source_owner_swaps,
+            top,
+        }
+    }
+
+    pub(crate) fn validates_diagnostic_context(
+        &self,
+        coordinate: InputStackContextCoordinate,
+    ) -> bool {
+        self.diagnostic_context_coordinate() == coordinate
+    }
+
     /// Selects the semantic top once and turns that discrimination into a
     /// branch-owned mutable view. Each view contains only the cursor and
     /// first-touch journal fields its input kind can use.
@@ -563,7 +671,6 @@ impl<G> InputStack<G> {
                         undo: &mut self.undo,
                         source_lex_states: &mut self.source_lex_states,
                         source_lex_captures: &mut self.source_lex_captures,
-                        context_revision: &mut self.context_revision,
                         #[cfg(any(test, feature = "profiling"))]
                         counters: &mut self.cursor_mutations,
                     }),
@@ -591,7 +698,6 @@ impl<G> InputStack<G> {
                             #[cfg(any(test, feature = "profiling"))]
                             counters: &mut self.cursor_mutations,
                         },
-                        context_revision: &mut self.context_revision,
                     }),
                 ))
             }
@@ -617,19 +723,10 @@ impl<G> InputStack<G> {
                             #[cfg(any(test, feature = "profiling"))]
                             counters: &mut self.cursor_mutations,
                         },
-                        context_revision: &mut self.context_revision,
                     }),
                 ))
             }
         }
-    }
-
-    fn note_context_mutation(&mut self) {
-        self.context_revision = self.context_revision.wrapping_add(1).max(1);
-    }
-
-    pub(crate) const fn context_revision(&self) -> u64 {
-        self.context_revision
     }
 
     pub(crate) fn rehome_generated_source(
@@ -671,7 +768,7 @@ impl<G> InputStack<G> {
             rebound = true;
         });
         if rebound {
-            self.note_context_mutation();
+            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
             let root_slot = root_slot.expect("a rebound source owns its slot");
             self.source_lex_states
                 .for_each_value_mut(|_, state| state.rehome_offsets(root_slot, offsets));
@@ -766,7 +863,6 @@ impl<G> InputStack<G> {
                 payload,
                 generation: core::marker::PhantomData,
             });
-            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         }
         for index in 0..self.top {
             let Some(source_context) = self.rows[index].source_context() else {
@@ -786,7 +882,7 @@ impl<G> InputStack<G> {
                 source_context.role(),
             )));
         }
-        self.note_context_mutation();
+        self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         true
     }
@@ -843,7 +939,6 @@ impl<G> InputStack<G> {
             self.partially_captured[index] = self.interval;
         }
         let result = mutate(source, slot);
-        self.note_context_mutation();
         Some(result)
     }
 }
@@ -1232,7 +1327,6 @@ impl<G> InputStack<G> {
             unreachable!()
         };
         cursor.retirement = retirement;
-        self.note_context_mutation();
         true
     }
 
@@ -1253,7 +1347,6 @@ impl<G> InputStack<G> {
         cursor
             .frame
             .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
-        self.note_context_mutation();
         true
     }
 
@@ -1268,7 +1361,6 @@ impl<G> InputStack<G> {
             unreachable!()
         };
         let extended = cursor.frame.extend_limit(additional).is_some();
-        self.note_context_mutation();
         Some(extended)
     }
 
@@ -1298,7 +1390,6 @@ impl<G> InputStack<G> {
     }
 
     fn push_row(&mut self, value: InputLevel<G>) {
-        self.note_context_mutation();
         self.row_admissions = self.row_admissions.saturating_add(1);
         if self.top == self.rows.len() {
             self.rows.push(value);
@@ -1351,7 +1442,6 @@ impl<G> InputStack<G> {
                 .occupied_source_buffer_slots
                 .saturating_sub(source.occupied_buffer_slots);
         }
-        self.note_context_mutation();
         self.top = index;
         if !self.recording {
             let retired = self.rows.pop().expect("input top exists");
@@ -1378,7 +1468,6 @@ impl<G> InputStack<G> {
         debug_assert_eq!(index.checked_add(1), Some(self.top));
         debug_assert!(!matches!(self.rows[index], InputLevel::Source(_)));
         let result = project(&self.rows[index]);
-        self.note_context_mutation();
         self.top = index;
         if !self.recording {
             self.rows.pop();
@@ -1480,7 +1569,6 @@ impl<G> InputStack<G> {
         self.partially_captured[index] = self.interval;
         self.source_owner_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
-        self.note_context_mutation();
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         result
     }
@@ -1524,7 +1612,6 @@ impl<G> InputStack<G> {
             },
         );
         if restored {
-            self.note_context_mutation();
             self.top = mark.top as usize;
             self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
             self.next_interval();
@@ -1570,7 +1657,6 @@ impl<G> InputStack<G> {
         });
         self.top = mark.top as usize;
         self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
-        self.note_context_mutation();
         self.fork = Some(InputStackFork {
             accepted_top,
             accepted_occupied_source_buffer_slots,
@@ -1599,7 +1685,6 @@ impl<G> InputStack<G> {
         );
         self.top = fork.accepted_top;
         self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
-        self.note_context_mutation();
         self.next_interval();
     }
 
@@ -1619,7 +1704,6 @@ impl<G> InputStack<G> {
             },
         );
         self.next_interval();
-        self.note_context_mutation();
     }
 
     pub(crate) fn as_slice(&self) -> &[InputLevel<G>] {
