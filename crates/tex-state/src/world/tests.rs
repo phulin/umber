@@ -53,6 +53,33 @@ fn artifact_identity_excludes_owned_render_presentation() {
 }
 
 #[test]
+fn reachable_future_state_identity_excludes_committed_artifact_history() {
+    let mut first = World::memory();
+    first.enable_reachable_state_identity();
+    let mut second = first.clone();
+    for (world, bytes) in [
+        (&mut first, b"alpha".as_slice()),
+        (&mut second, b"omega".as_slice()),
+    ] {
+        let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+        let reservation = world.reserve_artifact_publication_at(0);
+        world.record_artifact_commit(
+            hash,
+            bytes.to_vec(),
+            ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
+            Vec::new(),
+            reservation,
+        );
+    }
+    assert_ne!(first.artifact_commits(), second.artifact_commits());
+    assert_eq!(
+        first.reachable_state_identity_root(),
+        second.reachable_state_identity_root(),
+        "detached output history is reconciled by artifact prefixes, not future engine state",
+    );
+}
+
+#[test]
 fn cold_render_builder_records_only_detached_sources_or_unknowns() {
     assert!(RenderProvenanceBuilder::for_demand(crate::ProvenanceDemand::DIAGNOSTICS).is_none());
     let recipe = source("chapter.tex", 7, 11);

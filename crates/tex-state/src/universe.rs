@@ -2842,6 +2842,20 @@ impl<G> Universe<G> {
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
 
+    /// Releases a checkpoint captured only to detach boundary evidence.
+    /// Validation must run before the command-side release. Unlike a retained
+    /// root, this capture is not part of the journal or durable low-water set;
+    /// only its private page-checkpoint row requires explicit reclamation.
+    #[doc(hidden)]
+    pub fn release_prevalidated_unretained_runtime_checkpoint(
+        &mut self,
+        released: &RuntimeCheckpoint<G>,
+    ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
+        self.page_region
+            .release_checkpoint(released.page)
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))
+    }
+
     /// Releases only rootless page rows above the generation's monotonic
     /// retained checkpoint prefix.
     pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {

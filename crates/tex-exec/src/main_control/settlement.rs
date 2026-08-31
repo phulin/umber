@@ -634,9 +634,7 @@ impl<G> MainControl<G> {
                 .pop_front()
                 .expect("inspected named-boundary intent remains queued");
             debug_assert_eq!(published, pending);
-            if !checkpoint_role_is_retained(published.source_role)
-                || self.restartable_root_source_identity().is_none()
-            {
+            if !checkpoint_role_is_retained(published.source_role) {
                 continue;
             }
             if published.boundary == crate::EngineBoundary::ShipoutComplete {
@@ -646,9 +644,12 @@ impl<G> MainControl<G> {
                         context: "rootless shipout page release",
                     })?;
             }
-            self.completed_checkpoint_eligibilities.push(
-                crate::checkpoint::CheckpointEligibility::named(published.boundary),
-            );
+            let eligibility = if self.restartable_root_source_identity().is_some() {
+                crate::checkpoint::CheckpointEligibility::named(published.boundary)
+            } else {
+                crate::checkpoint::CheckpointEligibility::evidence_only(published.boundary)
+            };
+            self.completed_checkpoint_eligibilities.push(eligibility);
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
         }

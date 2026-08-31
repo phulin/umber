@@ -1522,6 +1522,14 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             self.pending_release = Some(checkpoint.release_unretained());
             return;
         }
+        if !checkpoint.is_restartable() {
+            self.state.checkpoint_keys.push(None);
+            self.state.checkpoint_retentions.push(None);
+            self.pending_release = self
+                .retained
+                .retain_evidence_checkpoint(checkpoint, evidence);
+            return;
+        }
         self.state.observe_shared_owners(retention);
         self.state.checkpoint_metadata_bytes = self
             .state

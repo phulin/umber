@@ -7887,8 +7887,17 @@ fn terminal_named_boundary_without_a_live_root_is_not_restartable() {
             .expect("terminal output evidence remains publishable");
 
         assert!(control.pending_named_boundaries.is_empty());
-        assert!(control.take_completed_boundaries().is_empty());
-        assert!(control.take_checkpoint_eligibilities().is_empty());
+        assert_eq!(
+            control.take_completed_boundaries(),
+            [crate::EngineBoundary::ShipoutComplete]
+        );
+        let eligibilities = control.take_checkpoint_eligibilities();
+        assert_eq!(eligibilities.len(), 1);
+        assert_eq!(
+            eligibilities[0].boundary(),
+            crate::EngineBoundary::ShipoutComplete
+        );
+        assert!(!eligibilities[0].is_restartable());
     });
 }
 

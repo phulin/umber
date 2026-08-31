@@ -409,6 +409,25 @@ impl<G> RetainedCheckpointStore<'_, G> {
         self.boundaries.append_evidence(evidence);
     }
 
+    /// Retains only detached schedule/comparison evidence and schedules the
+    /// transient aggregate capture for owner-local release. A fork defers that
+    /// release until its command candidate settles; the earliest surviving
+    /// restart root remains the journal low-water throughout.
+    pub fn retain_evidence_checkpoint(
+        &mut self,
+        checkpoint: EngineCheckpoint<G>,
+        evidence: RetainedBoundaryEvidence,
+    ) -> Option<crate::EngineCheckpointRelease<G>> {
+        let release = self.boundaries.release_unretained(checkpoint);
+        self.boundaries.append_evidence(evidence);
+        if matches!(self.boundaries.ownership, BoundaryOwnership::Forked { .. }) {
+            self.boundaries.deferred_releases.push(release);
+            None
+        } else {
+            Some(release)
+        }
+    }
+
     /// Releases one restart root during publication-time budget enforcement.
     /// Detached boundary evidence is owned by the incremental layer and is
     /// intentionally unaffected.
@@ -1086,33 +1105,67 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
     ) -> Self::Output {
         match self {
             Self::Accept => {
-                let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
-                let ledger = candidate
-                    .ledger
-                    .as_mut()
-                    .ok_or(RetainedStateAccessError::StaleAttachment)?;
-                if let Some(command) = candidate.command.as_mut() {
+                let (parked_command, control, deferred_releases) = {
+                    let sidecars =
+                        candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                    let deferred_releases = sidecars
+                        .boundaries
+                        .as_mut()
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?
+                        .take_deferred_releases();
+                    (
+                        sidecars.command.take(),
+                        sidecars.control.take(),
+                        deferred_releases,
+                    )
+                };
+                if let Some(mut command) = parked_command {
                     command.accept_checkpoint_candidate();
+                    for release in deferred_releases {
+                        release.apply_to_command(&mut command, candidate.universe());
+                    }
+                    candidate
+                        .sole_attachment_mut::<EngineGenerationSidecars<G>>()?
+                        .command = Some(command);
                 } else {
-                    let control = candidate
-                        .control
-                        .take()
-                        .ok_or(RetainedStateAccessError::StaleAttachment)?;
-                    candidate.control = Some(control.into_accepted_checkpoint_candidate());
+                    let mut control = control
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?
+                        .into_accepted_checkpoint_candidate();
+                    for release in deferred_releases {
+                        release.apply(&mut control, candidate.universe());
+                    }
+                    candidate
+                        .sole_attachment_mut::<EngineGenerationSidecars<G>>()?
+                        .control = Some(control);
                 }
-                candidate
+                let sidecars = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
+                sidecars
                     .boundaries
                     .as_mut()
                     .ok_or(RetainedStateAccessError::StaleAttachment)?
                     .accept();
-                ledger.accept_checkpoint_candidate();
+                sidecars
+                    .ledger
+                    .as_mut()
+                    .ok_or(RetainedStateAccessError::StaleAttachment)?
+                    .accept_checkpoint_candidate();
             }
             Self::Reject => {
-                let (parked_command, control) = {
+                let (parked_command, control, deferred_releases) = {
                     let sidecars =
                         candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
-                    (sidecars.command.take(), sidecars.control.take())
+                    let deferred_releases = sidecars
+                        .boundaries
+                        .as_mut()
+                        .ok_or(RetainedStateAccessError::StaleAttachment)?
+                        .take_deferred_releases();
+                    (
+                        sidecars.command.take(),
+                        sidecars.control.take(),
+                        deferred_releases,
+                    )
                 };
+                drop(deferred_releases);
                 let command = if let Some(mut command) = parked_command {
                     command.reject_checkpoint_candidate();
                     command
@@ -1460,6 +1513,7 @@ struct BoundaryLane<G> {
     pages: Vec<BoundaryPage<G>>,
     free_head: Option<u32>,
     ownership: BoundaryOwnership,
+    deferred_releases: Vec<crate::EngineCheckpointRelease<G>>,
     protected_record: Option<u64>,
     live_roots: usize,
     rows_released: u64,
@@ -1474,6 +1528,7 @@ impl<G> Default for BoundaryLane<G> {
             pages: Vec::new(),
             free_head: None,
             ownership: BoundaryOwnership::Accepted(VecDeque::new()),
+            deferred_releases: Vec::new(),
             protected_record: None,
             live_roots: 0,
             rows_released: 0,
@@ -1666,6 +1721,64 @@ impl<G> BoundaryLane<G> {
             removed,
             oldest_retained,
         ))
+    }
+
+    fn release_unretained(
+        &self,
+        checkpoint: EngineCheckpoint<G>,
+    ) -> crate::EngineCheckpointRelease<G> {
+        let (oldest_runtime, oldest_command) = match &self.ownership {
+            BoundaryOwnership::Accepted(accepted) => {
+                let oldest = self.oldest_restart_in(accepted);
+                (oldest, oldest)
+            }
+            BoundaryOwnership::Forked {
+                prefix, current, ..
+            } => (
+                self.oldest_restart_in(current),
+                self.newest_restart_in(prefix)
+                    .or_else(|| self.oldest_restart_in(current)),
+            ),
+        };
+        crate::EngineCheckpointRelease::with_component_floors(
+            checkpoint,
+            oldest_runtime,
+            oldest_command,
+        )
+    }
+
+    fn oldest_restart_in(&self, lane: &VecDeque<BoundarySlotKey>) -> Option<&EngineCheckpoint<G>> {
+        for key in lane {
+            let row = self.slot_by_index(key.slot);
+            debug_assert_eq!(row.generation, key.generation);
+            let cell = row
+                .cell
+                .as_ref()
+                .expect("current-generation boundary row remains live");
+            if let Some(checkpoint) = cell.checkpoint.as_ref()
+                && checkpoint.boundary() != crate::EngineBoundary::JobStart
+            {
+                return Some(checkpoint);
+            }
+        }
+        None
+    }
+
+    fn newest_restart_in(&self, lane: &VecDeque<BoundarySlotKey>) -> Option<&EngineCheckpoint<G>> {
+        for key in lane.iter().rev() {
+            let row = self.slot_by_index(key.slot);
+            debug_assert_eq!(row.generation, key.generation);
+            let cell = row
+                .cell
+                .as_ref()
+                .expect("candidate-prefix boundary row remains live");
+            if let Some(checkpoint) = cell.checkpoint.as_ref()
+                && checkpoint.boundary() != crate::EngineBoundary::JobStart
+            {
+                return Some(checkpoint);
+            }
+        }
+        None
     }
 
     fn can_begin(&self, key: &RetainedCheckpointKey) -> bool {
@@ -1916,6 +2029,7 @@ impl<G> BoundaryLane<G> {
     }
 
     fn reject(&mut self) {
+        debug_assert!(self.deferred_releases.is_empty());
         let BoundaryOwnership::Forked {
             mut prefix,
             mut detached_prior,
@@ -1934,6 +2048,7 @@ impl<G> BoundaryLane<G> {
     }
 
     fn accept(&mut self) {
+        debug_assert!(self.deferred_releases.is_empty());
         let BoundaryOwnership::Forked {
             mut prefix,
             detached_prior,
@@ -2092,6 +2207,10 @@ impl<G> BoundaryLane<G> {
         })
         .expect("boundary ownership contains only live rows");
         roots
+    }
+
+    fn take_deferred_releases(&mut self) -> Vec<crate::EngineCheckpointRelease<G>> {
+        std::mem::take(&mut self.deferred_releases)
     }
 }
 

@@ -1636,7 +1636,6 @@ pub struct WorldSnapshot {
 struct WorldReachableStateIdentity {
     effects: crate::state_hash::SemanticSequenceIdentity,
     inputs: crate::state_hash::SemanticSequenceIdentity,
-    artifacts: crate::state_hash::SemanticSequenceIdentity,
     scalars: crate::state_hash::SemanticMapIdentity,
 }
 
@@ -1649,7 +1648,6 @@ impl WorldReachableStateIdentity {
         Self {
             effects: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_6566),
             inputs: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_696e),
-            artifacts: crate::state_hash::SemanticSequenceIdentity::empty(0x776f_726c_645f_6172),
             scalars,
         }
     }
@@ -1658,7 +1656,6 @@ impl WorldReachableStateIdentity {
         crate::state_hash::semantic_scalar_root(0x776f_726c_645f_7274, |hasher| {
             hasher.u64(self.effects.root());
             hasher.u64(self.inputs.root());
-            hasher.u64(self.artifacts.root());
             hasher.u64(self.scalars.root());
         })
     }
@@ -3972,7 +3969,6 @@ impl World {
         self.detached
             .reserve_artifact(self.artifact_commits.len() + 1);
         Arc::make_mut(&mut self.artifact_commits).push(hash);
-        self.record_artifact_identity(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
@@ -4011,9 +4007,7 @@ impl World {
     ) {
         self.detached
             .reserve_artifact(self.artifact_commits.len() + 1);
-        let hash = artifact.hash;
-        Arc::make_mut(&mut self.artifact_commits).push(hash);
-        self.record_artifact_identity(hash);
+        Arc::make_mut(&mut self.artifact_commits).push(artifact.hash);
         Arc::make_mut(&mut self.committed_artifacts).push(artifact);
         Arc::make_mut(&mut self.artifact_publications).push(publication);
     }
@@ -5801,12 +5795,6 @@ impl World {
         let record = self.inputs.last().expect("input record was just published");
         if let Some(identity) = &mut self.reachable_state_identity {
             identity.inputs.push(stable_hash(record));
-        }
-    }
-
-    fn record_artifact_identity(&mut self, hash: ContentHash) {
-        if let Some(identity) = &mut self.reachable_state_identity {
-            identity.artifacts.push(stable_hash(&hash));
         }
     }
 
