@@ -75,6 +75,7 @@ fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
             font_size: 10.0,
             horizontal_scale: 1.0,
             bytes: b"A".to_vec(),
+            advance: None,
         }),
         PdfContentOperation::Rectangle(PdfContentRectangle {
             x: 50.0,
@@ -124,6 +125,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
             font_size: 10.0,
             horizontal_scale: 1.0,
             bytes: bytes.to_vec(),
+            advance: None,
         })
     };
     let bytes = ordered_page_content(&[
@@ -149,6 +151,44 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
 }
 
 #[test]
+fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
+    let text = |x, byte| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x,
+            baseline: 20.0,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            horizontal_scale: 1.0,
+            bytes: vec![byte],
+            advance: Some(5.0),
+        })
+    };
+    let bytes = ordered_page_content(&[
+        text(10.0, b'A'),
+        PdfContentOperation::ColorStack {
+            mode: crate::PdfLiteralMode::Direct,
+            x: 0.0,
+            y: 0.0,
+            bytes: b"0 g".to_vec(),
+        },
+        text(17.0, b'B'),
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        concat!(
+            "BT\n",
+            "/F1 10 Tf\n",
+            "1 0 0 1 10 20 Tm\n",
+            "(A) Tj\n",
+            "0 g\n",
+            "/F1 10 Tf\n",
+            "[-200 (B)] TJ\n",
+            "ET",
+        )
+    );
+}
+
+#[test]
 fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
     let payload = (u8::MIN..=u8::MAX).collect::<Vec<_>>();
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
@@ -158,6 +198,7 @@ fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
         font_size: 10.0,
         horizontal_scale: 1.0,
         bytes: payload.clone(),
+        advance: None,
     })]);
 
     let mut encoded = Vec::with_capacity(514);
@@ -190,6 +231,7 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
         font_size: 10.0,
         horizontal_scale: super::finalize::font_horizontal_scale(&construction),
         bytes: b"proprietary,".to_vec(),
+        advance: None,
     })]);
     assert!(
         String::from_utf8(bytes)

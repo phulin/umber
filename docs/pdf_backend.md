@@ -191,6 +191,11 @@ ordered construction policies. Compact construction groups rules before text;
 ordered construction retains pdfTeX literal, color-stack, matrix, save/restore,
 form, and image order. Both policies execute through one graphics/text-state
 interpreter, including origin restoration and typed `pdf_writer` operators.
+For mapped scalable fonts, that interpreter retains the current text position
+across compatible character, kern, glue, and direct-color operations and emits
+the intervening movement as a `TJ` adjustment, following pdftex.web §690's
+`pdf_begin_string`; fonts without the same `/Widths` raster remain absolutely
+positioned.
 
 The selected 0.15.0 source fork is `phulin/pdf-writer` commit
 `030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through

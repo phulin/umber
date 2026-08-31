@@ -57,6 +57,10 @@ pub struct PdfContentTextRun {
     /// for an auto-expanded font while sharing its base PDF font resource.
     pub horizontal_scale: f32,
     pub bytes: Vec<u8>,
+    /// Advance produced by the emitted PDF `/Widths` entries, in user-space
+    /// points. `None` keeps the run independently positioned when the font
+    /// program does not expose the same scalable-width raster as pdfTeX.
+    pub advance: Option<f32>,
 }
 
 /// One ordered page-content operation. Generated PDF syntax is lowered only

@@ -53,6 +53,14 @@ struct PdfPainter {
     origin: (f32, f32),
     saved_origins: Vec<(f32, f32)>,
     in_text: bool,
+    text_cursor: Option<PdfTextCursor>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfTextCursor {
+    x: f32,
+    baseline: f32,
+    horizontal_scale: f32,
 }
 
 impl PdfPainter {
@@ -62,6 +70,7 @@ impl PdfPainter {
             origin: (0.0, 0.0),
             saved_origins: Vec::new(),
             in_text: false,
+            text_cursor: None,
         }
     }
 
@@ -135,10 +144,45 @@ impl PdfPainter {
             self.in_text = true;
         }
         let (x, baseline) = self.relative_position(run.x, run.baseline);
+        self.content.set_font(Name(&run.font_name), run.font_size);
+        if let (Some(cursor), Some(advance)) = (self.text_cursor, run.advance)
+            && cursor.baseline == baseline
+            && cursor.horizontal_scale == run.horizontal_scale
+        {
+            // pdftex.web §690 (`pdf_begin_string`) keeps the PDF text
+            // position across character, kern, glue, and direct-color nodes.
+            // Express the next TeX anchor as a TJ adjustment in the current
+            // font raster instead of resetting Tm for every positioned run.
+            let text_unit = run.font_size * run.horizontal_scale / 1000.0;
+            if text_unit > 0.0 {
+                let adjustment = (-(x - cursor.x) / text_unit).round();
+                if adjustment.abs() < 32_768.0 {
+                    if adjustment == 0.0 {
+                        self.content.show(Str(&run.bytes));
+                    } else {
+                        self.content
+                            .show_positioned()
+                            .items()
+                            .adjust(adjustment)
+                            .show(Str(&run.bytes));
+                    }
+                    self.text_cursor = Some(PdfTextCursor {
+                        x: cursor.x - adjustment * text_unit + advance,
+                        baseline,
+                        horizontal_scale: run.horizontal_scale,
+                    });
+                    return;
+                }
+            }
+        }
         self.content
-            .set_font(Name(&run.font_name), run.font_size)
             .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline])
             .show(Str(&run.bytes));
+        self.text_cursor = run.advance.map(|advance| PdfTextCursor {
+            x: x + advance,
+            baseline,
+            horizontal_scale: run.horizontal_scale,
+        });
     }
 
     fn prepare_literal(&mut self, mode: crate::PdfLiteralMode, x: f32, y: f32) {
@@ -189,6 +233,7 @@ impl PdfPainter {
             self.content.end_text();
             self.in_text = false;
         }
+        self.text_cursor = None;
     }
 
     fn finish(mut self) -> Vec<u8> {

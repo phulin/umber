@@ -633,6 +633,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             }
                             crate::positioned::TextUnit::Space => {
                                 if !segment.is_empty() {
+                                    let advance = scalable_text_advance(
+                                        resource,
+                                        font,
+                                        &segment,
+                                        font_size,
+                                        horizontal_scale,
+                                    );
                                     content_operations.push(PdfContentOperation::Text(
                                         PdfContentTextRun {
                                             x: scaled_to_bp_f32(
@@ -648,6 +655,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                             font_size,
                                             horizontal_scale,
                                             bytes: std::mem::take(&mut segment),
+                                            advance,
                                         },
                                     ));
                                 }
@@ -678,6 +686,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                             font_size: space_size,
                                             horizontal_scale: space_horizontal_scale,
                                             bytes: vec![b' '],
+                                            advance: None,
                                         },
                                     ));
                                 }
@@ -697,6 +706,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             font_name: resource_name,
                             font_size,
                             horizontal_scale,
+                            advance: scalable_text_advance(
+                                resource,
+                                font,
+                                &segment,
+                                font_size,
+                                horizontal_scale,
+                            ),
                             bytes: segment,
                         }));
                     }
@@ -735,6 +751,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             font_size: 10.0,
                             horizontal_scale: 1.0,
                             bytes: vec![b' '],
+                            advance: None,
                         }));
                     }
                 },
@@ -1192,6 +1209,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         font_name: resource_name,
                         font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
                         horizontal_scale: font_horizontal_scale(&font.construction),
+                        advance: None,
                         bytes,
                     }));
                 }
@@ -2868,6 +2886,22 @@ pub(super) fn font_horizontal_scale(construction: &crate::FontResourceConstructi
         | crate::FontResourceConstruction::Copied { .. }
         | crate::FontResourceConstruction::Letterspaced { .. } => 1.0,
     }
+}
+
+fn scalable_text_advance(
+    input: &PdfFontInput,
+    font: &crate::FontResource,
+    bytes: &[u8],
+    font_size: f32,
+    horizontal_scale: f32,
+) -> Option<f32> {
+    input.map_entry.as_ref()?;
+    let denominator = i64::from(font.at_size.raw()).max(1);
+    let width_units = bytes.iter().try_fold(0_i64, |total, &code| {
+        let width = i64::from(input.metrics.widths[usize::from(code)].raw());
+        total.checked_add((width * 1000 + denominator / 2) / denominator)
+    })?;
+    Some(width_units as f32 * font_size * horizontal_scale / 1000.0)
 }
 
 fn pdf_font_objects(
