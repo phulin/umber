@@ -284,6 +284,39 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
 }
 
 #[test]
+fn pdftex_scalable_width_keeps_its_one_decimal_raster() {
+    // pdftex.web §690: `adv_char_width` and `/Widths` share a 1/10000
+    // font-size raster, serialized as one decimal place in text-space units.
+    let font_size = Scaled::from_raw(10 * Scaled::UNITY);
+    let one_third_em = Scaled::from_raw(218_453);
+    assert_eq!(
+        super::finalize::pdftex_scalable_width_tenths(one_third_em, font_size),
+        Some(3333)
+    );
+}
+
+#[test]
+fn expanded_glyph_end_exposes_internal_font_kerns() {
+    // pdftex.web §690: `adv_char_width` advances on the expanded glyph raster,
+    // while a following font kern remains a distinct `pdf_begin_string`
+    // movement. The PDF segment builder must therefore break at 6031, rather
+    // than absorbing that kern into the adjustment before the next word.
+    let construction = crate::FontResourceConstruction::Expanded {
+        source_font_id: 1,
+        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        ratio: 20,
+    };
+    let glyph_end = super::finalize::positioned_char_end(
+        Scaled::from_raw(5000),
+        Scaled::from_raw(1000),
+        &construction,
+    )
+    .expect("expanded glyph end fits");
+    assert_eq!(glyph_end, Scaled::from_raw(6020));
+    assert_ne!(glyph_end, Scaled::from_raw(6031));
+}
+
+#[test]
 fn pdftex_font_size_uses_four_places_for_tf_and_cursor_advances() {
     // pdftex.web §690: `pdf_set_font` emits the font size with four
     // decimal places, and `pdf_use_font` retains that raster for

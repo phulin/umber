@@ -541,6 +541,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         .fonts
                         .get(&font.semantic_identity)
                         .ok_or(PdfBuildError::MissingFontResource(font.name.clone()))?;
+                    let width_resource = mapped_width_resource(input, font, resource)?;
                     let resource_name = format!("F{}", resource.resource_number).into_bytes();
                     let font_id = match page_fonts.get(&resource.resource_number).copied() {
                         Some(id) => id,
@@ -593,7 +594,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 };
                                 let font_started = std::time::Instant::now();
                                 objects.extend(pdf_font_objects(
-                                    resource,
+                                    width_resource,
                                     ids,
                                     font,
                                     &resource_name,
@@ -617,9 +618,21 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     let font_size = pdftex_font_size(font.at_size);
                     let positioning_font_size = pdftex_font_size_f64(font.at_size);
                     let horizontal_scale = font_horizontal_scale(&font.construction);
-                    let explicit_space = font_has_explicit_space(resource);
+                    let explicit_space = font_has_explicit_space(width_resource);
+                    let text_context = MappedTextContext {
+                        resource: width_resource,
+                        font,
+                        font_name: &resource_name,
+                        h_origin: record.h_origin(),
+                        decimal_digits: parameters.decimal_digits,
+                        baseline,
+                        font_size,
+                        positioning_font_size,
+                        horizontal_scale,
+                    };
                     let mut segment = Vec::new();
                     let mut segment_x = None;
+                    let mut segment_end = None;
                     for ((unit, position), physical_code) in run
                         .units
                         .iter()
@@ -629,44 +642,31 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         match unit {
                             crate::positioned::TextUnit::Code(_) => {
                                 if let Some(code) = physical_code {
+                                    if !segment.is_empty() && segment_end != Some(*position) {
+                                        content_operations.push(mapped_text_segment(
+                                            &text_context,
+                                            &mut segment,
+                                            &mut segment_x,
+                                        )?);
+                                    }
                                     segment_x.get_or_insert(*position);
                                     segment.push(*code);
+                                    segment_end = Some(positioned_char_end(
+                                        *position,
+                                        width_resource.metrics.widths[usize::from(*code)],
+                                        &font.construction,
+                                    )?);
                                 }
                             }
                             crate::positioned::TextUnit::Space => {
                                 if !segment.is_empty() {
-                                    let advance = scalable_text_advance(
-                                        resource,
-                                        font,
-                                        &segment,
-                                        positioning_font_size,
-                                        horizontal_scale,
-                                    );
-                                    let anchor = segment_x
-                                        .take()
-                                        .expect("nonempty segment has an anchor")
-                                        .checked_add(record.h_origin())
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    content_operations.push(PdfContentOperation::Text(
-                                        PdfContentTextRun {
-                                            x: scaled_to_bp_f32(anchor, parameters.decimal_digits),
-                                            raster: Some(PdfContentTextRaster {
-                                                serialized_x: scaled_to_bp_f64(
-                                                    anchor,
-                                                    parameters.decimal_digits,
-                                                ),
-                                                position_x: scaled_to_bp_unrounded_f64(anchor),
-                                                font_size: positioning_font_size,
-                                            }),
-                                            baseline,
-                                            font_name: resource_name.clone(),
-                                            font_size,
-                                            horizontal_scale,
-                                            bytes: std::mem::take(&mut segment),
-                                            advance,
-                                        },
-                                    ));
+                                    content_operations.push(mapped_text_segment(
+                                        &text_context,
+                                        &mut segment,
+                                        &mut segment_x,
+                                    )?);
                                 }
+                                segment_end = None;
                                 if interword_space_enabled {
                                     let (font_name, space_size, space_horizontal_scale) =
                                         if explicit_space {
@@ -703,30 +703,11 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         }
                     }
                     if !segment.is_empty() {
-                        let anchor = segment_x
-                            .expect("nonempty segment has an anchor")
-                            .checked_add(record.h_origin())
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                        content_operations.push(PdfContentOperation::Text(PdfContentTextRun {
-                            x: scaled_to_bp_f32(anchor, parameters.decimal_digits),
-                            raster: Some(PdfContentTextRaster {
-                                serialized_x: scaled_to_bp_f64(anchor, parameters.decimal_digits),
-                                position_x: scaled_to_bp_unrounded_f64(anchor),
-                                font_size: positioning_font_size,
-                            }),
-                            baseline,
-                            font_name: resource_name,
-                            font_size,
-                            horizontal_scale,
-                            advance: scalable_text_advance(
-                                resource,
-                                font,
-                                &segment,
-                                positioning_font_size,
-                                horizontal_scale,
-                            ),
-                            bytes: segment,
-                        }));
+                        content_operations.push(mapped_text_segment(
+                            &text_context,
+                            &mut segment,
+                            &mut segment_x,
+                        )?);
                     }
                 }
                 PositionedEvent::PdfAccessibility(control) => match control.control {
@@ -1143,6 +1124,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         .fonts
                         .get(&font.semantic_identity)
                         .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
+                    let width_resource = mapped_width_resource(input, font, resource)?;
                     let resource_name = format!("F{}", resource.resource_number).into_bytes();
                     let font_id = object_id(resource.object_number)?;
                     form_fonts.insert(resource.resource_number, font_id);
@@ -1191,7 +1173,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         };
                         let font_started = std::time::Instant::now();
                         objects.extend(pdf_font_objects(
-                            resource,
+                            width_resource,
                             ids,
                             font,
                             &resource_name,
@@ -2891,6 +2873,95 @@ fn font_has_explicit_space(font: &PdfFontInput) -> bool {
         .is_some_and(|encoding| encoding.glyph_names()[32] == b"space")
 }
 
+fn mapped_width_resource<'a>(
+    input: &'a PdfFinalizationInput,
+    font: &crate::FontResource,
+    resource: &'a PdfFontInput,
+) -> Result<&'a PdfFontInput, PdfBuildError> {
+    match &font.construction {
+        crate::FontResourceConstruction::Expanded {
+            source_identity, ..
+        } => input
+            .fonts
+            .get(source_identity)
+            .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone())),
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => Ok(resource),
+    }
+}
+
+struct MappedTextContext<'a> {
+    resource: &'a PdfFontInput,
+    font: &'a crate::FontResource,
+    font_name: &'a [u8],
+    h_origin: Scaled,
+    decimal_digits: i32,
+    baseline: f32,
+    font_size: f32,
+    positioning_font_size: f64,
+    horizontal_scale: f32,
+}
+
+fn mapped_text_segment(
+    context: &MappedTextContext<'_>,
+    bytes: &mut Vec<u8>,
+    segment_x: &mut Option<Scaled>,
+) -> Result<PdfContentOperation, PdfBuildError> {
+    let anchor = segment_x
+        .take()
+        .expect("nonempty segment has an anchor")
+        .checked_add(context.h_origin)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let advance = scalable_text_advance(
+        context.resource,
+        context.font,
+        bytes,
+        context.positioning_font_size,
+        context.horizontal_scale,
+    );
+    Ok(PdfContentOperation::Text(PdfContentTextRun {
+        x: scaled_to_bp_f32(anchor, context.decimal_digits),
+        raster: Some(PdfContentTextRaster {
+            serialized_x: scaled_to_bp_f64(anchor, context.decimal_digits),
+            position_x: scaled_to_bp_unrounded_f64(anchor),
+            font_size: context.positioning_font_size,
+        }),
+        baseline: context.baseline,
+        font_name: context.font_name.to_vec(),
+        font_size: context.font_size,
+        horizontal_scale: context.horizontal_scale,
+        bytes: std::mem::take(bytes),
+        advance,
+    }))
+}
+
+pub(super) fn positioned_char_end(
+    position: Scaled,
+    width: Scaled,
+    construction: &crate::FontResourceConstruction,
+) -> Result<Scaled, PdfBuildError> {
+    let width = match construction {
+        crate::FontResourceConstruction::Expanded { ratio, .. } => {
+            let numerator = i64::from(width.raw()) * (1000 + i64::from(*ratio));
+            let rounded = if numerator >= 0 {
+                (numerator + 500) / 1000
+            } else {
+                -((-numerator + 500) / 1000)
+            };
+            Scaled::from_raw(
+                i32::try_from(rounded).map_err(|_| PdfBuildError::PageGeometryOverflow)?,
+            )
+        }
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => width,
+    };
+    position
+        .checked_add(width)
+        .ok_or(PdfBuildError::PageGeometryOverflow)
+}
+
 pub(super) fn font_horizontal_scale(construction: &crate::FontResourceConstruction) -> f32 {
     match construction {
         crate::FontResourceConstruction::Expanded { ratio, .. } => {
@@ -2910,12 +2981,13 @@ fn scalable_text_advance(
     horizontal_scale: f32,
 ) -> Option<f64> {
     input.map_entry.as_ref()?;
-    let denominator = i64::from(font.at_size.raw()).max(1);
-    let width_units = bytes.iter().try_fold(0_i64, |total, &code| {
-        let width = i64::from(input.metrics.widths[usize::from(code)].raw());
-        total.checked_add((width * 1000 + denominator / 2) / denominator)
+    let width_tenths = bytes.iter().try_fold(0_i64, |total, &code| {
+        total.checked_add(pdftex_scalable_width_tenths(
+            input.metrics.widths[usize::from(code)],
+            font.at_size,
+        )?)
     })?;
-    Some(width_units as f64 * font_size * f64::from(horizontal_scale) / 1000.0)
+    Some(width_tenths as f64 * font_size * f64::from(horizontal_scale) / 10_000.0)
 }
 
 fn pdf_font_objects(
@@ -3047,13 +3119,14 @@ fn pdf_font_objects(
     };
     dictionary.insert("FirstChar", PdfValue::Integer(first_char))?;
     dictionary.insert("LastChar", PdfValue::Integer(last_char))?;
-    let denominator = i64::from(font.at_size.raw()).max(1);
     let widths = (first_char as u8..=last_char as u8)
         .map(|code| {
-            let width = i64::from(input.metrics.widths[usize::from(code)].raw());
-            PdfValue::Integer((width * 1000 + denominator / 2) / denominator)
+            let coefficient =
+                pdftex_scalable_width_tenths(input.metrics.widths[usize::from(code)], font.at_size)
+                    .expect("validated scalable font has positive bounded metrics");
+            PdfNumber::new(coefficient, 1).map(PdfValue::Number)
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     dictionary.insert("Widths", PdfValue::Array(widths))?;
     let to_unicode = ids
         .to_unicode
@@ -3081,6 +3154,7 @@ fn pdf_font_objects(
         "FontName",
         PdfValue::Name(PdfName::new(subset_font_name.clone())),
     )?;
+    let denominator = i64::from(font.at_size.raw()).max(1);
     let scale_metric =
         |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
     let tfm_ascent = input
@@ -4402,6 +4476,39 @@ pub(super) fn pdftex_font_size(value: Scaled) -> f32 {
 
 fn pdftex_font_size_f64(value: Scaled) -> f64 {
     scaled_to_bp_coefficient(value, 4) as f64 / 10_000.0
+}
+
+pub(super) fn pdftex_scalable_width_tenths(width: Scaled, font_size: Scaled) -> Option<i64> {
+    // pdftex.web §690 and writefont.c `create_charwidth_array`: first retain
+    // the four-place font-size raster selected by `pdf_use_font`, then divide
+    // each TFM width onto the 1/10000 raster consumed by `adv_char_width`.
+    // `/Widths` prints that coefficient with one fractional decimal place.
+    const ONE_HUNDRED_BP: i64 = 6_578_176;
+    let (_, font_size_raster) =
+        pdftex_divide_scaled_positive(i64::from(font_size.raw()), ONE_HUNDRED_BP, 6)?;
+    let (coefficient, _) =
+        pdftex_divide_scaled_positive(i64::from(width.raw()), font_size_raster, 4)?;
+    Some(coefficient)
+}
+
+fn pdftex_divide_scaled_positive(
+    value: i64,
+    divisor: i64,
+    decimal_digits: u32,
+) -> Option<(i64, i64)> {
+    if value < 0 || divisor <= 0 {
+        return None;
+    }
+    let scale = 10_i128.checked_pow(decimal_digits)?;
+    let numerator = i128::from(value).checked_mul(scale)?;
+    let divisor = i128::from(divisor);
+    let quotient = (numerator + divisor / 2) / divisor;
+    let remainder = numerator - quotient * divisor;
+    let scaled_out = i128::from(value) - remainder / scale;
+    Some((
+        i64::try_from(quotient).ok()?,
+        i64::try_from(scaled_out).ok()?,
+    ))
 }
 
 fn scaled_to_bp_unrounded_f64(value: Scaled) -> f64 {

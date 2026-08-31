@@ -196,11 +196,15 @@ across compatible character, kern, glue, and direct-color operations and emits
 the intervening movement as a `TJ` adjustment, following pdftex.web §690's
 `pdf_begin_string`; fonts without the same `/Widths` raster remain absolutely
 positioned. Character-width accumulation uses pdfTeX's independent four-place
-font-size raster, and `Tf` serializes that same four-place value; neither uses
-the document-coordinate precision retained for absolute positions. A retained
-cursor begins at the rounded position serialized by `pdf_set_text_pos`, while
-later `pdf_begin_string` adjustments compare the original unrounded TeX anchor
-against that raster, matching pdftex.web §690.
+font-size raster, `/Widths` preserves its one-decimal text-space coefficients,
+and `Tf` serializes that same four-place font-size value; none uses the
+document-coordinate precision retained for absolute positions. The positioned
+run's exact character anchors split strings at font and automatic kerns, so
+those movements become local `TJ` adjustments instead of accumulating into a
+later interword adjustment. A retained cursor begins at the rounded position
+serialized by `pdf_set_text_pos`, while later `pdf_begin_string` adjustments
+compare the original unrounded TeX anchor against that raster, matching
+pdftex.web §690.
 
 The selected 0.15.0 source fork is `phulin/pdf-writer` commit
 `030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through
