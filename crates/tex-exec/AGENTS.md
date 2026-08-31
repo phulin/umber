@@ -38,9 +38,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   expansion, alignment interception, general operand scanning, preflight phase
   transitions, and typed retry reconstruction into the resident operation
   destinations.
-- `src/main_control/operation_frame.rs`: the singular stationary
-  `OperationFrame`, compact payload and phase tags, adjacent caller-owned typed
-  cold slot, and move-only suspension carriers.
+- `src/main_control/command_episode.rs`: the singular stationary
+  `CommandEpisode`, compact delivery/scanner phases, adjacent caller-owned
+  typed cold slot, borrow-typed hot/cold execution episodes, and the move-only
+  `OperationFrame` constructed only at genuine suspension boundaries.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/rollback, resource and diagnostic retry settlement, and ordered
   semantic/effect/artifact/boundary publication. Its direct-operation mark
@@ -53,18 +54,17 @@ Command operands are scanned by `tex-command` into typed request and result valu
   by-value preflight aggregate crosses those stages. Live executor owners fill
   or drain individual fields through borrow-scoped views; no admitted context
   or preparation survives the operation loan.
-- The `OperationFrame` owns the admitted current command, parked expansion,
-  scalar phase, delivery cursor, scanner child, partial direct scan, and one
-  mutually exclusive compact operation payload in its own fields. The payload
-  owns hot operands directly and names one adjacent caller-owned typed cold
-  slot only for uncommon leaves. Scanning installs either leaf once; a compact
-  `ScannedOperation` tag selects the next phase, preparation changes only
-  attempt-root fields to prepared-root fields, and application consumes
-  semantic leaves through a mutable borrow before clearing the slot. The cold
-  slot moves beside the frame only through a genuine typed suspension;
-  ordinary hot values never reserve its 264 bytes.
-  Do not recreate a nested preflight-command or scanned-operation projection,
-  or extract those fields merely to cross prepare, retry, rollback, or resume.
+- The resident `CommandEpisode` owns the admitted current command, parked
+  expansion, scalar phase, delivery cursor, scanner child, partial direct scan,
+  and the completed hot-family operand. An adjacent caller-owned typed cold
+  slot owns uncommon leaves without entering the resident command layout.
+  Canonical dispatch installs one branch result, then `dispatch_typed_operation`
+  enters hot execution directly or constructs a borrow-typed
+  `ColdExecutionEpisode`; there is no generic prepare/apply readiness mailbox.
+  A move-only `OperationFrame` packages the resident episode and cold slot only
+  when resource, diagnostic, or exact rollback suspension must outlive the
+  call. Do not recreate a nested preflight command, generic operation payload,
+  readiness status, or prepare/apply handoff.
 - Each topology-stable operation prepares executor host capabilities once from
   the authoritative live list. A stack-branded preparation carries the mode
   and shared effective-tail result plus the compact delivery/retry fields
@@ -75,8 +75,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; the scanner
   writes the completed hot operation into the existing caller-owned
-  `OperationFrame`, root preparation mutates that resident operation, and
-  application consumes its fields without a second carrier. Definition, let,
+  `CommandEpisode`, root preparation mutates that resident operation, and
+  typed execution consumes its fields without a second carrier. Definition, let,
   and catcode application, ordered evidence publication, and §1269
   `afterassignment` backup share one callback-scoped admitted context; a group
   transition ends admission before a possible page/host boundary. Detached
@@ -86,10 +86,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   values, the small attempt/prepared root fields that change domain in place,
   and the borrow-scoped promotion writer which preflights the complete root set
   before writing durable owners directly into those fields without an
-  aggregate receipt; `scan.rs` owns uncommon operand collection and writes completed leaves
-  directly into the borrowed caller slot while returning only compact control
-  outcomes; `apply.rs` mutably borrows the resident prepared operation and
-  consumes only its semantic leaves;
+  aggregate receipt; `scan.rs` owns uncommon operand collection and writes
+  completed leaves directly into the borrowed caller slot while returning only
+  compact control outcomes; `apply.rs` mutably borrows the cold branch owned by
+  `ColdExecutionEpisode` and consumes only its semantic leaves;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
   families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct

@@ -1,14 +1,14 @@
-//! Resident operation-frame ownership and typed suspension carriers.
+//! Resident command episodes and typed suspension-only operation frames.
 
 use super::*;
 
 /// The small command-delivery choice at the front of one operation.
 ///
 /// Delivery selects only how the next completed command enters main control;
-/// preparation, application, publication, and evidence are shared.
+/// typed dispatch then stays inside the selected hot or cold execution branch.
 pub(super) enum OperationDelivery {
     Replay,
-    /// The caller-owned operation frame contains the sole live command and
+    /// The caller-owned command episode contains the sole live command and
     /// its compact delivery/scanner coordinates.
     Command,
     /// TeX82 §1038's main-loop lookahead delivered this command with bare
@@ -26,14 +26,14 @@ pub(super) enum OperationDelivery {
     /// preflight processor borrow. The typed family operand is the real Rust
     /// borrow barrier before semantic state application; no command or
     /// universal scanned-step DTO crosses it.
-    Hot,
+    ResidentHot,
     /// Ordinary preflight completed delivery and scanning in its admitted
-    /// context; the caller-owned frame contains the cold operation payload.
-    Scanned,
+    /// context; the adjacent typed slot contains the cold operation.
+    ResidentCold,
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
-    /// The caller-owned operation frame already contains the scanned payload.
-    Prepared,
+    /// The suspension frame has restored the resident typed cold branch.
+    SuspendedCold,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,38 +307,37 @@ pub(super) enum PendingOperationScanPhase {
 
 pub(super) fn own_alignment_retry_child<G>(
     alignment: Option<Option<AlignmentIdentity>>,
-    mut frame: OperationFrame<G>,
+    mut episode: CommandEpisode<G>,
     cold: ColdOperationSlot<G>,
     alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
 ) -> Option<PendingDirectDestination<G>> {
-    let Some((alignment, cursor)) = alignment.zip(frame.cursor) else {
+    let Some((alignment, cursor)) = alignment.zip(episode.cursor) else {
         assert!(
             alignment_scanner.is_none(),
             "a detached scanner continuation requires its typed alignment destination"
         );
-        return frame
+        return episode
             .has_preflight()
             .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
-                frame,
-                cold,
+                frame: OperationFrame::new(episode, cold),
                 resume: PendingFrameResume::Delivery,
             }));
     };
-    match frame.phase {
+    match episode.phase {
         // Alignment remains the caller of its suspended expanded delivery,
         // but it retains only the exact parked root rather than a command
         // projection or scanner wrapper.
-        Some(PreflightCommandPhase::Expanding { .. }) if frame.command.is_none() => {
+        Some(PreflightCommandPhase::Expanding { .. }) if episode.command.is_none() => {
             assert!(
                 alignment_scanner.is_none(),
                 "an expansion child and alignment retry cannot share scanner capabilities"
             );
             assert!(
-                frame.scanner.is_none(),
+                episode.scanner.is_none(),
                 "parked expansion owns its scanner child internally"
             );
-            let expansion = frame.take_expansion();
-            frame.clear_preflight();
+            let expansion = episode.take_expansion();
+            episode.clear_preflight();
             Some(PendingDirectDestination::Alignment(
                 PendingAlignmentDelivery {
                     alignment,
@@ -358,8 +357,7 @@ pub(super) fn own_alignment_retry_child<G>(
             );
             let _ = retry;
             Some(PendingDirectDestination::Frame(PendingFrameDestination {
-                frame,
-                cold,
+                frame: OperationFrame::new(episode, cold),
                 resume: PendingFrameResume::Delivery,
             }))
         }
@@ -373,16 +371,6 @@ pub(super) fn own_alignment_retry_child<G>(
             },
         )),
     }
-}
-
-/// The one completed operation value awaiting its next semantic transition.
-///
-/// Scanning, resource preparation, and hot application are mutually exclusive
-/// phases. Keeping their values in one field makes that exclusivity physical
-/// and prevents the caller frame from reserving three separate large slots.
-pub(super) enum OperationPayload<G> {
-    Cold,
-    Hot(hot_apply::HotOperation<G>),
 }
 
 /// Caller-owned storage for the uncommon operation leaf.
@@ -412,41 +400,39 @@ impl<G> ColdOperationSlot<G> {
     pub(super) fn write(&mut self, operation: ColdOperation<G>) {
         assert!(
             self.operation.is_none(),
-            "one operation frame owns one cold leaf"
+            "one command episode owns one cold leaf"
         );
         self.operation = Some(operation);
     }
 }
 
-pub(super) struct OperationSlots<'operation, G> {
-    pub(super) frame: &'operation mut OperationFrame<G>,
-    pub(super) cold: &'operation mut ColdOperationSlot<G>,
-}
-
-/// Compact result coordinate for the unified dispatch seam.
-///
-/// Every payload lives in the caller-owned [`OperationFrame`]. Keeping this
-/// status payload-free prevents construction and application from transferring
-/// the complete cold operation merely to cross a borrow boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum OperationReadiness {
-    Applied,
-    Prepared,
-    Failed,
-}
-
-/// Singular reusable output slot for one command attempt.
-///
-/// Preparation writes exactly one of `applied`, `prepared`, or `error` and
-/// returns only [`OperationReadiness`]. Ordinary completion consumes the
-/// occupied fields individually and leaves the frame empty for the next loop
-/// iteration. A resource suspension moves this exact frame into the attempt's
-/// singular continuation; it is never appended to generation-lived storage.
-pub(super) struct OperationFrame<G> {
-    pub(super) applied: Option<Result<ReplayStep, ExecError>>,
-    pub(super) payload: Option<OperationPayload<G>>,
+pub(super) struct ColdExecutionEpisode<'operation, G> {
+    pub(super) operation: &'operation mut PreparedColdCommand<G>,
     pub(super) alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
-    pub(super) output_start: Option<OperationOutputStart>,
+    pub(super) output_start: OperationOutputStart,
+}
+
+pub(super) enum TypedOperationError {
+    Preparation(ExecError),
+    Application(ExecError),
+}
+
+impl TypedOperationError {
+    pub(super) fn into_exec_error(self) -> ExecError {
+        match self {
+            Self::Preparation(error) | Self::Application(error) => error,
+        }
+    }
+}
+
+/// Singular stationary owner for one command attempt.
+///
+/// This value is resident in the executor loop. It owns delivery/scanner state
+/// and the hot branch result, but is not a suspension frame and is never
+/// moved into generation-lived storage. A genuine suspension packages it in
+/// [`OperationFrame`] exactly once.
+pub(super) struct CommandEpisode<G> {
+    pub(super) hot: Option<hot_apply::HotOperation<G>>,
     pub(super) error: Option<ExecError>,
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
     pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
@@ -462,13 +448,10 @@ pub(super) struct OperationFrame<G> {
     pub(super) source_role: Option<tex_command::SourceRole>,
 }
 
-impl<G> Default for OperationFrame<G> {
+impl<G> Default for CommandEpisode<G> {
     fn default() -> Self {
         Self {
-            applied: None,
-            payload: None,
-            alignment_preamble: None,
-            output_start: None,
+            hot: None,
             error: None,
             command: None,
             expansion: None,
@@ -483,7 +466,7 @@ impl<G> Default for OperationFrame<G> {
     }
 }
 
-impl<G> OperationFrame<G> {
+impl<G> CommandEpisode<G> {
     pub(super) fn admit_settled(
         &mut self,
         command: tex_command::CurrentCommand<G>,
@@ -672,11 +655,8 @@ impl<G> OperationFrame<G> {
 
     pub(super) fn assert_empty(&self) {
         assert!(
-            self.applied.is_none()
-                && self.alignment_preamble.is_none()
-                && self.output_start.is_none()
-                && self.error.is_none()
-                && self.payload.is_none()
+            self.error.is_none()
+                && self.hot.is_none()
                 && self.command.is_none()
                 && self.expansion.is_none()
                 && self.phase.is_none()
@@ -707,11 +687,8 @@ impl<G> OperationFrame<G> {
 
     pub(super) fn assert_command_only(&self) {
         assert!(
-            self.applied.is_none()
-                && self.alignment_preamble.is_none()
-                && self.output_start.is_none()
-                && self.error.is_none()
-                && self.payload.is_none()
+            self.error.is_none()
+                && self.hot.is_none()
                 && self.phase.is_some()
                 && self.alignment_scanner.is_none(),
             "command delivery owns only its operation-local command frame"
@@ -720,11 +697,8 @@ impl<G> OperationFrame<G> {
 
     pub(super) fn assert_hot_only(&self) {
         assert!(
-            self.applied.is_none()
-                && self.alignment_preamble.is_none()
-                && self.output_start.is_none()
-                && self.error.is_none()
-                && matches!(self.payload, Some(OperationPayload::Hot(_)))
+            self.error.is_none()
+                && self.hot.is_some()
                 && self.command.is_none()
                 && self.expansion.is_none()
                 && self.phase.is_none()
@@ -743,8 +717,8 @@ impl<G> OperationFrame<G> {
             .expect("failed preparation writes its diagnostic into the frame")
     }
 
-    pub(super) fn has_unavailable(&self) -> bool {
-        matches!(self.payload, Some(OperationPayload::Cold))
+    pub(super) fn has_unavailable(&self, cold: &ColdOperationSlot<G>) -> bool {
+        cold.operation.is_some()
     }
 
     pub(super) fn write_unavailable(
@@ -752,28 +726,21 @@ impl<G> OperationFrame<G> {
         cold: &mut ColdOperationSlot<G>,
         operation: ColdOperation<G>,
     ) {
-        assert!(
-            self.payload.is_none(),
-            "one operation frame owns one completed payload"
-        );
+        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.write(operation);
-        self.payload = Some(OperationPayload::Cold);
     }
 
     pub(super) fn mark_resident_cold(&mut self, cold: &ColdOperationSlot<G>) {
-        assert!(
-            self.payload.is_none(),
-            "one operation frame owns one completed payload"
-        );
+        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         assert!(
             cold.operation.is_some(),
             "cold scanning fills the resident leaf before publishing its tag"
         );
-        self.payload = Some(OperationPayload::Cold);
     }
 
+    #[cfg(feature = "profiling")]
     pub(super) fn unavailable<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a ColdOperation<G> {
-        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation
             .as_ref()
             .expect("operation frame owns its unavailable cold leaf")
@@ -783,47 +750,85 @@ impl<G> OperationFrame<G> {
         &self,
         cold: &'a mut ColdOperationSlot<G>,
     ) -> &'a mut ColdOperation<G> {
-        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation
             .as_mut()
             .expect("operation frame owns its unavailable cold leaf")
     }
 
-    pub(super) fn prepared<'a>(
-        &self,
-        cold: &'a ColdOperationSlot<G>,
-    ) -> &'a PreparedColdCommand<G> {
-        self.unavailable(cold)
-    }
-
     pub(super) fn clear_cold(&mut self, cold: &mut ColdOperationSlot<G>) {
-        assert!(matches!(self.payload, Some(OperationPayload::Cold)));
+        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation = None;
-        self.payload = None;
     }
 
     pub(super) fn write_hot(&mut self, operation: hot_apply::HotOperation<G>) {
-        assert!(
-            self.payload.is_none(),
-            "one operation frame owns one completed payload"
-        );
-        self.payload = Some(OperationPayload::Hot(operation));
+        assert!(self.hot.is_none(), "one command owns one hot operation");
+        self.hot = Some(operation);
     }
 
     pub(super) fn hot_mut(&mut self) -> &mut hot_apply::HotOperation<G> {
-        match self.payload.as_mut() {
-            Some(OperationPayload::Hot(operation)) => operation,
-            _ => panic!("operation frame does not own a hot operation"),
-        }
+        self.hot
+            .as_mut()
+            .expect("command episode owns its hot operation")
     }
 }
 
-impl<G> std::ops::Deref for OperationFrame<G> {
+impl<G> std::ops::Deref for CommandEpisode<G> {
     type Target = tex_command::CurrentCommand<G>;
 
     fn deref(&self) -> &Self::Target {
         self.current()
     }
+}
+
+/// Move-only state retained only across a real resource or diagnostic retry.
+///
+/// Ordinary synchronous commands never construct this type. The resident
+/// [`CommandEpisode`] and cold leaf are packaged only at the suspension seam,
+/// where their exact scanner, retry, and rollback coordinates must outlive the
+/// executor call.
+pub(super) struct OperationFrame<G> {
+    pub(super) episode: Option<CommandEpisode<G>>,
+    pub(super) cold: Option<ColdOperationSlot<G>>,
+}
+
+#[cfg(feature = "profiling")]
+std::thread_local! {
+    static OPERATION_FRAME_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+impl<G> OperationFrame<G> {
+    #[inline]
+    pub(super) fn new(episode: CommandEpisode<G>, cold: ColdOperationSlot<G>) -> Self {
+        #[cfg(feature = "profiling")]
+        OPERATION_FRAME_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
+        Self {
+            episode: Some(episode),
+            cold: Some(cold),
+        }
+    }
+
+    #[inline]
+    pub(super) fn into_parts(mut self) -> (CommandEpisode<G>, ColdOperationSlot<G>) {
+        self.take_parts()
+    }
+
+    #[inline]
+    pub(super) fn take_parts(&mut self) -> (CommandEpisode<G>, ColdOperationSlot<G>) {
+        (
+            self.episode
+                .take()
+                .expect("suspended operation frame owns its command episode"),
+            self.cold
+                .take()
+                .expect("suspended operation frame owns its cold slot"),
+        )
+    }
+}
+
+#[cfg(feature = "profiling")]
+pub(super) fn operation_frame_constructions() -> u64 {
+    OPERATION_FRAME_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
 /// One command after canonical delivery and operand scanning.
@@ -837,7 +842,7 @@ pub(super) enum ScannedOperation {
 }
 
 pub(super) fn retain_cold_operation<G>(
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     operation: ColdOperation<G>,
 ) -> ScannedOperation {
@@ -846,7 +851,7 @@ pub(super) fn retain_cold_operation<G>(
 }
 
 pub(super) fn retain_hot_operation<G>(
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     operation: hot_apply::HotOperation<G>,
 ) -> ScannedOperation {
     frame.write_hot(operation);
@@ -854,16 +859,15 @@ pub(super) fn retain_hot_operation<G>(
 }
 
 pub(super) struct PendingResourceOperation<G> {
-    pub(super) attempt: tex_command::PendingCommandAttempt<G, PreparedResourceResume<G>>,
+    pub(super) attempt: tex_command::PendingCommandAttempt<G, SuspendedResourceResume<G>>,
 }
 
-pub(super) struct PreparedResourceResume<G> {
+pub(super) struct SuspendedResourceResume<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) cold: ColdOperationSlot<G>,
     pub(super) capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
-pub(super) const PREPARED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
+pub(super) const SUSPENDED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
     tex_command::AttemptResumePoint {
         command: 1,
         scanner: 0,
@@ -889,14 +893,13 @@ pub(super) enum PendingDirectDestination<G> {
 
 pub(super) struct PendingFrameDestination<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) cold: ColdOperationSlot<G>,
     pub(super) resume: PendingFrameResume,
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum PendingFrameResume {
     Delivery,
-    Prepared(crate::transaction_protocol::CommandCapabilities),
+    ColdExecution(crate::transaction_protocol::CommandCapabilities),
 }
 
 pub(super) enum PendingDirectState {
@@ -940,7 +943,6 @@ pub(super) struct PendingDiagnosticOperation<G> {
 
 pub(super) struct PendingDiagnosticDestination<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) cold: ColdOperationSlot<G>,
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {

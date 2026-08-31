@@ -370,13 +370,13 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     let control = include_str!("../src/main_control.rs");
     let delivery = include_str!("../src/main_control/delivery.rs");
     let executor_facts = include_str!("../src/main_control/executor_facts.rs");
-    let operation_frame = include_str!("../src/main_control/operation_frame.rs");
+    let command_episode = include_str!("../src/main_control/command_episode.rs");
     let settlement = include_str!("../src/main_control/settlement.rs");
     let ownership_surface = [
         control,
         delivery,
         executor_facts,
-        operation_frame,
+        command_episode,
         settlement,
     ]
     .concat();
@@ -392,10 +392,11 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(control.contains("mod delivery;"));
     assert!(control.contains("mod executor_facts;"));
     assert!(control.contains("mod hot_apply;"));
-    assert!(control.contains("mod operation_frame;"));
+    assert!(control.contains("mod command_episode;"));
     assert!(control.contains("mod settlement;"));
     for (authority, owner) in [
-        ("struct OperationFrame<G>", operation_frame),
+        ("struct CommandEpisode<G>", command_episode),
+        ("struct OperationFrame<G>", command_episode),
         ("fn preflight_replay_delivery(", delivery),
         ("fn settle_preflight_step<", delivery),
         ("fn commit_direct_operation(", settlement),
@@ -411,8 +412,9 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     }
     for interpreter_authority in [
         "fn execute_direct_episode(",
-        "fn prepare_operation(",
-        "fn apply_ready_operation(",
+        "fn execute_typed_operation(",
+        "fn dispatch_typed_operation(",
+        "fn execute_cold_episode(",
     ] {
         assert!(
             control.contains(interpreter_authority),
@@ -423,18 +425,28 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert_eq!(interpreter.matches("CommandProcessor::new(").count(), 1);
     assert!(!ownership_surface.contains("enum ScannedStep"));
     assert!(!ownership_surface.contains("struct PreparedOperation"));
-    assert!(operation_frame.contains("struct OperationFrame<G>"));
+    assert!(command_episode.contains("struct OperationFrame<G>"));
+    assert!(command_episode.contains("struct CommandEpisode<G>"));
     assert!(!ownership_surface.contains("struct PreparedColdOperation"));
     assert!(!ownership_surface.contains("struct PrepareOperationError"));
     assert!(!ownership_surface.contains("Prepared(Box<ColdOperation"));
-    let operation_frame_definition = operation_frame
+    let operation_frame_definition = command_episode
         .split("struct OperationFrame<G>")
         .nth(1)
-        .and_then(|tail| tail.split("impl<G> Default for OperationFrame<G>").next())
+        .and_then(|tail| tail.split("impl<G> OperationFrame<G>").next())
         .expect("locate authoritative operation frame");
-    assert!(operation_frame_definition.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(operation_frame_definition.contains("payload: Option<OperationPayload<G>>"));
-    assert!(operation_frame_definition.contains("phase: Option<PreflightCommandPhase>"));
+    assert!(operation_frame_definition.contains("episode: Option<CommandEpisode<G>>"));
+    assert!(operation_frame_definition.contains("cold: Option<ColdOperationSlot<G>>"));
+    assert!(!operation_frame_definition.contains("CurrentCommand"));
+    let command_episode_definition = command_episode
+        .split("struct CommandEpisode<G>")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
+        .expect("locate resident command episode");
+    assert!(command_episode_definition.contains("command: Option<tex_command::CurrentCommand<G>>"));
+    assert!(command_episode_definition.contains("hot: Option<hot_apply::HotOperation<G>>"));
+    assert!(command_episode_definition.contains("phase: Option<PreflightCommandPhase>"));
+    assert!(!ownership_surface.contains("OperationPayload"));
     assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
     assert!(!ownership_surface.contains("command: Option<PreflightCommand<G>>"));
     assert!(!ownership_surface.contains("struct PreflightDelivery<G>"));
@@ -500,29 +512,29 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!control.contains("fn scan_direct_hot_command"));
     assert!(!preflight.contains("let mut destination = None"));
     let preparation_front = control
-        .split_once("fn prepare_operation(")
+        .split_once("fn dispatch_typed_operation(")
         .and_then(|(_, tail)| tail.split_once("let tracked_region_is_active"))
         .map(|(body, _)| body)
         .expect("locate pre-scanned preparation bypass");
-    assert!(preparation_front.contains("OperationDelivery::Hot"));
+    assert!(preparation_front.contains("OperationDelivery::ResidentHot"));
     assert!(preparation_front.contains("frame.hot_mut()"));
     assert!(!preparation_front.contains("frame.take_hot()"));
-    assert!(preparation_front.contains("OperationDelivery::Scanned"));
+    assert!(preparation_front.contains("OperationDelivery::ResidentCold"));
     assert_eq!(
         preparation_front
-            .matches("prepare_scanned_cold_operation(")
+            .matches("execute_scanned_cold_episode(")
             .count(),
         1
     );
     let scanned_preparation = control
-        .split_once("fn prepare_scanned_cold_operation(")
+        .split_once("fn prepare_cold_execution_episode<")
         .and_then(|(_, tail)| tail.split_once("fn apply_hot_operation("))
         .map(|(body, _)| body)
         .expect("locate context-free cold preparation");
     assert!(!scanned_preparation.contains("command_context()"));
     assert!(!scanned_preparation.contains("command_processor("));
     let prepared_application = control
-        .split_once("fn apply_prepared_operation(")
+        .split_once("fn execute_cold_episode(")
         .and_then(|(_, tail)| tail.split_once("fn scan_startup_file_name("))
         .map(|(body, _)| body)
         .expect("locate resident prepared application");
@@ -536,9 +548,11 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!ordinary_application.contains("command_context()"));
     assert!(!prepared_application.contains("cold.operation.take()"));
     assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
+    assert!(!prepared_application.contains("CommandEpisode"));
+    assert!(!prepared_application.contains("OperationFrame"));
     let hot_application = control
         .split_once("fn apply_hot_operation(")
-        .and_then(|(_, tail)| tail.split_once("fn apply_prepared_operation("))
+        .and_then(|(_, tail)| tail.split_once("fn execute_cold_episode("))
         .map(|(body, _)| body)
         .expect("locate hot application lifetime");
     let hot_admission = hot_application
@@ -572,6 +586,17 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(cold_apply.contains("fn apply<"));
     assert!(!hot.contains("ColdOperation::"));
     assert!(!hot.contains("OperationFrame {"));
+    for retired_handoff in [
+        "fn prepare_operation(",
+        "fn apply_ready_operation(",
+        "fn apply_prepared_operation(",
+        "OperationReadiness",
+    ] {
+        assert!(
+            !ownership_surface.contains(retired_handoff),
+            "retained generic prepare/apply handoff: {retired_handoff}"
+        );
+    }
 }
 
 #[test]
@@ -771,8 +796,8 @@ fn operation_host_preparation_has_one_effective_tail_authority() {
     assert!(control.contains("preparation.record_checked_save_stack_words(checked)"));
     assert!(control.contains("preparation.take_checked_save_stack_words()"));
     let operation = control
-        .split_once("fn prepare_operation(")
-        .expect("operation preparation authority")
+        .split_once("fn dispatch_typed_operation(")
+        .expect("typed operation dispatch authority")
         .1;
     assert!(
         !operation.contains("effective_tail_facts"),

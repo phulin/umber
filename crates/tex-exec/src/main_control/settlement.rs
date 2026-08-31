@@ -311,18 +311,17 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &Universe<G>,
         operation: tex_command::CommandAttemptOperation,
-        frame: OperationFrame<G>,
+        frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) {
-        let pending = PreparedResourceResume::<G> {
-            frame,
-            cold,
+        let pending = SuspendedResourceResume::<G> {
+            frame: OperationFrame::new(frame, cold),
             capabilities,
         };
         let attempt = self
             .command
-            .suspend_attempt(stores, operation, PREPARED_RESOURCE_RESUME, pending)
+            .suspend_attempt(stores, operation, SUSPENDED_RESOURCE_RESUME, pending)
             .expect("live main control can retain its admitted generation");
         self.pending_resource_operation = Some(PendingResourceOperation::<G> { attempt });
     }
@@ -339,12 +338,12 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
-        mut frame: OperationFrame<G>,
+        mut frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
     ) -> Result<StepResult, ExecError> {
         assert!(
-            frame.has_unavailable(),
+            frame.has_unavailable(&cold),
             "unavailable resource remains in its attempt-owned frame"
         );
         let error = frame.take_error();

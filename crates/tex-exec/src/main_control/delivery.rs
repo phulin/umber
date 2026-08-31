@@ -11,7 +11,7 @@ pub(super) struct PreparedAlignmentPreamble<G> {
 }
 
 pub(super) fn fill_preflight_delivery_from_frame<G>(
-    frame: &OperationFrame<G>,
+    frame: &CommandEpisode<G>,
     preparation: &mut OperationHostPreparation<'_, G>,
 ) {
     let capabilities = match frame.phase.expect("retry frame owns its scalar phase") {
@@ -44,7 +44,7 @@ pub(super) fn command_requires_transaction_from_facts<G>(
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
-    frame: &OperationFrame<G>,
+    frame: &CommandEpisode<G>,
     pdf_output: i32,
     innermost_group: Option<GroupKind>,
 ) -> bool {
@@ -117,7 +117,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         host_preparation: &mut OperationHostPreparation<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
-        frame: &mut OperationFrame<G>,
+        frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
     ) -> PreflightReadiness {
         frame.assert_empty();
@@ -290,7 +290,7 @@ impl<G> MainControl<G> {
                                     frame.retain_source_role();
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
-                                        OperationDelivery::Hot,
+                                        OperationDelivery::ResidentHot,
                                         capabilities,
                                         None,
                                         None,
@@ -300,7 +300,7 @@ impl<G> MainControl<G> {
                                     frame.retain_source_role();
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
-                                        OperationDelivery::Scanned,
+                                        OperationDelivery::ResidentCold,
                                         capabilities,
                                         None,
                                         None,
@@ -372,13 +372,23 @@ impl<G> MainControl<G> {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::EndOfInput);
-                host_preparation.fill_preflight(OperationDelivery::Prepared, passive(), None, None);
+                host_preparation.fill_preflight(
+                    OperationDelivery::SuspendedCold,
+                    passive(),
+                    None,
+                    None,
+                );
                 return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::ReplayCompleted(episode));
-                host_preparation.fill_preflight(OperationDelivery::Prepared, passive(), None, None);
+                host_preparation.fill_preflight(
+                    OperationDelivery::SuspendedCold,
+                    passive(),
+                    None,
+                    None,
+                );
                 return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::Command => {}
@@ -437,7 +447,12 @@ impl<G> MainControl<G> {
             );
             frame.retain_source_role();
             frame.discard_resident_command();
-            host_preparation.fill_preflight(OperationDelivery::Prepared, capabilities, None, None);
+            host_preparation.fill_preflight(
+                OperationDelivery::SuspendedCold,
+                capabilities,
+                None,
+                None,
+            );
             return PreflightReadiness::Ready;
         }
         let capabilities =
@@ -517,7 +532,7 @@ pub(super) fn scan_replay_step<G>(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
@@ -756,7 +771,7 @@ pub(super) fn scan_noalign_body<G>(
     job_is_all_over: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
@@ -835,7 +850,7 @@ pub(super) fn scan_alignment_delivery_step<G>(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
@@ -1039,7 +1054,7 @@ pub(super) fn scan_alignment_delivery_event<G>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn settle_preflight_step<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     main_loop: bool,
     mode: Mode,
@@ -1127,7 +1142,7 @@ pub(super) fn settle_preflight_step<G>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scan_preflight_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -1314,7 +1329,7 @@ pub(super) fn scan_step<G>(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-    command_owner: &mut OperationFrame<G>,
+    command_owner: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
 ) -> Result<ScannedOperation, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
@@ -2655,7 +2670,7 @@ pub(super) fn scan_math_family_assignment<G>(
 
 pub(super) fn resume_pending_operation_scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    frame: &mut OperationFrame<G>,
+    frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     pending: PendingOperationScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
@@ -2799,7 +2814,7 @@ pub(super) fn resume_pending_operation_scan<G>(
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 pub(super) fn dispatch_main_control_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -2899,7 +2914,7 @@ pub(super) fn hot_core_command_family<G>(
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 pub(super) fn dispatch_main_control_command_inner<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -3697,7 +3712,7 @@ pub(super) fn starts_paragraph_in_vertical_mode<G>(meaning: ResolvedMeaning<G>) 
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 pub(super) fn scan_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     global: bool,
     flags: MeaningFlags,

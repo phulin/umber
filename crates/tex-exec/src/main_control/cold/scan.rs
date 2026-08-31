@@ -22,7 +22,7 @@ fn material_origin<G>(
 #[inline(always)]
 pub(in crate::main_control) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     global: bool,
     mode: Mode,

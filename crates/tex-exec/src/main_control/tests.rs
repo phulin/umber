@@ -6479,10 +6479,10 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
             Some(PendingDirectOperation {
                 state: PendingDirectState::Retained(_),
                 destination: PendingDirectDestination::Frame(frame),
-            }) if frame.frame.scanner.is_some()
-                && frame.frame.is_command_scan()
+            }) if frame.frame.episode.as_ref().is_some_and(|episode| episode.scanner.is_some())
+                && frame.frame.episode.as_ref().is_some_and(CommandEpisode::is_command_scan)
                 && matches!(
-                    frame.frame.current().meaning(),
+                    frame.frame.episode.as_ref().expect("suspended frame owns its episode").current().meaning(),
                     ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Edef
                     ))
@@ -6492,22 +6492,24 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
 }
 
 #[cfg(feature = "profiling")]
-fn operation_frame_phase_evidence(
+fn ordinary_command_episode_evidence(
     repetitions: usize,
 ) -> (
     tex_state::measurement::HotCoreAllocationMeasurement,
     usize,
     usize,
     usize,
+    u64,
 ) {
     let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
     let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let frames_before = operation_frame_constructions();
     let mut scalar_transitions = 0;
     let mut whole_frame_copies = 0;
     let mut overlapping_frame_moves = 0;
     {
         let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-        let mut frame = OperationFrame::<()>::default();
+        let mut frame = CommandEpisode::<()>::default();
         let stationary_address = std::ptr::addr_of!(frame);
         for _ in 0..repetitions {
             frame.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
@@ -6528,7 +6530,7 @@ fn operation_frame_phase_evidence(
             scalar_transitions += 1;
             whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
             let _ = frame.hot_mut();
-            frame.payload = None;
+            frame.hot = None;
             frame.assert_empty();
             scalar_transitions += 1;
             whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
@@ -6539,6 +6541,7 @@ fn operation_frame_phase_evidence(
         overlapping_frame_moves += 0;
     }
     let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let frames_after = operation_frame_constructions();
     (
         tex_state::measurement::HotCoreAllocationMeasurement {
             calls: after.calls - before.calls,
@@ -6547,6 +6550,50 @@ fn operation_frame_phase_evidence(
         scalar_transitions,
         whole_frame_copies,
         overlapping_frame_moves,
+        frames_after - frames_before,
+    )
+}
+
+#[cfg(feature = "profiling")]
+fn suspended_operation_frame_evidence(
+    repetitions: usize,
+) -> (
+    tex_state::measurement::HotCoreAllocationMeasurement,
+    u64,
+    u64,
+) {
+    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+    let allocations_before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let frames_before = operation_frame_constructions();
+    let mut checksum = 0_u64;
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        for index in 0..repetitions {
+            let mut episode = CommandEpisode::<()>::default();
+            episode.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
+            let frame = OperationFrame::new(episode, ColdOperationSlot::default());
+            let (mut resumed, cold) = std::hint::black_box(frame).into_parts();
+            checksum = checksum.wrapping_add(
+                resumed
+                    .phase
+                    .is_some()
+                    .then_some((index as u64).rotate_left(11))
+                    .unwrap_or_default(),
+            );
+            resumed.clear_preflight();
+            resumed.assert_empty();
+            assert!(cold.operation.is_none());
+        }
+    }
+    let allocations_after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    let frames_after = operation_frame_constructions();
+    (
+        tex_state::measurement::HotCoreAllocationMeasurement {
+            calls: allocations_after.calls - allocations_before.calls,
+            requested_bytes: allocations_after.requested_bytes - allocations_before.requested_bytes,
+        },
+        frames_after - frames_before,
+        std::hint::black_box(checksum),
     )
 }
 
@@ -6568,7 +6615,7 @@ fn resident_cold_scan_evidence(
     let mut checksum = 0_u64;
     {
         let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-        let mut frame = OperationFrame::<()>::default();
+        let mut frame = CommandEpisode::<()>::default();
         let mut cold = ColdOperationSlot::<()>::default();
         let stationary_frame = std::ptr::addr_of!(frame);
         let stationary_leaf = std::ptr::addr_of!(cold);
@@ -6621,24 +6668,28 @@ fn resident_cold_scan_evidence(
 }
 
 #[test]
-fn operation_frame_hot_and_cold_layouts_have_separate_lifetimes() {
+fn command_episode_and_suspension_frame_have_separate_lifetimes() {
     assert_eq!(std::mem::size_of::<hot_apply::HotOperation<()>>(), 32);
-    assert_eq!(std::mem::size_of::<OperationPayload<()>>(), 32);
     assert_eq!(std::mem::size_of::<ColdOperationSlot<()>>(), 264);
-    assert_eq!(std::mem::size_of::<OperationFrame<()>>(), 896);
+    assert_eq!(std::mem::size_of::<CommandEpisode<()>>(), 672);
+    assert_eq!(
+        std::mem::size_of::<OperationFrame<()>>(),
+        std::mem::size_of::<Option<CommandEpisode<()>>>()
+            + std::mem::size_of::<Option<ColdOperationSlot<()>>>()
+    );
     assert!(
-        std::mem::size_of::<OperationFrame<()>>() < 1_128,
-        "the former inline cold leaf made every resident frame 1,128 bytes"
+        std::mem::size_of::<CommandEpisode<()>>() < std::mem::size_of::<OperationFrame<()>>(),
+        "ordinary command episodes do not reserve the suspension-only cold slot"
     );
 }
 
 #[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar() {
-    let (one_allocations, one_transitions, one_copies, one_overlapping_moves) =
-        operation_frame_phase_evidence(1);
-    let (many_allocations, many_transitions, many_copies, many_overlapping_moves) =
-        operation_frame_phase_evidence(4_096);
+fn one_and_4096_ordinary_episodes_construct_zero_operation_frames() {
+    let (one_allocations, one_transitions, one_copies, one_overlapping_moves, one_frames) =
+        ordinary_command_episode_evidence(1);
+    let (many_allocations, many_transitions, many_copies, many_overlapping_moves, many_frames) =
+        ordinary_command_episode_evidence(4_096);
 
     assert_eq!(one_allocations.calls, 0);
     assert_eq!(one_allocations.requested_bytes, 0);
@@ -6650,6 +6701,69 @@ fn one_and_4096_hot_operation_frame_phase_cycles_are_allocation_free_and_scalar(
     assert_eq!(many_copies, 0);
     assert_eq!(one_overlapping_moves, 0);
     assert_eq!(many_overlapping_moves, 0);
+    assert_eq!(one_frames, 0);
+    assert_eq!(many_frames, 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_suspensions_construct_exactly_one_frame_each() {
+    let (one_allocations, one_frames, one_checksum) = suspended_operation_frame_evidence(1);
+    let (many_allocations, many_frames, many_checksum) = suspended_operation_frame_evidence(4_096);
+
+    assert_eq!(one_allocations.calls, 0);
+    assert_eq!(one_allocations.requested_bytes, 0);
+    assert_eq!(many_allocations.calls, 0);
+    assert_eq!(many_allocations.requested_bytes, 0);
+    assert_eq!(one_frames, 1);
+    assert_eq!(many_frames, 4_096);
+    assert_ne!(one_checksum, many_checksum);
+}
+
+#[cfg(feature = "profiling")]
+fn executed_relax_frame_count(repetitions: usize) -> u64 {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut source = Vec::with_capacity(repetitions * b"\\relax".len());
+        for _ in 0..repetitions {
+            source.extend_from_slice(br"\relax");
+        }
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, &source);
+        let before = operation_frame_constructions();
+        for _ in 0..repetitions {
+            assert_eq!(
+                control.advance(stores).expect("relax executes"),
+                StepResult::Progress(MainControlStep::Continue)
+            );
+        }
+        operation_frame_constructions() - before
+    })
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn one_and_4096_executed_simple_primitives_use_zero_suspension_frames() {
+    assert_eq!(executed_relax_frame_count(1), 0);
+    assert_eq!(executed_relax_frame_count(4_096), 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn synchronous_assignment_mode_and_list_families_preserve_semantics_without_frames() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\count0=7\advance\count0 by5\begingroup\count0=2\endgroup\setbox0=\hbox{\kern1pt}\end",
+        );
+        let before = operation_frame_constructions();
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("count register"), 12);
+        assert!(stores.copy_box_to_page(0).is_some());
+        assert_eq!(control.modes.current_mode(), Mode::Vertical);
+        assert_eq!(operation_frame_constructions() - before, 0);
+    });
 }
 
 #[cfg(feature = "profiling")]
@@ -17511,9 +17625,4 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
             assert!(!terminal_text(stores).contains("You can't use a prefix"));
         },
     );
-}
-
-#[test]
-fn operation_frame_returns_only_a_payload_free_status() {
-    assert_eq!(std::mem::size_of::<OperationReadiness>(), 1);
 }

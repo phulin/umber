@@ -4,9 +4,9 @@
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
 //! processor releases its borrow. `ColdOperation` is not materialized on this
-//! path. The caller-owned [`OperationFrame`] stores the hot result in its one
-//! mutually exclusive operation-payload field, alongside its reusable scalar
-//! destination; preparation and application borrow that resident value.
+//! path. The caller-owned [`CommandEpisode`] stores the hot result in its one
+//! branch-owned field, alongside its reusable scalar destination; typed
+//! execution borrows that resident value directly.
 
 use super::*;
 
@@ -105,7 +105,7 @@ pub(super) fn prepare<G>(
 /// mode/group cases have selected the ordinary assignment arm.
 pub(super) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut OperationFrame<G>,
+    command: &mut CommandEpisode<G>,
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
