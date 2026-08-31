@@ -6317,8 +6317,13 @@ impl<G> MainControl<G> {
                 diagnostic_effects,
                 frame,
                 cold,
-                outer_paragraph_was_active,
-                source_role,
+                OperationOutputStart {
+                    outer_paragraph_was_active,
+                    source_role,
+                    artifact_count: stores.world().artifact_commits().len(),
+                    effect_count: stores.world().effect_records().len(),
+                    prepared_page_count: self.prepared_dvi_pages.len(),
+                },
             );
         }
         let tracked_region_is_active = stores
@@ -6624,8 +6629,13 @@ impl<G> MainControl<G> {
                 diagnostic_effects,
                 frame,
                 cold,
-                outer_paragraph_was_active,
-                source_role,
+                OperationOutputStart {
+                    outer_paragraph_was_active,
+                    source_role,
+                    artifact_count: stores.world().artifact_commits().len(),
+                    effect_count: stores.world().effect_records().len(),
+                    prepared_page_count: self.prepared_dvi_pages.len(),
+                },
             ),
             ScannedOperation::Hot => {
                 let applied = self.apply_hot_operation(
@@ -6655,8 +6665,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
-        outer_paragraph_was_active: bool,
-        source_role: Option<tex_command::SourceRole>,
+        output_start: OperationOutputStart,
     ) -> Result<ReplayStep, TypedOperationError> {
         let immediate_pdf_retry = match frame.unavailable_mut(cold) {
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfExtensionInDviMode(
@@ -6668,12 +6677,8 @@ impl<G> MainControl<G> {
             frame.clear_preflight();
             frame.admit_immediate_pdf(primitive);
         }
-        let episode = self.prepare_cold_execution_episode(
-            stores,
-            frame.unavailable_mut(cold),
-            outer_paragraph_was_active,
-            source_role,
-        )?;
+        let episode =
+            self.prepare_cold_execution_episode(stores, frame.unavailable_mut(cold), output_start)?;
         let result = self
             .execute_cold_episode(stores, host_preparation, episode, diagnostic_effects)
             .map_err(TypedOperationError::Application);
@@ -6687,8 +6692,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         operation: &'operation mut PreparedColdCommand<G>,
-        outer_paragraph_was_active: bool,
-        source_role: Option<tex_command::SourceRole>,
+        output_start: OperationOutputStart,
     ) -> Result<ColdExecutionEpisode<'operation, G>, TypedOperationError> {
         let resource_result = {
             self.resolve_font_resource(operation, stores)
@@ -6770,13 +6774,7 @@ impl<G> MainControl<G> {
         Ok(ColdExecutionEpisode {
             operation,
             alignment_preamble,
-            output_start: OperationOutputStart {
-                outer_paragraph_was_active,
-                source_role,
-                artifact_count: stores.world().artifact_commits().len(),
-                effect_count: stores.world().effect_records().len(),
-                prepared_page_count: self.prepared_dvi_pages.len(),
-            },
+            output_start,
         })
     }
 
