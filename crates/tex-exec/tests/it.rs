@@ -450,7 +450,8 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
     assert!(!ownership_surface.contains("command: Option<PreflightCommand<G>>"));
     assert!(!ownership_surface.contains("struct PreflightDelivery<G>"));
-    assert!(executor_facts.contains("fn fill_preflight("));
+    assert!(executor_facts.contains("fn fill_delivery("));
+    assert!(!executor_facts.contains("CommandBarrier"));
     for retired in [
         "PendingPreflightCommand",
         "struct PendingOperationScan",
@@ -482,7 +483,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .expect("locate one destination-directed preflight context episode");
     assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
     assert!(!admitted_episode.contains("stores.command_context()"));
-    assert!(preflight.contains("host_preparation.fill_preflight("));
+    assert!(preflight.contains("host_preparation.fill_delivery("));
     assert!(cold_scan.contains("match meaning {"));
     assert!(cold_scan.contains("complete_cold_scan!("));
     assert!(!cold_scan.contains("fill_resident!"));

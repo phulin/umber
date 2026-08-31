@@ -13,7 +13,6 @@ pub(super) struct OperationPreparationScope;
 pub(super) struct OperationPreparation<'operation, G> {
     checked_save_stack_words: Option<usize>,
     delivery: Option<OperationDelivery>,
-    preflight: Option<crate::transaction_protocol::CommandPreflight>,
     resume: Option<OperationResume<G>>,
     delivery_status: Option<tex_command::DeliveryStatus>,
     trace_reported: bool,
@@ -30,7 +29,6 @@ impl<'operation, G> OperationPreparation<'operation, G> {
         Self {
             checked_save_stack_words: None,
             delivery: None,
-            preflight: None,
             resume: None,
             delivery_status: None,
             trace_reported: false,
@@ -38,45 +36,23 @@ impl<'operation, G> OperationPreparation<'operation, G> {
         }
     }
 
-    pub(super) fn fill_preflight(
+    pub(super) fn fill_delivery(
         &mut self,
         delivery: OperationDelivery,
-        preflight: crate::transaction_protocol::CommandPreflight,
         scanner: Option<tex_command::ScannerFrameKey<G>>,
         expansion: Option<tex_command::ExpansionWorkKey<G>>,
     ) {
         assert!(
-            self.delivery.is_none() && self.preflight.is_none() && self.resume.is_none(),
-            "one operation preparation owns one preflight result"
+            self.delivery.is_none() && self.resume.is_none(),
+            "one operation preparation owns one direct dispatch result"
         );
         self.delivery = Some(delivery);
-        self.preflight = Some(preflight);
         if scanner.is_some() || expansion.is_some() {
             self.resume = Some(OperationResume { scanner, expansion });
         }
     }
 
-    pub(super) fn record_command_preflight(
-        &mut self,
-        preflight: crate::transaction_protocol::CommandPreflight,
-    ) {
-        assert!(
-            self.delivery.is_none() && self.preflight.replace(preflight).is_none(),
-            "one command classification has one prepared destination"
-        );
-    }
-
-    pub(super) fn take_recorded_preflight(
-        &mut self,
-    ) -> Option<crate::transaction_protocol::CommandPreflight> {
-        assert!(
-            self.delivery.is_none(),
-            "completed delivery owns its command preflight"
-        );
-        self.preflight.take()
-    }
-
-    pub(super) fn has_preflight(&self) -> bool {
+    pub(super) fn has_delivery(&self) -> bool {
         self.delivery.is_some()
     }
 
@@ -84,18 +60,6 @@ impl<'operation, G> OperationPreparation<'operation, G> {
         self.delivery
             .as_ref()
             .expect("operation preparation owns one delivery")
-    }
-
-    pub(super) fn preflight(&self) -> &crate::transaction_protocol::CommandPreflight {
-        self.preflight
-            .as_ref()
-            .expect("operation preparation owns one command preflight")
-    }
-
-    pub(super) fn take_preflight(&mut self) -> crate::transaction_protocol::CommandPreflight {
-        self.preflight
-            .take()
-            .expect("operation preparation drains one command preflight")
     }
 
     pub(super) fn take_delivery(&mut self) -> OperationDelivery {
@@ -335,19 +299,10 @@ mod layout_tests {
     use super::*;
 
     #[test]
-    fn operation_preparation_keeps_cold_resume_storage_out_of_direct_initialization() {
+    fn operation_preparation_initializes_only_direct_delivery_state() {
         let mut scope = OperationPreparationScope;
         let mut preparation: OperationPreparation<'_, ()> = OperationPreparation::new(&mut scope);
-        preparation.fill_preflight(
-            OperationDelivery::Replay,
-            crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
-            None,
-            None,
-        );
+        preparation.fill_delivery(OperationDelivery::Replay, None, None);
         assert!(preparation.resume.is_none());
-        assert_eq!(
-            std::mem::size_of::<OperationPreparation<'static, ()>>(),
-            120
-        );
     }
 }

@@ -1,4 +1,4 @@
-//! Canonical command capabilities and narrow-transaction preflight.
+//! Direct command-barrier classification and narrow transactions.
 //!
 //! This module describes the transaction boundary only. It does not open a
 //! `tex_state` snapshot or execute a command. The journal and arena bits mirror
@@ -144,19 +144,6 @@ impl HotSnapshotMarks {
     pub const RESOURCE_JOURNAL: Self = Self(1 << 16);
 }
 
-bitset! {
-    /// Host resources whose absence is established during preflight.
-    pub struct ResourceCapabilities(u8);
-}
-
-impl ResourceCapabilities {
-    pub const INPUT: Self = Self(1 << 0);
-    pub const INPUT_PROBE: Self = Self(1 << 1);
-    pub const FONT: Self = Self(1 << 2);
-    pub const PDF_IMAGE: Self = Self(1 << 3);
-    pub const TERMINAL: Self = Self(1 << 4);
-}
-
 /// A validated projection of fixed-size `HotSnapshot` fields.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HotSnapshotProjection {
@@ -243,58 +230,18 @@ impl NarrowTransaction {
     }
 }
 
-/// Mutation-free result of classifying the next command.
+/// The uncommon barrier selected by direct semantic dispatch.
+///
+/// `None` is the ordinary case: no object is constructed or transported for
+/// commands that scan and apply directly. A value exists only when dispatch
+/// must enter the retryable resource lane or an explicit late-failure
+/// transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommandPreflight {
-    /// Direct execution carries only the mutation fact consulted by dynamic
-    /// transaction admission.
-    Ordinary(OrdinaryCommand),
-    /// Operand scanning may suspend and therefore names its retry projection.
-    Resource(ResourcePreflight),
+pub enum CommandBarrier {
+    /// Operand scanning may suspend on an immutable host resource.
+    Resource,
     /// The operation can fail after mutation and needs exact rollback marks.
-    Transaction(TransactionPreflight),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OrdinaryCommand {
-    mutation: StateOwners,
-}
-
-impl OrdinaryCommand {
-    #[must_use]
-    pub const fn mutation(self) -> StateOwners {
-        self.mutation
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResourcePreflight {
-    resources: ResourceCapabilities,
-    retry_transaction: NarrowTransactionSpec,
-}
-
-impl ResourcePreflight {
-    #[must_use]
-    pub const fn resources(self) -> ResourceCapabilities {
-        self.resources
-    }
-
-    #[must_use]
-    pub const fn retry_transaction(self) -> NarrowTransactionSpec {
-        self.retry_transaction
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TransactionPreflight {
-    transaction: NarrowTransactionSpec,
-}
-
-impl TransactionPreflight {
-    #[must_use]
-    pub const fn transaction(self) -> NarrowTransactionSpec {
-        self.transaction
-    }
+    Transaction(NarrowTransactionSpec),
 }
 
 /// Rejected static capability or runtime mark admission.
@@ -311,15 +258,8 @@ pub enum PreflightError {
     },
 }
 
-const STATE: StateOwners = StateOwners::DENSE_STATE.union(StateOwners::SAVE);
-const GROUP: StateOwners = STATE.union(StateOwners::GROUP);
 const MATERIAL: StateOwners = STATE.union(StateOwners::MODE).union(StateOwners::PAGE);
-const ALIGNMENT: StateOwners = MATERIAL
-    .union(StateOwners::INPUT)
-    .union(StateOwners::PARAMETER)
-    .union(StateOwners::CONDITION)
-    .union(StateOwners::GROUP);
-const MATH: StateOwners = MATERIAL.union(StateOwners::GROUP);
+const STATE: StateOwners = StateOwners::DENSE_STATE.union(StateOwners::SAVE);
 const PDF: StateOwners = MATERIAL.union(StateOwners::PDF);
 const RETRY_SCAN: StateOwners = StateOwners::INPUT
     .union(StateOwners::PARAMETER)
@@ -340,64 +280,97 @@ const JOB_TRANSACTION: StateOwners = MATERIAL
     .union(StateOwners::OUTPUT)
     .union(StateOwners::PROVENANCE);
 
-const fn ordinary(mutation: StateOwners) -> CommandPreflight {
-    CommandPreflight::Ordinary(OrdinaryCommand { mutation })
+const fn direct() -> Option<CommandBarrier> {
+    None
 }
 
-const fn diagnostic(mutation: StateOwners) -> CommandPreflight {
-    ordinary(mutation)
+const fn resource() -> Option<CommandBarrier> {
+    Some(CommandBarrier::Resource)
 }
 
-const fn resource(resources: ResourceCapabilities) -> CommandPreflight {
-    CommandPreflight::Resource(ResourcePreflight {
-        resources,
-        retry_transaction: NarrowTransactionSpec::new(RETRY_SCAN),
-    })
+const fn transaction(owners: StateOwners) -> Option<CommandBarrier> {
+    Some(CommandBarrier::Transaction(NarrowTransactionSpec::new(
+        owners,
+    )))
 }
 
-const fn deferred_effect(mutation: StateOwners) -> CommandPreflight {
-    ordinary(mutation)
-}
-
-const fn transaction(owners: StateOwners) -> CommandPreflight {
-    CommandPreflight::Transaction(TransactionPreflight {
-        transaction: NarrowTransactionSpec::new(owners),
-    })
-}
-
-const fn late_effect() -> CommandPreflight {
+const fn late_effect() -> Option<CommandBarrier> {
     transaction(EFFECT_TRANSACTION)
 }
 
-const fn late_state(mutation: StateOwners) -> CommandPreflight {
+const fn late_state(mutation: StateOwners) -> Option<CommandBarrier> {
     transaction(mutation)
 }
 
 /// Classifies every meaning that can reach canonical main control.
 #[must_use]
-pub fn canonical_command_preflight<G>(meaning: ResolvedMeaning<G>) -> CommandPreflight {
+pub fn canonical_command_barrier<G>(meaning: ResolvedMeaning<G>) -> Option<CommandBarrier> {
     match meaning {
-        ResolvedMeaning::Static(meaning) => static_command_preflight(meaning),
-        ResolvedMeaning::Macro { .. } => ordinary(StateOwners::NONE),
+        ResolvedMeaning::Static(meaning) => static_command_barrier(meaning),
+        ResolvedMeaning::Macro { .. } => direct(),
     }
 }
 
 /// Classifies one generation-free static command meaning.
 #[must_use]
-pub fn canonical_static_command_preflight(meaning: Meaning) -> CommandPreflight {
-    static_command_preflight(meaning)
+pub fn canonical_static_command_barrier(meaning: Meaning) -> Option<CommandBarrier> {
+    static_command_barrier(meaning)
 }
 
-fn static_command_preflight(meaning: Meaning) -> CommandPreflight {
+/// Whether this command family consults `\pdfoutput` before operand work.
+///
+/// This compile-time classification replaces the former ordinary-command
+/// mutation mask. Callers use it to fetch the live parameter only for the PDF
+/// family that can enter the DVI-mode diagnostic/retry boundary.
+#[must_use]
+pub fn command_uses_pdf_output<G>(meaning: ResolvedMeaning<G>) -> bool {
+    matches!(
+        meaning,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::PdfXImage
+                | UnexpandablePrimitive::PdfStartLink
+                | UnexpandablePrimitive::PdfLiteral
+                | UnexpandablePrimitive::PdfSetMatrix
+                | UnexpandablePrimitive::PdfSave
+                | UnexpandablePrimitive::PdfRestore
+                | UnexpandablePrimitive::PdfColorStack
+                | UnexpandablePrimitive::PdfSavePos
+                | UnexpandablePrimitive::PdfSnapRefPoint
+                | UnexpandablePrimitive::PdfSnapY
+                | UnexpandablePrimitive::PdfSnapYComp
+                | UnexpandablePrimitive::PdfXForm
+                | UnexpandablePrimitive::PdfRefXForm
+                | UnexpandablePrimitive::PdfRefXImage
+                | UnexpandablePrimitive::PdfObject
+                | UnexpandablePrimitive::PdfReferenceObject
+                | UnexpandablePrimitive::PdfInfo
+                | UnexpandablePrimitive::PdfCatalog
+                | UnexpandablePrimitive::PdfNames
+                | UnexpandablePrimitive::PdfTrailer
+                | UnexpandablePrimitive::PdfTrailerId
+                | UnexpandablePrimitive::PdfInterwordSpaceOn
+                | UnexpandablePrimitive::PdfInterwordSpaceOff
+                | UnexpandablePrimitive::PdfFakeSpace
+                | UnexpandablePrimitive::PdfSpaceFont
+                | UnexpandablePrimitive::PdfAnnot
+                | UnexpandablePrimitive::PdfEndLink
+                | UnexpandablePrimitive::PdfRunningLinkOn
+                | UnexpandablePrimitive::PdfRunningLinkOff
+                | UnexpandablePrimitive::PdfOutline
+                | UnexpandablePrimitive::PdfDest
+                | UnexpandablePrimitive::PdfThread
+                | UnexpandablePrimitive::PdfStartThread
+                | UnexpandablePrimitive::PdfEndThread
+        ))
+    )
+}
+
+fn static_command_barrier(meaning: Meaning) -> Option<CommandBarrier> {
     match meaning {
-        Meaning::Undefined | Meaning::Unknown(_) => diagnostic(StateOwners::NONE),
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
-            resource(ResourceCapabilities::INPUT)
-        }
-        Meaning::Relax | Meaning::ExpandablePrimitive(_) => ordinary(StateOwners::NONE),
-        Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => {
-            ordinary(MATERIAL)
-        }
+        Meaning::Undefined | Meaning::Unknown(_) => direct(),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => resource(),
+        Meaning::Relax | Meaning::ExpandablePrimitive(_) => direct(),
+        Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => direct(),
         Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
         | Meaning::SkipRegister(_)
@@ -410,26 +383,19 @@ fn static_command_preflight(meaning: Meaning) -> CommandPreflight {
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)
-        | Meaning::Font(_) => ordinary(STATE),
-        Meaning::InternalInteger(_) => diagnostic(StateOwners::NONE),
-        Meaning::EndV => ordinary(ALIGNMENT),
-        Meaning::UnexpandablePrimitive(primitive) => primitive_preflight(primitive),
+        | Meaning::Font(_) => direct(),
+        Meaning::InternalInteger(_) => direct(),
+        Meaning::EndV => direct(),
+        Meaning::UnexpandablePrimitive(primitive) => primitive_barrier(primitive),
     }
 }
 
-fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
+fn primitive_barrier(primitive: UnexpandablePrimitive) -> Option<CommandBarrier> {
     use UnexpandablePrimitive as P;
 
     match primitive {
-        P::Font => resource(ResourceCapabilities::FONT),
-        P::OpenIn => resource(ResourceCapabilities::INPUT_PROBE),
-        P::Read | P::ReadLine => resource(
-            ResourceCapabilities::INPUT
-                .union(ResourceCapabilities::INPUT_PROBE)
-                .union(ResourceCapabilities::TERMINAL),
-        ),
-        P::PdfXImage => resource(ResourceCapabilities::PDF_IMAGE),
-        P::OpenOut | P::CloseOut | P::Write => deferred_effect(MATERIAL),
+        P::Font | P::OpenIn | P::Read | P::ReadLine | P::PdfXImage => resource(),
+        P::OpenOut | P::CloseOut | P::Write => direct(),
         P::Immediate => late_effect(),
         P::PdfMapFile | P::PdfMapLine | P::PdfGlyphToUnicode => late_effect(),
         P::PdfResetTimer | P::PdfSetRandomSeed => late_effect(),
@@ -443,11 +409,9 @@ fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
         | P::ShowGroups
         | P::ShowIfs
         | P::Message
-        | P::ErrMessage => diagnostic(StateOwners::NONE),
-        P::BeginGroup | P::EndGroup => ordinary(GROUP),
-        P::HAlign | P::VAlign | P::NoAlign | P::Omit | P::Cr | P::CrCr | P::Span => {
-            ordinary(ALIGNMENT)
-        }
+        | P::ErrMessage => direct(),
+        P::BeginGroup | P::EndGroup => direct(),
+        P::HAlign | P::VAlign | P::NoAlign | P::Omit | P::Cr | P::CrCr | P::Span => direct(),
         P::MathChar
         | P::Delimiter
         | P::TextFont
@@ -487,7 +451,7 @@ fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
         | P::DisplayStyle
         | P::TextStyle
         | P::ScriptStyle
-        | P::ScriptScriptStyle => ordinary(MATH),
+        | P::ScriptScriptStyle => direct(),
         P::Par
         | P::Indent
         | P::NoIndent
@@ -542,7 +506,7 @@ fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
         | P::EndL
         | P::BeginR
         | P::EndR
-        | P::QuitVMode => ordinary(MATERIAL),
+        | P::QuitVMode => direct(),
         P::PdfStartLink => late_state(PDF),
         P::PdfLiteral
         | P::PdfSetMatrix
@@ -575,7 +539,7 @@ fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
         | P::PdfDest
         | P::PdfThread
         | P::PdfStartThread
-        | P::PdfEndThread => ordinary(PDF),
+        | P::PdfEndThread => direct(),
         P::Def
         | P::Edef
         | P::Gdef
@@ -674,7 +638,7 @@ fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
         | P::GlueStretchOrder
         | P::GlueShrinkOrder
         | P::GlueToMu
-        | P::MuToGlue => ordinary(STATE),
+        | P::MuToGlue => direct(),
     }
 }
 

@@ -30,8 +30,8 @@ pub(super) enum OperationDelivery {
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the adjacent typed slot contains the cold operation.
     ResidentCold,
-    /// Delivery completed during mutation-free capability preflight. The
-    /// semantic step still runs through the sole executor below.
+    /// Delivery completed before a cold semantic step. The semantic step still
+    /// runs through the sole executor below.
     /// The suspension frame has restored the resident typed cold branch.
     SuspendedCold,
 }
@@ -310,7 +310,6 @@ pub(super) fn own_alignment_retry_child<G>(
     mut episode: CommandEpisode<G>,
     cold: ColdOperationSlot<G>,
     alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
-    preflight: Option<crate::transaction_protocol::CommandPreflight>,
 ) -> Option<PendingDirectDestination<G>> {
     let Some((alignment, cursor)) = alignment.zip(episode.cursor) else {
         assert!(
@@ -321,7 +320,7 @@ pub(super) fn own_alignment_retry_child<G>(
             .has_preflight()
             .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery(preflight),
+                resume: PendingFrameResume::Delivery,
             }));
     };
     match episode.phase {
@@ -359,7 +358,7 @@ pub(super) fn own_alignment_retry_child<G>(
             let _ = retry;
             Some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery(preflight),
+                resume: PendingFrameResume::Delivery,
             }))
         }
         // Alignment itself suspended without a command-owned continuation.
@@ -865,7 +864,6 @@ pub(super) struct PendingResourceOperation<G> {
 
 pub(super) struct SuspendedResourceResume<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) preflight: crate::transaction_protocol::CommandPreflight,
 }
 
 pub(super) const SUSPENDED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
@@ -899,8 +897,8 @@ pub(super) struct PendingFrameDestination<G> {
 
 #[derive(Clone, Copy)]
 pub(super) enum PendingFrameResume {
-    Delivery(Option<crate::transaction_protocol::CommandPreflight>),
-    ColdExecution(crate::transaction_protocol::CommandPreflight),
+    Delivery,
+    ColdExecution,
 }
 
 pub(super) enum PendingDirectState {
@@ -944,7 +942,6 @@ pub(super) struct PendingDiagnosticOperation<G> {
 
 pub(super) struct PendingDiagnosticDestination<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) preflight: Option<crate::transaction_protocol::CommandPreflight>,
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {

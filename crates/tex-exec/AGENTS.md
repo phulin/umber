@@ -52,8 +52,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   preparation. A scanner or conditional invokes only the exact fact method it
   consumes; ordinary delivery writes no mode/tail cache and performs no
   effective-tail traversal. The caller-owned preparation slot retains only
-  delivery, retry, and checked-save state across admitted stages; no live fact
-  or provider survives a processor episode or enters suspension.
+  delivery, retry, and checked-save state across admitted stages; it contains
+  no command classification. No live fact or provider survives a processor
+  episode or enters suspension.
 - The resident `CommandEpisode` owns the admitted current command, parked
   expansion, scalar phase, delivery cursor, scanner child, partial direct scan,
   and the completed hot-family operand. An adjacent caller-owned typed cold
@@ -100,10 +101,13 @@ Command operands are scanned by `tex-command` into typed request and result valu
   page/PDF projection, and non-clone effects-before-artifacts publication with
   exact suffix retry.
 - `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
-  exhaustive canonical-command capability classification and mutation-free
-  preflight. Compatibility assertions over exact owner/mark projections,
-  admission variants, and preflight layout are retired; external rollback and
-  parity tests are the migration authority.
+  exhaustive uncommon-barrier classification for direct canonical dispatch.
+  Ordinary commands produce no value; the resource and explicit late-failure
+  transaction cases alone materialize a barrier, while the PDF family is a
+  compile-time predicate used to demand-read `\pdfoutput`. Compatibility
+  assertions over exact owner/mark projections, admission variants, and
+  runtime layout are retired; external rollback and parity tests are the
+  migration authority.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.

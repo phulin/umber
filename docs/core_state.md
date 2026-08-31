@@ -502,10 +502,14 @@ group. Rollback may unwind descendant groups entered after capture, while an
 exited-and-replaced enclosing group invalidates the snapshot even if the live
 stack later returns to the same depth and journal position.
 
-Production command delivery has no private aggregate retry snapshot. Raw or
-expanded delivery and typed operand preflight complete first; resource misses
-retain their prepared request, and semantic apply commits exact owners
-directly. `DirectOperationMark` is a fixed-size, non-restoring cursor over the
+Production command delivery has no private aggregate retry snapshot or
+executor-preflight value. Raw or expanded delivery classifies uncommon
+resource and late-failure barriers directly from the resident command;
+ordinary delivery stores and copies no classification. The PDF family alone
+demand-reads live `\pdfoutput` for its DVI-mode retry decision. Typed operand
+scanning then completes in place; resource misses retain their prepared
+request, and semantic apply commits exact owners directly.
+`DirectOperationMark` is a fixed-size, non-restoring cursor over the
 operation's environment-journal activity and private immutable-store suffix.
 Its command-attempt edge is coordinate-free; `CommandState` owns the sole
 ordinary opening mark, while a real resource suspension alone retains a cold

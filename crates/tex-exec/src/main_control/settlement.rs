@@ -313,11 +313,9 @@ impl<G> MainControl<G> {
         operation: tex_command::CommandAttemptOperation,
         frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
-        preflight: crate::transaction_protocol::CommandPreflight,
     ) {
         let pending = SuspendedResourceResume::<G> {
             frame: OperationFrame::new(frame, cold),
-            preflight,
         };
         let attempt = self
             .command
@@ -340,7 +338,6 @@ impl<G> MainControl<G> {
         mark: DirectOperationMark<G>,
         mut frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
-        preflight: crate::transaction_protocol::CommandPreflight,
     ) -> Result<StepResult, ExecError> {
         assert!(
             frame.has_unavailable(&cold),
@@ -350,7 +347,7 @@ impl<G> MainControl<G> {
         let result = self.finish_resource_preflight_failure(stores, error);
         if matches!(result, Ok(StepResult::Suspended(_))) {
             let operation = self.retain_direct_operation_for_retry(stores, mark);
-            self.suspend_prepared_resource_operation(stores, operation, frame, cold, preflight);
+            self.suspend_prepared_resource_operation(stores, operation, frame, cold);
         } else {
             self.commit_direct_operation(stores, mark);
         }
