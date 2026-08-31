@@ -507,7 +507,6 @@ fn repeated_same_scalar_writes_coalesce_to_first_old_and_final_live_value() {
         }
         let after = command.timeline.packed_journal_counters();
         assert_eq!(after.records - before.records, 1);
-        assert_eq!(after.coalesced_writes - before.coalesced_writes, 1_023);
         assert_eq!(after.descriptor_publications, 0);
         assert!(!command.name_in_progress());
 
@@ -846,7 +845,6 @@ fn repeated_source_owner_swaps_coalesce_and_candidate_reject_redoes_the_final_ow
         let after = command.input.levels.counters();
         assert_eq!(after.owner_swaps - before.owner_swaps, 1);
         assert_eq!(after.undo_records - before.undo_records, 1);
-        assert_eq!(after.coalesced_mutations - before.coalesced_mutations, 2);
 
         let mut candidate = crate::CommandState::fork_summary(command, &early, universe, universe)
             .expect("source prefix forks");
@@ -1212,10 +1210,6 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
         assert_eq!(after.payload_admissions, before.payload_admissions);
         assert_eq!(after.full_payload_history_clones, 0);
         assert_eq!(after.undo_records - before.undo_records, 1);
-        assert_eq!(
-            after.coalesced_mutations - before.coalesced_mutations,
-            1_023
-        );
         assert!(
             after.undo_record_bytes - before.undo_record_bytes <= 48,
             "token-frame record bytes: {}",

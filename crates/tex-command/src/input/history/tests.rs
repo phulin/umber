@@ -49,15 +49,10 @@ fn assert_exact_direct_transition<G>(
             stored_token_branch_entries: expected_branches.1,
             macro_argument_branch_entries: expected_branches.2,
             first_touch_transitions: 1,
-            coalesced_transitions: 1,
             closure_dispatches: 0,
         }
     );
     assert_eq!(after_history.undo_records - before_history.undo_records, 1);
-    assert_eq!(
-        after_history.coalesced_mutations - before_history.coalesced_mutations,
-        1
-    );
     assert_eq!(
         state.input.levels.context_revision(),
         opening_revision.wrapping_add(2).max(1)

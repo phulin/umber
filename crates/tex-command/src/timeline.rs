@@ -230,7 +230,6 @@ pub(crate) struct LogicalStack<T: LogicalStackElement> {
     /// a replacement, even though ordinary first-touch coalescing has already
     /// marked the physical row touched.
     partially_captured: Vec<u64>,
-    coalesced_mutations: u64,
     payload_admissions: u64,
 }
 
@@ -251,7 +250,6 @@ pub(crate) struct LogicalStackCounters {
     pub(crate) full_payload_history_clones: u64,
     pub(crate) undo_records: u64,
     pub(crate) undo_record_bytes: u64,
-    pub(crate) coalesced_mutations: u64,
     pub(crate) displaced_payloads: u32,
     pub(crate) displaced_reuses: u64,
     pub(crate) stored_state_captures: u64,
@@ -275,7 +273,6 @@ impl<T: LogicalStackElement> Default for LogicalStack<T> {
             interval: 1,
             touched: Vec::new(),
             partially_captured: Vec::new(),
-            coalesced_mutations: 0,
             payload_admissions: 0,
         }
     }
@@ -545,7 +542,6 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             full_payload_history_clones: 0,
             undo_records: undo.records,
             undo_record_bytes: undo.record_bytes,
-            coalesced_mutations: self.coalesced_mutations,
             displaced_payloads: self.displaced.live,
             displaced_reuses: self.displaced.reuses,
             stored_state_captures: 0,
@@ -560,9 +556,6 @@ impl<T: LogicalStackElement> LogicalStack<T> {
 
     fn record(&mut self, index: usize) {
         if !self.recording || self.touched[index] == self.interval {
-            if self.recording {
-                self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-            }
             return;
         }
         self.touched[index] = self.interval;
@@ -651,7 +644,6 @@ mod tests {
             *stack.last_mut().expect("frame remains live") += 1;
         }
         assert_eq!(stack.counters().undo_records, 1);
-        assert_eq!(stack.counters().coalesced_mutations, 1_023);
         assert!(stack.restore(mark));
         assert_eq!(stack.as_slice(), &[10]);
     }

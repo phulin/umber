@@ -44,7 +44,6 @@ pub(crate) struct InputCursorMutationCounters {
     pub(crate) stored_token_branch_entries: u64,
     pub(crate) macro_argument_branch_entries: u64,
     pub(crate) first_touch_transitions: u64,
-    pub(crate) coalesced_transitions: u64,
     pub(crate) closure_dispatches: u64,
 }
 
@@ -55,7 +54,6 @@ struct InlineCursorRecorder<'a, G> {
     touched: &'a mut u64,
     partially_captured: &'a mut u64,
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
-    coalesced_mutations: &'a mut u64,
     #[cfg(any(test, feature = "profiling"))]
     counters: &'a mut InputCursorMutationCounters,
 }
@@ -67,12 +65,6 @@ impl<G> InlineCursorRecorder<'_, G> {
             return;
         }
         if *self.touched == self.interval {
-            *self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-            #[cfg(any(test, feature = "profiling"))]
-            {
-                self.counters.coalesced_transitions =
-                    self.counters.coalesced_transitions.saturating_add(1);
-            }
             return;
         }
         *self.touched = self.interval;
@@ -105,7 +97,6 @@ struct ResidentSourceTop<'a, G> {
     partially_captured: &'a mut u64,
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
-    coalesced_mutations: &'a mut u64,
     source_lex_captures: &'a mut u64,
     context_revision: &'a mut u64,
     #[cfg(any(test, feature = "profiling"))]
@@ -128,14 +119,6 @@ impl<G> ResidentSourceTop<'_, G> {
     #[inline(always)]
     fn record_first_touch(&mut self) {
         let needs_inverse = self.recording && *self.touched != self.interval;
-        if self.recording && !needs_inverse {
-            *self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-            #[cfg(any(test, feature = "profiling"))]
-            {
-                self.counters.coalesced_transitions =
-                    self.counters.coalesced_transitions.saturating_add(1);
-            }
-        }
         if needs_inverse {
             *self.source_lex_captures = self.source_lex_captures.saturating_add(1);
             let payload = self
@@ -432,7 +415,6 @@ pub(crate) struct InputStack<G> {
     touched: Vec<u64>,
     partially_captured: Vec<u64>,
     source_owner_captured: Vec<u64>,
-    coalesced_mutations: u64,
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
@@ -460,7 +442,6 @@ impl<G> Default for InputStack<G> {
             touched: Vec::new(),
             partially_captured: Vec::new(),
             source_owner_captured: Vec::new(),
-            coalesced_mutations: 0,
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
@@ -580,7 +561,6 @@ impl<G> InputStack<G> {
                         partially_captured: &mut self.partially_captured[index],
                         undo: &mut self.undo,
                         source_lex_states: &mut self.source_lex_states,
-                        coalesced_mutations: &mut self.coalesced_mutations,
                         source_lex_captures: &mut self.source_lex_captures,
                         context_revision: &mut self.context_revision,
                         #[cfg(any(test, feature = "profiling"))]
@@ -607,7 +587,6 @@ impl<G> InputStack<G> {
                             touched: &mut self.touched[index],
                             partially_captured: &mut self.partially_captured[index],
                             undo: &mut self.undo,
-                            coalesced_mutations: &mut self.coalesced_mutations,
                             #[cfg(any(test, feature = "profiling"))]
                             counters: &mut self.cursor_mutations,
                         },
@@ -634,7 +613,6 @@ impl<G> InputStack<G> {
                             touched: &mut self.touched[index],
                             partially_captured: &mut self.partially_captured[index],
                             undo: &mut self.undo,
-                            coalesced_mutations: &mut self.coalesced_mutations,
                             #[cfg(any(test, feature = "profiling"))]
                             counters: &mut self.cursor_mutations,
                         },
@@ -840,9 +818,6 @@ impl<G> InputStack<G> {
             _ => return None,
         };
         let needs_inverse = self.recording && self.touched[index] != self.interval;
-        if self.recording && !needs_inverse {
-            self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-        }
         let (rows, slots, states, undo) = (
             &mut self.rows,
             &mut self.source_slots,
@@ -1488,7 +1463,6 @@ impl<G> InputStack<G> {
             let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
             slot.occupied_buffer_slots = current_buffer_slots;
             self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
-            self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
             return result;
         }
         self.source_owner_states.warm_first_page();
@@ -1707,7 +1681,6 @@ impl<G> InputStack<G> {
             full_payload_history_clones: 0,
             undo_records: undo.records,
             undo_record_bytes: undo.record_bytes,
-            coalesced_mutations: self.coalesced_mutations,
             displaced_payloads: self.displaced_rows.live,
             displaced_reuses: self.displaced_rows.reuses,
             stored_state_captures: self.source_lex_captures,
@@ -1732,9 +1705,6 @@ impl<G> InputStack<G> {
 
     fn record_inline(&mut self, index: usize, state: InputLevelInlineState) {
         if !self.recording || self.touched[index] == self.interval {
-            if self.recording {
-                self.coalesced_mutations = self.coalesced_mutations.saturating_add(1);
-            }
             return;
         }
         self.touched[index] = self.interval;

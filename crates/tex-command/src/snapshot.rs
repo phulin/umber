@@ -79,8 +79,6 @@ pub(crate) struct CommandTimeline<G> {
     pending_input: PackedJournal<PendingInputUndo, 8>,
     touched_scalars: u16,
     pending_input_touched: bool,
-    coalesced_writes: u64,
-    ordered_events: u64,
     #[cfg(feature = "profiling")]
     alignment_delivery_journal_attempts: u64,
     fork: Option<CommandTimelineFork>,
@@ -227,8 +225,6 @@ impl<G> Default for CommandTimeline<G> {
             pending_input: PackedJournal::default(),
             touched_scalars: 0,
             pending_input_touched: false,
-            coalesced_writes: 0,
-            ordered_events: 0,
             #[cfg(feature = "profiling")]
             alignment_delivery_journal_attempts: 0,
             fork: None,
@@ -537,8 +533,6 @@ impl<G> CommandTimeline<G> {
             records: scalar.records.saturating_add(pending.records),
             record_bytes: scalar.record_bytes.saturating_add(pending.record_bytes),
             descriptor_publications: 0,
-            coalesced_writes: self.coalesced_writes,
-            ordered_events: self.ordered_events,
             chunks_acquired: scalar
                 .chunks_acquired
                 .saturating_add(pending.chunks_acquired),
@@ -627,7 +621,6 @@ impl<G> CommandTimeline<G> {
         }
         let bit = slot.bit();
         if self.touched_scalars & bit != 0 {
-            self.coalesced_writes = self.coalesced_writes.saturating_add(1);
             return;
         }
         self.touched_scalars |= bit;
@@ -701,7 +694,6 @@ impl<G> CommandTimeline<G> {
             return;
         }
         if self.pending_input_touched {
-            self.coalesced_writes = self.coalesced_writes.saturating_add(1);
             return;
         }
         self.pending_input_touched = true;
@@ -838,8 +830,6 @@ pub struct CommandTimelineCounters {
     pub records: u64,
     pub record_bytes: u64,
     pub descriptor_publications: u64,
-    pub coalesced_writes: u64,
-    pub ordered_events: u64,
     #[cfg(feature = "profiling")]
     pub alignment_delivery_journal_attempts: u64,
     pub chunks_acquired: u64,
@@ -857,7 +847,6 @@ pub struct CommandTimelineCounters {
     pub full_frame_history_clones: u64,
     pub logical_records: u64,
     pub logical_record_bytes: u64,
-    pub logical_coalesced_mutations: u64,
     pub logical_stored_state_captures: u64,
     pub logical_owner_swaps: u64,
     pub displaced_payloads: u64,

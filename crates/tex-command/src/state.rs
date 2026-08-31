@@ -1060,9 +1060,6 @@ impl<G> CommandState<G> {
             counters.logical_record_bytes = counters
                 .logical_record_bytes
                 .saturating_add(stack.undo_record_bytes);
-            counters.logical_coalesced_mutations = counters
-                .logical_coalesced_mutations
-                .saturating_add(stack.coalesced_mutations);
             counters.logical_stored_state_captures = counters
                 .logical_stored_state_captures
                 .saturating_add(stack.stored_state_captures);
@@ -1172,17 +1169,16 @@ impl<G> CommandState<G> {
         self.input.levels.reset_cursor_mutation_counters();
     }
 
-    /// Returns `(typed top accesses, first touches, coalesced transitions,
-    /// closure dispatches)` for the direct resident-input mutation boundary.
+    /// Returns `(typed top accesses, first touches, closure dispatches)` for
+    /// the direct resident-input mutation boundary.
     #[doc(hidden)]
     #[cfg(any(test, feature = "profiling"))]
     #[must_use]
-    pub fn profile_input_cursor_mutation_counters(&self) -> (u64, u64, u64, u64) {
+    pub fn profile_input_cursor_mutation_counters(&self) -> (u64, u64, u64) {
         let counters = self.input.levels.cursor_mutation_counters();
         (
             counters.typed_top_accesses,
             counters.first_touch_transitions,
-            counters.coalesced_transitions,
             counters.closure_dispatches,
         )
     }

@@ -960,7 +960,6 @@ fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
             2
         );
         assert_eq!(after.records - before.records, 1);
-        assert_eq!(after.coalesced_writes - before.coalesced_writes, 1);
         assert_eq!(command.alignment.align_state, initial_align_state);
 
         command
@@ -1014,10 +1013,6 @@ fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
             before_delimiter.alignment_delivery_journal_attempts
         );
         assert_eq!(after_delimiter.records, before_delimiter.records);
-        assert_eq!(
-            after_delimiter.coalesced_writes,
-            before_delimiter.coalesced_writes
-        );
 
         let delimiter_snapshot = command.snapshot(universe).expect("active-cell checkpoint");
         crate::test_harness::push(&mut command, [tab]);
@@ -1147,7 +1142,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
             );
             assert_eq!(
                 processor.command.profile_input_cursor_mutation_counters(),
-                (1, 0, 0, 0)
+                (1, 0, 0)
             );
             assert_eq!(
                 processor.command.profile_input_source_context_counters(),
@@ -1186,7 +1181,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
         );
         assert_eq!(
             processor.command.profile_input_cursor_mutation_counters(),
-            (2, 0, 0, 0)
+            (2, 0, 0)
         );
     });
 }

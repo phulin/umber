@@ -3528,6 +3528,11 @@ record and 1,023 coalesced writes. Push, pop, and replacement order remains in
 the logical top and replacement-handle journal, so intermediate diagnostics
 continue to observe the exact live stack.
 
+The live journal stores no coalesced-write census. Focused gates derive that
+evidence at their explicit measurement boundary from known mutation attempts
+minus observed first-touch records, so an already-touched production row or
+root scalar pays only the interval/touched test.
+
 Only state cells whose intermediate values cannot escape the checkpoint
 transaction are coalesced: filename-scan activity, pending after-assignment,
 expansion accounting, alignment brace depth, input/source identity counters,

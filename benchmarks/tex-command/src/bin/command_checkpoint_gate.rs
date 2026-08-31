@@ -107,6 +107,13 @@ struct FrameDiscardWork {
     lazy_reuse_incarnations: u64,
 }
 
+fn coalesced_mutations(mutations: usize, first_touch_records: u64) -> u64 {
+    u64::try_from(mutations)
+        .expect("mutation count fits u64")
+        .checked_sub(first_touch_records)
+        .expect("first-touch records cannot exceed mutation attempts")
+}
+
 fn main() {
     let shallow = run_fixture(1);
     let accumulated = run_fixture(64);
@@ -333,19 +340,20 @@ fn run_source_depth_fixture(depth: usize) -> SourceDepthCounts {
         let (_, allocations) = measure(|| command.profile_repeated_source_lex_mutations(4_096));
         let after = command.profile_timeline_counters();
 
+        let records = after
+            .logical_records
+            .saturating_sub(before.logical_records);
         SourceDepthCounts {
             mutations: 4_096,
             allocations,
-            records: after.logical_records.saturating_sub(before.logical_records),
+            records,
             record_bytes: after
                 .logical_record_bytes
                 .saturating_sub(before.logical_record_bytes),
             stored_state_captures: after
                 .logical_stored_state_captures
                 .saturating_sub(before.logical_stored_state_captures),
-            coalesced_mutations: after
-                .logical_coalesced_mutations
-                .saturating_sub(before.logical_coalesced_mutations),
+            coalesced_mutations: coalesced_mutations(4_096, records),
             owner_swaps: after
                 .logical_owner_swaps
                 .saturating_sub(before.logical_owner_swaps),
@@ -536,10 +544,9 @@ fn run_source_history_fixture() -> SourceHistoryCounts {
             1
         );
         assert_eq!(after.logical_owner_swaps, before.logical_owner_swaps);
-        assert_eq!(
-            after.logical_coalesced_mutations - before.logical_coalesced_mutations,
-            8_191
-        );
+        let lex_records = after.logical_records - before.logical_records;
+        assert_eq!(lex_records, 1);
+        assert_eq!(coalesced_mutations(8_192, lex_records), 8_191);
         command
             .restore_summary(&summary, universe)
             .expect("source lexer cleanup restores");
@@ -660,6 +667,7 @@ fn run_fixture(units: usize) -> GateCounts {
         let _ = command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
             &mut effects,
+            None,
         );
 
         let warm = command
@@ -691,11 +699,9 @@ fn run_fixture(units: usize) -> GateCounts {
         let (_, repeated_scalar_mutations) =
             measure(|| command.profile_repeated_timeline_mutations(8_192));
         let journal_after = command.profile_timeline_counters();
-        assert_eq!(journal_after.records - journal_before.records, 1);
-        assert_eq!(
-            journal_after.coalesced_writes - journal_before.coalesced_writes,
-            8_191
-        );
+        let scalar_records = journal_after.records - journal_before.records;
+        assert_eq!(scalar_records, 1);
+        assert_eq!(coalesced_mutations(8_192, scalar_records), 8_191);
         assert_eq!(journal_after.descriptor_publications, 0);
         assert!(journal_after.record_bytes - journal_before.record_bytes <= 32);
         command
@@ -716,22 +722,17 @@ fn run_fixture(units: usize) -> GateCounts {
             input_before.logical_payload_admissions
         );
         assert_eq!(input_after.full_frame_history_clones, 0);
-        assert_eq!(
-            input_after.logical_records - input_before.logical_records,
-            1
-        );
-        assert_eq!(
-            input_after.logical_coalesced_mutations - input_before.logical_coalesced_mutations,
-            8_191
-        );
+        let input_records = input_after.logical_records - input_before.logical_records;
+        assert_eq!(input_records, 1);
+        let input_coalesced = coalesced_mutations(8_192, input_records);
+        assert_eq!(input_coalesced, 8_191);
         assert!(input_after.logical_record_bytes - input_before.logical_record_bytes <= 48);
         let logical_history = LogicalHistoryCounts {
             payload_admissions_per_frame: input_before.logical_payload_admissions / logical_frames,
             full_frame_history_clones: input_after.full_frame_history_clones,
-            records: input_after.logical_records - input_before.logical_records,
+            records: input_records,
             record_bytes: input_after.logical_record_bytes - input_before.logical_record_bytes,
-            coalesced_mutations: input_after.logical_coalesced_mutations
-                - input_before.logical_coalesced_mutations,
+            coalesced_mutations: input_coalesced,
         };
         command
             .restore_summary(&summary, universe)

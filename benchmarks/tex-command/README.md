@@ -131,6 +131,10 @@ An independent source-depth row compares one and 4,096 live source slots. In
 both cases, 4,096 warmed lexical mutations must allocate zero bytes, append one
 inverse of at most 48 bytes, coalesce the other 4,095 mutations, perform no
 source-owner swap, and clone no whole input frame.
+The coalesced counts are derived at this measurement boundary from the known
+mutation attempts minus the observed first-touch records. Production command
+state stores no coalesced-mutation census and performs no counter update after
+a row or scalar is already touched.
 The cursor-structure row independently varies group-stack depth from one to
 4,096 and aftergroup payload from one to 65,536 words. It requires identical
 fixed summary/cursor sizes, a one-word cursor, zero warmed capture/restore
