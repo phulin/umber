@@ -135,7 +135,6 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
                         self.sequence,
                         self.sequence,
                         None,
-                        None,
                         false,
                         None,
                         false,

@@ -508,7 +508,7 @@ fn project_token_cursor<G>(
     match &cursor.span {
         PackedTokenSpanHandle::Replay { replay, len } => {
             for index in 0..*len as usize {
-                project_token(hash, replay_lane.get(*replay, index)?.0.token()?, state)?;
+                project_token(hash, replay_lane.get(*replay, index)?.token()?, state)?;
             }
         }
         PackedTokenSpanHandle::DurableList { list, .. } => {
@@ -1137,7 +1137,7 @@ impl<G> InputState<G> {
         ) -> Option<tex_state::token::Token> {
             PackedTokenSources::new(replay_lane, attempt, parameters)
                 .token_at(&tokens.span, tokens.behavior, index)
-                .map(|(word, _, _)| word.semantic_token())
+                .map(|(word, _)| word.semantic_token())
         }
 
         fn render_token<G>(

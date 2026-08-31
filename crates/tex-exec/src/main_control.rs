@@ -4051,7 +4051,7 @@ impl<G> MainControl<G> {
         }
         if !host_preparation.has_preflight() {
             self.ensure_primitive_handles(stores);
-            let (command, cursor, retry_expansion) = {
+            let (command, cursor, retry_expansion, source_provenance) = {
                 let mut context = stores.command_context().expect("live generation");
                 let mut processor = command_processor(
                     &mut self.command,
@@ -4069,7 +4069,12 @@ impl<G> MainControl<G> {
                     .as_ref()
                     .err()
                     .and_then(|_| processor.take_pending_expansion_work());
-                (command, cursor, retry_expansion)
+                let source_provenance = command
+                    .as_ref()
+                    .ok()
+                    .and_then(Option::as_ref)
+                    .and_then(|command| processor.source_provenance(command));
+                (command, cursor, retry_expansion, source_provenance)
             };
             let command = match command {
                 Ok(command) => command,
@@ -4109,7 +4114,7 @@ impl<G> MainControl<G> {
                     spelling: command.spelling(),
                     meaning: static_meaning(command.meaning()),
                     control_sequence: command.control_sequence(),
-                    source_provenance: command.source_provenance(),
+                    source_provenance,
                 };
                 self.commit_direct_operation(stores, operation_mark);
                 return Ok(DiagnosticStepResult::Progress(step));

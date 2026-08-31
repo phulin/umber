@@ -2256,7 +2256,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .input
             .replay
             .get(replay, 0)
-            .map(|(word, _)| word.semantic_token());
+            .map(|word| word.semantic_token());
         self.insert_expansion_list(PackedTokenSpanHandle::Replay { replay, len }, first);
         Ok(())
     }

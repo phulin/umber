@@ -12,8 +12,8 @@ use crate::{
 fn keyword_replay_keeps_scalar_continuations_compact() {
     let prefix = std::mem::size_of::<super::MatchedKeywordPrefix<()>>();
     let pending = std::mem::size_of::<super::PendingScalarFrame<()>>();
-    assert_eq!(prefix, 536);
-    assert_eq!(pending, 592);
+    assert_eq!(prefix, 120);
+    assert_eq!(pending, 208);
 }
 
 #[test]

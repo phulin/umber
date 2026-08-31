@@ -103,7 +103,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let level = self.command.push_token_level(
                 PackedTokenSpanHandle::backed_up([BackedUpToken {
                     spelling: frozen_relax,
-                    source_provenance: None,
                 }]),
                 TokenBehavior::BackedUp(BackupTreatment::Ordinary),
                 RetirementBehavior::Pop,

@@ -170,7 +170,6 @@ impl<G> MatchedKeywordPrefix<G> {
         debug_assert!(self.inline.len() < KEYWORD_PREFIX_INLINE_CAPACITY);
         self.inline.push(crate::input::BackedUpToken {
             spelling: command.spelling(),
-            source_provenance: command.source_provenance(),
         });
     }
 

@@ -119,7 +119,9 @@ collector (see `src/conditionals.rs`).
   packed-resolution fact; the `CommandState` resident transition reclaims its
   original destination for suppression and required alignment treatment, and
   the processor receives only a copy-small
-  ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
+  ready/outer result. Exact source geometry remains behind the spelling's
+  packed origin and is materialized only by cold processor consumers; the hot
+  value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
 - `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural
@@ -245,7 +247,9 @@ collector (see `src/conditionals.rs`).
   foreign compact and stored inverses fail before mutation. The module also owns cold backup source coordinates,
   explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
   reuse, and orthogonal delivery/retirement classifications. A source slot's
-  optional `open_depths` owner is `\tracingnesting`'s own record. Nested source
+  replay words retain their packed origin directly and own no parallel decoded
+  source-provenance lane. A source slot's optional `open_depths` owner is
+  `\tracingnesting`'s own record. Nested source
   opening installs it before the frame becomes visible; retirement borrows it
   before pop and carries only copy-small boundary facts afterward. See
   `src/tracing_nesting.rs`.

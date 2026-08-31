@@ -403,6 +403,33 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.current_file_line_number()
     }
 
+    /// Materializes a command's exact physical spelling range on demand.
+    ///
+    /// The hot command carries only its packed origin. Backup, observation,
+    /// diagnostics, and other cold consumers call this projection while the
+    /// admitted source/provenance stores are available.
+    #[must_use]
+    pub fn source_provenance(
+        &self,
+        command: &crate::CurrentCommand<G>,
+    ) -> Option<crate::SourceProvenance> {
+        let range = self.state.origin_source_range(command.origin())?;
+        Some(crate::SourceProvenance::from_range(
+            crate::SourceRange::new(range.source(), range.start(), range.end()),
+        ))
+    }
+
+    #[must_use]
+    pub(crate) fn direct_source_provenance(
+        &self,
+        command: &crate::CurrentCommand<G>,
+    ) -> Option<crate::SourceProvenance> {
+        command
+            .is_direct_source_delivery()
+            .then(|| self.source_provenance(command))
+            .flatten()
+    }
+
     /// Returns the immutable command dialect and character mode for this job.
     #[must_use]
     pub fn profile(&self) -> crate::CommandProfile {

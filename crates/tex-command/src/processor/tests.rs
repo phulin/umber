@@ -1461,10 +1461,13 @@ fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
                 DeliveryStatus::Command
             );
             let delivered = destination.as_ref().expect("delivered command");
+            let provenance = processor
+                .source_provenance(delivered)
+                .expect("source provenance");
             (
                 delivered.delivery_stamp(),
-                delivered.source_range().expect("source range"),
-                delivered.source_location().expect("source location"),
+                provenance.range(),
+                provenance.location(),
             )
         };
 
@@ -1948,7 +1951,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
                 cat: Catcode::Letter,
             }
         );
-        let second_provenance = second.source_provenance();
+        let second_provenance = processor.source_provenance(&second);
         assert_eq!(second.direct_source_line_number(), Some(1));
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let second_line_number = match processor.command.input.levels.top_source() {
@@ -1968,7 +1971,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
             .get_next()
             .expect("backup delivery")
             .expect("backed-up character");
-        assert_eq!(replayed.source_provenance(), second_provenance);
+        assert_eq!(processor.source_provenance(&replayed), second_provenance);
         assert_eq!(replayed.direct_source_line_number(), None);
         assert_eq!(processor.command.input.current_file_line_number(), 1);
     });

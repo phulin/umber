@@ -292,6 +292,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/provenance.rs`: Storage-independent provenance demand, budget, source,
   invocation, insertion, synthesis, related-location, and origin-record values;
   live storage and ownership are deliberately absent pending the final arenas.
+  It also defines the demand-only physical source-range projection resolved
+  from a compact token origin by `CommandContext`.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver

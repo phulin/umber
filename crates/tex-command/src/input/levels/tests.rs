@@ -26,8 +26,8 @@ fn transient_payload_is_read_through_its_replay_coordinate() {
     let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         panic!("transient replay coordinate")
     };
-    assert_eq!(lane.get(replay, 0).map(|entry| entry.0), Some(traced('a')));
-    assert_eq!(lane.get(replay, 1).map(|entry| entry.0), Some(traced('b')));
+    assert_eq!(lane.get(replay, 0), Some(traced('a')));
+    assert_eq!(lane.get(replay, 1), Some(traced('b')));
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
     let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         panic!("escaping input replay coordinate")
     };
-    assert_eq!(lane.get(replay, 0).map(|entry| entry.0), Some(traced('a')));
-    assert_eq!(lane.get(replay, 1).map(|entry| entry.0), Some(traced('b')));
+    assert_eq!(lane.get(replay, 0), Some(traced('a')));
+    assert_eq!(lane.get(replay, 1), Some(traced('b')));
 
     let snapshot_payload = snapshot
         .finish_input_builder(builder)
@@ -60,10 +60,7 @@ fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
     else {
         panic!("snapshot replay coordinate")
     };
-    assert_eq!(
-        snapshot.get(snapshot_replay, 0).map(|entry| entry.0),
-        Some(traced('a'))
-    );
+    assert_eq!(snapshot.get(snapshot_replay, 0), Some(traced('a')));
     assert_eq!(snapshot.get(snapshot_replay, 1), None);
     assert!(
         lane.words.active.is_empty(),
@@ -92,7 +89,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
         lane.release(first).is_err(),
         "non-top replay must stay live"
     );
-    assert_eq!(lane.get(first, 0).map(|entry| entry.0), Some(traced('a')));
+    assert_eq!(lane.get(first, 0), Some(traced('a')));
     lane.release(second).expect("top replay retires");
     lane.release(first).expect("older replay retires after top");
 
@@ -107,7 +104,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
     let PackedTokenSpanHandle::Replay { replay: warmed, .. } = warmed else {
         panic!("warmed replay coordinate")
     };
-    assert_eq!(lane.get(warmed, 0).map(|entry| entry.0), Some(traced('c')));
+    assert_eq!(lane.get(warmed, 0), Some(traced('c')));
 }
 
 #[test]
@@ -115,7 +112,6 @@ fn replay_lane_clone_preserves_prior_payload_while_current_reuses_lifo_state() {
     let mut current = ReplayLane::<()>::default();
     let prior_payload = PackedTokenSpanHandle::<()>::backed_up([BackedUpToken {
         spelling: traced('p'),
-        source_provenance: None,
     }])
     .admit(&mut current)
     .expect("prior replay admission");
@@ -135,14 +131,8 @@ fn replay_lane_clone_preserves_prior_payload_while_current_reuses_lifo_state() {
         panic!("candidate replay coordinate")
     };
 
-    assert_eq!(
-        snapshot.get(prior, 0).map(|entry| entry.0),
-        Some(traced('p'))
-    );
-    assert_eq!(
-        current.get(candidate, 0).map(|entry| entry.0),
-        Some(traced('c'))
-    );
+    assert_eq!(snapshot.get(prior, 0), Some(traced('p')));
+    assert_eq!(current.get(candidate, 0), Some(traced('c')));
 }
 
 #[test]
@@ -197,10 +187,7 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
     else {
         panic!("transient replay payload")
     };
-    assert_eq!(
-        lane.get(stored, 0).map(|entry| entry.0),
-        lane.get(transient, 0).map(|entry| entry.0)
-    );
+    assert_eq!(lane.get(stored, 0), lane.get(transient, 0));
 }
 
 #[test]

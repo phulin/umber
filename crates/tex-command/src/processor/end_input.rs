@@ -332,7 +332,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .input
                         .replay
                         .get(replay, 0)
-                        .map(|(spelling, _)| spelling.semantic_token()),
+                        .map(|spelling| spelling.semantic_token()),
                     _ => None,
                 },
                 Some(Token::Char {

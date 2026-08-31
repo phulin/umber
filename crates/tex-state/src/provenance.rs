@@ -7,6 +7,38 @@ use crate::world::InputRecordId;
 
 const DEFAULT_PROVENANCE_RECORD_LIMIT: usize = 1_048_576;
 
+/// Exact immutable physical source range behind one compact token origin.
+///
+/// This is a demand-only projection. Hot token and command values retain the
+/// [`OriginId`] instead of copying this decoded geometry on every delivery.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OriginSourceRange {
+    source: SourceId,
+    start: u64,
+    end: u64,
+}
+
+impl OriginSourceRange {
+    pub(crate) const fn new(source: SourceId, start: u64, end: u64) -> Self {
+        Self { source, start, end }
+    }
+
+    #[must_use]
+    pub const fn source(self) -> SourceId {
+        self.source
+    }
+
+    #[must_use]
+    pub const fn start(self) -> u64 {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn end(self) -> u64 {
+        self.end
+    }
+}
+
 /// Optional provenance surfaces selected once for an engine job.
 ///
 /// Source registration and compact token positions are unconditional engine

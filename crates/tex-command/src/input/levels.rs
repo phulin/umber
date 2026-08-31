@@ -11,7 +11,7 @@ use crate::attempt::AttemptTokenListId;
 use crate::macro_call::MacroActivationId;
 
 use super::{
-    lines::{SourceLexCursor, SourceProvenance},
+    lines::SourceLexCursor,
     source::{RegisteredSource, SourceCursor, SourceCursorExecutionState, SourceNameClass},
 };
 
@@ -223,7 +223,7 @@ impl<G> MacroArgumentCursor<G> {
         scratch
             .admitted_argument_word(self.range, self.position())
             .ok()
-            .map(|word| (word.token_word(), word.origin(), None))
+            .map(|word| (word.token_word(), word.origin()))
     }
 
     /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
@@ -255,7 +255,6 @@ impl<G> MacroArgumentCursor<G> {
             identity,
             u64::from(position),
             sequence,
-            None,
             active_source,
             false,
             None,
@@ -300,11 +299,11 @@ impl<G> TokenCursor<G> {
     ) -> Result<StoredTokenAdvance, ()> {
         let position = self.frame.position();
         let index = position as usize;
-        let Some((word, origin, source_provenance)) = (match &self.span {
+        let Some((word, origin)) = (match &self.span {
             PackedTokenSpanHandle::Replay { replay, .. } => sources
                 .replay
                 .get(*replay, index)
-                .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
+                .map(|word| (word.token_word(), word.origin())),
             PackedTokenSpanHandle::MacroReplacement { .. } => {
                 let TokenBehavior::MacroBody(activation) = self.behavior else {
                     return Err(());
@@ -313,16 +312,16 @@ impl<G> TokenCursor<G> {
                     .parameters
                     .active_activation(activation)
                     .and_then(|activation| activation.definition.replacement_word(index))
-                    .map(|word| (word, OriginId::UNKNOWN, None))
+                    .map(|word| (word, OriginId::UNKNOWN))
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => sources
                 .attempt
                 .token_word(*list, index)
                 .ok()
-                .map(|word| (word.token_word(), word.origin(), None)),
-            PackedTokenSpanHandle::DurableList { list, .. } => list
-                .word_at(index)
-                .map(|word| (word, OriginId::UNKNOWN, None)),
+                .map(|word| (word.token_word(), word.origin())),
+            PackedTokenSpanHandle::DurableList { list, .. } => {
+                list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
+            }
         }) else {
             return Ok(StoredTokenAdvance::Exhausted(self.identity()));
         };
@@ -344,7 +343,6 @@ impl<G> TokenCursor<G> {
                 self.frame.identity(),
                 u64::from(position),
                 sequence,
-                source_provenance,
                 self.frame.source_context(),
                 false,
                 None,
@@ -377,7 +375,7 @@ pub(super) enum StoredTokenAdvance {
 /// This value-returning view is reserved for non-delivering lifecycle probes.
 /// The default command-delivery path writes into the caller's final
 /// [`crate::CurrentCommand`] instead.
-pub(crate) type PackedTokenAt = (TokenWord, OriginId, Option<SourceProvenance>);
+pub(crate) type PackedTokenAt = (TokenWord, OriginId);
 
 /// Typed lifetime handle for one immutable packed-token span.
 ///
@@ -454,7 +452,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
             PackedTokenSpanHandle::Replay { replay, .. } => self
                 .replay
                 .get(*replay, index)
-                .map(|(word, provenance)| (word.token_word(), word.origin(), provenance)),
+                .map(|word| (word.token_word(), word.origin())),
             PackedTokenSpanHandle::MacroReplacement { .. } => {
                 let TokenBehavior::MacroBody(identity) = behavior else {
                     return None;
@@ -462,16 +460,16 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 self.parameters
                     .activation(identity)
                     .and_then(|activation| activation.definition.replacement_word(index))
-                    .map(|word| (word, OriginId::UNKNOWN, None))
+                    .map(|word| (word, OriginId::UNKNOWN))
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => self
                 .attempt
                 .token_word(*list, index)
                 .ok()
-                .map(|word| (word.token_word(), word.origin(), None)),
-            PackedTokenSpanHandle::DurableList { list, .. } => list
-                .word_at(index)
-                .map(|word| (word, OriginId::UNKNOWN, None)),
+                .map(|word| (word.token_word(), word.origin())),
+            PackedTokenSpanHandle::DurableList { list, .. } => {
+                list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
+            }
         }
     }
 }
@@ -1082,11 +1080,8 @@ enum ReplayBodyWords {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ReplayEntry {
     word_mark: ReplayLaneMark,
-    provenance_mark: ReplayLaneMark,
     body_words: ReplayBodyWords,
-    body_provenance: Option<ReplaySpan>,
     prefix_words: Option<ReplaySpan>,
-    prefix_provenance: Option<ReplaySpan>,
     ownership: PackedTokenOwnership,
     released: bool,
 }
@@ -1106,7 +1101,6 @@ pub(crate) struct ReplayLane<G> {
     entries: Vec<ReplayEntry>,
     input_builders: Vec<OwnedReplayWords>,
     words: SegmentedReplayLane<TracedTokenWord>,
-    provenance: SegmentedReplayLane<Option<SourceProvenance>>,
     transient_depth: u32,
     _generation: PhantomData<fn(&G) -> &G>,
 }
@@ -1117,7 +1111,6 @@ impl<G> Default for ReplayLane<G> {
             entries: Vec::new(),
             input_builders: Vec::new(),
             words: SegmentedReplayLane::default(),
-            provenance: SegmentedReplayLane::default(),
             transient_depth: 0,
             _generation: PhantomData,
         }
@@ -1130,7 +1123,6 @@ impl<G> Clone for ReplayLane<G> {
             entries: self.entries.clone(),
             input_builders: self.input_builders.clone(),
             words: self.words.clone(),
-            provenance: self.provenance.clone(),
             transient_depth: 0,
             _generation: PhantomData,
         }
@@ -1142,7 +1134,6 @@ impl<G> PartialEq for ReplayLane<G> {
         self.entries == other.entries
             && self.input_builders == other.input_builders
             && self.words == other.words
-            && self.provenance == other.provenance
     }
 }
 impl<G> Eq for ReplayLane<G> {}
@@ -1151,7 +1142,6 @@ impl<G> Hash for ReplayLane<G> {
         self.entries.hash(state);
         self.input_builders.hash(state);
         self.words.hash(state);
-        self.provenance.hash(state);
     }
 }
 
@@ -1182,7 +1172,6 @@ impl<G> ReplayLane<G> {
                     .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
             )
             .saturating_add(self.words.retained_bytes())
-            .saturating_add(self.provenance.retained_bytes())
             .saturating_add(owned)
             .saturating_add(builders)
     }
@@ -1193,15 +1182,10 @@ impl<G> ReplayLane<G> {
         ownership: PackedTokenOwnership,
     ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         let word_mark = self.words.mark();
-        let provenance_mark = self.provenance.mark();
         let mut start = None;
-        let mut provenance_start = None;
         let mut len = 0_u32;
         for token in tokens {
             start.get_or_insert(self.words.push(token.spelling)?);
-            if ownership == PackedTokenOwnership::BackedUp {
-                provenance_start.get_or_insert(self.provenance.push(token.source_provenance)?);
-            }
             len = len
                 .checked_add(1)
                 .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
@@ -1217,14 +1201,11 @@ impl<G> ReplayLane<G> {
             .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
         self.entries.push(ReplayEntry {
             word_mark,
-            provenance_mark,
             body_words: ReplayBodyWords::Segmented(ReplaySpan {
                 start: start.unwrap_or(empty),
                 len,
             }),
-            body_provenance: provenance_start.map(|start| ReplaySpan { start, len }),
             prefix_words: None,
-            prefix_provenance: None,
             ownership,
             released: false,
         });
@@ -1308,11 +1289,8 @@ impl<G> ReplayLane<G> {
         let len = words.len;
         self.entries.push(ReplayEntry {
             word_mark: self.words.mark(),
-            provenance_mark: self.provenance.mark(),
             body_words: ReplayBodyWords::Owned(words),
-            body_provenance: None,
             prefix_words: None,
-            prefix_provenance: None,
             ownership: PackedTokenOwnership::Transient,
             released: false,
         });
@@ -1336,11 +1314,7 @@ impl<G> ReplayLane<G> {
         Ok(())
     }
 
-    pub(crate) fn get(
-        &self,
-        replay: ReplayPayloadId<G>,
-        index: usize,
-    ) -> Option<(TracedTokenWord, Option<SourceProvenance>)> {
+    pub(crate) fn get(&self, replay: ReplayPayloadId<G>, index: usize) -> Option<TracedTokenWord> {
         let entry = self.entries.get(replay.entry as usize)?;
         if entry.released {
             return None;
@@ -1351,31 +1325,14 @@ impl<G> ReplayLane<G> {
         let prefix_len = entry.prefix_words.map_or(0, |span| span.len as usize);
         if index < prefix_len {
             let words = entry.prefix_words?;
-            let provenance = entry.prefix_provenance;
-            return Some((
-                *self.words.get(words.start, index)?,
-                provenance
-                    .and_then(|span| self.provenance.get(span.start, index))
-                    .copied()
-                    .flatten(),
-            ));
+            return self.words.get(words.start, index).copied();
         }
         let local = index - prefix_len;
         let spelling = match &entry.body_words {
             ReplayBodyWords::Segmented(words) => *self.words.get(words.start, local)?,
             ReplayBodyWords::Owned(words) => *words.get(local)?,
         };
-        let provenance = match &entry.body_words {
-            ReplayBodyWords::Segmented(_) => entry.body_provenance,
-            ReplayBodyWords::Owned(_) => None,
-        };
-        Some((
-            spelling,
-            provenance
-                .and_then(|span| self.provenance.get(span.start, local))
-                .copied()
-                .flatten(),
-        ))
+        Some(spelling)
     }
 
     pub(crate) fn ownership(&self, replay: ReplayPayloadId<G>) -> Option<PackedTokenOwnership> {
@@ -1402,19 +1359,15 @@ impl<G> ReplayLane<G> {
             return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
         }
         let mut word_start = None;
-        let mut provenance_start = None;
         let mut len = 0_u32;
         for token in prefix {
             word_start.get_or_insert(self.words.push(token.spelling)?);
-            provenance_start.get_or_insert(self.provenance.push(token.source_provenance)?);
             len = len
                 .checked_add(1)
                 .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
         }
         if len != 0 {
             self.entries[expected].prefix_words = word_start.map(|start| ReplaySpan { start, len });
-            self.entries[expected].prefix_provenance =
-                provenance_start.map(|start| ReplaySpan { start, len });
         }
         Ok(len)
     }
@@ -1480,7 +1433,6 @@ impl<G> ReplayLane<G> {
                 .pop()
                 .expect("released replay suffix remains live");
             self.words.restore(entry.word_mark)?;
-            self.provenance.restore(entry.provenance_mark)?;
         }
         Ok(())
     }
@@ -1512,10 +1464,7 @@ impl<G, I: Iterator<Item = TracedTokenWord>> PackedTokenSpanSource<G> for Traced
         lane: &mut ReplayLane<G>,
     ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
         lane.push_words(
-            self.tokens.map(|spelling| BackedUpToken {
-                spelling,
-                source_provenance: None,
-            }),
+            self.tokens.map(|spelling| BackedUpToken { spelling }),
             self.ownership,
         )
     }
@@ -1534,7 +1483,6 @@ impl<G, I: Iterator<Item = Token>> PackedTokenSpanSource<G> for SemanticReplaySe
         lane.push_words(
             self.tokens.map(|token| BackedUpToken {
                 spelling: TracedTokenWord::pack(token, self.origin),
-                source_provenance: None,
             }),
             self.ownership,
         )
@@ -1568,7 +1516,6 @@ impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplayS
                     token,
                     self.origins.next().unwrap_or(OriginId::UNKNOWN),
                 ),
-                source_provenance: None,
             }),
             PackedTokenOwnership::Stored,
         )
@@ -1703,10 +1650,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
         let mut replay = ReplayLane::default();
         let replay_span = replay
             .push_words(
-                traced.map(|spelling| BackedUpToken {
-                    spelling,
-                    source_provenance: None,
-                }),
+                traced.map(|spelling| BackedUpToken { spelling }),
                 PackedTokenOwnership::Transient,
             )
             .expect("mixed-cursor replay span");
@@ -1797,11 +1741,10 @@ impl<G> MixedPackedCursorBenchmark<G> {
                 .zip(self.behaviors)
                 .zip(&mut self.positions[..4])
             {
-                let (word, origin, provenance) = sources
+                let (word, origin) = sources
                     .token_at(span, behavior, *position as usize)
                     .expect("mixed packed cursor remains within its span");
                 debug_assert_eq!(origin, OriginId::UNKNOWN);
-                debug_assert!(provenance.is_none());
                 checksum = checksum.wrapping_add(u64::from(word.raw()));
                 *position += 1;
                 if *position as usize == span.frame_len() {
@@ -1950,11 +1893,10 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
     }
 }
 
-/// One restored command plus the source range committed at its first delivery.
+/// One restored command spelling with its stable packed origin coordinate.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BackedUpToken {
     pub(crate) spelling: TracedTokenWord,
-    pub(crate) source_provenance: Option<SourceProvenance>,
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

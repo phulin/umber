@@ -1092,6 +1092,55 @@ impl<'a, G> CommandContext<'a, G> {
         })
     }
 
+    /// Resolves only the immutable physical range behind one token origin.
+    ///
+    /// Ordinary delivery keeps the four-byte origin packed beside the token;
+    /// backup, observation, and diagnostics call this cold projection only
+    /// when they need decoded source geometry.
+    #[must_use]
+    pub fn origin_source_range(
+        &self,
+        origin: crate::token::OriginId,
+    ) -> Option<crate::provenance::OriginSourceRange> {
+        let record = match origin.decode() {
+            crate::token::OriginEncoding::Arena(index) => self
+                .admitted
+                .provenance_coordinate_at(index)
+                .map(|coordinate| self.admitted.provenance(coordinate))?,
+            crate::token::OriginEncoding::DirectSource(position) => {
+                let region = self.sources.region_for_backed_position(position)?;
+                let end = position.raw().checked_add(1)?.min(region.anchor().raw());
+                OriginRecord::SourceSpan(
+                    self.sources
+                        .span(
+                            position,
+                            crate::source_map::SourcePos::from_raw_for_store(end),
+                        )
+                        .ok()?,
+                )
+            }
+            crate::token::OriginEncoding::Unknown
+            | crate::token::OriginEncoding::NoExpandFallback => return None,
+        };
+        match record {
+            OriginRecord::Source(source) => Some(crate::provenance::OriginSourceRange::new(
+                source.source(),
+                source.byte_offset(),
+                source.byte_offset().saturating_add(1),
+            )),
+            OriginRecord::SourceSpan(span) => {
+                let registration = self.sources.registration_for_span(span)?;
+                let region = registration.region();
+                Some(crate::provenance::OriginSourceRange::new(
+                    region.source,
+                    span.lo().raw().checked_sub(region.start.raw())?,
+                    span.hi().raw().checked_sub(region.start.raw())?,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn detach_origin_source(
         &self,
         record: OriginRecord,

@@ -1010,7 +1010,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             level.0,
                                             u64::from(index),
                                             self.next_delivery_sequence,
-                                            None,
                                             active_source,
                                             false,
                                             None,
@@ -1038,9 +1037,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .as_mut()
                         .expect("resident delivery initializes the command slot");
                     let delivery_sequence = command.delivery_stamp().sequence();
-                    if let Some(location) = command.source_location() {
-                        self.command.last_diagnostic_location = Some(location);
-                    }
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
                     self.publish_delivery_freshness(delivery_sequence);
                     if matches!(interception, ResidentCommandInterception::Outer)
@@ -1256,7 +1252,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 provenance: CommandProvenance::from_stamp(
                     command.delivery_stamp(),
                     command.origin(),
-                    command.direct_source_provenance(),
+                    self.direct_source_provenance(command),
                 ),
             })
         });

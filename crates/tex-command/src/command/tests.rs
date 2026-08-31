@@ -11,9 +11,9 @@ use super::{CurrentCommand, DeliveryStamp, EmptyCommand};
 fn command_delivery_layout_stays_compact() {
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 24);
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
-    // The canonical command carries raw identity, resolved meaning, exact
-    // provenance, and execution metadata in less than two 64-byte cache lines.
-    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 112);
+    // Decoded source geometry lives behind the packed origin coordinate, not
+    // in every command.
+    assert_eq!(std::mem::size_of::<CurrentCommand<()>>(), 80);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
     assert_eq!(
         std::mem::size_of::<EmptyCommand<'_, ()>>(),
@@ -102,7 +102,6 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
             23,
             29,
             None,
-            None,
             false,
             None,
             false,
@@ -154,7 +153,6 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
             31,
             37,
             41,
-            None,
             None,
             false,
             None,
@@ -260,7 +258,6 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
             5,
             7,
             None,
-            None,
             false,
             None,
             false,
@@ -277,7 +274,6 @@ fn packed_input_resolution_acquires_and_releases_exactly_one_macro_owner() {
             11,
             13,
             17,
-            None,
             None,
             false,
             None,

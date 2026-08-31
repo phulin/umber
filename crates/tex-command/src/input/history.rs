@@ -104,7 +104,10 @@ struct ResidentSourceTop<'a, G> {
 }
 
 enum ResidentSourceAdvance {
-    Delivered(tex_state::token::PackedMeaningResolution),
+    Delivered(
+        tex_state::token::PackedMeaningResolution,
+        super::SourceLocation,
+    ),
     InvalidCharacter,
     NeedLine(super::InputLevelId),
     Exhausted(super::InputLevelId),
@@ -209,14 +212,16 @@ impl<G> ResidentSourceTop<'_, G> {
                         identity.0,
                         position,
                         sequence,
-                        Some(token.provenance),
                         active_source,
                         true,
                         direct_source_line,
                         false,
                         state,
                     );
-                    Ok(ResidentSourceAdvance::Delivered(resolution))
+                    Ok(ResidentSourceAdvance::Delivered(
+                        resolution,
+                        token.provenance.location(),
+                    ))
                 }
             }
             CompactSourceTokenizationStep::InvalidCharacter => {
@@ -890,7 +895,7 @@ impl<G> crate::CommandState<G> {
                         destination.reborrow(),
                         sequence,
                     )? {
-                        ResidentSourceAdvance::Delivered(resolution) => {
+                        ResidentSourceAdvance::Delivered(resolution, location) => {
                             #[cfg(test)]
                             {
                                 self.raw_delivery_path_counters.source_direct = self
@@ -898,6 +903,7 @@ impl<G> crate::CommandState<G> {
                                     .source_direct
                                     .saturating_add(1);
                             }
+                            self.last_diagnostic_location = Some(location);
                             self.settle_resident_delivery(fuel, destination.reborrow(), resolution)
                         }
                         ResidentSourceAdvance::InvalidCharacter => {

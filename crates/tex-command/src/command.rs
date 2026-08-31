@@ -6,7 +6,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
 
-use crate::{SourceLocation, SourceProvenance, SourceRange};
+use crate::SourceProvenance;
 
 /// Profiling-only proof of how current-command ownership changes.
 ///
@@ -81,13 +81,10 @@ pub struct CurrentCommand<G> {
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
-    source_provenance: Option<SourceProvenance>,
-    /// External file or `\scantokens` source active at this delivery. This
-    /// is input execution context, not the spelling's definition-site
-    /// provenance: a package-defined macro invoked from the main file keeps
-    /// the main file here.
-    active_source: u32,
-    active_source_role: crate::SourceRole,
+    /// Compact policy projection of the external source active at delivery.
+    /// Its identity and physical spelling range remain recoverable from the
+    /// token origin or live input coordinate and are not copied here.
+    active_source_role: Option<crate::SourceRole>,
     direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     delivery_flags: CommandDeliveryFlags,
@@ -114,8 +111,7 @@ impl CommandDeliveryFlags {
     const DIRECT_SOURCE: u8 = 1 << 0;
     const SUPPRESS_EXPANDABLE: u8 = 1 << 1;
     const OUTER_RECOVERY_SPACE: u8 = 1 << 2;
-    const HAS_ACTIVE_SOURCE: u8 = 1 << 3;
-    const HAS_DIRECT_SOURCE_LINE: u8 = 1 << 4;
+    const HAS_DIRECT_SOURCE_LINE: u8 = 1 << 3;
 
     const fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
@@ -142,8 +138,6 @@ impl<G> Clone for CurrentCommand<G> {
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
-            source_provenance: self.source_provenance,
-            active_source: self.active_source,
             active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
@@ -159,8 +153,6 @@ impl<G> PartialEq for CurrentCommand<G> {
             && self.identity == other.identity
             && self.control_sequence == other.control_sequence
             && self.delivery == other.delivery
-            && self.source_provenance == other.source_provenance
-            && self.active_source == other.active_source
             && self.active_source_role == other.active_source_role
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
@@ -177,8 +169,6 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.identity.hash(state);
         self.control_sequence.hash(state);
         self.delivery.hash(state);
-        self.source_provenance.hash(state);
-        self.active_source.hash(state);
         self.active_source_role.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
@@ -369,7 +359,6 @@ impl<G> CurrentCommand<G> {
             delivery.input_level,
             delivery.position,
             delivery.sequence,
-            source_provenance,
             active_source,
             direct_source,
             direct_source_line,
@@ -402,9 +391,7 @@ impl<G> CurrentCommand<G> {
             identity: CommandIdentity::Ordinary,
             control_sequence: None,
             delivery: DeliveryStamp::new(0, 0, 0),
-            source_provenance: None,
-            active_source: 0,
-            active_source_role: crate::SourceRole::GeneratedInput,
+            active_source_role: None,
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             delivery_flags: CommandDeliveryFlags::default(),
@@ -487,7 +474,6 @@ impl<G> CurrentCommand<G> {
             cat: Catcode::Space,
         });
         self.control_sequence = None;
-        self.source_provenance = None;
         self.delivery_flags
             .set(CommandDeliveryFlags::DIRECT_SOURCE, false);
         self.delivery_flags
@@ -614,75 +600,18 @@ impl<G> CurrentCommand<G> {
         self.delivery
     }
 
-    /// Returns the committed source spelling range when this command first
-    /// originated in a registered physical source. Backup delivery preserves
-    /// this range without making it part of token identity.
-    #[must_use]
-    pub const fn source_range(&self) -> Option<SourceRange> {
-        match self.source_provenance {
-            Some(provenance) => Some(provenance.range()),
-            None => None,
-        }
-    }
-
-    /// Returns the physical source column of the final byte this command's
-    /// spelling consumed, if it originated in registered source input.
-    #[must_use]
-    pub const fn source_location(&self) -> Option<SourceLocation> {
-        match self.source_provenance {
-            Some(provenance) => Some(provenance.location()),
-            None => None,
-        }
-    }
-
-    /// Returns retained physical provenance for diagnostic consumers.
-    #[must_use]
-    pub const fn source_provenance(&self) -> Option<SourceProvenance> {
-        self.source_provenance
-    }
-
-    /// External source context active when this command was delivered.
-    ///
-    /// This differs deliberately from [`Self::source_provenance`]: expansion
-    /// may deliver a package-defined token while the active source remains
-    /// the user's main file.
-    #[must_use]
-    pub const fn active_source_id(&self) -> Option<tex_state::SourceId> {
-        if self
-            .delivery_flags
-            .contains(CommandDeliveryFlags::HAS_ACTIVE_SOURCE)
-        {
-            Some(tex_state::SourceId::new(self.active_source))
-        } else {
-            None
-        }
-    }
-
     /// Host/VFS role of the external source active at this delivery.
     #[must_use]
     pub const fn active_source_role(&self) -> Option<crate::SourceRole> {
-        if self
-            .delivery_flags
-            .contains(CommandDeliveryFlags::HAS_ACTIVE_SOURCE)
-        {
-            Some(self.active_source_role)
-        } else {
-            None
-        }
+        self.active_source_role
     }
 
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
-    pub(crate) const fn direct_source_provenance(&self) -> Option<SourceProvenance> {
-        if self
-            .delivery_flags
+    pub(crate) const fn is_direct_source_delivery(&self) -> bool {
+        self.delivery_flags
             .contains(CommandDeliveryFlags::DIRECT_SOURCE)
-        {
-            self.source_provenance
-        } else {
-            None
-        }
     }
 
     /// Physical line captured while this exact command was delivered from a
@@ -713,8 +642,6 @@ impl<G> CurrentCommand<G> {
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
-            source_provenance: self.source_provenance,
-            active_source: self.active_source,
             active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
@@ -754,7 +681,6 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         input_level: u64,
         position: u64,
         sequence: u64,
-        source_provenance: Option<SourceProvenance>,
         active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
@@ -769,20 +695,13 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         let command = self.0;
         command.spelling = TracedTokenWord::from_parts(word, origin);
         command.delivery = DeliveryStamp::new(input_level, position, sequence);
-        command.source_provenance = source_provenance;
-        command.active_source = active_source.map_or(0, |source| source.source().raw());
-        command.active_source_role =
-            active_source.map_or(crate::SourceRole::GeneratedInput, |source| source.role());
+        command.active_source_role = active_source.map(|source| source.role());
         command.direct_source_line = direct_source_line.unwrap_or(0);
         command.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
         command.delivery_flags = CommandDeliveryFlags::default();
         command
             .delivery_flags
             .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
-        command.delivery_flags.set(
-            CommandDeliveryFlags::HAS_ACTIVE_SOURCE,
-            active_source.is_some(),
-        );
         command.delivery_flags.set(
             CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE,
             direct_source_line.is_some(),

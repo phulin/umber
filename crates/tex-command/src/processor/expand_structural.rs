@@ -264,7 +264,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling: command.spelling(),
-                source_provenance: command.source_provenance(),
             }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,

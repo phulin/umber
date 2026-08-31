@@ -157,10 +157,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up([BackedUpToken {
-                spelling,
-                source_provenance: None,
-            }]),
+            PackedTokenSpanHandle::backed_up([BackedUpToken { spelling }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -222,10 +219,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .replay
                 .prepend_backed_up(
                     replay,
-                    tokens.into_iter().map(|spelling| BackedUpToken {
-                        spelling,
-                        source_provenance: None,
-                    }),
+                    tokens
+                        .into_iter()
+                        .map(|spelling| BackedUpToken { spelling }),
                 )
                 .map_err(|_| CommandError::input_invariant())?;
             let Ok(prepended) = u32::try_from(prepended) else {
@@ -300,7 +296,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling: command.spelling(),
-                source_provenance: command.source_provenance(),
             }]),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,

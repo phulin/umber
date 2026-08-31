@@ -306,7 +306,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 provenance: CommandProvenance::from_stamp(
                     command.delivery_stamp(),
                     command.origin(),
-                    command.direct_source_provenance(),
+                    self.direct_source_provenance(command),
                 ),
             })
         });
