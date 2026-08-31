@@ -1327,7 +1327,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             report_trace = false;
         }
         let command = destination
-            .as_ref()
+            .as_mut()
             .ok_or_else(CommandError::input_invariant)?;
         #[cfg(feature = "profiling")]
         {
@@ -1774,10 +1774,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: tex_state::DefinitionId<G>,
         call_site: OriginId,
         arguments: MacroArguments<G>,
+        replacement_len: usize,
     ) -> InputLevelId {
-        let definition_view = self.state.definition(definition.clone());
         let parent = self.command.parameters.parent_invocation();
-        let replacement_len = definition_view.replacement_text().len();
         let invocation = call_site;
         let _ = parent;
         self.command

@@ -374,13 +374,17 @@ The expanded loop classifies that meaning once into return, expand, or
 `end_template`; policy handling does not repeat meaning matches.
 The temporary bank borrow ends before any command-driven mutation, while the
 final owner survives later assignment, group restoration, operation rollback,
-replay, retry, suspension, and generation retirement. TeX assignment level and
-journal state stay in the bank row and never enter the command. Consumers which
-only inspect a definition borrow its parameter and replacement spans through
-that existing id; they do not clone the id into an owning view. In particular,
+replay, retry, suspension, and generation retirement. A macro call borrows
+that owner through matching, tracing, and replacement-length inspection. Only
+after matching, recovery, input conservation, and frame sealing have all
+settled successfully does it move the same owner from `CurrentCommand` into
+`MacroActivation`; prefix mismatch, error, rollback/retry, and typed
+suspension leave the command owner intact. TeX assignment level and journal
+state stay in the bank row and never enter the command. Consumers which only
+inspect a definition borrow its parameter and replacement spans through that
+existing id; they do not clone the id into an owning view. In particular,
 `\ifx` retains its two raw-delivery command slots as the sole operand owners
-while comparing borrowed meanings and definition
-spans.
+while comparing borrowed meanings and definition spans.
 
 The publisher retains only a monotonic serial for cold format coordinates, and
 the token-list publisher retains warmed builder chunks and slots. Neither
@@ -390,10 +394,11 @@ compaction, forwarding pointer, id rewrite, or move to another generation.
 
 Execution scratch segments can recycle because their last semantic user is
 known. The macro activation is the sole live-call definition owner and also
-owns its frame id. Its replacement input carries only that activation identity
-and a length; delivery and cold context rendering borrow the parameter and
-replacement spans through the activation without retaining or equality-checking
-a duplicate definition. The replacement input retires only after all argument
+owns its frame id. Activation admission receives the settled resident command's
+owner by move after borrowing the replacement length. Its replacement input
+carries only that activation identity and length; delivery and cold context
+rendering borrow the parameter and replacement spans through the activation
+without retaining or equality-checking a duplicate definition. The replacement input retires only after all argument
 replay above it has ended; `pop_macro_frame` then invalidates the slot serial,
 rewinds the exact frame watermark, and returns the physical suffix to the spare pool. No
 durable state or checkpoint is allowed to hold that frame afterward. The

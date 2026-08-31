@@ -2020,8 +2020,13 @@ coordinates.
 The implemented ownership model keeps stable `MacroActivation` payloads in
 the `ParameterState` activation chain and stores a typed activation identity
 in `TokenBehavior::MacroBody`. The activation is the sole live-call definition
-owner; replacement delivery and diagnostic context borrow through its identity,
-and context projection performs no duplicate-owner equality validation. One admitted owner retains up to 64 macro
+owner. Matching, tracing, and replacement-length inspection borrow the
+resident `CurrentCommand` owner; after every fallible call transition settles,
+successful activation moves that exact owner into `MacroActivation`. Prefix
+mismatch, error, rollback/retry, and typed suspension retain it in the command.
+Replacement delivery and diagnostic context borrow through the activation
+identity, and context projection performs no duplicate-owner equality
+validation. One admitted owner retains up to 64 macro
 records and their live token/provenance closure. `MacroArguments` and every
 live `ArgumentRange` name the same command-owned argument chunk by compact
 coordinates. `InputLevelId` is typed separately from source identity and is
@@ -2029,11 +2034,12 @@ present on both source and token levels. Exact-byte and Unicode source cursors
 use this identical enum.
 
 An executing macro resolves its generation-safe meaning identifier through the
-strong environment root already held for that meaning. Activation admission
-creates one live-call retain and moves it into `MacroActivation`; the input span
-creates none. Diagnostic parameter/replacement context is rendered by borrowing
-that activation owner, so retirement of the original definition-store entry
-cannot invalidate an active input level. General cold
+strong environment root already held for that meaning. Raw delivery creates
+the live-call owner in `CurrentCommand`; activation admission moves it into
+`MacroActivation` without another retain, and the input span creates none.
+Diagnostic parameter/replacement context is rendered by borrowing that
+activation owner, so retirement of the original definition-store entry cannot
+invalidate an active input level. General cold
 and stale lookup APIs retain their validation and rejection behavior.
 
 The centralized transient and backed-up constructors avoid caller-side rich

@@ -398,6 +398,14 @@ impl<G> DefinitionId<G> {
             identity => Some(identity),
         }
     }
+
+    /// Borrows the validated macro-parameter program through this definition's
+    /// existing owner.
+    #[must_use]
+    pub fn parameter_pattern(&self) -> MacroParameterPattern {
+        self.data.pattern.finish()
+    }
+
     /// Borrows the packed parameter text through this definition's existing
     /// owner.
     #[must_use]
@@ -687,7 +695,7 @@ pub struct DefinitionView<G> {
 impl<G> DefinitionView<G> {
     #[must_use]
     pub fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.id.data.pattern.finish()
+        self.id.parameter_pattern()
     }
 
     #[must_use]

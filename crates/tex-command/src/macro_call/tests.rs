@@ -143,6 +143,120 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
 }
 
 #[test]
+fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
+    crate::test_harness::with_universe(|universe| {
+        let parameterless =
+            install_replacement_macro(universe, "parameterlessowner", &[letter('p')]);
+        let parameterized = install_macro(universe, "parameterizedowner", &[Token::Param(1)]);
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [parameterless, parameterized, letter('a')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        for expected_replacement_len in [1, 1] {
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("macro delivery"),
+                DeliveryStatus::Command
+            );
+            let mut call = destination.take().expect("macro command");
+            let owners_before = match call.meaning_ref() {
+                tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
+                    definition.semantic_owner_count()
+                }
+                _ => panic!("macro meaning"),
+            };
+            let retains_before = tex_state::definition_retain_count();
+            assert_eq!(
+                processor.macro_call(&mut call),
+                Ok(MacroCallOutcome::Activated)
+            );
+            assert_eq!(
+                tex_state::definition_retain_count(),
+                retains_before,
+                "successful matching and activation borrow then move the resident owner"
+            );
+            let activation = processor
+                .command
+                .parameters
+                .activations
+                .last()
+                .expect("live activation");
+            assert_eq!(activation.definition.semantic_owner_count(), owners_before);
+            assert_eq!(
+                activation.definition.replacement_text().len(),
+                expected_replacement_len
+            );
+            assert!(matches!(
+                call.meaning_ref(),
+                tex_state::meaning::ResolvedMeaning::Static(Meaning::Undefined)
+            ));
+
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("replacement delivery"),
+                DeliveryStatus::Command
+            );
+            let _ = destination.take();
+        }
+    });
+}
+
+#[test]
+fn failed_macro_call_keeps_the_resident_definition_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_macro(universe, "prefixowner", &[other('!'), Token::Param(1)]);
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [macro_token, other('?')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut call = processor
+            .get_next()
+            .expect("macro delivery")
+            .expect("macro command");
+        let owners_before = match call.meaning_ref() {
+            tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
+                definition.semantic_owner_count()
+            }
+            _ => panic!("macro meaning"),
+        };
+
+        assert_eq!(
+            processor.macro_call(&mut call),
+            Ok(MacroCallOutcome::PrefixMismatchRecovered)
+        );
+        match call.meaning_ref() {
+            tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
+                assert_eq!(definition.semantic_owner_count(), owners_before);
+            }
+            _ => panic!("failed call retains macro meaning"),
+        }
+        assert!(processor.command.parameters.activations.is_empty());
+    });
+}
+
+#[test]
 fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
     crate::test_harness::with_universe(|universe| {
         let inner = install_replacement_macro(universe, "inner", &[letter('i')]);
@@ -464,8 +578,11 @@ fn outer_group_trim_bounds_macro_trace_and_observation_at_both_ends() {
                     .expect("macro delivery"),
                 DeliveryStatus::Command
             );
-            let call = destination.take().expect("macro command");
-            assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+            let mut call = destination.take().expect("macro command");
+            assert_eq!(
+                processor.macro_call(&mut call),
+                Ok(MacroCallOutcome::Activated)
+            );
         }
         universe
             .world_mut()
@@ -541,10 +658,10 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
                 .expect("macro delivery"),
             DeliveryStatus::Command
         );
-        let call = destination.take().expect("macro command");
+        let mut call = destination.take().expect("macro command");
 
         assert_eq!(
-            processor.macro_call(&call).expect("macro call"),
+            processor.macro_call(&mut call).expect("macro call"),
             MacroCallOutcome::Activated
         );
         assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
@@ -622,10 +739,10 @@ fn delimited_argument_preserves_a_failed_overlapping_prefix() {
                 .expect("macro delivery"),
             DeliveryStatus::Command
         );
-        let call = destination.take().expect("macro command");
+        let mut call = destination.take().expect("macro command");
 
         assert_eq!(
-            processor.macro_call(&call).expect("macro call"),
+            processor.macro_call(&mut call).expect("macro call"),
             MacroCallOutcome::Activated
         );
         assert_eq!(active_argument_tokens(processor.command), expected);
@@ -706,10 +823,10 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
                 .expect("macro delivery"),
             DeliveryStatus::Command
         );
-        let call = destination.take().expect("macro command");
+        let mut call = destination.take().expect("macro command");
 
         assert_eq!(
-            processor.macro_call(&call).expect("macro call"),
+            processor.macro_call(&mut call).expect("macro call"),
             MacroCallOutcome::Activated
         );
         assert_eq!(
@@ -769,9 +886,9 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
                 .expect("long macro delivery"),
             DeliveryStatus::Command
         );
-        let long_call = destination.take().expect("long macro command");
+        let mut long_call = destination.take().expect("long macro command");
         assert_eq!(
-            processor.macro_call(&long_call),
+            processor.macro_call(&mut long_call),
             Ok(MacroCallOutcome::Activated)
         );
         let arguments = processor.command.parameters.activations[0].arguments;
@@ -810,9 +927,9 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
                 .expect("short macro delivery"),
             DeliveryStatus::Command
         );
-        let short_call = destination.take().expect("short macro command");
+        let mut short_call = destination.take().expect("short macro command");
         assert_eq!(
-            processor.macro_call(&short_call),
+            processor.macro_call(&mut short_call),
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
         assert_eq!(processor.command.scratch.frame_len(), 0);
@@ -851,9 +968,12 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
                 .expect("delimited macro delivery"),
             DeliveryStatus::Command
         );
-        let call = destination.take().expect("delimited macro command");
+        let mut call = destination.take().expect("delimited macro command");
 
-        assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+        assert_eq!(
+            processor.macro_call(&mut call),
+            Ok(MacroCallOutcome::Activated)
+        );
         assert_eq!(
             active_argument_tokens(processor.command),
             [paragraph, letter('x')]
@@ -929,9 +1049,9 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
                 .expect("alias argument macro delivery"),
             DeliveryStatus::Command
         );
-        let alias_call = destination.take().expect("alias argument macro command");
+        let mut alias_call = destination.take().expect("alias argument macro command");
         assert_eq!(
-            processor.macro_call(&alias_call),
+            processor.macro_call(&mut alias_call),
             Ok(MacroCallOutcome::Activated)
         );
         assert_eq!(
@@ -954,11 +1074,11 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
                 .expect("paragraph argument macro delivery"),
             DeliveryStatus::Command
         );
-        let paragraph_call = destination
+        let mut paragraph_call = destination
             .take()
             .expect("paragraph argument macro command");
         assert_eq!(
-            processor.macro_call(&paragraph_call),
+            processor.macro_call(&mut paragraph_call),
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
     });
@@ -977,6 +1097,7 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
         requested_bytes: u64,
         whole_token_copies: u64,
         whole_command_copies: u64,
+        definition_retains: u64,
         whole_input_frame_copies: u64,
         aggregate_word_reads: u64,
     }
@@ -1046,11 +1167,14 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
                     &mut fuel,
                     &mut diagnostic_effects,
                 );
-                let call = processor
+                let mut call = processor
                     .get_next()
                     .expect("warm macro delivery")
                     .expect("warm macro command");
-                assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+                assert_eq!(
+                    processor.macro_call(&mut call),
+                    Ok(MacroCallOutcome::Activated)
+                );
                 assert!(
                     processor
                         .get_x_token()
@@ -1074,7 +1198,7 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let call = processor
+            let mut call = processor
                 .get_next()
                 .expect("measured macro delivery")
                 .expect("measured macro command");
@@ -1084,12 +1208,16 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
             let token_copies = processor.command.scratch.physical_macro_word_copies();
             let aggregate_reads = processor.command.scratch.match_word_reads();
             let command_copies = crate::command::command_ownership_counters().clones;
+            let definition_retains = tex_state::definition_retain_count();
             let timeline = processor.command.profile_timeline_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let allocations = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             {
                 let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                assert_eq!(processor.macro_call(&call), Ok(MacroCallOutcome::Activated));
+                assert_eq!(
+                    processor.macro_call(&mut call),
+                    Ok(MacroCallOutcome::Activated)
+                );
             }
             let after_allocations =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -1108,6 +1236,7 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
                 whole_token_copies: processor.command.scratch.physical_macro_word_copies()
                     - token_copies,
                 whole_command_copies: after_commands.clones - command_copies,
+                definition_retains: tex_state::definition_retain_count() - definition_retains,
                 whole_input_frame_copies: after_timeline.full_frame_history_clones
                     - timeline.full_frame_history_clones,
                 aggregate_word_reads: processor.command.scratch.match_word_reads()
@@ -1128,6 +1257,7 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
             requested_bytes: 0,
             whole_token_copies: 0,
             whole_command_copies: 0,
+            definition_retains: 0,
             whole_input_frame_copies: 0,
             aggregate_word_reads: 0,
         }
@@ -1141,6 +1271,7 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
     assert_eq!(four_k.requested_bytes, 0);
     assert_eq!(four_k.whole_token_copies, 0);
     assert_eq!(four_k.whole_command_copies, 0);
+    assert_eq!(four_k.definition_retains, 0);
     assert_eq!(four_k.whole_input_frame_copies, 0);
     assert_eq!(four_k.aggregate_word_reads, 0);
 }
