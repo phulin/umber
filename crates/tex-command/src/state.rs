@@ -155,7 +155,7 @@ pub struct CommandState<G> {
     /// interception. Shipping builds contain neither the counters nor updates.
     #[cfg(test)]
     pub(crate) raw_delivery_path_counters: RawDeliveryPathCounters,
-    /// Assertion-bearing proof for the resident token-list collector. These
+    /// Assertion-bearing proof for the shared resident token collector. These
     /// counters are operational test/profiling evidence, never semantic state.
     #[cfg(test)]
     pub(crate) token_collector_path_counters: TokenCollectorPathCounters,
@@ -1250,15 +1250,15 @@ impl<G> CommandState<G> {
         )
     }
 
-    /// Resets focused resident token-list collector counters.
+    /// Resets focused shared token-collector counters.
     #[doc(hidden)]
     #[cfg(test)]
     pub fn profile_reset_token_collector_path_counters(&mut self) {
         self.token_collector_path_counters = TokenCollectorPathCounters::default();
     }
 
-    /// Returns append/fact/phase/rescan/settlement and whole-value-copy facts
-    /// for focused token-list collector gates.
+    /// Returns classification/append/state/phase/rescan/settlement and
+    /// whole-value-copy facts for focused shared-collector gates.
     #[doc(hidden)]
     #[cfg(test)]
     #[must_use]

@@ -626,6 +626,15 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .nth(1)
         .and_then(|tail| tail.split("/// e-TeX").next())
         .expect("locate direct token-list splice");
+    let unexpanded = scanner
+        .split("fn append_unexpanded(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// e-TeX 2.6").next())
+        .expect("locate unexpanded child splice");
+    let standalone_unexpanded = scanner
+        .split("fn expand_unexpanded(")
+        .nth(1)
+        .expect("locate standalone unexpanded replay");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
     assert!(scanner.contains("let mut pending = match resumed"));
@@ -688,6 +697,9 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(token_collector.contains("TokenCollectorDestination::MacroArgument"));
     assert!(token_collector.contains("TokenCollectorDestination::TokenBuffers"));
     assert!(token_collector.contains("TokenCollectorDestination::Definition"));
+    assert!(unexpanded.contains("consume_token_list_into_buffer"));
+    assert!(standalone_unexpanded.contains("PackedTokenSpanHandle::AttemptList"));
+    assert!(!standalone_unexpanded.contains(".to_vec()"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"
