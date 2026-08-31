@@ -491,6 +491,8 @@ impl<T> ChunkStorage<T> {
         lineage: u32,
         item_identity: Option<u64>,
         dependency_floor: Option<usize>,
+        dependency_metadata_complete: bool,
+        source_arena: u32,
         source: (RawChunkKey, u32),
     ) -> Result<(u32, bool), ForkArenaError>
     where
@@ -500,7 +502,7 @@ impl<T> ChunkStorage<T> {
         if key == source_key {
             return Err(ForkArenaError::InvalidRange);
         }
-        let source_meta = self.validate(source_key, arena)?;
+        let source_meta = self.validate(source_key, source_arena)?;
         if source_offset >= source_meta.used {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -513,7 +515,14 @@ impl<T> ChunkStorage<T> {
             index,
             offset,
             became_full,
-        } = self.reserve_position(key, arena, lineage, item_identity, dependency_floor, true)?;
+        } = self.reserve_position(
+            key,
+            arena,
+            lineage,
+            item_identity,
+            dependency_floor,
+            dependency_metadata_complete,
+        )?;
         if source_page == page {
             let slots = &mut self.pages[page].slots;
             if source_index < index {
@@ -1297,6 +1306,8 @@ pub struct ForkArenaCounters {
     pub whole_payload_moves: u64,
     /// Complete payload values handed across an explicit copy boundary.
     pub whole_payload_copies: u64,
+    /// Payloads cloned from an admitted coordinate into their final slot.
+    pub resident_payload_clones: u64,
     /// Values initialized through a borrow of their final resident slot.
     pub destination_values_constructed: u64,
     pub source_nodes_copied: u64,
@@ -2000,31 +2011,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
-    /// Writes one value already duplicated from an existing semantic node.
-    fn append_payload_copy(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        root: &mut ArenaListId<Lane>,
-        value: T,
-        item_identity: Option<u64>,
-    ) -> Result<(), ForkArenaError>
-    where
-        T: RegionValue<Lane>,
-    {
-        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
-        let dependency_floor = self.region_value_dependency_floor(pool, &value)?;
-        let slot = self.reserve_payload_slot_with_dependency(
-            pool,
-            root,
-            item_identity,
-            dependency_floor,
-            true,
-        )?;
-        assert!(slot.is_none(), "reserved copy destination is vacant");
-        *slot = Some(value);
-        Ok(())
-    }
-
     /// Clones one same-arena source cell directly into its final packed slot.
     fn append_payload_clone_from_coordinate(
         &mut self,
@@ -2051,10 +2037,78 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.lineage,
             item_identity,
             dependency_floor,
+            true,
+            self.owner,
             (source_key, source_offset),
         )?;
         self.complete_payload_reservation(root, key, offset, became_full)?;
         self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
+        self.counters.resident_payload_clones =
+            self.counters.resident_payload_clones.saturating_add(1);
+        Ok(())
+    }
+
+    /// Clones one cross-arena source cell into its final slot, rewrites that
+    /// resident value, then completes identity and child dependency metadata.
+    #[allow(clippy::too_many_arguments)]
+    fn append_payload_mapped_clone_from_coordinate(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &mut ArenaListId<Lane>,
+        source_arena: u32,
+        source_key: RawChunkKey,
+        source_offset: u32,
+        identity_enabled: bool,
+        rewrite: &mut impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Clone + RegionValue<Lane>,
+    {
+        let placeholder_identity = identity_enabled.then_some(0);
+        let key = self.payload_reservation_target(pool, root)?;
+        let (offset, became_full) = pool.payload.reserve_clone_from(
+            key,
+            self.owner,
+            self.lineage,
+            placeholder_identity,
+            None,
+            false,
+            source_arena,
+            (source_key, source_offset),
+        )?;
+        self.complete_payload_reservation(root, key, offset, became_full)?;
+        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
+        self.counters.resident_payload_clones =
+            self.counters.resident_payload_clones.saturating_add(1);
+
+        let item_identity = {
+            let value = pool
+                .payload
+                .get_mut(key, self.owner, self.lineage, offset)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            rewrite(value)?
+        };
+        if item_identity.is_some() != identity_enabled {
+            return Err(ForkArenaError::IdentityModeMismatch);
+        }
+        let dependency_floor = {
+            let value = pool
+                .payload
+                .get(key, self.owner, offset)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            self.region_value_dependency_floor(pool, value)?
+        };
+        pool.payload.complete_reservation(
+            key,
+            self.owner,
+            self.lineage,
+            offset,
+            ReservationCompletion {
+                placeholder_identity,
+                item_identity,
+                dependency_floor,
+            },
+        )?;
         Ok(())
     }
 
@@ -2072,6 +2126,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         source: &ForkArena<T, Lane>,
         list: ArenaListId<Lane>,
+        identity_enabled: bool,
         mut rewrite: impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
@@ -2088,7 +2143,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         let operation = self.operation_mark(pool);
         self.active_builder = true;
         let mut root = ArenaListId::empty();
-        let mut identity_mode = None;
         let copied = if list.is_empty() {
             Ok(())
         } else {
@@ -2099,7 +2153,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 list.tail.raw,
                 list.tail.offset,
                 &mut root,
-                &mut identity_mode,
+                identity_enabled,
                 &mut rewrite,
             )
         };
@@ -2125,7 +2179,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         key: RawChunkKey,
         end: u32,
         root: &mut ArenaListId<Lane>,
-        identity_mode: &mut Option<bool>,
+        identity_enabled: bool,
         rewrite: &mut impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
     ) -> Result<(), ForkArenaError>
     where
@@ -2145,26 +2199,21 @@ impl<T, Lane> ForkArena<T, Lane> {
                 previous.0,
                 previous.1,
                 root,
-                identity_mode,
+                identity_enabled,
                 rewrite,
             )?;
             0
         };
         for offset in start..end {
-            let mut value = pool
-                .payload
-                .get(key, source.owner, offset)
-                .ok_or(ForkArenaError::InvalidRange)?
-                .clone();
-            let item_identity = rewrite(&mut value)?;
-            match *identity_mode {
-                Some(enabled) if enabled != item_identity.is_some() => {
-                    return Err(ForkArenaError::IdentityModeMismatch);
-                }
-                None => *identity_mode = Some(item_identity.is_some()),
-                _ => {}
-            }
-            self.append_payload_copy(pool, root, value, item_identity)?;
+            self.append_payload_mapped_clone_from_coordinate(
+                pool,
+                root,
+                source.owner,
+                key,
+                offset,
+                identity_enabled,
+                rewrite,
+            )?;
         }
         Ok(())
     }

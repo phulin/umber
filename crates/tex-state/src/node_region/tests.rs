@@ -267,9 +267,11 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
         .map_err(|(error, _)| error)
         .expect("source closure");
     let mut destination = pool.start_region::<PageRole>().expect("destination");
+    let before = destination.counters();
 
     let copied =
-        copy_closure_into(&mut pool, &closure, &mut destination, false).expect("recursive copy");
+        copy_closure_into(&mut pool, &closure, &mut destination, true).expect("recursive copy");
+    let after = destination.counters();
     let copied_root = destination.list(&pool, copied).expect("copied root");
     let Node::Disc { pre, .. } = copied_root.get(0).expect("disc node") else {
         panic!("copied root lost discretionary shape");
@@ -301,7 +303,87 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
             .len(),
         1
     );
-    assert_eq!(destination.counters().source_nodes_copied, 3);
+    assert!(pre.semantic_identity().is_some());
+    assert!(box_node.children.semantic_identity().is_some());
+    assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 3);
+    assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 3);
+    assert_eq!(
+        after.resident_payload_clones - before.resident_payload_clones,
+        3
+    );
+    assert_eq!(after.whole_payload_moves - before.whole_payload_moves, 0);
+}
+
+#[test]
+fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
+    assert_eq!(core::mem::size_of::<RegionNode>(), 168);
+
+    for size in [1_usize, 64, 4_096] {
+        let mut pool = NodePool::with_chunk_bytes(512);
+        let mut source = pool.start_region::<DurableRole>().expect("source");
+        let root = source
+            .publish_owned(
+                &mut pool,
+                (0..size).map(|value| Node::Penalty(value as i32)),
+            )
+            .expect("source root");
+        let source_address = source
+            .list(&pool, root)
+            .expect("source list")
+            .get(0)
+            .map(std::ptr::from_ref)
+            .expect("source address");
+        let closure = source
+            .into_closure(&pool, root)
+            .map_err(|(error, _)| error)
+            .expect("source closure");
+        let mut destination = pool.start_region::<PageRole>().expect("destination");
+        let before = destination.counters();
+
+        let copied = copy_closure_into(&mut pool, &closure, &mut destination, true)
+            .expect("mapped closure copy");
+        let after = destination.counters();
+        let copies = after.whole_payload_copies - before.whole_payload_copies;
+        let resident_clones = after.resident_payload_clones - before.resident_payload_clones;
+
+        assert_eq!(copied.len(), size);
+        assert_eq!(
+            after.source_nodes_copied - before.source_nodes_copied,
+            size as u64
+        );
+        assert_eq!(copies, size as u64, "one required Clone per RegionNode");
+        assert_eq!(resident_clones, size as u64);
+        assert_eq!(
+            copies - resident_clones,
+            0,
+            "the required Clone writes its final slot without a second transfer"
+        );
+        assert_eq!(
+            after.whole_payload_moves - before.whole_payload_moves,
+            0,
+            "mapped copy does not move a staged whole RegionNode"
+        );
+        let copied_list = destination.list(&pool, copied).expect("copied list");
+        let expected_identity = SemanticSequenceIdentity::from_nodes(copied_list.iter());
+        assert_eq!(
+            copied.page_list().semantic_identity(),
+            Some(expected_identity.raw())
+        );
+        for (index, node) in copied_list.iter().enumerate() {
+            assert_eq!(node, &Node::Penalty(index as i32));
+        }
+        assert_eq!(
+            closure
+                .list(&pool)
+                .expect("source closure remains live")
+                .get(0)
+                .map(std::ptr::from_ref),
+            Some(source_address)
+        );
+        eprintln!(
+            "MAPPED_REGION_NODE_CLONE_SCALE bytes=168 nodes={size} required_clones={copies} resident_clones={resident_clones} second_payload_transfers=0"
+        );
+    }
 }
 
 #[test]
@@ -344,6 +426,7 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
         Some(address)
     );
     assert_eq!(destination.counters().source_nodes_copied, 0);
+    assert_eq!(destination.counters().resident_payload_clones, 0);
     assert_eq!(pool.closure_transition_counters().envelope_moves, 1);
     assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 2);
 }

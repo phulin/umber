@@ -1033,25 +1033,31 @@ fn copy_list_recursive<Source, Destination>(
 
     let mut copied_children = source_children.into_iter();
     let mut identity = semantic_identity_enabled.then(SemanticSequenceIdentity::empty);
-    let coordinate = destination.clone_mapped_list_from(pool, source, list.coordinate(), |node| {
-        let mut missing_replacement = false;
-        node.visit_node_lists_mut(|child| {
-            if let Some(replacement) = copied_children.next() {
-                *child = replacement;
-            } else {
-                missing_replacement = true;
+    let coordinate = destination.clone_mapped_list_from(
+        pool,
+        source,
+        list.coordinate(),
+        semantic_identity_enabled,
+        |node| {
+            let mut missing_replacement = false;
+            node.visit_node_lists_mut(|child| {
+                if let Some(replacement) = copied_children.next() {
+                    *child = replacement;
+                } else {
+                    missing_replacement = true;
+                }
+            });
+            if missing_replacement {
+                return Err(ForkArenaError::InvalidRegion);
             }
-        });
-        if missing_replacement {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        let item_identity = identity.as_mut().map(|sequence_identity| {
-            let node_identity = semantic_node_identity(node);
-            sequence_identity.push_back(node_identity);
-            node_identity
-        });
-        Ok(item_identity)
-    });
+            let item_identity = identity.as_mut().map(|sequence_identity| {
+                let node_identity = semantic_node_identity(node);
+                sequence_identity.push_back(node_identity);
+                node_identity
+            });
+            Ok(item_identity)
+        },
+    );
     let coordinate = coordinate?;
     if copied_children.next().is_some() {
         return Err(ForkArenaError::InvalidRegion);

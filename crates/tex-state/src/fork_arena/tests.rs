@@ -5,14 +5,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};
 
-static DIRECT_CLONE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static DIRECT_CLONE_CALLS: Cell<usize> = const { Cell::new(0) };
+}
 
 #[derive(Debug, Eq, PartialEq)]
 struct CloneTracked(u32);
 
 impl Clone for CloneTracked {
     fn clone(&self) -> Self {
-        DIRECT_CLONE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        DIRECT_CLONE_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
         Self(self.0)
     }
 }
@@ -21,6 +23,22 @@ impl super::RegionValue<ActiveLane> for CloneTracked {
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
 
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ChildTracked {
+    value: u32,
+    child: super::ArenaListId<ActiveLane>,
+}
+
+impl super::RegionValue<ActiveLane> for ChildTracked {
+    fn visit_region_lists(&self, visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {
+        visit(self.child);
+    }
+
+    fn rebrand_region_lists(&mut self, destination_arena: u32) {
+        self.child = self.child.rebrand_arena(destination_arena);
+    }
 }
 
 #[derive(Debug)]
@@ -883,71 +901,99 @@ fn admitted_forward_callback_preserves_subrange_and_early_stop_semantics() {
 #[test]
 fn direct_mapped_clone_clones_each_source_once_and_reuses_warmed_storage() {
     const ALLOCATION_OWNER: usize = 14;
-    const VALUES: usize = 4_096;
 
-    let mut pool = ChunkPool::<CloneTracked>::with_chunk_bytes(512);
-    let mut source = ForkArena::<CloneTracked, ActiveLane>::new();
-    let source_root = {
-        let mut builder = source.begin_builder(&mut pool).expect("source builder");
-        for value in 0..VALUES as u32 {
-            builder.push(CloneTracked(value)).expect("source value");
-        }
-        builder.seal().expect("source root")
-    };
-    let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
-    let empty = destination.operation_mark(&pool);
+    for values in [1_usize, 64, 4_096] {
+        let mut pool = ChunkPool::<CloneTracked>::with_chunk_bytes(512);
+        let mut source = ForkArena::<CloneTracked, ActiveLane>::new();
+        let source_root = {
+            let mut builder = source.begin_builder(&mut pool).expect("source builder");
+            for value in 0..values as u32 {
+                builder.push(CloneTracked(value)).expect("source value");
+            }
+            builder.seal().expect("source root")
+        };
+        let source_address = source
+            .list(&pool, source_root)
+            .expect("source list")
+            .get(0)
+            .map(std::ptr::from_ref)
+            .expect("source value address");
+        let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
+        let empty = destination.operation_mark(&pool);
 
-    destination
-        .clone_mapped_list_from(&mut pool, &source, source_root, |value| {
-            value.0 += 1;
-            Ok(None)
-        })
-        .expect("warm direct clone");
-    destination
-        .restore_operation(&mut pool, empty)
-        .expect("return warmed destination chunks");
-
-    DIRECT_CLONE_CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
-    let before = thread_measurement(ALLOCATION_OWNER);
-    let copied = {
-        let _scope = scope(ALLOCATION_OWNER);
         destination
-            .clone_mapped_list_from(&mut pool, &source, source_root, |value| {
+            .clone_mapped_list_from(&mut pool, &source, source_root, false, |value| {
                 value.0 += 1;
                 Ok(None)
             })
-            .expect("measured direct clone")
-    };
-    let after = thread_measurement(ALLOCATION_OWNER);
-
-    assert_eq!(copied.len(), VALUES);
-    assert_eq!(
-        DIRECT_CLONE_CALLS.load(std::sync::atomic::Ordering::Relaxed),
-        VALUES,
-        "the destination is constructed from exactly one clone per source value"
-    );
-    assert_eq!(
-        after.calls - before.calls,
-        0,
-        "warmed direct construction has no transient staging allocation"
-    );
-    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-    assert_eq!(
+            .expect("warm direct clone");
         destination
-            .list(&pool, copied)
-            .expect("copied list")
-            .iter()
-            .map(|value| value.0)
-            .collect::<Vec<_>>(),
-        (1..=VALUES as u32).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        source
-            .list(&pool, source_root)
-            .expect("source remains live")
-            .get(0),
-        Some(&CloneTracked(0))
-    );
+            .restore_operation(&mut pool, empty)
+            .expect("return warmed destination chunks");
+
+        DIRECT_CLONE_CALLS.with(|calls| calls.set(0));
+        let counters_before = destination.counters();
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        let copied = {
+            let _scope = scope(ALLOCATION_OWNER);
+            destination
+                .clone_mapped_list_from(&mut pool, &source, source_root, false, |value| {
+                    value.0 += 1;
+                    Ok(None)
+                })
+                .expect("measured direct clone")
+        };
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
+        let counters_after = destination.counters();
+        let clone_calls = DIRECT_CLONE_CALLS.with(Cell::get);
+        let copies = counters_after.whole_payload_copies - counters_before.whole_payload_copies;
+        let resident_clones =
+            counters_after.resident_payload_clones - counters_before.resident_payload_clones;
+
+        assert_eq!(copied.len(), values);
+        assert_eq!(
+            clone_calls, values,
+            "the destination is constructed from exactly one clone per source value"
+        );
+        assert_eq!(copies, values as u64);
+        assert_eq!(resident_clones, values as u64);
+        assert_eq!(
+            copies - resident_clones,
+            0,
+            "no cloned payload crosses a second whole-value boundary"
+        );
+        assert_eq!(
+            counters_after.whole_payload_moves - counters_before.whole_payload_moves,
+            0
+        );
+        assert_eq!(
+            allocation_after.calls - allocation_before.calls,
+            0,
+            "warmed direct construction has no transient staging allocation"
+        );
+        assert_eq!(
+            allocation_after.requested_bytes - allocation_before.requested_bytes,
+            0
+        );
+        let copied_view = destination.list(&pool, copied).expect("copied list");
+        for index in 0..values {
+            assert_eq!(
+                copied_view.get(index),
+                Some(&CloneTracked(index as u32 + 1))
+            );
+        }
+        assert_eq!(
+            source
+                .list(&pool, source_root)
+                .expect("source remains live")
+                .get(0)
+                .map(std::ptr::from_ref),
+            Some(source_address)
+        );
+        eprintln!(
+            "DIRECT_MAPPED_CLONE_SCALE nodes={values} clone_calls={clone_calls} resident_clones={resident_clones} second_payload_transfers=0 allocation_calls=0 allocation_bytes=0"
+        );
+    }
 }
 
 #[test]
@@ -964,7 +1010,7 @@ fn direct_mapped_clone_rewrite_failure_rolls_back_the_partial_destination() {
     let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
 
     assert_eq!(
-        destination.clone_mapped_list_from(&mut pool, &source, source_root, |value| {
+        destination.clone_mapped_list_from(&mut pool, &source, source_root, false, |value| {
             if value.0 == 17 {
                 return Err(ForkArenaError::InvalidRegion);
             }
@@ -993,6 +1039,81 @@ fn direct_mapped_clone_rewrite_failure_rolls_back_the_partial_destination() {
             .expect("source remains unchanged")
             .get(17),
         Some(&CloneTracked(17))
+    );
+}
+
+#[test]
+fn direct_mapped_clone_metadata_failure_restores_the_exact_operation_mark() {
+    let mut pool = ChunkPool::<ChildTracked>::with_chunk_bytes(64);
+    let mut source = ForkArena::<ChildTracked, ActiveLane>::new();
+    let source_root = {
+        let mut builder = source.begin_builder(&mut pool).expect("source builder");
+        builder
+            .push(ChildTracked {
+                value: 17,
+                child: super::ArenaListId::empty(),
+            })
+            .expect("source value");
+        builder.seal().expect("source root")
+    };
+    let source_address = source
+        .list(&pool, source_root)
+        .expect("source list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("source address");
+    let mut destination = ForkArena::<ChildTracked, ActiveLane>::new();
+    let operation = destination.operation_mark(&pool);
+
+    assert_eq!(
+        destination.clone_mapped_list_from(&mut pool, &source, source_root, false, |value| {
+            value.child = source_root;
+            Ok(None)
+        },),
+        Err(ForkArenaError::InvalidRegion)
+    );
+
+    let restored = destination.operation_mark(&pool);
+    assert_eq!(restored.arena, operation.arena);
+    assert_eq!(restored.payload_chunks, operation.payload_chunks);
+    assert_eq!(restored.payload_tail_used, operation.payload_tail_used);
+    assert_eq!(
+        restored.payload_tail_summary,
+        operation.payload_tail_summary
+    );
+    assert_eq!(restored.descriptor_chunks, operation.descriptor_chunks);
+    assert_eq!(
+        restored.descriptor_tail_used,
+        operation.descriptor_tail_used
+    );
+    assert_eq!(
+        source
+            .list(&pool, source_root)
+            .expect("source remains admitted")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(source_address)
+    );
+
+    let replacement = {
+        let mut builder = destination
+            .begin_builder(&mut pool)
+            .expect("metadata failure leaves no active builder");
+        builder
+            .push(ChildTracked {
+                value: 23,
+                child: super::ArenaListId::empty(),
+            })
+            .expect("replacement value");
+        builder.seal().expect("replacement root")
+    };
+    assert_eq!(
+        destination
+            .list(&pool, replacement)
+            .expect("replacement list")
+            .get(0)
+            .map(|value| value.value),
+        Some(23)
     );
 }
 
