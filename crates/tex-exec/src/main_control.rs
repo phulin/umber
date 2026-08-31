@@ -3008,13 +3008,13 @@ impl<G> MainControl<G> {
     fn command_requires_transaction(
         &self,
         host_preparation: &OperationHostPreparation<'_, G>,
-        capabilities: crate::transaction_protocol::CommandCapabilities,
+        preflight: &crate::transaction_protocol::CommandPreflight,
         frame: &CommandEpisode<G>,
     ) -> bool {
         command_requires_transaction_from_facts(
             host_preparation.mode(),
             &self.boxes,
-            capabilities,
+            preflight,
             frame,
             host_preparation.pdf_output(),
             host_preparation.innermost_group(),
@@ -3117,7 +3117,7 @@ impl<G> MainControl<G> {
                                 alignment: pending.alignment,
                                 cursor: pending.cursor,
                             },
-                            crate::transaction_protocol::canonical_static_command_capabilities(
+                            crate::transaction_protocol::canonical_static_command_preflight(
                                 Meaning::Relax,
                             ),
                             pending.scanner.take(),
@@ -3127,14 +3127,17 @@ impl<G> MainControl<G> {
                     PendingDirectDestination::Frame(pending) => {
                         (command_episode, cold_operation) = pending.frame.take_parts();
                         match pending.resume {
-                            PendingFrameResume::Delivery => fill_preflight_delivery_from_frame(
-                                &command_episode,
-                                &mut host_preparation,
-                            ),
-                            PendingFrameResume::ColdExecution(capabilities) => {
+                            PendingFrameResume::Delivery(preflight) => {
+                                fill_preflight_delivery_from_frame(
+                                    &command_episode,
+                                    &mut host_preparation,
+                                    preflight,
+                                )
+                            }
+                            PendingFrameResume::ColdExecution(preflight) => {
                                 host_preparation.fill_preflight(
                                     OperationDelivery::SuspendedCold,
-                                    capabilities,
+                                    preflight,
                                     None,
                                     None,
                                 );
@@ -3153,7 +3156,7 @@ impl<G> MainControl<G> {
                     let _ = command_episode.error.take();
                     host_preparation.fill_preflight(
                         OperationDelivery::SuspendedCold,
-                        pending.capabilities,
+                        pending.preflight,
                         None,
                         None,
                     );
@@ -3236,9 +3239,7 @@ impl<G> MainControl<G> {
                 self.prepare_host_capabilities(&context, &mut host_preparation);
                 host_preparation.fill_preflight(
                     delivery,
-                    crate::transaction_protocol::canonical_static_command_capabilities(
-                        Meaning::Relax,
-                    ),
+                    crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
                     None,
                     None,
                 );
@@ -3278,7 +3279,7 @@ impl<G> MainControl<G> {
                     );
                     let destination = PendingDirectDestination::Frame(PendingFrameDestination {
                         frame: OperationFrame::new(command_episode, cold_operation),
-                        resume: PendingFrameResume::Delivery,
+                        resume: PendingFrameResume::Delivery(None),
                     });
                     let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
                     self.pending_direct_operation = Some(PendingDirectOperation {
@@ -3303,18 +3304,19 @@ impl<G> MainControl<G> {
                 }
                 _ => None,
             };
-            if let crate::transaction_protocol::CommandPreflight::Resource(_) =
-                host_preparation.capabilities().preflight()
-                && !(stores.int_param(IntParam::PDF_OUTPUT) <= 0
-                    && matches!(host_preparation.delivery(), OperationDelivery::Command)
-                    && command_episode.current_option().is_some_and(|command| {
-                        matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                                UnexpandablePrimitive::PdfXImage
-                            ))
-                        )
-                    }))
+            if matches!(
+                host_preparation.preflight(),
+                crate::transaction_protocol::CommandPreflight::Resource(_)
+            ) && !(stores.int_param(IntParam::PDF_OUTPUT) <= 0
+                && matches!(host_preparation.delivery(), OperationDelivery::Command)
+                && command_episode.current_option().is_some_and(|command| {
+                    matches!(
+                        command.meaning(),
+                        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                            UnexpandablePrimitive::PdfXImage
+                        ))
+                    )
+                }))
             {
                 if operations != 0 {
                     self.record_direct_episode_commit(
@@ -3329,7 +3331,7 @@ impl<G> MainControl<G> {
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
                 let tracked_mark = episode_tracked_mark.take();
-                let capabilities = host_preparation.take_capabilities();
+                let preflight = host_preparation.take_preflight();
                 let applied = match self.execute_typed_operation(
                     stores,
                     &mut host_preparation,
@@ -3348,7 +3350,7 @@ impl<G> MainControl<G> {
                                 operation_mark,
                                 command_episode,
                                 cold_operation,
-                                capabilities,
+                                preflight,
                             );
                             if matches!(result, Ok(StepResult::Suspended(_))) {
                                 self.advance_telemetry.rollbacks += 1;
@@ -3372,6 +3374,7 @@ impl<G> MainControl<G> {
                                 command_episode,
                                 cold_operation,
                                 alignment_scanner,
+                                Some(preflight),
                             )
                             .expect("resource suspension retains one direct caller destination");
                             self.retain_direct_delivery_for_retry(
@@ -3457,11 +3460,11 @@ impl<G> MainControl<G> {
             }
 
             if matches!(
-                host_preparation.capabilities().preflight(),
+                host_preparation.preflight(),
                 crate::transaction_protocol::CommandPreflight::Transaction(_)
             ) || self.command_requires_transaction(
                 &host_preparation,
-                host_preparation.capabilities(),
+                host_preparation.preflight(),
                 &command_episode,
             ) {
                 if operations != 0 {
@@ -3476,14 +3479,14 @@ impl<G> MainControl<G> {
                 }
                 let tracked_mark = episode_tracked_mark.take();
                 if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
-                    host_preparation.capabilities().preflight()
+                    host_preparation.preflight()
                 {
-                    let transaction = transaction.transaction();
+                    let transaction = (*transaction).transaction();
                     transaction
                         .admit(transaction.projection())
                         .expect("preflight owns the exact narrow projection");
                 }
-                let capabilities = host_preparation.take_capabilities();
+                let preflight = host_preparation.take_preflight();
                 let applied = match self.execute_typed_operation(
                     stores,
                     &mut host_preparation,
@@ -3502,7 +3505,7 @@ impl<G> MainControl<G> {
                                 operation_mark,
                                 command_episode,
                                 cold_operation,
-                                capabilities,
+                                preflight,
                             );
                             return result;
                         }
@@ -3518,6 +3521,7 @@ impl<G> MainControl<G> {
                                     command_episode,
                                     cold_operation,
                                     alignment_scanner,
+                                    Some(preflight),
                                 )
                                 .expect(
                                     "resource suspension retains one direct caller destination",
@@ -3540,6 +3544,7 @@ impl<G> MainControl<G> {
                                     command_episode,
                                     cold_operation,
                                     alignment_scanner,
+                                    Some(preflight),
                                 )
                                 .expect("retained failure owns one direct caller destination");
                                 self.retain_direct_delivery_for_retry(
@@ -3607,7 +3612,9 @@ impl<G> MainControl<G> {
                                                     command_episode,
                                                     ColdOperationSlot::default(),
                                                 ),
-                                                resume: PendingFrameResume::Delivery,
+                                                resume: PendingFrameResume::Delivery(Some(
+                                                    preflight,
+                                                )),
                                             },
                                         ),
                                     });
@@ -3694,7 +3701,6 @@ impl<G> MainControl<G> {
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
-            let capabilities = host_preparation.take_capabilities();
             let applied = match self.execute_typed_operation(
                 stores,
                 &mut host_preparation,
@@ -3711,12 +3717,13 @@ impl<G> MainControl<G> {
                         let _ = stores.abandon_dependency_region(mark);
                     }
                     let result = if command_episode.has_unavailable(&cold_operation) {
+                        let preflight = host_preparation.take_preflight();
                         self.finish_unavailable_prepared_resource_operation(
                             stores,
                             operation_mark,
                             command_episode,
                             cold_operation,
-                            capabilities,
+                            preflight,
                         )
                     } else {
                         let result = self.finish_resource_preflight_failure(
@@ -3724,12 +3731,14 @@ impl<G> MainControl<G> {
                             command_episode.take_error(),
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
+                            let preflight = host_preparation.take_preflight();
                             let alignment_scanner = command_episode.alignment_scanner.take();
                             let destination = own_alignment_retry_child(
                                 alignment_delivery,
                                 command_episode,
                                 cold_operation,
                                 alignment_scanner,
+                                Some(preflight),
                             )
                             .expect("resource suspension retains one direct caller destination");
                             self.retain_direct_delivery_for_retry(
@@ -3804,12 +3813,13 @@ impl<G> MainControl<G> {
                                 "nested resource suspension retains its enclosing operation"
                             );
                             self.discard_direct_operation(stores, operation_mark);
+                            let preflight = host_preparation.take_preflight();
                             self.pending_direct_operation = Some(PendingDirectOperation {
                                 state: PendingDirectState::Fresh,
                                 destination: PendingDirectDestination::Frame(
                                     PendingFrameDestination {
                                         frame: OperationFrame::new(command_episode, cold_operation),
-                                        resume: PendingFrameResume::ColdExecution(capabilities),
+                                        resume: PendingFrameResume::ColdExecution(preflight),
                                     },
                                 ),
                             });
@@ -4007,21 +4017,27 @@ impl<G> MainControl<G> {
         let retained_attempt = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
-                destination: PendingDiagnosticDestination::<G> { frame },
+                destination: PendingDiagnosticDestination::<G> { frame, preflight },
             }) => {
                 (command_episode, cold_operation) = frame.into_parts();
                 let _ = command_episode.error.take();
                 if command_episode.has_unavailable(&cold_operation) {
                     host_preparation.fill_preflight(
                         OperationDelivery::SuspendedCold,
-                        crate::transaction_protocol::canonical_static_command_capabilities(
-                            Meaning::Relax,
-                        ),
+                        preflight.unwrap_or_else(|| {
+                            crate::transaction_protocol::canonical_static_command_preflight(
+                                Meaning::Relax,
+                            )
+                        }),
                         None,
                         None,
                     );
                 } else {
-                    fill_preflight_delivery_from_frame(&command_episode, &mut host_preparation);
+                    fill_preflight_delivery_from_frame(
+                        &command_episode,
+                        &mut host_preparation,
+                        preflight,
+                    );
                 }
                 Some(operation)
             }
@@ -4070,6 +4086,7 @@ impl<G> MainControl<G> {
                             operation,
                             destination: PendingDiagnosticDestination {
                                 frame: OperationFrame::new(frame, ColdOperationSlot::default()),
+                                preflight: None,
                             },
                         });
                     } else {
@@ -4100,14 +4117,13 @@ impl<G> MainControl<G> {
             command_episode.admit_settled(command, Some(cursor));
             host_preparation.fill_preflight(
                 OperationDelivery::Command,
-                crate::transaction_protocol::canonical_command_capabilities(
+                crate::transaction_protocol::canonical_command_preflight(
                     command_episode.current().meaning(),
                 ),
                 None,
                 None,
             );
         }
-        let _capabilities = host_preparation.take_capabilities();
         let mode_mark = self.modes.begin_journal();
         let applied = match self.execute_typed_operation(
             stores,
@@ -4135,6 +4151,7 @@ impl<G> MainControl<G> {
                     );
                     let destination = PendingDiagnosticDestination {
                         frame: OperationFrame::new(command_episode, cold_operation),
+                        preflight: Some(host_preparation.take_preflight()),
                     };
                     let operation = self.retain_direct_operation_for_retry(stores, operation_mark);
                     self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
@@ -6195,11 +6212,10 @@ impl<G> MainControl<G> {
         }
         host_preparation.fill_preflight(
             delivery,
-            crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax),
+            crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
             None,
             None,
         );
-        let _capabilities = host_preparation.take_capabilities();
         let result = self.execute_typed_operation(
             stores,
             &mut host_preparation,

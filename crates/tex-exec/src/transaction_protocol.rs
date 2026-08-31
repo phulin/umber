@@ -157,59 +157,6 @@ impl ResourceCapabilities {
     pub const TERMINAL: Self = Self(1 << 4);
 }
 
-bitset! {
-    /// Externally visible effects a command can request.
-    pub struct EffectCapabilities(u8);
-}
-
-impl EffectCapabilities {
-    pub const DEFERRED_STREAM: Self = Self(1 << 0);
-    pub const STREAM: Self = Self(1 << 1);
-    pub const CLOCK: Self = Self(1 << 2);
-    pub const RANDOM: Self = Self(1 << 3);
-    pub const MAP_UPDATE: Self = Self(1 << 4);
-}
-
-bitset! {
-    /// Cold output boundaries a command can reach.
-    pub struct OutputCapabilities(u8);
-}
-
-impl OutputCapabilities {
-    pub const DIAGNOSTIC: Self = Self(1 << 0);
-    pub const TRANSCRIPT: Self = Self(1 << 1);
-    pub const PAGE_ARTIFACT: Self = Self(1 << 2);
-    pub const PDF_STATE: Self = Self(1 << 3);
-    pub const FORMAT: Self = Self(1 << 4);
-    pub const FINAL_JOB: Self = Self(1 << 5);
-}
-
-bitset! {
-    /// Recovery behavior selected before semantic mutation.
-    pub struct RecoveryCapabilities(u8);
-}
-
-impl RecoveryCapabilities {
-    pub const MAY_SUSPEND: Self = Self(1 << 0);
-    pub const LATE_FAILURE: Self = Self(1 << 1);
-    pub const TEX_DIAGNOSTIC: Self = Self(1 << 2);
-}
-
-/// Stable semantic bucket used by the capability table.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CanonicalCommandFamily {
-    Passive,
-    Assignment,
-    Grouping,
-    Material,
-    Alignment,
-    Math,
-    Resource,
-    Effect,
-    Publication,
-    Diagnostic,
-}
-
 /// A validated projection of fixed-size `HotSnapshot` fields.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HotSnapshotProjection {
@@ -254,20 +201,18 @@ impl HotSnapshotProjection {
 /// Exact rollback authority for one retryable or late-failing operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NarrowTransactionSpec {
-    projection: HotSnapshotProjection,
+    owners: StateOwners,
 }
 
 impl NarrowTransactionSpec {
     #[must_use]
     pub const fn new(owners: StateOwners) -> Self {
-        Self {
-            projection: HotSnapshotProjection::for_owners(owners),
-        }
+        Self { owners }
     }
 
     #[must_use]
     pub const fn projection(self) -> HotSnapshotProjection {
-        self.projection
+        HotSnapshotProjection::for_owners(self.owners)
     }
 
     /// Admits only the exact snapshot projection named by preflight.
@@ -275,11 +220,9 @@ impl NarrowTransactionSpec {
         self,
         supplied: HotSnapshotProjection,
     ) -> Result<NarrowTransaction, PreflightError> {
-        if supplied != self.projection {
-            return Err(PreflightError::TransactionProjectionMismatch {
-                expected: self.projection,
-                supplied,
-            });
+        let expected = self.projection();
+        if supplied != expected {
+            return Err(PreflightError::TransactionProjectionMismatch { expected, supplied });
         }
         Ok(NarrowTransaction {
             projection: supplied,
@@ -300,133 +243,11 @@ impl NarrowTransaction {
     }
 }
 
-/// Complete static classification for one canonical command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommandCapabilities {
-    family: CanonicalCommandFamily,
-    mutation: StateOwners,
-    resources: ResourceCapabilities,
-    effects: EffectCapabilities,
-    output: OutputCapabilities,
-    recovery: RecoveryCapabilities,
-    transaction: Option<NarrowTransactionSpec>,
-}
-
-impl CommandCapabilities {
-    #[allow(clippy::too_many_arguments)]
-    fn from_parts(
-        family: CanonicalCommandFamily,
-        mutation: StateOwners,
-        resources: ResourceCapabilities,
-        effects: EffectCapabilities,
-        output: OutputCapabilities,
-        recovery: RecoveryCapabilities,
-        transaction: Option<NarrowTransactionSpec>,
-    ) -> Self {
-        Self {
-            family,
-            mutation,
-            resources,
-            effects,
-            output,
-            recovery,
-            transaction,
-        }
-    }
-
-    /// Checked constructor used by cold adapters and protocol tests.
-    #[allow(clippy::too_many_arguments)]
-    pub fn try_new(
-        family: CanonicalCommandFamily,
-        mutation: StateOwners,
-        resources: ResourceCapabilities,
-        effects: EffectCapabilities,
-        output: OutputCapabilities,
-        recovery: RecoveryCapabilities,
-        transaction: Option<NarrowTransactionSpec>,
-    ) -> Result<Self, PreflightError> {
-        let needs_transaction = recovery.contains(RecoveryCapabilities::MAY_SUSPEND)
-            || recovery.contains(RecoveryCapabilities::LATE_FAILURE);
-        if resources.is_empty() == recovery.contains(RecoveryCapabilities::MAY_SUSPEND) {
-            return Err(PreflightError::ResourceRecoveryMismatch);
-        }
-        if needs_transaction != transaction.is_some() {
-            return Err(PreflightError::RecoveryTransactionMismatch);
-        }
-        if let Some(spec) = transaction
-            && !mutation.contains(spec.projection().owners())
-        {
-            return Err(PreflightError::TransactionOwnerNotMutable {
-                mutation,
-                transaction: spec.projection().owners(),
-            });
-        }
-        Ok(Self::from_parts(
-            family,
-            mutation,
-            resources,
-            effects,
-            output,
-            recovery,
-            transaction,
-        ))
-    }
-
-    #[must_use]
-    pub const fn family(self) -> CanonicalCommandFamily {
-        self.family
-    }
-
-    #[must_use]
-    pub const fn mutation(self) -> StateOwners {
-        self.mutation
-    }
-
-    #[must_use]
-    pub const fn resources(self) -> ResourceCapabilities {
-        self.resources
-    }
-
-    #[must_use]
-    pub const fn effects(self) -> EffectCapabilities {
-        self.effects
-    }
-
-    #[must_use]
-    pub const fn output(self) -> OutputCapabilities {
-        self.output
-    }
-
-    #[must_use]
-    pub const fn recovery(self) -> RecoveryCapabilities {
-        self.recovery
-    }
-
-    #[must_use]
-    pub const fn transaction(self) -> Option<NarrowTransactionSpec> {
-        self.transaction
-    }
-
-    /// Performs mutation-free command admission.
-    #[must_use]
-    pub const fn preflight(self) -> CommandPreflight {
-        if self.recovery.contains(RecoveryCapabilities::MAY_SUSPEND) {
-            CommandPreflight::Resource(ResourcePreflight { capabilities: self })
-        } else if let Some(transaction) = self.transaction {
-            CommandPreflight::Transaction(TransactionPreflight {
-                capabilities: self,
-                transaction,
-            })
-        } else {
-            CommandPreflight::Ordinary(OrdinaryCommand { capabilities: self })
-        }
-    }
-}
-
 /// Mutation-free result of classifying the next command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandPreflight {
-    /// Direct execution carries capabilities but no transaction object.
+    /// Direct execution carries only the mutation fact consulted by dynamic
+    /// transaction admission.
     Ordinary(OrdinaryCommand),
     /// Operand scanning may suspend and therefore names its retry projection.
     Resource(ResourcePreflight),
@@ -436,48 +257,40 @@ pub enum CommandPreflight {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OrdinaryCommand {
-    capabilities: CommandCapabilities,
+    mutation: StateOwners,
 }
 
 impl OrdinaryCommand {
     #[must_use]
-    pub const fn capabilities(self) -> CommandCapabilities {
-        self.capabilities
+    pub const fn mutation(self) -> StateOwners {
+        self.mutation
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResourcePreflight {
-    capabilities: CommandCapabilities,
+    resources: ResourceCapabilities,
+    retry_transaction: NarrowTransactionSpec,
 }
 
 impl ResourcePreflight {
     #[must_use]
-    pub const fn capabilities(self) -> CommandCapabilities {
-        self.capabilities
+    pub const fn resources(self) -> ResourceCapabilities {
+        self.resources
     }
 
     #[must_use]
     pub const fn retry_transaction(self) -> NarrowTransactionSpec {
-        match self.capabilities.transaction {
-            Some(transaction) => transaction,
-            None => unreachable!(),
-        }
+        self.retry_transaction
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TransactionPreflight {
-    capabilities: CommandCapabilities,
     transaction: NarrowTransactionSpec,
 }
 
 impl TransactionPreflight {
-    #[must_use]
-    pub const fn capabilities(self) -> CommandCapabilities {
-        self.capabilities
-    }
-
     #[must_use]
     pub const fn transaction(self) -> NarrowTransactionSpec {
         self.transaction
@@ -487,12 +300,6 @@ impl TransactionPreflight {
 /// Rejected static capability or runtime mark admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreflightError {
-    ResourceRecoveryMismatch,
-    RecoveryTransactionMismatch,
-    TransactionOwnerNotMutable {
-        mutation: StateOwners,
-        transaction: StateOwners,
-    },
     InvalidOwnerMarkProjection {
         owners: StateOwners,
         expected: HotSnapshotMarks,
@@ -533,122 +340,63 @@ const JOB_TRANSACTION: StateOwners = MATERIAL
     .union(StateOwners::OUTPUT)
     .union(StateOwners::PROVENANCE);
 
-fn ordinary(family: CanonicalCommandFamily, mutation: StateOwners) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        family,
-        mutation,
-        ResourceCapabilities::NONE,
-        EffectCapabilities::NONE,
-        OutputCapabilities::NONE,
-        RecoveryCapabilities::NONE,
-        None,
-    )
+const fn ordinary(mutation: StateOwners) -> CommandPreflight {
+    CommandPreflight::Ordinary(OrdinaryCommand { mutation })
 }
 
-fn diagnostic(mutation: StateOwners) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        CanonicalCommandFamily::Diagnostic,
-        mutation,
-        ResourceCapabilities::NONE,
-        EffectCapabilities::NONE,
-        OutputCapabilities::DIAGNOSTIC.union(OutputCapabilities::TRANSCRIPT),
-        RecoveryCapabilities::TEX_DIAGNOSTIC,
-        None,
-    )
+const fn diagnostic(mutation: StateOwners) -> CommandPreflight {
+    ordinary(mutation)
 }
 
-fn resource(resource: ResourceCapabilities) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        CanonicalCommandFamily::Resource,
-        RETRY_SCAN,
-        resource,
-        EffectCapabilities::NONE,
-        OutputCapabilities::NONE,
-        RecoveryCapabilities::MAY_SUSPEND,
-        Some(NarrowTransactionSpec::new(RETRY_SCAN)),
-    )
+const fn resource(resources: ResourceCapabilities) -> CommandPreflight {
+    CommandPreflight::Resource(ResourcePreflight {
+        resources,
+        retry_transaction: NarrowTransactionSpec::new(RETRY_SCAN),
+    })
 }
 
-fn deferred_effect(mutation: StateOwners) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        CanonicalCommandFamily::Effect,
-        mutation,
-        ResourceCapabilities::NONE,
-        EffectCapabilities::DEFERRED_STREAM,
-        OutputCapabilities::NONE,
-        RecoveryCapabilities::NONE,
-        None,
-    )
+const fn deferred_effect(mutation: StateOwners) -> CommandPreflight {
+    ordinary(mutation)
 }
 
-fn late_effect(effect: EffectCapabilities) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        CanonicalCommandFamily::Effect,
-        EFFECT_TRANSACTION,
-        ResourceCapabilities::NONE,
-        effect,
-        OutputCapabilities::TRANSCRIPT,
-        RecoveryCapabilities::LATE_FAILURE,
-        Some(NarrowTransactionSpec::new(EFFECT_TRANSACTION)),
-    )
+const fn transaction(owners: StateOwners) -> CommandPreflight {
+    CommandPreflight::Transaction(TransactionPreflight {
+        transaction: NarrowTransactionSpec::new(owners),
+    })
 }
 
-fn late_state(family: CanonicalCommandFamily, mutation: StateOwners) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        family,
-        mutation,
-        ResourceCapabilities::NONE,
-        EffectCapabilities::NONE,
-        OutputCapabilities::NONE,
-        RecoveryCapabilities::LATE_FAILURE,
-        Some(NarrowTransactionSpec::new(mutation)),
-    )
+const fn late_effect() -> CommandPreflight {
+    transaction(EFFECT_TRANSACTION)
 }
 
-fn publication(
-    mutation: StateOwners,
-    output: OutputCapabilities,
-    transaction: StateOwners,
-) -> CommandCapabilities {
-    CommandCapabilities::from_parts(
-        CanonicalCommandFamily::Publication,
-        mutation,
-        ResourceCapabilities::NONE,
-        EffectCapabilities::STREAM,
-        output,
-        RecoveryCapabilities::LATE_FAILURE,
-        Some(NarrowTransactionSpec::new(transaction)),
-    )
+const fn late_state(mutation: StateOwners) -> CommandPreflight {
+    transaction(mutation)
 }
 
 /// Classifies every meaning that can reach canonical main control.
 #[must_use]
-pub fn canonical_command_capabilities<G>(meaning: ResolvedMeaning<G>) -> CommandCapabilities {
+pub fn canonical_command_preflight<G>(meaning: ResolvedMeaning<G>) -> CommandPreflight {
     match meaning {
-        ResolvedMeaning::Static(meaning) => static_command_capabilities(meaning),
-        ResolvedMeaning::Macro { .. } => {
-            ordinary(CanonicalCommandFamily::Passive, StateOwners::NONE)
-        }
+        ResolvedMeaning::Static(meaning) => static_command_preflight(meaning),
+        ResolvedMeaning::Macro { .. } => ordinary(StateOwners::NONE),
     }
 }
 
 /// Classifies one generation-free static command meaning.
 #[must_use]
-pub fn canonical_static_command_capabilities(meaning: Meaning) -> CommandCapabilities {
-    static_command_capabilities(meaning)
+pub fn canonical_static_command_preflight(meaning: Meaning) -> CommandPreflight {
+    static_command_preflight(meaning)
 }
 
-fn static_command_capabilities(meaning: Meaning) -> CommandCapabilities {
+fn static_command_preflight(meaning: Meaning) -> CommandPreflight {
     match meaning {
         Meaning::Undefined | Meaning::Unknown(_) => diagnostic(StateOwners::NONE),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
             resource(ResourceCapabilities::INPUT)
         }
-        Meaning::Relax | Meaning::ExpandablePrimitive(_) => {
-            ordinary(CanonicalCommandFamily::Passive, StateOwners::NONE)
-        }
+        Meaning::Relax | Meaning::ExpandablePrimitive(_) => ordinary(StateOwners::NONE),
         Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => {
-            ordinary(CanonicalCommandFamily::Material, MATERIAL)
+            ordinary(MATERIAL)
         }
         Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
@@ -662,14 +410,14 @@ fn static_command_capabilities(meaning: Meaning) -> CommandCapabilities {
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)
-        | Meaning::Font(_) => ordinary(CanonicalCommandFamily::Assignment, STATE),
+        | Meaning::Font(_) => ordinary(STATE),
         Meaning::InternalInteger(_) => diagnostic(StateOwners::NONE),
-        Meaning::EndV => ordinary(CanonicalCommandFamily::Alignment, ALIGNMENT),
-        Meaning::UnexpandablePrimitive(primitive) => primitive_capabilities(primitive),
+        Meaning::EndV => ordinary(ALIGNMENT),
+        Meaning::UnexpandablePrimitive(primitive) => primitive_preflight(primitive),
     }
 }
 
-fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabilities {
+fn primitive_preflight(primitive: UnexpandablePrimitive) -> CommandPreflight {
     use UnexpandablePrimitive as P;
 
     match primitive {
@@ -682,27 +430,11 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         ),
         P::PdfXImage => resource(ResourceCapabilities::PDF_IMAGE),
         P::OpenOut | P::CloseOut | P::Write => deferred_effect(MATERIAL),
-        P::Immediate => late_effect(EffectCapabilities::STREAM),
-        P::PdfMapFile | P::PdfMapLine | P::PdfGlyphToUnicode => {
-            late_effect(EffectCapabilities::MAP_UPDATE)
-        }
-        P::PdfResetTimer => late_effect(EffectCapabilities::CLOCK),
-        P::PdfSetRandomSeed => late_effect(EffectCapabilities::RANDOM),
-        P::Shipout => publication(
-            SHIPOUT_TRANSACTION,
-            OutputCapabilities::PAGE_ARTIFACT.union(OutputCapabilities::PDF_STATE),
-            SHIPOUT_TRANSACTION,
-        ),
-        P::End => publication(
-            JOB_TRANSACTION,
-            OutputCapabilities::FINAL_JOB,
-            JOB_TRANSACTION,
-        ),
-        P::Dump => publication(
-            JOB_TRANSACTION,
-            OutputCapabilities::FORMAT.union(OutputCapabilities::FINAL_JOB),
-            JOB_TRANSACTION,
-        ),
+        P::Immediate => late_effect(),
+        P::PdfMapFile | P::PdfMapLine | P::PdfGlyphToUnicode => late_effect(),
+        P::PdfResetTimer | P::PdfSetRandomSeed => late_effect(),
+        P::Shipout => transaction(SHIPOUT_TRANSACTION),
+        P::End | P::Dump => transaction(JOB_TRANSACTION),
         P::Show
         | P::ShowBox
         | P::ShowThe
@@ -712,9 +444,9 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::ShowIfs
         | P::Message
         | P::ErrMessage => diagnostic(StateOwners::NONE),
-        P::BeginGroup | P::EndGroup => ordinary(CanonicalCommandFamily::Grouping, GROUP),
+        P::BeginGroup | P::EndGroup => ordinary(GROUP),
         P::HAlign | P::VAlign | P::NoAlign | P::Omit | P::Cr | P::CrCr | P::Span => {
-            ordinary(CanonicalCommandFamily::Alignment, ALIGNMENT)
+            ordinary(ALIGNMENT)
         }
         P::MathChar
         | P::Delimiter
@@ -755,7 +487,7 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::DisplayStyle
         | P::TextStyle
         | P::ScriptStyle
-        | P::ScriptScriptStyle => ordinary(CanonicalCommandFamily::Math, MATH),
+        | P::ScriptScriptStyle => ordinary(MATH),
         P::Par
         | P::Indent
         | P::NoIndent
@@ -810,8 +542,8 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::EndL
         | P::BeginR
         | P::EndR
-        | P::QuitVMode => ordinary(CanonicalCommandFamily::Material, MATERIAL),
-        P::PdfStartLink => late_state(CanonicalCommandFamily::Material, PDF),
+        | P::QuitVMode => ordinary(MATERIAL),
+        P::PdfStartLink => late_state(PDF),
         P::PdfLiteral
         | P::PdfSetMatrix
         | P::PdfSave
@@ -843,7 +575,7 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::PdfDest
         | P::PdfThread
         | P::PdfStartThread
-        | P::PdfEndThread => ordinary(CanonicalCommandFamily::Material, PDF),
+        | P::PdfEndThread => ordinary(PDF),
         P::Def
         | P::Edef
         | P::Gdef
@@ -942,7 +674,7 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::GlueStretchOrder
         | P::GlueShrinkOrder
         | P::GlueToMu
-        | P::MuToGlue => ordinary(CanonicalCommandFamily::Assignment, STATE),
+        | P::MuToGlue => ordinary(STATE),
     }
 }
 

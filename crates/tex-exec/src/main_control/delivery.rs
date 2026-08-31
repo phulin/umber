@@ -13,19 +13,24 @@ pub(super) struct PreparedAlignmentPreamble<G> {
 pub(super) fn fill_preflight_delivery_from_frame<G>(
     frame: &CommandEpisode<G>,
     preparation: &mut OperationHostPreparation<'_, G>,
+    retained_preflight: Option<crate::transaction_protocol::CommandPreflight>,
 ) {
-    let capabilities = match frame.phase.expect("retry frame owns its scalar phase") {
-        PreflightCommandPhase::ImmediatePdfRetry(primitive) => {
-            crate::transaction_protocol::canonical_static_command_capabilities(
-                Meaning::UnexpandablePrimitive(primitive),
-            )
+    let preflight = retained_preflight.unwrap_or_else(|| {
+        match frame.phase.expect("retry frame owns its scalar phase") {
+            PreflightCommandPhase::ImmediatePdfRetry(primitive) => {
+                crate::transaction_protocol::canonical_static_command_preflight(
+                    Meaning::UnexpandablePrimitive(primitive),
+                )
+            }
+            PreflightCommandPhase::Expanding { .. } => {
+                crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax)
+            }
+            _ => {
+                crate::transaction_protocol::canonical_command_preflight(frame.current().meaning())
+            }
         }
-        PreflightCommandPhase::Expanding { .. } => {
-            crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax)
-        }
-        _ => crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning()),
-    };
-    preparation.fill_preflight(OperationDelivery::Command, capabilities, None, None);
+    });
+    preparation.fill_preflight(OperationDelivery::Command, preflight, None, None);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,21 +48,18 @@ pub(super) enum PreflightReadiness {
 pub(super) fn command_requires_transaction_from_facts<G>(
     mode: Mode,
     boxes: &ReplayBoxes<G>,
-    capabilities: crate::transaction_protocol::CommandCapabilities,
+    preflight: &crate::transaction_protocol::CommandPreflight,
     frame: &CommandEpisode<G>,
     pdf_output: i32,
     innermost_group: Option<GroupKind>,
 ) -> bool {
-    if !matches!(
-        capabilities.preflight(),
-        crate::transaction_protocol::CommandPreflight::Ordinary(_)
-    ) {
+    let crate::transaction_protocol::CommandPreflight::Ordinary(ordinary) = preflight else {
         return true;
-    }
+    };
     // pdfTeX's `check_pdfoutput` fails before operand scanning. ErrorStop can
     // change `\pdfoutput` and retry that untouched command, so DVI mode keeps
     // the retry transaction.
-    if capabilities
+    if ordinary
         .mutation()
         .contains(crate::transaction_protocol::StateOwners::PDF)
         && pdf_output <= 0
@@ -134,7 +136,7 @@ impl<G> MainControl<G> {
                 {
                     host_preparation.fill_preflight(
                         OperationDelivery::Replay,
-                        crate::transaction_protocol::canonical_static_command_capabilities(
+                        crate::transaction_protocol::canonical_static_command_preflight(
                             Meaning::Relax,
                         ),
                         None,
@@ -238,15 +240,14 @@ impl<G> MainControl<G> {
                             );
                             reported = true;
                         }
-                        let capabilities =
-                            crate::transaction_protocol::canonical_command_capabilities(
-                                frame.current().meaning(),
-                            );
+                        let preflight = crate::transaction_protocol::canonical_command_preflight(
+                            frame.current().meaning(),
+                        );
                         let needs_barrier = tracked_region_is_active
                             || command_requires_transaction_from_facts(
                                 mode,
                                 &self.boxes,
-                                capabilities,
+                                &preflight,
                                 frame,
                                 processor.int_param(IntParam::PDF_OUTPUT),
                                 innermost_group,
@@ -291,7 +292,7 @@ impl<G> MainControl<G> {
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
                                         OperationDelivery::ResidentHot,
-                                        capabilities,
+                                        preflight,
                                         None,
                                         None,
                                     );
@@ -301,7 +302,7 @@ impl<G> MainControl<G> {
                                     frame.clear_preflight();
                                     host_preparation.fill_preflight(
                                         OperationDelivery::ResidentCold,
-                                        capabilities,
+                                        preflight,
                                         None,
                                         None,
                                     );
@@ -331,6 +332,33 @@ impl<G> MainControl<G> {
                                     frame.error = Some(error);
                                 }
                             }
+                        } else {
+                            host_preparation.record_command_preflight(preflight);
+                        }
+                    }
+                    if status == tex_command::DeliveryStatus::Command
+                        && frame.current_option().is_some()
+                        && !frame.has_preflight()
+                        && !host_preparation.has_preflight()
+                    {
+                        let cursor = processor.delivery_cursor();
+                        let continues_main_loop = self.main_loop_active
+                            && matches!(
+                                frame.current().meaning(),
+                                ResolvedMeaning::Static(
+                                    Meaning::CharToken {
+                                        cat: Catcode::Letter | Catcode::Other,
+                                        ..
+                                    } | Meaning::CharGiven(_)
+                                        | Meaning::UnexpandablePrimitive(
+                                            UnexpandablePrimitive::Char
+                                        )
+                                )
+                            );
+                        if raw_main_loop_delivery && continues_main_loop {
+                            frame.mark_resident_raw(Some(cursor));
+                        } else {
+                            frame.mark_resident_settled(Some(cursor));
                         }
                     }
                     host_preparation.record_delivery_status(status, reported);
@@ -367,7 +395,7 @@ impl<G> MainControl<G> {
         let trace_reported = host_preparation.take_trace_reported();
 
         let passive =
-            || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
+            || crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax);
         match delivery_status {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
@@ -442,27 +470,37 @@ impl<G> MainControl<G> {
                     suppress_right: true,
                 },
             );
-            let capabilities = crate::transaction_protocol::canonical_command_capabilities(
-                frame.current().meaning(),
-            );
+            let preflight = host_preparation
+                .take_recorded_preflight()
+                .unwrap_or_else(|| {
+                    crate::transaction_protocol::canonical_command_preflight(
+                        frame.current().meaning(),
+                    )
+                });
             frame.retain_source_role();
             frame.discard_resident_command();
             host_preparation.fill_preflight(
                 OperationDelivery::SuspendedCold,
-                capabilities,
+                preflight,
                 None,
                 None,
             );
             return PreflightReadiness::Ready;
         }
-        let capabilities =
-            crate::transaction_protocol::canonical_command_capabilities(frame.current().meaning());
-        if raw_main_loop_delivery && continues_main_loop {
-            frame.mark_resident_raw(None);
-        } else {
-            frame.mark_resident_settled(None);
-        }
-        host_preparation.fill_preflight(OperationDelivery::Command, capabilities, None, None);
+        let preflight = host_preparation
+            .take_recorded_preflight()
+            .unwrap_or_else(|| {
+                crate::transaction_protocol::canonical_command_preflight(frame.current().meaning())
+            });
+        assert!(
+            frame.cursor.is_some(),
+            "a live command crossing preflight retains its delivery cursor"
+        );
+        debug_assert_eq!(
+            matches!(frame.phase, Some(PreflightCommandPhase::Raw)),
+            raw_main_loop_delivery && continues_main_loop
+        );
+        host_preparation.fill_preflight(OperationDelivery::Command, preflight, None, None);
         PreflightReadiness::Ready
     }
 }

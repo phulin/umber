@@ -310,6 +310,7 @@ pub(super) fn own_alignment_retry_child<G>(
     mut episode: CommandEpisode<G>,
     cold: ColdOperationSlot<G>,
     alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+    preflight: Option<crate::transaction_protocol::CommandPreflight>,
 ) -> Option<PendingDirectDestination<G>> {
     let Some((alignment, cursor)) = alignment.zip(episode.cursor) else {
         assert!(
@@ -320,7 +321,7 @@ pub(super) fn own_alignment_retry_child<G>(
             .has_preflight()
             .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery,
+                resume: PendingFrameResume::Delivery(preflight),
             }));
     };
     match episode.phase {
@@ -358,7 +359,7 @@ pub(super) fn own_alignment_retry_child<G>(
             let _ = retry;
             Some(PendingDirectDestination::Frame(PendingFrameDestination {
                 frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery,
+                resume: PendingFrameResume::Delivery(preflight),
             }))
         }
         // Alignment itself suspended without a command-owned continuation.
@@ -864,7 +865,7 @@ pub(super) struct PendingResourceOperation<G> {
 
 pub(super) struct SuspendedResourceResume<G> {
     pub(super) frame: OperationFrame<G>,
-    pub(super) capabilities: crate::transaction_protocol::CommandCapabilities,
+    pub(super) preflight: crate::transaction_protocol::CommandPreflight,
 }
 
 pub(super) const SUSPENDED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
@@ -898,8 +899,8 @@ pub(super) struct PendingFrameDestination<G> {
 
 #[derive(Clone, Copy)]
 pub(super) enum PendingFrameResume {
-    Delivery,
-    ColdExecution(crate::transaction_protocol::CommandCapabilities),
+    Delivery(Option<crate::transaction_protocol::CommandPreflight>),
+    ColdExecution(crate::transaction_protocol::CommandPreflight),
 }
 
 pub(super) enum PendingDirectState {
@@ -943,6 +944,7 @@ pub(super) struct PendingDiagnosticOperation<G> {
 
 pub(super) struct PendingDiagnosticDestination<G> {
     pub(super) frame: OperationFrame<G>,
+    pub(super) preflight: Option<crate::transaction_protocol::CommandPreflight>,
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {

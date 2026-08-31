@@ -17,12 +17,16 @@ pub(super) struct OperationHostPreparation<'operation, G> {
     innermost_group: Option<GroupKind>,
     checked_save_stack_words: Option<usize>,
     delivery: Option<OperationDelivery>,
-    capabilities: Option<crate::transaction_protocol::CommandCapabilities>,
-    scanner: Option<tex_command::ScannerFrameKey<G>>,
-    expansion: Option<tex_command::ExpansionWorkKey<G>>,
+    preflight: Option<crate::transaction_protocol::CommandPreflight>,
+    resume: Option<OperationResume<G>>,
     delivery_status: Option<tex_command::DeliveryStatus>,
     trace_reported: bool,
     pub(super) _scope: PhantomData<&'operation mut OperationPreparationScope>,
+}
+
+struct OperationResume<G> {
+    scanner: Option<tex_command::ScannerFrameKey<G>>,
+    expansion: Option<tex_command::ExpansionWorkKey<G>>,
 }
 
 impl<'operation, G> OperationHostPreparation<'operation, G> {
@@ -34,9 +38,8 @@ impl<'operation, G> OperationHostPreparation<'operation, G> {
             innermost_group: None,
             checked_save_stack_words: None,
             delivery: None,
-            capabilities: None,
-            scanner: None,
-            expansion: None,
+            preflight: None,
+            resume: None,
             delivery_status: None,
             trace_reported: false,
             _scope: PhantomData,
@@ -46,21 +49,39 @@ impl<'operation, G> OperationHostPreparation<'operation, G> {
     pub(super) fn fill_preflight(
         &mut self,
         delivery: OperationDelivery,
-        capabilities: crate::transaction_protocol::CommandCapabilities,
+        preflight: crate::transaction_protocol::CommandPreflight,
         scanner: Option<tex_command::ScannerFrameKey<G>>,
         expansion: Option<tex_command::ExpansionWorkKey<G>>,
     ) {
         assert!(
-            self.delivery.is_none()
-                && self.capabilities.is_none()
-                && self.scanner.is_none()
-                && self.expansion.is_none(),
+            self.delivery.is_none() && self.preflight.is_none() && self.resume.is_none(),
             "one host preparation owns one preflight result"
         );
         self.delivery = Some(delivery);
-        self.capabilities = Some(capabilities);
-        self.scanner = scanner;
-        self.expansion = expansion;
+        self.preflight = Some(preflight);
+        if scanner.is_some() || expansion.is_some() {
+            self.resume = Some(OperationResume { scanner, expansion });
+        }
+    }
+
+    pub(super) fn record_command_preflight(
+        &mut self,
+        preflight: crate::transaction_protocol::CommandPreflight,
+    ) {
+        assert!(
+            self.delivery.is_none() && self.preflight.replace(preflight).is_none(),
+            "one command classification has one prepared destination"
+        );
+    }
+
+    pub(super) fn take_recorded_preflight(
+        &mut self,
+    ) -> Option<crate::transaction_protocol::CommandPreflight> {
+        assert!(
+            self.delivery.is_none(),
+            "completed delivery owns its command preflight"
+        );
+        self.preflight.take()
     }
 
     pub(super) fn has_preflight(&self) -> bool {
@@ -73,15 +94,16 @@ impl<'operation, G> OperationHostPreparation<'operation, G> {
             .expect("prepared host facts own one delivery")
     }
 
-    pub(super) fn capabilities(&self) -> crate::transaction_protocol::CommandCapabilities {
-        self.capabilities
-            .expect("prepared host facts own one capability record")
+    pub(super) fn preflight(&self) -> &crate::transaction_protocol::CommandPreflight {
+        self.preflight
+            .as_ref()
+            .expect("prepared host facts own one command preflight")
     }
 
-    pub(super) fn take_capabilities(&mut self) -> crate::transaction_protocol::CommandCapabilities {
-        self.capabilities
+    pub(super) fn take_preflight(&mut self) -> crate::transaction_protocol::CommandPreflight {
+        self.preflight
             .take()
-            .expect("operation preparation drains one capability record")
+            .expect("operation preparation drains one command preflight")
     }
 
     pub(super) fn take_delivery(&mut self) -> OperationDelivery {
@@ -91,11 +113,13 @@ impl<'operation, G> OperationHostPreparation<'operation, G> {
     }
 
     pub(super) fn take_scanner(&mut self) -> Option<tex_command::ScannerFrameKey<G>> {
-        self.scanner.take()
+        self.resume
+            .as_mut()
+            .and_then(|resume| resume.scanner.take())
     }
 
     pub(super) fn take_expansion(&mut self) -> Option<tex_command::ExpansionWorkKey<G>> {
-        self.expansion.take()
+        self.resume.take().and_then(|resume| resume.expansion)
     }
 
     pub(super) fn record_delivery_status(
@@ -334,5 +358,28 @@ impl<G> MainControl<G> {
                 .and_then(|node| Self::classify_last_node(stores, node)),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn operation_preparation_keeps_cold_resume_storage_out_of_direct_initialization() {
+        let mut scope = OperationPreparationScope;
+        let mut preparation: OperationHostPreparation<'_, ()> =
+            OperationHostPreparation::new(&mut scope);
+        preparation.fill_preflight(
+            OperationDelivery::Replay,
+            crate::transaction_protocol::canonical_static_command_preflight(Meaning::Relax),
+            None,
+            None,
+        );
+        assert!(preparation.resume.is_none());
+        assert_eq!(
+            std::mem::size_of::<OperationHostPreparation<'static, ()>>(),
+            136
+        );
     }
 }
