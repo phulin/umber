@@ -48,6 +48,12 @@ impl Default for TokenSink {
     }
 }
 
+impl TokenSink {
+    pub(super) const fn len(self) -> u32 {
+        self.len
+    }
+}
+
 /// Reusable physical storage shared by every scanner sink in one attempt.
 #[derive(Debug)]
 pub(super) struct TokenLane {
@@ -104,6 +110,62 @@ impl TokenLane {
         {
             self.counters.words_appended += 1;
         }
+        Ok(())
+    }
+
+    /// Transfers a complete child sink chain to its parent sink in O(1).
+    ///
+    /// A completed nested scanner has no independent lifetime after a direct
+    /// `\unexpanded` splice. Moving its chain preserves the one physical word
+    /// owner; the emptied source coordinate cannot publish the words again.
+    pub(super) fn append_sink(
+        &mut self,
+        destination: &mut TokenSink,
+        source: &mut TokenSink,
+    ) -> Result<(), AttemptError> {
+        if source.len == 0 {
+            if source.head != NO_CHUNK || source.tail != NO_CHUNK {
+                return Err(AttemptError::InvalidCoordinate);
+            }
+            return Ok(());
+        }
+        if source.head == NO_CHUNK || source.tail == NO_CHUNK {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        if self.chunks.get(source.head as usize).is_none()
+            || self
+                .chunks
+                .get(source.tail as usize)
+                .is_none_or(|tail| tail.next != NO_CHUNK)
+        {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        let next_len = destination
+            .len
+            .checked_add(source.len)
+            .ok_or(AttemptError::CapacityOverflow)?;
+        if destination.len == 0 {
+            if destination.head != NO_CHUNK || destination.tail != NO_CHUNK {
+                return Err(AttemptError::InvalidCoordinate);
+            }
+            *destination = *source;
+        } else {
+            if destination.head == NO_CHUNK || destination.tail == NO_CHUNK {
+                return Err(AttemptError::InvalidCoordinate);
+            }
+            if self.chunks.get(destination.head as usize).is_none()
+                || self
+                    .chunks
+                    .get(destination.tail as usize)
+                    .is_none_or(|tail| tail.next != NO_CHUNK)
+            {
+                return Err(AttemptError::InvalidCoordinate);
+            }
+            self.chunks[destination.tail as usize].next = source.head;
+            destination.tail = source.tail;
+            destination.len = next_len;
+        }
+        *source = TokenSink::default();
         Ok(())
     }
 

@@ -88,6 +88,7 @@ mod scanners;
 mod snapshot;
 mod state;
 mod timeline;
+mod token_collector;
 mod tracing_nesting;
 
 #[cfg(test)]

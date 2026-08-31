@@ -561,6 +561,7 @@ enum AttemptTokenStorage {
     /// adding another heap owner.
     Buffer(AttemptTokenBufferId),
     PendingBuffer,
+    ConsumedBuffer,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -976,7 +977,9 @@ impl<G> AttemptArena<G> {
                     })
             }
             AttemptTokenStorage::Buffer(buffer) => self.token_buffer(*buffer),
-            AttemptTokenStorage::PendingBuffer => Err(AttemptError::InvalidCoordinate),
+            AttemptTokenStorage::PendingBuffer | AttemptTokenStorage::ConsumedBuffer => {
+                Err(AttemptError::InvalidCoordinate)
+            }
         }
     }
 
@@ -1061,7 +1064,9 @@ impl<G> AttemptArena<G> {
                 .get(index)
                 .map(|word| AttemptOrigin::Admitted(word.origin()))
                 .ok_or(AttemptError::InvalidCoordinate),
-            AttemptTokenStorage::PendingBuffer => Err(AttemptError::InvalidCoordinate),
+            AttemptTokenStorage::PendingBuffer | AttemptTokenStorage::ConsumedBuffer => {
+                Err(AttemptError::InvalidCoordinate)
+            }
         }
     }
 
@@ -1266,6 +1271,67 @@ impl<G> AttemptArena<G> {
             .value
             .sink;
         token_lane.push(sink, word)
+    }
+
+    /// Moves a completed child scanner list into a live parent scanner sink.
+    ///
+    /// This is the direct-splice ownership boundary used by `\unexpanded`.
+    /// The source list is consumed and its fixed-chunk chain becomes part of
+    /// the destination without rereading or copying any token word.
+    pub(crate) fn consume_token_list_into_buffer(
+        &mut self,
+        source: AttemptTokenListId,
+        destination: AttemptTokenBufferId,
+    ) -> Result<u32, AttemptError> {
+        self.validate_key(source.key)?;
+        self.validate_key(destination.key)?;
+        let source_buffer = match self
+            .token_lists
+            .get(source.index())
+            .filter(|row| row.serial == source.serial)
+            .map(|row| row.value)
+        {
+            Some(AttemptTokenStorage::Buffer(buffer)) => buffer,
+            _ => return Err(AttemptError::InvalidCoordinate),
+        };
+        if source_buffer == destination {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        let destination_index = destination.index();
+        let source_index = source_buffer.index();
+        let destination_serial = self
+            .token_buffers
+            .get(destination_index)
+            .filter(|row| row.serial == destination.serial)
+            .map(|row| row.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let source_serial = self
+            .token_buffers
+            .get(source_index)
+            .filter(|row| row.serial == source_buffer.serial)
+            .map(|row| row.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        debug_assert_eq!(destination_serial, destination.serial);
+        debug_assert_eq!(source_serial, source_buffer.serial);
+
+        let (destination_sink, source_sink) = if destination_index < source_index {
+            let (before_source, source_and_after) = self.token_buffers.split_at_mut(source_index);
+            (
+                &mut before_source[destination_index].value.sink,
+                &mut source_and_after[0].value.sink,
+            )
+        } else {
+            let (before_destination, destination_and_after) =
+                self.token_buffers.split_at_mut(destination_index);
+            (
+                &mut destination_and_after[0].value.sink,
+                &mut before_destination[source_index].value.sink,
+            )
+        };
+        let moved = source_sink.len();
+        self.token_lane.append_sink(destination_sink, source_sink)?;
+        self.token_lists[source.index()].value = AttemptTokenStorage::ConsumedBuffer;
+        Ok(moved)
     }
 
     pub(crate) fn finish_token_buffer(

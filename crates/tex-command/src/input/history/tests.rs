@@ -143,21 +143,21 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         let matching = state.scratch.begin_macro_match().expect("macro match");
         let mut buffer = state
             .scratch
-            .begin_match_writer(&matching)
+            .begin_argument_collector(&matching)
             .expect("match writer");
         for spelling in [word('a'), word('b')] {
             state
                 .scratch
-                .settle_preclassified_match_token(
+                .settle_argument_token(
                     &mut buffer,
-                    spelling,
-                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                    crate::token_collector::ClassifiedToken::from_word(spelling, None),
+                    true,
                 )
                 .expect("argument word");
         }
         state
             .scratch
-            .finish_match_writer(buffer)
+            .finish_argument_collector(buffer)
             .expect("argument range");
         let macro_frame = state
             .scratch
@@ -334,21 +334,21 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     let matching = state.scratch.begin_macro_match().expect("macro match");
                     let mut writer = state
                         .scratch
-                        .begin_match_writer(&matching)
+                        .begin_argument_collector(&matching)
                         .expect("macro writer");
                     for _ in 0..operations {
                         state
                             .scratch
-                            .settle_preclassified_match_token(
+                            .settle_argument_token(
                                 &mut writer,
-                                word('x'),
-                                crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                                crate::token_collector::ClassifiedToken::from_word(word('x'), None),
+                                true,
                             )
                             .expect("macro argument word");
                     }
                     state
                         .scratch
-                        .finish_match_writer(writer)
+                        .finish_argument_collector(writer)
                         .expect("macro argument range");
                     let macro_frame = state
                         .scratch

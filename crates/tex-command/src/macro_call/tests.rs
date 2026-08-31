@@ -143,6 +143,63 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
 }
 
 #[test]
+fn argument_collector_uses_resolved_brace_commands_with_control_sequence_spelling() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_macro(universe, "aliasedbraces", &[Token::Param(1)]);
+        let opening = universe.intern("openingalias").expect("opening alias");
+        let closing = universe.intern("closingalias").expect("closing alias");
+        for (symbol, ch, cat) in [
+            (opening, '{', Catcode::BeginGroup),
+            (closing, '}', Catcode::EndGroup),
+        ] {
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::from_static(Meaning::CharToken { ch, cat }),
+                    AssignmentScope::Global,
+                )
+                .expect("brace alias meaning");
+        }
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                macro_token,
+                Token::Cs(opening.symbol()),
+                letter('x'),
+                Token::Cs(closing.symbol()),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut call = processor
+            .get_next()
+            .expect("macro delivery")
+            .expect("macro command");
+
+        assert_eq!(
+            processor.macro_call(&mut call),
+            Ok(MacroCallOutcome::Activated)
+        );
+        assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
+        assert_eq!(
+            processor.command.profile_token_collector_path_counters().1,
+            3,
+            "each raw argument command is classified once"
+        );
+    });
+}
+
+#[test]
 fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
     crate::test_harness::with_universe(|universe| {
         let parameterless =
@@ -1202,7 +1259,9 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
                 .get_next()
                 .expect("measured macro delivery")
                 .expect("measured macro command");
-            processor.command.scratch.reset_match_settlement_counters();
+            processor
+                .command
+                .profile_reset_token_collector_path_counters();
             let admissions = processor.command.scratch.match_writer_admissions();
             let finalizations = processor.command.scratch.match_writer_finalizations();
             let token_copies = processor.command.scratch.physical_macro_word_copies();
@@ -1223,11 +1282,10 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             let after_commands = crate::command::command_ownership_counters();
             let after_timeline = processor.command.profile_timeline_counters();
-            let (fact_classifications, token_settlements) =
-                processor.command.scratch.match_settlement_counters();
+            let collector_counters = processor.command.profile_token_collector_path_counters();
             Evidence {
-                fact_classifications,
-                token_settlements,
+                fact_classifications: collector_counters.1,
+                token_settlements: collector_counters.2,
                 writer_admissions: processor.command.scratch.match_writer_admissions() - admissions,
                 writer_finalizations: processor.command.scratch.match_writer_finalizations()
                     - finalizations,

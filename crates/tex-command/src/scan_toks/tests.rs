@@ -571,7 +571,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
 
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
             let measured_operation = command.begin_attempt_operation();
-            command.profile_reset_scan_toks_path_counters();
+            command.profile_reset_token_collector_path_counters();
             let delivery_owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let scratch_owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
             let delivery_before =
@@ -594,18 +594,19 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 tex_state::measurement::hot_core_thread_allocation_measurement(delivery_owner);
             let scratch_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(scratch_owner);
-            let counters = command.profile_scan_toks_path_counters();
+            let counters = command.profile_token_collector_path_counters();
 
             assert_eq!(counters.0, 4 * rounds as u64, "collectors");
-            assert_eq!(counters.1, 5 * rounds as u64, "appends");
-            assert_eq!(counters.2, counters.1, "one fact update per append");
-            assert_eq!(counters.3, counters.0, "one monotonic phase transition");
-            assert_eq!(counters.4, 0, "duplicate phase dispatches");
-            assert_eq!(counters.5, 0, "fact rescans");
-            assert_eq!(counters.6, counters.0, "one final settlement");
-            assert_eq!(counters.7, 0, "whole token-list copies");
-            assert_eq!(counters.8, 0, "whole command copies");
-            assert_eq!(counters.9, 0, "whole frame copies");
+            assert_eq!(counters.1, 12 * rounds as u64, "raw classifications");
+            assert_eq!(counters.2, 5 * rounds as u64, "appends");
+            assert_eq!(counters.3, 7 * rounds as u64, "in-place state updates");
+            assert_eq!(counters.4, counters.0, "one monotonic phase transition");
+            assert_eq!(counters.5, 0, "duplicate phase dispatches");
+            assert_eq!(counters.6, 0, "fact rescans");
+            assert_eq!(counters.7, counters.0, "one final settlement");
+            assert_eq!(counters.8, 0, "whole token-list copies");
+            assert_eq!(counters.9, 0, "whole command copies");
+            assert_eq!(counters.10, 0, "whole frame copies");
             assert_eq!(delivery_after.calls - delivery_before.calls, 0);
             assert_eq!(
                 delivery_after.requested_bytes - delivery_before.requested_bytes,
@@ -690,6 +691,86 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
                 .semantic_token(),
             token('X', Catcode::Letter)
         );
+    });
+}
+
+#[test]
+fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
+    crate::test_harness::with_universe(|universe| {
+        let unexpanded = universe.intern("unexpanded").expect("unexpanded primitive");
+        universe
+            .assign_meaning(
+                unexpanded,
+                MeaningWord::from_static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::Unexpanded,
+                )),
+                AssignmentScope::Global,
+            )
+            .expect("unexpanded meaning");
+        let replacement = token('y', Catcode::Letter);
+        let definition = universe
+            .allocate_definition(&[], &[TokenWord::pack(replacement)])
+            .expect("nested macro definition");
+        let nested = universe.intern("unexpandedpayload").expect("nested macro");
+        universe
+            .assign_meaning(
+                nested,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("nested macro meaning");
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                token('{', Catcode::BeginGroup),
+                Token::Cs(unexpanded.symbol()),
+                token('{', Catcode::BeginGroup),
+                Token::Cs(nested.symbol()),
+                token('{', Catcode::BeginGroup),
+                token('z', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+                token('}', Catcode::EndGroup),
+                token('}', Catcode::EndGroup),
+            ],
+        );
+        command.profile_reset_token_collector_path_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let scanned = processor
+            .scan_toks(ScanToksMode::General { expanded: true })
+            .expect("expanded parent scan");
+        let words = processor
+            .attempt_words(scanned.replacement_text)
+            .expect("adopted parent words");
+        assert_eq!(
+            words
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>(),
+            [
+                Token::Cs(nested.symbol()),
+                token('{', Catcode::BeginGroup),
+                token('z', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+            ]
+        );
+        let counters = processor.command.profile_token_collector_path_counters();
+        assert_eq!(counters.0, 2, "parent and child collectors");
+        assert_eq!(counters.6, 0, "no classified-token rescan");
+        assert_eq!(counters.8, 0, "no whole-list copy");
     });
 }
 

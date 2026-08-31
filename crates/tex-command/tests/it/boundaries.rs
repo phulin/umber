@@ -609,6 +609,8 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let scanner = fs::read_to_string(manifest_dir.join("src/scan_toks.rs"))
         .expect("read token-list scanner implementation");
+    let token_collector = fs::read_to_string(manifest_dir.join("src/token_collector.rs"))
+        .expect("read shared token collector implementation");
     let collector = scanner
         .split("fn collect_replacement(")
         .nth(1)
@@ -672,15 +674,20 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
     assert!(splice.contains("self.push_scan_toks_word(collector, word)?"));
-    assert!(scanner.contains("arena.push_definition_replacement(definition, word.token_word())"));
+    assert!(scanner.contains("arena.push_definition_replacement(*definition, word.token_word())"));
     for retired_route in ["ScanToksSinks", "ScanToksSink", "ScannedToksPart"] {
         assert!(
             !scanner.contains(retired_route),
             "resident collector must not retain retired route {retired_route}"
         );
     }
-    assert!(scanner.contains("collector: ScanToksCollector"));
-    assert!(scanner.contains("collector: &mut ScanToksCollector"));
+    assert!(scanner.contains("collector: TokenCollector<G>"));
+    assert!(scanner.contains("collector: &mut TokenCollector<G>"));
+    assert!(!scanner.contains("struct ScanToksCollector"));
+    assert!(token_collector.contains("pub(crate) struct TokenCollector<G>"));
+    assert!(token_collector.contains("TokenCollectorDestination::MacroArgument"));
+    assert!(token_collector.contains("TokenCollectorDestination::TokenBuffers"));
+    assert!(token_collector.contains("TokenCollectorDestination::Definition"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"

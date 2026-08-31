@@ -669,6 +669,66 @@ fn nested_scanner_suffix_truncation_preserves_the_parent_destination() {
 
 #[cfg(feature = "profiling")]
 #[test]
+fn one_and_4096_child_scanner_splices_transfer_ownership_without_copy() {
+    for token_count in [1, 4_096] {
+        let mut attempt = AttemptArena::<()>::default();
+        let parent = attempt
+            .allocate_token_buffer()
+            .expect("parent scanner destination");
+        attempt
+            .push_buffer_token(parent, word('p'))
+            .expect("parent prefix");
+        let child = attempt
+            .allocate_token_buffer()
+            .expect("child scanner destination");
+        for _ in 0..token_count {
+            attempt
+                .push_buffer_token(child, word('c'))
+                .expect("child scanner word");
+        }
+        let child = attempt
+            .finish_token_buffer(child)
+            .expect("completed child list");
+        let lane_before = attempt.token_lane.counters();
+        let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
+        let allocations_before =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let moved = {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            attempt
+                .consume_token_list_into_buffer(child, parent)
+                .expect("child chain transfers to parent")
+        };
+        let allocations_after =
+            tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        let lane_after = attempt.token_lane.counters();
+
+        assert_eq!(moved, token_count);
+        assert_eq!(lane_after.words_appended, lane_before.words_appended);
+        assert_eq!(lane_after.chunk_allocations, lane_before.chunk_allocations);
+        assert_eq!(allocations_after.calls - allocations_before.calls, 0);
+        assert_eq!(
+            allocations_after.requested_bytes - allocations_before.requested_bytes,
+            0
+        );
+        assert_eq!(
+            attempt.token_words(child),
+            Err(AttemptError::InvalidCoordinate)
+        );
+        let parent = attempt
+            .finish_token_buffer(parent)
+            .expect("completed parent list");
+        let words = attempt
+            .token_words(parent)
+            .expect("transferred parent words");
+        assert_eq!(words.len(), token_count as usize + 1);
+        assert_eq!(words.first().copied(), Some(word('p')));
+        assert!(words.iter().skip(1).all(|entry| *entry == word('c')));
+    }
+}
+
+#[cfg(feature = "profiling")]
+#[test]
 fn one_and_4096_parent_owned_scans_reuse_chunks_without_allocation_or_transfer() {
     fn run(attempt: &mut AttemptArena<()>) {
         let mark = attempt.mark();

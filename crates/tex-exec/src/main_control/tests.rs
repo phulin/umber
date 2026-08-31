@@ -6220,6 +6220,11 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
             "[4142]",
         ),
         (
+            br"\edef\result{P\unexpanded\expandafter{{A\pdffiledump length 2{child}B}}Q}\message{[\result]}\end"
+                .as_slice(),
+            "[P{A4142B}Q]",
+        ),
+        (
             br"\edef\result{\csname a\pdffiledump length 2{child}b\endcsname}\message{[\meaning\result]}\end"
                 .as_slice(),
             "a4142b",
@@ -17031,6 +17036,24 @@ fn immediate_write_prints_expansion_trace_before_expanded_text() {
             .find("WRITE:PAYLOAD")
             .unwrap_or_else(|| panic!("missing immediate write from {output:?}"));
         assert!(trace < write, "write overtook expansion trace: {output:?}");
+    });
+}
+
+#[test]
+fn immediate_write_retains_unexpanded_child_spelling_in_its_final_text() {
+    // e-TeX §27.465 and TeX82 §1375: the write collector expands normally,
+    // but its nested `\unexpanded` child joins the parent result directly.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\payload{EXPANDED}\immediate\write16{WRITE:\unexpanded{\payload}:END}\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let output = terminal_text(stores);
+        assert!(output.contains("WRITE:\\payload :END"), "{output:?}");
+        assert!(!output.contains("WRITE:EXPANDED:END"), "{output:?}");
     });
 }
 

@@ -1256,21 +1256,21 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let matching = command.scratch.begin_macro_match().expect("macro match");
             let mut writer = command
                 .scratch
-                .begin_match_writer(&matching)
+                .begin_argument_collector(&matching)
                 .expect("macro writer");
             for spelling in &traced {
                 command
                     .scratch
-                    .settle_preclassified_match_token(
+                    .settle_argument_token(
                         &mut writer,
-                        *spelling,
-                        crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                        crate::token_collector::ClassifiedToken::from_word(*spelling, None),
+                        true,
                     )
                     .expect("macro argument word");
             }
             command
                 .scratch
-                .finish_match_writer(writer)
+                .finish_argument_collector(writer)
                 .expect("macro argument range");
             let macro_frame = command
                 .scratch

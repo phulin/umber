@@ -1515,19 +1515,19 @@ impl<G> MixedPackedCursorBenchmark<G> {
             .begin_macro_match()
             .expect("mixed-cursor macro frame");
         let mut buffer = scratch
-            .begin_match_writer(&matching)
+            .begin_argument_collector(&matching)
             .expect("mixed-cursor argument buffer");
         for word in traced {
             scratch
-                .settle_preclassified_match_token(
+                .settle_argument_token(
                     &mut buffer,
-                    word,
-                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                    crate::token_collector::ClassifiedToken::from_word(word, None),
+                    true,
                 )
                 .expect("mixed-cursor argument word");
         }
         scratch
-            .finish_match_writer(buffer)
+            .finish_argument_collector(buffer)
             .expect("mixed-cursor argument range");
         let frame = scratch
             .commit_macro_match(matching)
@@ -1677,7 +1677,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
             .begin_macro_match()
             .expect("long-argument macro frame");
         let mut buffer = scratch
-            .begin_match_writer(&matching)
+            .begin_argument_collector(&matching)
             .expect("long-argument buffer");
         for index in 0..WORDS {
             let semantic = TokenWord::pack(Token::Char {
@@ -1685,15 +1685,18 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 cat: crate::Catcode::Letter,
             });
             scratch
-                .settle_preclassified_match_token(
+                .settle_argument_token(
                     &mut buffer,
-                    TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
-                    crate::execution_scratch::MacroArgumentTokenFacts::default(),
+                    crate::token_collector::ClassifiedToken::from_word(
+                        TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
+                        None,
+                    ),
+                    true,
                 )
                 .expect("long-argument word");
         }
         scratch
-            .finish_match_writer(buffer)
+            .finish_argument_collector(buffer)
             .expect("long-argument range");
         let frame = scratch
             .commit_macro_match(matching)

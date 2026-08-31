@@ -158,7 +158,7 @@ pub struct CommandState<G> {
     /// Assertion-bearing proof for the resident token-list collector. These
     /// counters are operational test/profiling evidence, never semantic state.
     #[cfg(test)]
-    pub(crate) scan_toks_path_counters: ScanToksPathCounters,
+    pub(crate) token_collector_path_counters: TokenCollectorPathCounters,
 }
 
 #[cfg(test)]
@@ -185,10 +185,11 @@ pub(crate) struct RawDeliveryPathCounters {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ScanToksPathCounters {
+pub(crate) struct TokenCollectorPathCounters {
     pub(crate) collectors_started: u64,
+    pub(crate) raw_classifications: u64,
     pub(crate) collector_appends: u64,
-    pub(crate) fact_updates: u64,
+    pub(crate) state_updates: u64,
     pub(crate) phase_transitions: u64,
     pub(crate) duplicate_phase_dispatches: u64,
     pub(crate) fact_rescans: u64,
@@ -377,7 +378,7 @@ impl<G> Default for CommandState<G> {
             #[cfg(test)]
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
             #[cfg(test)]
-            scan_toks_path_counters: ScanToksPathCounters::default(),
+            token_collector_path_counters: TokenCollectorPathCounters::default(),
         }
     }
 }
@@ -1252,8 +1253,8 @@ impl<G> CommandState<G> {
     /// Resets focused resident token-list collector counters.
     #[doc(hidden)]
     #[cfg(test)]
-    pub fn profile_reset_scan_toks_path_counters(&mut self) {
-        self.scan_toks_path_counters = ScanToksPathCounters::default();
+    pub fn profile_reset_token_collector_path_counters(&mut self) {
+        self.token_collector_path_counters = TokenCollectorPathCounters::default();
     }
 
     /// Returns append/fact/phase/rescan/settlement and whole-value-copy facts
@@ -1261,14 +1262,15 @@ impl<G> CommandState<G> {
     #[doc(hidden)]
     #[cfg(test)]
     #[must_use]
-    pub fn profile_scan_toks_path_counters(
+    pub fn profile_token_collector_path_counters(
         &self,
-    ) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) {
-        let counters = self.scan_toks_path_counters;
+    ) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) {
+        let counters = self.token_collector_path_counters;
         (
             counters.collectors_started,
+            counters.raw_classifications,
             counters.collector_appends,
-            counters.fact_updates,
+            counters.state_updates,
             counters.phase_transitions,
             counters.duplicate_phase_dispatches,
             counters.fact_rescans,
