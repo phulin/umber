@@ -492,26 +492,33 @@ const PAGE_MASK: u32 = PAGE_LEN as u32 - 1;
 #[path = "banks/tests.rs"]
 mod tests;
 
-/// One current value and its TeX assignment level.
+/// One current value, its TeX assignment level, and its runtime save serial.
+///
+/// `save_serial` is direct-index first-write metadata for the named-checkpoint
+/// journal. It is not semantic state and is therefore omitted from format and
+/// checkpoint payloads; inverse records restore it alongside the value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BankCell<T> {
     pub(crate) value: T,
     pub(crate) level: u32,
+    pub(crate) save_serial: u64,
 }
 
 impl<T> BankCell<T> {
-    pub(crate) const fn level_zero(value: T) -> Self {
+    pub(crate) const fn new(value: T, level: u32, save_serial: u64) -> Self {
         Self {
             value,
-            level: LEVEL_ZERO,
+            level,
+            save_serial,
         }
     }
 
+    pub(crate) const fn level_zero(value: T) -> Self {
+        Self::new(value, LEVEL_ZERO, 0)
+    }
+
     pub(crate) const fn level_one(value: T) -> Self {
-        Self {
-            value,
-            level: LEVEL_ONE,
-        }
+        Self::new(value, LEVEL_ONE, 0)
     }
 }
 
@@ -540,6 +547,7 @@ impl<T: Clone> DenseBank<T> {
             BankCell {
                 value: default.clone(),
                 level,
+                save_serial: 0,
             },
         );
         Ok(Self { cells, default })
@@ -643,6 +651,7 @@ impl<T: Clone> PagedDenseBank<T> {
             || BankCell {
                 value: (self.default)(index),
                 level: self.default_level,
+                save_serial: 0,
             },
             |values| values[offset].clone(),
         ))
@@ -657,6 +666,7 @@ impl<T: Clone> PagedDenseBank<T> {
             let values = array::from_fn(|slot| BankCell {
                 value: default(base + slot as u32),
                 level: default_level,
+                save_serial: 0,
             });
             self.pages[page] = Some(Box::new(values));
         }

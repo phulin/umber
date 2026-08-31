@@ -219,11 +219,17 @@ struct DenseState<G> {
     // Other typed banks have the same direct-indexed shape.
 }
 
+struct BankCell<T> {
+    value: T,
+    level: u32,
+    save_serial: u64,
+}
+
 struct SaveJournal<G> {
     active_groups: Vec<GroupSegment<G>>,
     checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
     checkpoint_lane: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
-    checkpoint_epochs: HashMap<StateCell, u64>,
+    save_serial: u64,
     operation_undo: Vec<UndoEntry<G>>,
     group_capacity_bytes: usize,
     checkpoint_capacity_bytes: usize,
@@ -237,10 +243,16 @@ struct JournalCursor {
 }
 ```
 
-Dense state remains directly mutated and directly read. There is no state
-overlay, threshold densification, compaction pass, forwarding coordinate,
-per-entry owner, or checkpoint bank clone. Restoration walks retained deltas
-backward and swaps their packed alternate words into the dense banks. Edit
+Dense state remains directly mutated and directly read. Every authoritative
+bank cell carries one runtime-only save serial. A mutation compares that serial
+directly with the journal's monotonic interval serial; the first write appends
+the exact prior value, level, and serial, while later writes in the interval
+append no checkpoint delta. Restoration walks retained deltas backward and
+swaps their packed alternate words and prior serials into the dense banks. The
+serial is absent from format images and is never copied as a checkpoint-wide
+payload. There is no hash lookup, state overlay, threshold densification,
+compaction pass, forwarding coordinate, per-entry owner, or checkpoint bank
+clone. Edit
 start detaches the accepted chunk suffix, candidate writes append privately,
 rejection swaps the candidate backward and accepted suffix forward, and
 acceptance prunes the detached suffix. Whole group

@@ -425,6 +425,7 @@ impl FontRuntimeBank {
         cell: FontRuntimeCell,
         value: &mut i32,
         level: &mut u32,
+        save_serial: &mut u64,
     ) -> Result<(), BankError> {
         let target = match cell {
             FontRuntimeCell::ParameterCount(font) => &mut self.row_mut(font)?.parameter_count,
@@ -440,6 +441,7 @@ impl FontRuntimeBank {
         };
         std::mem::swap(value, &mut target.value);
         std::mem::swap(level, &mut target.level);
+        std::mem::swap(save_serial, &mut target.save_serial);
         Ok(())
     }
 
@@ -448,6 +450,7 @@ impl FontRuntimeBank {
         cell: FontRuntimeCell,
         value: &mut Scaled,
         level: &mut u32,
+        save_serial: &mut u64,
     ) -> Result<(), BankError> {
         let FontRuntimeCell::Dimen { font, number } = cell else {
             return Err(BankError::IndexOutOfBounds);
@@ -463,6 +466,7 @@ impl FontRuntimeBank {
             .ok_or(BankError::IndexOutOfBounds)?;
         std::mem::swap(value, &mut target.value);
         std::mem::swap(level, &mut target.level);
+        std::mem::swap(save_serial, &mut target.save_serial);
         Ok(())
     }
 

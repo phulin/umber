@@ -144,6 +144,8 @@ pub(crate) struct Mutation<G> {
     cell: JournalCell,
     pub(crate) before: StateWord<G>,
     pub(crate) before_level: u32,
+    /// The cell's direct first-write serial before this mutation.
+    pub(crate) before_save_serial: u64,
     /// The TeX group level whose save record this assignment represents.
     /// `None` means TeX would not push a restore record for this write.
     saved_at: u32,
@@ -154,6 +156,7 @@ impl<G> Mutation<G> {
         cell: StateCell,
         before: StateWord<G>,
         before_level: u32,
+        before_save_serial: u64,
         saved_at: Option<u32>,
     ) -> Self {
         debug_assert!(saved_at != Some(0));
@@ -161,6 +164,7 @@ impl<G> Mutation<G> {
             cell: JournalCell::pack(cell),
             before,
             before_level,
+            before_save_serial,
             saved_at: saved_at.unwrap_or(0),
         }
     }
@@ -180,6 +184,7 @@ impl<G> Clone for Mutation<G> {
             cell: self.cell,
             before: self.before.clone(),
             before_level: self.before_level,
+            before_save_serial: self.before_save_serial,
             saved_at: self.saved_at,
         }
     }
@@ -218,6 +223,7 @@ pub(crate) struct CheckpointDelta<G> {
     pub(crate) cell: StateCell,
     pub(crate) alternate: StateWord<G>,
     pub(crate) alternate_level: u32,
+    pub(crate) alternate_save_serial: u64,
 }
 
 /// Accepted journal material temporarily detached while one rooted candidate
@@ -323,8 +329,7 @@ pub(crate) struct SaveJournal<G> {
     checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
     checkpoint_arena: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
     checkpoint_entries: usize,
-    checkpoint_stamps: std::collections::HashMap<StateCell, (u64, usize)>,
-    checkpoint_epoch: u64,
+    save_serial: u64,
     checkpoint_fork: bool,
     operation_entries: Vec<JournalEntry<G>>,
     active_operations: Vec<u64>,
@@ -333,6 +338,8 @@ pub(crate) struct SaveJournal<G> {
     group_capacity_bytes: usize,
     checkpoint_capacity_bytes: usize,
     operation_capacity_bytes: usize,
+    #[cfg(test)]
+    first_touch_cell_visits: usize,
     #[cfg(feature = "profiling")]
     profile: SaveJournalProfile,
 }
@@ -374,8 +381,7 @@ impl<G> SaveJournal<G> {
             checkpoint_pool,
             checkpoint_arena: ForkArena::new(),
             checkpoint_entries: 0,
-            checkpoint_stamps: std::collections::HashMap::new(),
-            checkpoint_epoch: 1,
+            save_serial: 1,
             checkpoint_fork: false,
             operation_entries: Vec::new(),
             active_operations: Vec::new(),
@@ -384,6 +390,8 @@ impl<G> SaveJournal<G> {
             group_capacity_bytes: 0,
             checkpoint_capacity_bytes,
             operation_capacity_bytes: 0,
+            #[cfg(test)]
+            first_touch_cell_visits: 0,
             #[cfg(feature = "profiling")]
             profile: SaveJournalProfile::default(),
         }
@@ -413,7 +421,7 @@ impl<G> SaveJournal<G> {
             group_depth,
             self.save_stack,
         );
-        self.advance_checkpoint_epoch();
+        self.advance_save_serial();
         cursor
     }
 
@@ -473,13 +481,13 @@ impl<G> SaveJournal<G> {
     pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
         #[cfg(feature = "profiling")]
         self.record_profile_mutation(&mutation);
+        #[cfg(test)]
+        {
+            self.first_touch_cell_visits = self.first_touch_cell_visits.saturating_add(1);
+        }
         let cell = mutation.cell();
-        let stamped = self.checkpoint_stamps.get(&cell).copied();
-        if stamped.map(|(epoch, _)| epoch) != Some(self.checkpoint_epoch) {
+        if mutation.before_save_serial != self.save_serial {
             let checkpoint_pages = self.checkpoint_pool.page_count();
-            let index = self.checkpoint_entries;
-            self.checkpoint_stamps
-                .insert(cell, (self.checkpoint_epoch, index));
             #[cfg(feature = "profiling")]
             self.record_profile_growth(
                 self.checkpoint_entries,
@@ -495,6 +503,7 @@ impl<G> SaveJournal<G> {
                     cell,
                     alternate: mutation.before.clone(),
                     alternate_level: mutation.before_level,
+                    alternate_save_serial: mutation.before_save_serial,
                 })
                 .expect("one dense journal cell fits its coarse chunk");
             let _ = builder
@@ -540,6 +549,23 @@ impl<G> SaveJournal<G> {
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
+    }
+
+    /// The monotonic serial written directly into every cell mutated in the
+    /// current checkpoint interval.
+    #[inline(always)]
+    pub(crate) const fn save_serial(&self) -> u64 {
+        self.save_serial
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn checkpoint_entry_count(&self) -> usize {
+        self.checkpoint_entries
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn first_touch_cell_visits(&self) -> usize {
+        self.first_touch_cell_visits
     }
 
     pub(crate) fn record_group_enter(&mut self, frame: GroupFrame) {
@@ -746,7 +772,7 @@ impl<G> SaveJournal<G> {
             .expect("validated dense checkpoint begins its sole fork");
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.checkpoint_fork = true;
-        self.advance_checkpoint_epoch();
+        self.advance_save_serial();
 
         let save_stack = self.save_stack;
         self.save_stack = cursor.save_stack;
@@ -923,7 +949,7 @@ impl<G> SaveJournal<G> {
             .expect("dense rejection reattaches its prior suffix");
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_fork = false;
-        self.advance_checkpoint_epoch();
+        self.advance_save_serial();
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) {
@@ -937,7 +963,7 @@ impl<G> SaveJournal<G> {
             .expect("dense acceptance drops its detached prior suffix");
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_fork = false;
-        self.advance_checkpoint_epoch();
+        self.advance_save_serial();
     }
 
     pub(crate) fn operation_suffix(&self, operation: &StateOperation<G>) -> &[JournalEntry<G>] {
@@ -968,7 +994,7 @@ impl<G> SaveJournal<G> {
             .expect("validated dense checkpoint suffix truncates atomically");
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
-        self.advance_checkpoint_epoch();
+        self.advance_save_serial();
         self.save_stack = cursor.save_stack;
     }
 
@@ -1007,14 +1033,6 @@ impl<G> SaveJournal<G> {
                             .pop()
                             .expect("operation save remains in its group");
                         debug_assert_eq!(saved.cell(), mutation.cell());
-                    }
-                    if self.checkpoint_stamps.get(&mutation.cell()).is_some_and(
-                        |(epoch, position)| {
-                            *epoch == self.checkpoint_epoch
-                                && *position >= operation.checkpoint_entries as usize
-                        },
-                    ) {
-                        self.checkpoint_stamps.remove(&mutation.cell());
                     }
                 }
                 JournalEntry::GroupEnter(frame) => {
@@ -1391,11 +1409,11 @@ impl<G> SaveJournal<G> {
         self.spare_group_entries.push(entries);
     }
 
-    fn advance_checkpoint_epoch(&mut self) {
-        self.checkpoint_epoch = self.checkpoint_epoch.checked_add(1).unwrap_or_else(|| {
-            self.checkpoint_stamps.clear();
-            1
-        });
+    fn advance_save_serial(&mut self) {
+        self.save_serial = self
+            .save_serial
+            .checked_add(1)
+            .expect("dense save serial space exhausted");
     }
 
     #[cfg(feature = "profiling")]
@@ -1478,8 +1496,11 @@ impl<G> Drop for SaveJournal<G> {
                 .unwrap_or(u64::MAX),
             operation_entry_size: u64::try_from(core::mem::size_of::<JournalEntry<G>>())
                 .unwrap_or(u64::MAX),
-            stamp_entries: u64::try_from(self.checkpoint_stamps.len()).unwrap_or(u64::MAX),
-            stamp_capacity: u64::try_from(self.checkpoint_stamps.capacity()).unwrap_or(u64::MAX),
+            // Direct stamps live in their authoritative dense cells. The old
+            // hash-table occupancy controls remain zero for profile schema
+            // compatibility.
+            stamp_entries: 0,
+            stamp_capacity: 0,
             mutations: self.profile.mutations,
             mutation_words: self.profile.mutation_words,
             group_enters: self.profile.group_enters,

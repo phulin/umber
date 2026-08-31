@@ -72,7 +72,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
   keeps execution independent of the command expansion error tree.
 - `src/env/banks.rs`: Direct contiguous banks, page/index dense banks,
-  dense-prefix/paged-overflow register banks, and typed parameter ids.
+  dense-prefix/paged-overflow register banks, typed parameter ids, and the
+  runtime-only per-cell save serial used by direct checkpoint first-touch.
 - `src/env/banks/tests.rs`: Direct-index, virtual-default, and paged-overflow
   bank tests.
 - `src/env/group.rs`: Storage-independent group kinds, display frames, and
@@ -166,11 +167,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generation-owned reusable output-attempt lane, typed Page/Durable/Scratch
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
-- `src/journal.rs`: Separate compact TeX group saves, typed chunk-arena named-
-  checkpoint deltas holding one reversible alternate per written cell, fixed
-  save-stack projections, exact capacity-change accounting for constant-time
-  budget reads, prefix-independent accepted/current suffix settlement, and
-  reusable operation-local undo with owner-checked stable cursors.
+- `src/journal.rs`: Separate compact TeX group saves, direct-cell-serial
+  first-touch and typed chunk-arena named-checkpoint deltas holding one
+  reversible alternate per written cell, fixed save-stack projections, exact
+  capacity-change accounting for constant-time budget reads,
+  prefix-independent accepted/current suffix settlement, and reusable
+  operation-local undo with owner-checked stable cursors.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,

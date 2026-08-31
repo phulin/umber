@@ -1,7 +1,7 @@
 use super::{
     AssignmentScope, CodeTableKind, DenseState, FreshParameterDefault, FreshParameterInstallError,
     FreshParameterInstallation, FreshParameterProfile, GroupRestorationCell,
-    GroupRestorationOutcome, GroupRestorationValue,
+    GroupRestorationOutcome, GroupRestorationValue, StateWord,
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::GroupKind;
@@ -158,6 +158,105 @@ fn operation_rollback_is_exact_after_the_cell_was_already_written_in_the_interva
 
     state.restore(checkpoint).expect("checkpoint rollback");
     assert_eq!(state.count(0).expect("count"), 1);
+}
+
+#[test]
+fn operation_rollback_restores_the_prior_direct_save_serial() {
+    let mut state = state();
+    state
+        .assign_count(7, 1, AssignmentScope::Global)
+        .expect("base assignment");
+    let before_serial = state
+        .read_cell(super::StateCell::Count(7))
+        .expect("base cell")
+        .save_serial;
+    let checkpoint = state.journal_cursor();
+    let interval_serial = state.journal().save_serial();
+    let operation = state.begin_state_operation();
+    state
+        .assign_count(7, 2, AssignmentScope::Global)
+        .expect("first operation assignment");
+    state
+        .assign_count(7, 3, AssignmentScope::Global)
+        .expect("repeated operation assignment");
+    assert_eq!(
+        state
+            .read_cell(super::StateCell::Count(7))
+            .expect("mutated cell")
+            .save_serial,
+        interval_serial
+    );
+
+    state
+        .rollback_state_operation(operation)
+        .expect("operation rollback");
+    let rolled_back = state
+        .read_cell(super::StateCell::Count(7))
+        .expect("rolled-back cell");
+    assert_eq!(
+        (rolled_back.value, rolled_back.save_serial),
+        (StateWord::Integer(1), before_serial)
+    );
+
+    state
+        .assign_count(7, 4, AssignmentScope::Global)
+        .expect("post-rollback assignment");
+    assert_eq!(state.journal().checkpoint_entry_count(), 2);
+    state.restore(checkpoint).expect("checkpoint restore");
+    let restored = state
+        .read_cell(super::StateCell::Count(7))
+        .expect("restored cell");
+    assert_eq!(
+        (restored.value, restored.save_serial),
+        (StateWord::Integer(1), before_serial)
+    );
+}
+
+#[cfg(not(feature = "profiling"))]
+#[test]
+fn one_of_4096_repeated_dense_writes_has_one_entry_one_visit_each_and_no_allocations() {
+    const WRITES: usize = 4_096;
+    const OWNER: usize = 14;
+
+    let mut state = state();
+    let warm = state.journal_cursor();
+    state
+        .assign_count(7, 1, AssignmentScope::Global)
+        .expect("warm checkpoint storage");
+    state.restore(warm).expect("rewind warm mutation");
+
+    let entries_before = state.journal().checkpoint_entry_count();
+    let visits_before = state.journal().first_touch_cell_visits();
+    let allocation_before = umber_hot_core_allocator::thread_measurement(OWNER);
+    {
+        let _scope = umber_hot_core_allocator::scope(OWNER);
+        for value in 0..WRITES {
+            state
+                .assign_count(
+                    7,
+                    i32::try_from(std::hint::black_box(value)).expect("test value fits i32"),
+                    AssignmentScope::Global,
+                )
+                .expect("direct dense assignment");
+        }
+    }
+    let allocation_after = umber_hot_core_allocator::thread_measurement(OWNER);
+
+    assert_eq!(
+        state.journal().checkpoint_entry_count() - entries_before,
+        1,
+        "the first write retains the sole checkpoint alternate"
+    );
+    assert_eq!(
+        state.journal().first_touch_cell_visits() - visits_before,
+        WRITES,
+        "every mutation performs exactly one direct stamp visit"
+    );
+    assert_eq!(allocation_after.calls - allocation_before.calls, 0);
+    assert_eq!(
+        allocation_after.requested_bytes - allocation_before.requested_bytes,
+        0
+    );
 }
 
 #[test]

@@ -137,7 +137,9 @@ pub enum CodeTableKind {
 }
 
 /// Typed identity of one mutable current-value cell.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+// Deliberately not `Hash`: dense first-touch tracking is one direct cell-stamp
+// comparison and cannot regress to a coordinate hash table unnoticed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StateCell {
     Meaning(u32),
     Count(u16),
@@ -1718,15 +1720,17 @@ impl<G> DenseState<G> {
         } else {
             self.write_cell(
                 cell,
-                BankCell {
-                    value: saved.before.clone(),
-                    level: saved.before_level,
-                },
+                BankCell::new(
+                    saved.before.clone(),
+                    saved.before_level,
+                    self.journal().save_serial(),
+                ),
             )?;
             self.journal_mut().record_mutation(Mutation::new(
                 cell,
                 current.value,
                 current.level,
+                current.save_serial,
                 None,
             ));
             (saved.before.clone(), GroupRestorationOutcome::Restored)
@@ -1863,10 +1867,11 @@ impl<G> DenseState<G> {
             match entry {
                 JournalEntry::Mutation(mutation) => self.write_cell(
                     mutation.cell(),
-                    BankCell {
-                        value: mutation.before,
-                        level: mutation.before_level,
-                    },
+                    BankCell::new(
+                        mutation.before,
+                        mutation.before_level,
+                        mutation.before_save_serial,
+                    ),
                 )?,
                 JournalEntry::GroupExit(frame) => self.groups.push(frame),
                 JournalEntry::GroupEnter(frame) => {
@@ -1923,15 +1928,13 @@ impl<G> DenseState<G> {
             .then_some(current_level);
         self.write_cell(
             cell,
-            BankCell {
-                value,
-                level: after_level,
-            },
+            BankCell::new(value, after_level, self.journal().save_serial()),
         )?;
         self.journal_mut().record_mutation(Mutation::new(
             cell,
             before.value,
             before.level,
+            before.save_serial,
             saved_at,
         ));
         Ok(())
@@ -1995,55 +1998,59 @@ impl<G> DenseState<G> {
             .then(|| self.read_cell(cell))
             .transpose()?;
         let identity_after = value.value.clone();
-        let BankCell { value, level } = value;
+        let BankCell {
+            value,
+            level,
+            save_serial,
+        } = value;
         match (cell, value) {
             (StateCell::Meaning(index), StateWord::Meaning(word)) => self
                 .meanings
-                .write(index, BankCell { value: word, level })?,
-            (StateCell::Count(index), StateWord::Integer(word)) => {
-                self.counts.write(index, BankCell { value: word, level })?
-            }
+                .write(index, BankCell::new(word, level, save_serial))?,
+            (StateCell::Count(index), StateWord::Integer(word)) => self
+                .counts
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::Dimension(index), StateWord::Dimension(word)) => self
                 .dimensions
-                .write(index, BankCell { value: word, level })?,
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::TokenRegister(index), StateWord::TokenList(word)) => {
                 self.token_registers
-                    .write(index, BankCell { value: word, level })?
+                    .write(index, BankCell::new(word, level, save_serial))?
             }
             (StateCell::GlueRegister(index), StateWord::Glue(word)) => self
                 .glue_registers
-                .write(index, BankCell { value: word, level })?,
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::MuGlueRegister(index), StateWord::Glue(word)) => self
                 .mu_glue_registers
-                .write(index, BankCell { value: word, level })?,
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::IntegerParameter(index), StateWord::Integer(word)) => self
                 .integer_parameters
-                .write(u32::from(index), BankCell { value: word, level })?,
+                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
             (StateCell::DimensionParameter(index), StateWord::Dimension(word)) => self
                 .dimension_parameters
-                .write(u32::from(index), BankCell { value: word, level })?,
+                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
             (StateCell::TokenParameter(index), StateWord::TokenList(word)) => self
                 .token_parameters
-                .write(u32::from(index), BankCell { value: word, level })?,
+                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
             (StateCell::GlueParameter(index), StateWord::Glue(word)) => self
                 .glue_parameters
-                .write(u32::from(index), BankCell { value: word, level })?,
+                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
             (StateCell::CurrentFont, StateWord::Font(word)) => {
-                self.current_font = BankCell { value: word, level }
+                self.current_font = BankCell::new(word, level, save_serial)
             }
             (StateCell::MathFamilyFont(index), StateWord::Font(word)) => self
                 .math_family_fonts
-                .write(u32::from(index), BankCell { value: word, level })?,
+                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
             (StateCell::Code(kind, index), StateWord::Code(word)) => self
                 .code_bank_mut(kind)
-                .write(index, BankCell { value: word, level })?,
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::FontRuntime(cell), StateWord::Integer(word)) => self.font_runtime.write(
                 cell,
-                BankCellValue::Integer(BankCell { value: word, level }),
+                BankCellValue::Integer(BankCell::new(word, level, save_serial)),
             )?,
             (StateCell::FontRuntime(cell), StateWord::Dimension(word)) => self.font_runtime.write(
                 cell,
-                BankCellValue::Dimension(BankCell { value: word, level }),
+                BankCellValue::Dimension(BankCell::new(word, level, save_serial)),
             )?,
             _ => return Err(StateError::CellKindMismatch),
         }
@@ -2065,9 +2072,15 @@ impl<G> DenseState<G> {
         &mut self,
         delta: &mut crate::journal::CheckpointDelta<G>,
     ) -> Result<(), StateError> {
-        fn swap_cell<T>(target: &mut BankCell<T>, value: &mut T, level: &mut u32) {
+        fn swap_cell<T>(
+            target: &mut BankCell<T>,
+            value: &mut T,
+            level: &mut u32,
+            save_serial: &mut u64,
+        ) {
             std::mem::swap(&mut target.value, value);
             std::mem::swap(&mut target.level, level);
+            std::mem::swap(&mut target.save_serial, save_serial);
         }
 
         let identity_before = self
@@ -2080,71 +2093,98 @@ impl<G> DenseState<G> {
                 self.meanings.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::Count(index), StateWord::Integer(value)) => swap_cell(
                 self.counts.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::Dimension(index), StateWord::Dimension(value)) => swap_cell(
                 self.dimensions.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::TokenRegister(index), StateWord::TokenList(value)) => swap_cell(
                 self.token_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::GlueRegister(index), StateWord::Glue(value)) => swap_cell(
                 self.glue_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::MuGlueRegister(index), StateWord::Glue(value)) => swap_cell(
                 self.mu_glue_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::IntegerParameter(index), StateWord::Integer(value)) => swap_cell(
                 self.integer_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::DimensionParameter(index), StateWord::Dimension(value)) => swap_cell(
                 self.dimension_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::TokenParameter(index), StateWord::TokenList(value)) => swap_cell(
                 self.token_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::GlueParameter(index), StateWord::Glue(value)) => swap_cell(
                 self.glue_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::CurrentFont, StateWord::Font(value)) => {
-                swap_cell(&mut self.current_font, value, &mut delta.alternate_level);
+                swap_cell(
+                    &mut self.current_font,
+                    value,
+                    &mut delta.alternate_level,
+                    &mut delta.alternate_save_serial,
+                );
             }
             (StateCell::MathFamilyFont(index), StateWord::Font(value)) => swap_cell(
                 self.math_family_fonts.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
             (StateCell::Code(kind, index), StateWord::Code(value)) => swap_cell(
                 self.code_bank_mut(kind).get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
             ),
-            (StateCell::FontRuntime(cell), StateWord::Integer(value)) => self
-                .font_runtime
-                .swap_integer(cell, value, &mut delta.alternate_level)?,
-            (StateCell::FontRuntime(cell), StateWord::Dimension(value)) => self
-                .font_runtime
-                .swap_dimension(cell, value, &mut delta.alternate_level)?,
+            (StateCell::FontRuntime(cell), StateWord::Integer(value)) => {
+                self.font_runtime.swap_integer(
+                    cell,
+                    value,
+                    &mut delta.alternate_level,
+                    &mut delta.alternate_save_serial,
+                )?
+            }
+            (StateCell::FontRuntime(cell), StateWord::Dimension(value)) => {
+                self.font_runtime.swap_dimension(
+                    cell,
+                    value,
+                    &mut delta.alternate_level,
+                    &mut delta.alternate_save_serial,
+                )?
+            }
             _ => return Err(StateError::CellKindMismatch),
         }
         if let Some(before) = identity_before {
@@ -2234,10 +2274,7 @@ pub(crate) enum DynamicMemoryRoot<G> {
 
 impl<T> BankCell<T> {
     fn map<U>(self, map: impl FnOnce(T) -> U) -> BankCell<U> {
-        BankCell {
-            value: map(self.value),
-            level: self.level,
-        }
+        BankCell::new(map(self.value), self.level, self.save_serial)
     }
 }
 

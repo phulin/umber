@@ -37,6 +37,7 @@ fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, befo
         StateCell::Count(cell),
         StateWord::Integer(before),
         level,
+        0,
         Some(level),
     ));
 }
@@ -54,9 +55,21 @@ fn reports_journal_component_widths() {
     );
     #[cfg(target_pointer_width = "64")]
     {
-        assert_eq!(core::mem::size_of::<Mutation<TestGeneration>>(), 56);
+        assert_eq!(core::mem::size_of::<Mutation<TestGeneration>>(), 64);
         assert_eq!(core::mem::size_of::<JournalEntry<TestGeneration>>(), 64);
     }
+}
+
+#[test]
+fn dense_state_cell_coordinates_do_not_implement_hash() {
+    trait AmbiguousIfHash<Marker> {
+        fn marker() {}
+    }
+    impl<T: ?Sized> AmbiguousIfHash<()> for T {}
+    struct Invalid;
+    impl<T: ?Sized + core::hash::Hash> AmbiguousIfHash<Invalid> for T {}
+
+    let _ = <StateCell as AmbiguousIfHash<_>>::marker;
 }
 
 #[test]
@@ -116,6 +129,7 @@ fn cursor_is_an_exact_position_in_ordered_history() {
         StateCell::Count(7),
         StateWord::Integer(1),
         1,
+        0,
         None,
     ));
     let end = journal.checkpoint_cursor(0);
@@ -143,6 +157,7 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
             StateCell::Count(index as u16),
             StateWord::Integer(index as i32),
             1,
+            0,
             None,
         ));
     }
@@ -151,6 +166,7 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
         StateCell::Count(released_records as u16),
         StateWord::Integer(released_records as i32),
         1,
+        0,
         None,
     ));
     let accepted = journal.checkpoint_cursor(0);
@@ -173,6 +189,7 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
             StateCell::Count(index as u16),
             StateWord::Integer(index as i32),
             1,
+            0,
             None,
         ));
     }
@@ -191,11 +208,13 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
     let mut journal = SaveJournal::<TestGeneration>::new();
     let _start = journal.checkpoint_cursor(0);
     let operation = journal.begin_operation();
-    for before in [1, 2] {
+    let interval_serial = journal.save_serial();
+    for (before, before_save_serial) in [(1, 0), (2, interval_serial)] {
         journal.record_mutation(Mutation::new(
             StateCell::Count(7),
             StateWord::Integer(before),
             1,
+            before_save_serial,
             None,
         ));
     }
@@ -203,12 +222,18 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
     let cursor = journal.checkpoint_cursor(0);
     let mut checkpoint_values = Vec::new();
     journal.visit_checkpoint_prefix(cursor, |delta| {
-        checkpoint_values.push((delta.cell, delta.alternate.clone(), delta.alternate_level));
+        checkpoint_values.push((
+            delta.cell,
+            delta.alternate.clone(),
+            delta.alternate_level,
+            delta.alternate_save_serial,
+        ));
     });
     assert_eq!(checkpoint_values.len(), 1);
     assert_eq!(checkpoint_values[0].0, StateCell::Count(7));
     assert!(matches!(checkpoint_values[0].1, StateWord::Integer(1)));
     assert_eq!(checkpoint_values[0].2, 1);
+    assert_eq!(checkpoint_values[0].3, 0);
     assert_eq!(journal.operation_entries.len(), 2);
     assert!(journal.active_groups.is_empty());
 
@@ -220,6 +245,7 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
         StateCell::Count(7),
         StateWord::Integer(3),
         1,
+        interval_serial,
         None,
     ));
     assert_eq!(journal.checkpoint_entries, 2);
@@ -234,6 +260,7 @@ fn nested_operations_share_one_ordered_lane_and_rollback_only_the_inner_suffix()
         StateCell::Count(7),
         StateWord::Integer(1),
         1,
+        0,
         None,
     ));
     let inner = journal.begin_operation();
@@ -241,6 +268,7 @@ fn nested_operations_share_one_ordered_lane_and_rollback_only_the_inner_suffix()
         StateCell::Count(8),
         StateWord::Integer(2),
         1,
+        0,
         None,
     ));
     assert_eq!(journal.operation_suffix(&inner).len(), 1);
@@ -302,6 +330,7 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
         StateCell::Count(0),
         StateWord::Integer(0),
         1,
+        0,
         None,
     ));
     let tail = root_journal.begin_checkpoint_candidate(root);
@@ -310,6 +339,7 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
         StateCell::Count(1),
         StateWord::Integer(1),
         1,
+        0,
         None,
     ));
     root_journal.reject_checkpoint_candidate(tail);
@@ -353,6 +383,7 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
             StateCell::Count(cell),
             StateWord::Integer(i32::from(cell)),
             1,
+            0,
             None,
         ));
     }
@@ -411,6 +442,7 @@ fn null_token_parameter_uses_tex_restore_zero_word() {
             StateCell::TokenParameter(0),
             StateWord::TokenList(None),
             1,
+            0,
             Some(2),
         )),
         Some(1)
