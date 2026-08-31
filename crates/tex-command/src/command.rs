@@ -561,6 +561,13 @@ impl<G> CurrentCommand<G> {
         &self.meaning
     }
 
+    /// Consumes this delivered command and returns its already-resolved
+    /// meaning without acquiring another immutable-definition owner.
+    #[must_use]
+    pub(crate) fn into_meaning(self) -> ResolvedMeaning<G> {
+        self.meaning
+    }
+
     /// Moves the resident macro-definition owner after invocation settlement.
     ///
     /// The caller must complete every fallible matching, recovery, and input

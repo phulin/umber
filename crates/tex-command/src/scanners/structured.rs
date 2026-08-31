@@ -790,10 +790,9 @@ pub struct ScannedMacroDefinition {
 /// The command processor owns every raw operand delivery, including the
 /// optional equals sign and `\futurelet`'s lookahead replay. Replay receives
 /// only the target and its already-resolved source meaning.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ScannedLetAssignment<G> {
     pub target: Symbol,
-    pub source: Option<Symbol>,
     pub meaning: ResolvedMeaning<G>,
 }
 
@@ -8350,7 +8349,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let target = self
             .delivered_definition_target(&command)
             .ok_or(CommandError::input_invariant())?;
-        let (source, meaning) = if future {
+        let meaning = if future {
             let mut first_destination = None;
             if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
@@ -8362,30 +8361,43 @@ impl<G> CommandProcessor<'_, '_, G> {
             let second = second_destination
                 .take()
                 .ok_or(CommandError::input_invariant())?;
-            let source = second.control_sequence();
             let meaning = second.meaning();
             self.back_input(second)?;
             let first = first_destination
                 .take()
                 .ok_or(CommandError::input_invariant())?;
             self.back_input_saved(first)?;
-            (source, meaning)
+            meaning
         } else {
-            if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let mut source = destination.take().ok_or(CommandError::input_invariant())?;
+            let mut source = loop {
+                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                    return Err(CommandError::input_invariant());
+                }
+                let source = destination.take().ok_or(CommandError::input_invariant())?;
+                if !matches!(
+                    source.meaning_ref(),
+                    ResolvedMeaning::Static(Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    })
+                ) {
+                    break source;
+                }
+            };
             if matches!(
-                static_meaning(source.meaning()),
-                Some(Meaning::CharToken { ch: '=', .. })
+                source.spelling().semantic_token(),
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other
+                }
             ) {
                 if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
                 source = destination.take().ok_or(CommandError::input_invariant())?;
                 if matches!(
-                    static_meaning(source.meaning()),
-                    Some(Meaning::CharToken {
+                    source.meaning_ref(),
+                    ResolvedMeaning::Static(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
                     })
@@ -8396,13 +8408,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     source = destination.take().ok_or(CommandError::input_invariant())?;
                 }
             }
-            (source.control_sequence(), source.meaning())
+            source.into_meaning()
         };
-        Ok(ScannedLetAssignment {
-            target,
-            source,
-            meaning,
-        })
+        Ok(ScannedLetAssignment { target, meaning })
     }
 
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input

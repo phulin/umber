@@ -5807,6 +5807,27 @@ fn identical_local_let_is_profile_gated_and_global_let_always_commits() {
 }
 
 #[test]
+fn let_recognizes_only_raw_other_equals() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\source{X}\let\otherequals==\let\rawtest\otherequals\source\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let raw_test = stores.intern("rawtest").expect("name").symbol();
+        assert_eq!(
+            stores.meaning(raw_test).expect("meaning"),
+            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
+                ch: '=',
+                cat: Catcode::Other,
+            })
+        );
+    });
+}
+
+#[test]
 fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
     // TeX82 §§1211--1234: attaching the detached command observer must not
     // select another semantic implementation. This source exercises every

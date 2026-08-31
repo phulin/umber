@@ -297,6 +297,7 @@ fn apply_macro_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
+    let observed_definition = command.observes_mutations().then(|| definition.clone());
     assignment_tracing::trace_meaning_write(
         stores,
         command.diagnostic_effects,
@@ -307,10 +308,7 @@ fn apply_macro_definition<G>(
             stores
                 .assign_resolved_meaning(
                     target,
-                    tex_state::meaning::ResolvedMeaning::Macro {
-                        flags,
-                        definition: definition.clone(),
-                    },
+                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
                     assignment_scope(global),
                 )
                 .expect("macro target belongs to the admitted generation");
@@ -319,7 +317,7 @@ fn apply_macro_definition<G>(
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
     // cold evidence publication, never part of an unobserved definition.
-    if command.observes_mutations() {
+    if let Some(definition) = observed_definition {
         let stored = stores.definition(definition);
         if flags.contains(MeaningFlags::PROTECTED) {
             // e-TeX change section [27.465] installs the protected marker as
@@ -364,14 +362,14 @@ fn apply_let<G>(
     // TeX82 §§277/1221 always route `\let` through `eq_define`. e-TeX change
     // [19.277] (retained by pdftex.web §277) alone suppresses an identical
     // local definition while extended mode is active.
-    let current = stores.meaning(target);
-    let redundant = crate::assignments::committer::redundant_local_assignment(
-        stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0,
-        &current,
-        &meaning,
-        global,
-    );
+    let redundant = if !global && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
+        let current = stores.meaning(target);
+        crate::assignments::committer::redundant_local_assignment(true, &current, &meaning, false)
+    } else {
+        false
+    };
     let committed = !redundant;
+    let observed_meaning = (committed && command.observes_mutations()).then(|| meaning.clone());
     assignment_tracing::trace_meaning_write(
         stores,
         command.diagnostic_effects,
@@ -381,12 +379,12 @@ fn apply_let<G>(
         |stores| {
             if committed {
                 stores
-                    .assign_resolved_meaning(target, meaning.clone(), assignment_scope(global))
+                    .assign_resolved_meaning(target, meaning, assignment_scope(global))
                     .expect("let target belongs to the admitted generation");
             }
         },
     );
-    if committed && command.observes_mutations() {
+    if let Some(meaning) = observed_meaning {
         let record = MutationRecord {
             target: MutationTarget::Meaning,
             key: ObservationValue::Name(stores.resolve(target).to_owned()),
