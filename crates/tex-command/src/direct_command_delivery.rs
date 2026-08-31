@@ -1,4 +1,4 @@
-//! Focused structural harness for borrowed current-meaning projection.
+//! Focused structural harness for direct dense-row command delivery.
 
 use tex_state::CommandContext;
 use tex_state::env::AssignmentScope;
@@ -14,45 +14,45 @@ use crate::command::{CurrentCommand, command_ownership_counters};
 const MIXED_MEANINGS: usize = 9;
 const MACROS_PER_ROUND: u64 = 2;
 
-/// Focused mixed-meaning fixture for the borrowed projection boundary.
-pub struct MeaningProjectionBenchmark<G> {
+/// Focused mixed-meaning fixture for direct dense-row command delivery.
+pub struct DirectCommandDeliveryBenchmark<G> {
     words: [TokenWord; MIXED_MEANINGS],
     command: CurrentCommand<G>,
     sequence: u64,
 }
 
-/// Exact structural receipt from one mixed-meaning projection run.
+/// Exact structural receipt from one mixed-meaning direct-delivery run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeaningProjectionReceipt {
-    pub resolved_meanings: u64,
-    pub table_probes: u64,
-    pub tag_decodes: u64,
-    pub macro_meanings: u64,
-    pub macro_owner_resolutions: u64,
-    pub duplicate_owner_resolutions: u64,
+pub struct DirectCommandDeliveryReceipt {
+    pub delivered_commands: u64,
+    pub dense_row_accesses: u64,
+    pub dense_row_decodes: u64,
+    pub macro_commands: u64,
+    pub macro_owner_acquisitions: u64,
+    pub duplicate_owner_acquisitions: u64,
     pub whole_meaning_copies: u64,
     pub whole_command_copies: u64,
     pub checksum: u64,
 }
 
-impl<G> MeaningProjectionBenchmark<G> {
+impl<G> DirectCommandDeliveryBenchmark<G> {
     /// Installs undefined, primitive, macro/alias, register, font, static
     /// alias, and active-character rows in one admitted meaning table.
     pub fn new(universe: &mut tex_state::Universe<G>) -> Self {
         let symbols: [Symbol; 8] = [
-            "projectionundefined",
-            "projectionprimitive",
-            "projectionmacro",
-            "projectionregister",
-            "projectionparameter",
-            "projectionfont",
-            "projectionalias",
-            "projectionstatic",
+            "deliveryundefined",
+            "deliveryprimitive",
+            "deliverymacro",
+            "deliveryregister",
+            "deliveryparameter",
+            "deliveryfont",
+            "deliveryalias",
+            "deliverystatic",
         ]
         .map(|name| {
             universe
                 .intern(name)
-                .expect("projection fixture symbol")
+                .expect("direct-delivery fixture symbol")
                 .symbol()
         });
         let definition = universe
@@ -63,7 +63,7 @@ impl<G> MeaningProjectionBenchmark<G> {
                     cat: Catcode::Letter,
                 })],
             )
-            .expect("projection fixture definition");
+            .expect("direct-delivery fixture definition");
         let rows = [
             MeaningWord::from_static(Meaning::Undefined),
             MeaningWord::from_static(Meaning::ExpandablePrimitive(
@@ -81,22 +81,22 @@ impl<G> MeaningProjectionBenchmark<G> {
                 .assign_meaning(
                     universe
                         .qualify_symbol(symbol)
-                        .expect("projection symbol remains admitted"),
+                        .expect("direct-delivery symbol remains admitted"),
                     meaning,
                     AssignmentScope::Global,
                 )
-                .expect("projection fixture meaning");
+                .expect("direct-delivery fixture meaning");
         }
         let active = universe
             .intern_active_character('~')
-            .expect("projection active character");
+            .expect("direct-delivery active character");
         universe
             .assign_meaning(
                 active,
                 MeaningWord::from_static(Meaning::CharGiven('A')),
                 AssignmentScope::Global,
             )
-            .expect("projection active meaning");
+            .expect("direct-delivery active meaning");
 
         let mut words = [TokenWord::pack(Token::Cs(symbols[0])); MIXED_MEANINGS];
         for (destination, symbol) in words[..8].iter_mut().zip(symbols) {
@@ -113,9 +113,13 @@ impl<G> MeaningProjectionBenchmark<G> {
         }
     }
 
-    /// Projects `rounds * 9` meanings through one reusable command slot.
-    pub fn run(&mut self, state: &CommandContext<'_, G>, rounds: u32) -> MeaningProjectionReceipt {
-        let before_meaning = tex_state::meaning::meaning_projection_counters();
+    /// Delivers `rounds * 9` commands through one reusable final slot.
+    pub fn run(
+        &mut self,
+        state: &CommandContext<'_, G>,
+        rounds: u32,
+    ) -> DirectCommandDeliveryReceipt {
+        let before_meaning = tex_state::meaning::direct_command_delivery_counters();
         let before_command = command_ownership_counters();
         let mut checksum = 0_u64;
         for _ in 0..rounds {
@@ -161,29 +165,29 @@ impl<G> MeaningProjectionBenchmark<G> {
                     (5, ResolvedMeaning::Static(Meaning::Font(font))) if *font == NULL_FONT => 6,
                     (7, ResolvedMeaning::Static(Meaning::CharGiven('Z'))) => 7,
                     (8, ResolvedMeaning::Static(Meaning::CharGiven('A'))) => 8,
-                    _ => panic!("mixed meaning projection changed semantics at row {index}"),
+                    _ => panic!("direct command delivery changed semantics at row {index}"),
                 };
                 checksum = checksum.wrapping_add(semantic);
             }
         }
-        let after_meaning = tex_state::meaning::meaning_projection_counters();
+        let after_meaning = tex_state::meaning::direct_command_delivery_counters();
         let after_command = command_ownership_counters();
-        let resolved_meanings = u64::from(rounds) * MIXED_MEANINGS as u64;
-        let macro_meanings = u64::from(rounds) * MACROS_PER_ROUND;
-        let macro_owner_resolutions = after_meaning
-            .macro_owner_resolutions
-            .saturating_sub(before_meaning.macro_owner_resolutions);
-        MeaningProjectionReceipt {
-            resolved_meanings,
-            table_probes: after_meaning
-                .table_probes
-                .saturating_sub(before_meaning.table_probes),
-            tag_decodes: after_meaning
-                .tag_decodes
-                .saturating_sub(before_meaning.tag_decodes),
-            macro_meanings,
-            macro_owner_resolutions,
-            duplicate_owner_resolutions: macro_owner_resolutions.saturating_sub(macro_meanings),
+        let delivered_commands = u64::from(rounds) * MIXED_MEANINGS as u64;
+        let macro_commands = u64::from(rounds) * MACROS_PER_ROUND;
+        let macro_owner_acquisitions = after_meaning
+            .macro_owner_acquisitions
+            .saturating_sub(before_meaning.macro_owner_acquisitions);
+        DirectCommandDeliveryReceipt {
+            delivered_commands,
+            dense_row_accesses: after_meaning
+                .dense_row_accesses
+                .saturating_sub(before_meaning.dense_row_accesses),
+            dense_row_decodes: after_meaning
+                .dense_row_decodes
+                .saturating_sub(before_meaning.dense_row_decodes),
+            macro_commands,
+            macro_owner_acquisitions,
+            duplicate_owner_acquisitions: macro_owner_acquisitions.saturating_sub(macro_commands),
             whole_meaning_copies: after_meaning
                 .meaning_word_clones
                 .saturating_sub(before_meaning.meaning_word_clones)

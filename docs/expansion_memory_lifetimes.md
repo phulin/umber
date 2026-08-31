@@ -361,15 +361,16 @@ projects its aggregate without scanning stored words. No command, input frame,
 token buffer, or second argument representation crosses this transition.
 
 An admitted control-sequence spelling probes and borrows its dense meaning row
-once. The reference-sized projection decodes the canonical row tag once and
-writes the final owned meaning and command identity directly into
-`CurrentCommand`; no intermediate resolved meaning is reconstructed or matched
-again. The same token classification reports the work ledger's meaning-lookup
-fact, and no second spelling decode precedes resolution. A macro row acquires
-one `DefinitionId<G>` owner in the final owned `CurrentCommand`; borrowing the
-row itself acquires none. Trace eligibility and expanded-loop classification
-likewise borrow that resolved meaning instead of retaining and releasing
-another definition owner.
+once. The packed-token resolver accepts the actual caller-owned
+`CurrentCommand`; the canonical row decodes its tag once and writes the final
+static payload and command identity, or the sole macro owner, directly into
+that slot. No meaning-projection carrier, intermediate resolved meaning,
+whole-row copy, or second command is reconstructed. The same token
+classification reports the work ledger's meaning-lookup fact, and no second
+spelling decode precedes resolution. A macro row acquires one `DefinitionId<G>`
+owner in the final owned `CurrentCommand`; borrowing the row itself acquires
+none. Trace eligibility and expanded-loop classification likewise borrow that
+resolved meaning instead of retaining and releasing another definition owner.
 The expanded loop classifies that meaning once into return, expand, or
 `end_template`; policy handling does not repeat meaning matches.
 The temporary bank borrow ends before any command-driven mutation, while the

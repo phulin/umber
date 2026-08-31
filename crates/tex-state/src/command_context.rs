@@ -15,7 +15,7 @@ use crate::font::FontStore;
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
-use crate::meaning::{Meaning, MeaningProjection, MeaningWord, ResolvedMeaning};
+use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
@@ -734,20 +734,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.compact_control_sequence_meaning_word(symbol).resolve()
     }
 
-    /// Borrows one already-admitted dense meaning row for direct projection.
-    ///
-    /// The returned reference-only view must be consumed before any mutable
-    /// command-context operation. It decodes the row once and acquires only
-    /// the final macro owner requested by its destination.
-    #[inline(always)]
-    pub fn compact_control_sequence_meaning_projection(
-        &self,
-        symbol: Symbol,
-    ) -> MeaningProjection<'_, G> {
-        self.compact_control_sequence_meaning_word(symbol)
-            .projection()
-    }
-
     /// Borrows the direct dense meaning row for an already-admitted symbol.
     ///
     /// The returned word remains tied to this immutable command-context
@@ -756,7 +742,7 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn compact_control_sequence_meaning_word(&self, symbol: Symbol) -> &MeaningWord<G> {
         #[cfg(any(test, feature = "profiling"))]
-        crate::meaning::record_meaning_table_probe();
+        crate::meaning::record_dense_meaning_row_access();
         self.admitted
             .state_ref()
             .meaning_word(symbol)
@@ -860,16 +846,15 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub(crate) fn frozen_primitive_meaning_projection(
+    pub(crate) fn frozen_primitive_meaning_word(
         &self,
         token: crate::token::Token,
-    ) -> Option<MeaningProjection<'_, G>> {
+    ) -> Option<&MeaningWord<G>> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
         self.primitive_meanings
             .get(usize::from(frozen.primitive_index()?))
-            .map(MeaningWord::projection)
     }
 
     #[must_use]

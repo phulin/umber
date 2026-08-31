@@ -391,18 +391,18 @@ publish a definition for a dead row. No live handle is relocated or rehomed.
 ## Hot resolution and suspension
 
 At episode admission, `tex-command` receives a borrowed view of the generation
-which matches the dense state it will execute. One dense probe lends a
-reference-sized `MeaningProjection`; its single row-tag decode writes the final
-owned meaning and command identity directly into `CurrentCommand`. A macro row
-clones the definition's non-atomic owner exactly once and moves it into that
-destination; no intermediate `ResolvedMeaning` or whole row is reconstructed.
-Macro entry later moves that owner into its active frame or owning view.
-Parameter and replacement reads dereference the shared immutable slice
-directly. Admission acquires one guard for the episode, not one lock or heap
-allocation per lookup.
+which matches the dense state it will execute. The packed-token resolver takes
+the actual caller-owned `CurrentCommand` target, performs one dense-row access,
+and lets that canonical row decode once into the final slot. A macro row
+acquires the definition's non-atomic owner exactly once there; no projection
+or resolved-meaning carrier, whole-row copy, or second command is
+reconstructed. Macro entry later moves that owner into its active frame or
+owning view. Parameter and replacement reads dereference the shared immutable
+slice directly. Admission acquires one guard for the episode, not one lock or
+heap allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
-Reference-only `EmptyCommand`, `RawCommand`, and `ResolvedCommand` typestates
+Reference-only `EmptyCommand` and `ResolvedCommand` typestates
 prove its in-place progression without adding storage or moving the command.
 The input stack ends its raw borrow before a cold line, EOF, parameter push, or
 suspension transition; meaning resolution ends its dense-state borrow before

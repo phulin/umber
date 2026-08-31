@@ -23,8 +23,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
   direct command and execution work, including name-free compact
-  control-sequence meaning delivery and the destination-directed packed-token
-  resolution entry implemented beside the token encoding, typed register mutation,
+  control-sequence dense-row access and the destination-directed packed-token
+  command write implemented beside the token encoding, typed register mutation,
   page-list/page-builder access, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,
   detached paragraph-shape and e-TeX penalty-array projections with journaled
@@ -179,9 +179,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed shared
-  macro owners and the reference-only projection target which decodes one
-  borrowed canonical row directly into its caller's final fields; raw integers
-  never materialize runtime definition handles.
+  macro owners and the canonical dense-row writer which decodes one borrowed
+  row directly into its caller's final command fields; raw integers never
+  materialize runtime definition handles.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, and coarse retained
@@ -336,9 +336,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/tests/replay.rs`: Feature-gated generated invariant test for exact
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
-  classification helpers, destination-directed packed meaning resolution
-  which returns its already-decoded literal catcode for command-side delivery
-  interception, and inline-small rooted traced-token buffers with
+  classification helpers, destination-directed packed command resolution
+  which writes the actual caller-owned slot and returns its already-decoded
+  literal catcode for command-side delivery interception, and inline-small
+  rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
   one origin pack every word against its id and move that structural root into
   the sparse owner set once; they never clone it per token before deduplication.

@@ -3,8 +3,8 @@
 use tex_state::CommandContext;
 use tex_state::DefinitionId;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningFlags, MeaningProjectionTarget, ResolvedMeaning};
-use tex_state::token::{Catcode, Token, TokenWord, TracedTokenWord};
+use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
+use tex_state::token::{Catcode, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
 
 use crate::{SourceLocation, SourceProvenance, SourceRange};
 
@@ -319,22 +319,22 @@ impl CommandIdentity {
     }
 }
 
-struct CurrentMeaningProjection<'command, G> {
-    meaning: &'command mut ResolvedMeaning<G>,
-    identity: &'command mut CommandIdentity,
-}
-
-impl<G> MeaningProjectionTarget<G> for CurrentMeaningProjection<'_, G> {
+impl<G> PackedCommandTarget<G> for CurrentCommand<G> {
     #[inline(always)]
-    fn project_static(&mut self, meaning: Meaning) {
-        *self.identity = CommandIdentity::from_static_meaning(meaning);
-        *self.meaning = ResolvedMeaning::Static(meaning);
+    fn write_control_sequence(&mut self, control_sequence: Option<Symbol>) {
+        self.control_sequence = control_sequence;
     }
 
     #[inline(always)]
-    fn project_macro(&mut self, flags: MeaningFlags, definition: DefinitionId<G>) {
-        *self.identity = CommandIdentity::Ordinary;
-        *self.meaning = ResolvedMeaning::Macro { flags, definition };
+    fn write_static_meaning(&mut self, meaning: Meaning) {
+        self.identity = CommandIdentity::from_static_meaning(meaning);
+        self.meaning = ResolvedMeaning::Static(meaning);
+    }
+
+    #[inline(always)]
+    fn write_macro_meaning(&mut self, flags: MeaningFlags, definition: DefinitionId<G>) {
+        self.identity = CommandIdentity::Ordinary;
+        self.meaning = ResolvedMeaning::Macro { flags, definition };
     }
 }
 
@@ -763,15 +763,7 @@ impl<'slot, G> EmptyCommand<'slot, G> {
             CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
             suppress_expandable,
         );
-        let mut projection = CurrentMeaningProjection {
-            meaning: &mut command.meaning,
-            identity: &mut command.identity,
-        };
-        let resolution = state.project_packed_token_meaning_into(
-            word,
-            &mut projection,
-            &mut command.control_sequence,
-        );
+        let resolution = state.write_packed_token_command_into(word, command);
         (ResolvedCommand(command), resolution)
     }
 }

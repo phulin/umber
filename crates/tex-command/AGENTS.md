@@ -112,15 +112,18 @@ collector (see `src/conditionals.rs`).
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   resident input writes its packed spelling and resolved meaning together
-  through one `EmptyCommand` to `ResolvedCommand` handoff. That reference-only
-  proof ends inside the `CommandState` resident transition after suppression
-  and required alignment treatment; the processor receives only a copy-small
+  through one `EmptyCommand` to `ResolvedCommand` handoff. The packed-token
+  resolver receives that actual command as its in-place target, indexes the
+  canonical dense eqtb row once, and writes the final static payload or sole
+  macro owner without a projection carrier. That reference-only proof ends
+  inside the `CommandState` resident transition after suppression and required
+  alignment treatment; the processor receives only a copy-small
   ready/outer result. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
   enters a durable snapshot or format boundary.
-- `src/meaning_projection.rs`: profiling-only mixed-meaning structural harness
-  for the borrow-scoped dense-row projection into the caller-owned command.
-  Its one/4,096-round gate counts table probes, tag decodes, final macro-owner
+- `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural
+  harness for direct dense-row writes into the caller-owned command. Its
+  one/4,096-round gate counts row accesses, row decodes, final macro-owner
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
 - `src/processor/expand.rs`: canonical destination-directed raw/expanded

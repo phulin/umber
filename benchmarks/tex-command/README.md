@@ -59,12 +59,12 @@ macro argument, attempt, and durable owners; and five million indexed reads
 across one sealed 16,385-word macro argument. These rows separate source decode,
 lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
 delivery, mixed packed-cursor traversal, and long segmented argument access.
-The borrowed-meaning row runs one and 4,096 rounds across nine table-backed
+The direct-command-delivery row runs one and 4,096 rounds across nine table-backed
 undefined, primitive, macro/alias, register, parameter, font, static-alias, and
 active-character meanings. It requires one dense probe and one meaning-tag
-decode per resolved meaning, one final owner acquisition per macro row, zero
-duplicate owner resolutions, zero whole-meaning or command copies, and zero
-warmed heap allocation.
+decode directly into the caller-owned command slot per delivered command, one
+final owner acquisition per macro row, zero duplicate owner acquisitions, zero
+whole-meaning or command copies, and zero warmed heap allocation.
 The destination-directed row warms and then measures 8,192 calls apiece to raw
 non-creating, raw creating, and expanded delivery, reusing one caller-owned
 command slot throughout. All three policies must remain allocation-free.

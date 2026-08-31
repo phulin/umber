@@ -256,17 +256,17 @@ row's replay explanation. It neither clears nor reconstructs the caller-owned
 `CurrentCommand` slot.
 
 Control-sequence resolution performs one direct probe of the already-admitted
-dense meaning row through the live `CommandContext`. The probe returns only a
-reference-sized `MeaningProjection`. Consuming that view decodes the canonical
-row tag once and writes the final owned meaning and command-identity fields in
-the caller's `CurrentCommand`; it does not first construct a
-`ResolvedMeaning`. Static words decode during that borrow, while a macro row
-clones its generation-branded definition owner exactly once and moves that
-owner into the destination. The row borrow ends with projection, before outer
-recovery, alignment handling, expansion, execution, assignment, replay, or
-suspension can mutate state. Assignment level remains solely in the dense bank,
-so delivered-command ownership does not duplicate journaling or reinterpret a
-meaning after delivery.
+dense meaning row through the live `CommandContext`. The packed-token resolver
+accepts the actual caller-owned `CurrentCommand` as its in-place target; the
+canonical row decodes its tag once and writes the final static payload and
+command identity, or acquires the one generation-branded macro-definition
+owner directly into that slot. It constructs no projection carrier,
+intermediate resolved-meaning carrier, whole-row copy, or second command. The row
+borrow ends with that write, before outer recovery, alignment handling,
+expansion, execution, assignment, replay, or suspension can mutate state.
+Assignment level remains solely in the dense bank, so delivered-command
+ownership does not duplicate journaling or reinterpret a meaning after
+delivery.
 
 Consuming `EmptyCommand::write_resolved_delivery` writes and resolves the
 resident packed spelling directly in the caller destination and returns the

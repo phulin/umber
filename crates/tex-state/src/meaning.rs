@@ -122,77 +122,58 @@ pub enum MeaningWord<G> {
     },
 }
 
-/// Destination for one borrow-scoped meaning projection.
-///
-/// The dense meaning row remains borrowed only while [`MeaningProjection`]
-/// selects its variant. Static fields are copied directly and a macro owner is
-/// acquired exactly once before this call returns. Implementations must store
-/// that final owner rather than reconstructing another resolved meaning.
-pub trait MeaningProjectionTarget<G> {
-    fn project_static(&mut self, meaning: Meaning);
-    fn project_macro(&mut self, flags: MeaningFlags, definition: DefinitionId<G>);
-}
-
-/// Short borrowed view of one canonical packed meaning row.
-///
-/// This wrapper contains only a reference. It is neither a second meaning
-/// representation nor a value that can cross a mutation or suspension
-/// boundary.
-#[derive(Clone, Copy)]
-pub struct MeaningProjection<'meaning, G> {
-    word: &'meaning MeaningWord<G>,
-}
-
-/// Profiling-only structural census for borrowed meaning projection.
+/// Profiling-only structural census for direct command delivery.
 #[cfg(any(test, feature = "profiling"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MeaningProjectionCounters {
-    pub table_probes: u64,
-    pub tag_decodes: u64,
-    pub macro_owner_resolutions: u64,
+pub struct DirectCommandDeliveryCounters {
+    pub dense_row_accesses: u64,
+    pub dense_row_decodes: u64,
+    pub macro_owner_acquisitions: u64,
     pub meaning_word_clones: u64,
     pub resolved_meaning_clones: u64,
 }
 
 #[cfg(any(test, feature = "profiling"))]
 thread_local! {
-    static MEANING_PROJECTION_COUNTERS: core::cell::Cell<MeaningProjectionCounters> =
-        const { core::cell::Cell::new(MeaningProjectionCounters {
-            table_probes: 0,
-            tag_decodes: 0,
-            macro_owner_resolutions: 0,
+    static DIRECT_COMMAND_DELIVERY_COUNTERS: core::cell::Cell<DirectCommandDeliveryCounters> =
+        const { core::cell::Cell::new(DirectCommandDeliveryCounters {
+            dense_row_accesses: 0,
+            dense_row_decodes: 0,
+            macro_owner_acquisitions: 0,
             meaning_word_clones: 0,
             resolved_meaning_clones: 0,
         }) };
 }
 
 #[cfg(any(test, feature = "profiling"))]
-fn update_meaning_projection_counters(update: impl FnOnce(&mut MeaningProjectionCounters)) {
-    MEANING_PROJECTION_COUNTERS.with(|slot| {
+fn update_direct_command_delivery_counters(
+    update: impl FnOnce(&mut DirectCommandDeliveryCounters),
+) {
+    DIRECT_COMMAND_DELIVERY_COUNTERS.with(|slot| {
         let mut counters = slot.get();
         update(&mut counters);
         slot.set(counters);
     });
 }
 
-/// Returns the current thread's profiling-only projection census.
+/// Returns the current thread's profiling-only direct-delivery census.
 #[cfg(any(test, feature = "profiling"))]
 #[must_use]
-pub fn meaning_projection_counters() -> MeaningProjectionCounters {
-    MEANING_PROJECTION_COUNTERS.with(core::cell::Cell::get)
+pub fn direct_command_delivery_counters() -> DirectCommandDeliveryCounters {
+    DIRECT_COMMAND_DELIVERY_COUNTERS.with(core::cell::Cell::get)
 }
 
 #[cfg(any(test, feature = "profiling"))]
-pub(crate) fn record_meaning_table_probe() {
-    update_meaning_projection_counters(|counters| {
-        counters.table_probes = counters.table_probes.saturating_add(1);
+pub(crate) fn record_dense_meaning_row_access() {
+    update_direct_command_delivery_counters(|counters| {
+        counters.dense_row_accesses = counters.dense_row_accesses.saturating_add(1);
     });
 }
 
 impl<G> Clone for MeaningWord<G> {
     fn clone(&self) -> Self {
         #[cfg(any(test, feature = "profiling"))]
-        update_meaning_projection_counters(|counters| {
+        update_direct_command_delivery_counters(|counters| {
             counters.meaning_word_clones = counters.meaning_word_clones.saturating_add(1);
         });
         match self {
@@ -260,13 +241,6 @@ impl<G> MeaningWord<G> {
         Self::Macro { flags, definition }
     }
 
-    /// Borrows this canonical row for one destination-directed projection.
-    #[must_use]
-    #[inline(always)]
-    pub const fn projection(&self) -> MeaningProjection<'_, G> {
-        MeaningProjection { word: self }
-    }
-
     #[must_use]
     pub fn resolve(&self) -> ResolvedMeaning<G> {
         match self {
@@ -325,27 +299,34 @@ impl<G> MeaningWord<G> {
     }
 }
 
-impl<G> MeaningProjection<'_, G> {
-    /// Decodes this borrowed row once and writes its final fields into
-    /// `target`.
+impl<G> MeaningWord<G> {
+    /// Decodes this borrowed canonical row directly into the caller's final
+    /// command slot.
+    ///
+    /// The row borrow ends before this call returns. Static meanings are
+    /// copied into the resident slot, while a macro row acquires exactly the
+    /// one definition owner that slot must retain.
     #[inline(always)]
-    pub fn project_into(self, target: &mut impl MeaningProjectionTarget<G>) {
+    pub(crate) fn write_command_into(
+        &self,
+        target: &mut impl crate::token::PackedCommandTarget<G>,
+    ) {
         #[cfg(any(test, feature = "profiling"))]
-        update_meaning_projection_counters(|counters| {
-            counters.tag_decodes = counters.tag_decodes.saturating_add(1);
+        update_direct_command_delivery_counters(|counters| {
+            counters.dense_row_decodes = counters.dense_row_decodes.saturating_add(1);
         });
-        match self.word {
+        match self {
             MeaningWord::Static(word) => {
-                target.project_static(Meaning::decode_stored(*word));
+                target.write_static_meaning(Meaning::decode_stored(*word));
             }
-            MeaningWord::Font(font) => target.project_static(Meaning::Font(*font)),
+            MeaningWord::Font(font) => target.write_static_meaning(Meaning::Font(*font)),
             MeaningWord::Macro { flags, definition } => {
                 #[cfg(any(test, feature = "profiling"))]
-                update_meaning_projection_counters(|counters| {
-                    counters.macro_owner_resolutions =
-                        counters.macro_owner_resolutions.saturating_add(1);
+                update_direct_command_delivery_counters(|counters| {
+                    counters.macro_owner_acquisitions =
+                        counters.macro_owner_acquisitions.saturating_add(1);
                 });
-                target.project_macro(*flags, definition.clone());
+                target.write_macro_meaning(*flags, definition.clone());
             }
         }
     }
@@ -363,7 +344,7 @@ pub enum ResolvedMeaning<G> {
 impl<G> Clone for ResolvedMeaning<G> {
     fn clone(&self) -> Self {
         #[cfg(any(test, feature = "profiling"))]
-        update_meaning_projection_counters(|counters| {
+        update_direct_command_delivery_counters(|counters| {
             counters.resolved_meaning_clones = counters.resolved_meaning_clones.saturating_add(1);
         });
         match self {

@@ -5,7 +5,7 @@
 
 mod hot_core;
 
-pub use crate::meaning::{MeaningProjectionCounters, meaning_projection_counters};
+pub use crate::meaning::{DirectCommandDeliveryCounters, direct_command_delivery_counters};
 pub use hot_core::{
     HOT_CORE_EXPANDABLE_OPCODE_COUNT, HOT_CORE_UNEXPANDABLE_OPCODE_COUNT,
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocationTrace, HotCoreAllocator,

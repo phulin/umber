@@ -139,6 +139,59 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
 }
 
 #[test]
+fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
+    crate::test_harness::with_universe(|universe| {
+        let symbol = universe.intern("directslot").expect("intern");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::from_static(Meaning::CountRegister(32_767)),
+                AssignmentScope::Global,
+            )
+            .expect("meaning");
+        let mut command = CurrentCommand::empty();
+        let slot = core::ptr::from_ref(&command);
+        let context = universe.command_context().expect("command context");
+        #[cfg(feature = "profiling")]
+        let before = tex_state::meaning::direct_command_delivery_counters();
+
+        let (resolved, resolution) = command.empty_for_raw_delivery().write_resolved_delivery(
+            TokenWord::pack(Token::Cs(symbol.symbol())),
+            OriginId::UNKNOWN,
+            31,
+            37,
+            41,
+            None,
+            None,
+            false,
+            None,
+            false,
+            &context,
+        );
+        #[cfg(feature = "profiling")]
+        let after = tex_state::meaning::direct_command_delivery_counters();
+
+        assert_eq!(core::ptr::from_ref(resolved.as_ref()), slot);
+        assert!(resolution.meaning_lookup());
+        #[cfg(feature = "profiling")]
+        {
+            assert_eq!(after.dense_row_accesses - before.dense_row_accesses, 1);
+            assert_eq!(after.dense_row_decodes - before.dense_row_decodes, 1);
+            assert_eq!(after.meaning_word_clones - before.meaning_word_clones, 0);
+            assert_eq!(
+                after.resolved_meaning_clones - before.resolved_meaning_clones,
+                0
+            );
+        }
+        assert_eq!(
+            resolved.as_ref().meaning_ref(),
+            &ResolvedMeaning::Static(Meaning::CountRegister(32_767))
+        );
+        assert_eq!(resolved.as_ref().control_sequence(), Some(symbol.symbol()));
+    });
+}
+
+#[test]
 fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
     crate::test_harness::with_universe(|universe| {
         let replacement = TokenWord::pack(Token::Char {
@@ -356,14 +409,14 @@ fn command_code_partition_classifies_character_internal_unexpandable_and_expanda
 }
 
 #[test]
-fn borrowed_projection_preserves_table_meaning_families_and_active_namespace() {
+fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
     crate::test_harness::with_universe(|universe| {
-        let undefined = universe.intern("projectionundefined").expect("undefined");
-        let primitive = universe.intern("projectionprimitive").expect("primitive");
-        let register = universe.intern("projectionregister").expect("register");
-        let font = universe.intern("projectionfont").expect("font");
-        let macro_name = universe.intern("projectionmacro").expect("macro");
-        let macro_alias = universe.intern("projectionalias").expect("alias");
+        let undefined = universe.intern("deliveryundefined").expect("undefined");
+        let primitive = universe.intern("deliveryprimitive").expect("primitive");
+        let register = universe.intern("deliveryregister").expect("register");
+        let font = universe.intern("deliveryfont").expect("font");
+        let macro_name = universe.intern("deliverymacro").expect("macro");
+        let macro_alias = universe.intern("deliveryalias").expect("alias");
         let definition = universe
             .allocate_definition(
                 &[],

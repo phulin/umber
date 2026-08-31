@@ -47,6 +47,8 @@ mod command;
 mod conditionals;
 mod continuation;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
+#[cfg(feature = "profiling")]
+mod direct_command_delivery;
 mod error;
 mod execution_scratch;
 pub use execution_scratch::ScannerFrameKey;
@@ -57,8 +59,6 @@ mod fuel;
 mod host;
 mod input;
 mod macro_call;
-#[cfg(feature = "profiling")]
-mod meaning_projection;
 mod observation;
 mod primitives;
 pub use primitives::{
@@ -95,6 +95,8 @@ mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use continuation::{CommandContinuationError, OwnedCommandContinuation};
+#[cfg(feature = "profiling")]
+pub use direct_command_delivery::{DirectCommandDeliveryBenchmark, DirectCommandDeliveryReceipt};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{
@@ -119,8 +121,6 @@ pub use input::{
     LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
     MixedPackedCursorReceipt,
 };
-#[cfg(feature = "profiling")]
-pub use meaning_projection::{MeaningProjectionBenchmark, MeaningProjectionReceipt};
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
 pub use observation::canonical_names;
