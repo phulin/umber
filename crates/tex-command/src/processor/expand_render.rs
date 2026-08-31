@@ -243,8 +243,8 @@ fn append_meaning_text_with_token_selector<G>(
         Meaning::Relax => append_print_esc_text(state, "relax", text),
         Meaning::CharToken { ch, cat } => append_character_command_text(ch, cat, text),
         Meaning::CharGiven(ch) => {
-            text.push_str("the character ");
-            append_printable_character_text(ch, text);
+            append_print_esc_text(state, "char", text);
+            write!(text, "\"{:X}", u32::from(ch)).expect("writing to String cannot fail");
         }
         Meaning::MathCharGiven(value) => {
             write!(text, "\\mathchar\"{value:X}").expect("writing to String cannot fail");

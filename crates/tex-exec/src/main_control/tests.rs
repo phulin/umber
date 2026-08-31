@@ -2560,6 +2560,43 @@ fn tracingrestores_reports_chardef_meanings_as_char_commands_in_every_profile() 
 }
 
 #[test]
+fn meaning_expansion_reports_chardef_meanings_as_hex_char_commands() {
+    // TeX82 §1223's `char_given` `print_cmd_chr` arm prints `\char` and a
+    // hexadecimal operand (tex.web lines 22876--22899). Both a printable
+    // value and a control-code value must use that syntax: macro packages
+    // parse the latter to recover encoded font slots.
+    for profile in [
+        CommandProfile::TEX82,
+        CommandProfile::ETEX26,
+        CommandProfile::PDFTEX14029,
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = if profile == CommandProfile::TEX82 {
+                MainControl::tex82_initex(stores)
+            } else if profile == CommandProfile::ETEX26 {
+                etex_initex(stores)
+            } else {
+                debug_assert_eq!(profile, CommandProfile::PDFTEX14029);
+                pdftex_initex(stores)
+            };
+            register_source(
+                &mut control,
+                br#"\chardef\printable="41 \chardef\encoded="16
+                    \message{[\meaning\printable][\meaning\encoded]}\end"#,
+            );
+
+            run_to_end(&mut control, stores);
+
+            let output = terminal_text(stores);
+            assert!(
+                output.contains(r#"[\char"41][\char"16]"#),
+                "{profile:?}: {output}"
+            );
+        });
+    }
+}
+
+#[test]
 fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     // TeX82 §§252/283 restore the saved typed eqtb word before `show_eqtb`
     // renders it. A genuine format boundary proves the saved shorthand
