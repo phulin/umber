@@ -230,29 +230,26 @@ pub fn line_expansion_ratio(
 /// Scales a metric by `(1000 + ratio) / 1000` with pdfTeX rounding.
 #[must_use]
 pub fn scaled_at_ratio(value: Scaled, ratio: i32) -> Scaled {
-    Scaled::from_raw(
-        i32::try_from(round_ratio(
-            i64::from(value.raw()),
-            i64::from(1000 + ratio),
-            1000,
-        ))
-        .expect("font expansion of a legal metric remains representable"),
-    )
+    scaled_ratio(value.raw(), 1000 + ratio, 1000)
 }
 
 fn positive_scaled_ratio(value: i32, numerator: i32, denominator: i32) -> Scaled {
     if value <= 0 {
         Scaled::from_raw(0)
     } else {
-        Scaled::from_raw(
-            i32::try_from(round_ratio(
-                i64::from(value),
-                i64::from(numerator),
-                i64::from(denominator),
-            ))
-            .expect("capacity is bounded by a legal font metric"),
-        )
+        scaled_ratio(value, numerator, denominator)
     }
+}
+
+pub(crate) fn scaled_ratio(value: i32, numerator: i32, denominator: i32) -> Scaled {
+    Scaled::from_raw(
+        i32::try_from(round_ratio(
+            i64::from(value),
+            i64::from(numerator),
+            i64::from(denominator),
+        ))
+        .expect("font expansion of a legal metric remains representable"),
+    )
 }
 
 fn nearest_step(requested: i64, step: i32, limit: i32) -> i32 {

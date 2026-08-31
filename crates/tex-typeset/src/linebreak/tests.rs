@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_state::TestState;
 use tex_fonts::metrics::CharTag;
-use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
+use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
 use tex_state::font::FontExpansion;
 use tex_state::font::NULL_FONT;
 use tex_state::glue::{GlueSpec, Order};
@@ -654,6 +654,88 @@ fn microtype_font(name: &str, width: i32) -> LoadedFont {
         parameters,
         FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
     )
+}
+
+fn microtype_kern_font(name: &str, width: i32, kern: i32) -> LoadedFont {
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: sp(width),
+        height: sp(0),
+        depth: sp(0),
+        italic_correction: sp(0),
+        tag: CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        },
+    });
+    characters[usize::from(b'B')] = Some(CharMetrics {
+        width: sp(width),
+        height: sp(0),
+        depth: sp(0),
+        italic_correction: sp(0),
+        tag: CharTag::None,
+    });
+    LoadedFont::new(
+        name,
+        format!("{name}.tfm"),
+        [width as u8; 8],
+        0,
+        sp(width),
+        sp(width),
+        vec![sp(0); 7],
+        FontMetrics::new(
+            characters,
+            vec![LigKernInstruction {
+                skip_byte: 128,
+                next_char: b'B',
+                command: Some(LigKernCommand::Kern(sp(kern))),
+            }],
+            None,
+            None,
+            Vec::new(),
+        ),
+    )
+}
+
+/// pdftex.web §821 keeps kern expansion differences signed: a negative kern
+/// becomes more negative at the stretch endpoint and therefore reduces the
+/// paragraph's total stretch and shrink capacities.
+#[test]
+fn pdftex_font_kern_expansion_capacity_retains_signed_differences() {
+    let widths = |kern| {
+        let mut universe = TestState::new();
+        let font = universe.intern_font(microtype_kern_font("signed-kern", 100, kern));
+        universe
+            .configure_font_expansion(
+                font,
+                FontExpansion {
+                    stretch: 500,
+                    shrink: 500,
+                    step: 100,
+                    auto_expand: true,
+                },
+            )
+            .expect("microtype font expansion configuration is valid");
+        universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, b'A', 1000);
+        universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, b'B', 1000);
+        let nodes = [
+            microtype_char(font, 'A'),
+            Node::Kern {
+                amount: sp(kern),
+                kind: KernKind::Font,
+            },
+            microtype_char(font, 'B'),
+        ];
+        line_widths_nodes(&universe, &nodes)
+    };
+
+    let negative = widths(-100);
+    assert_eq!(negative.font_stretch.raw(), 50);
+    assert_eq!(negative.font_shrink.raw(), 50);
+
+    let positive = widths(100);
+    assert_eq!(positive.font_stretch.raw(), 150);
+    assert_eq!(positive.font_shrink.raw(), 150);
 }
 
 fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {

@@ -389,15 +389,17 @@ fn add_font_kern_capacity<S: TypesetState>(
     let endpoint = state.font_kern(left_font, left, right).unwrap_or(natural);
     let stretched = crate::expansion::scaled_at_ratio(endpoint, spec.stretch());
     let shrunk = crate::expansion::scaled_at_ratio(endpoint, -spec.shrink());
-    let stretch = ((stretched.raw() - natural.raw()).max(0), efcode);
-    let shrink = ((natural.raw() - shrunk.raw()).max(0), efcode);
+    // pdftex.web §821 retains signed kern differences: negative kerns reduce
+    // the glyph-derived capacities at both expansion endpoints.
+    let stretch = stretched.raw() - natural.raw();
+    let shrink = natural.raw() - shrunk.raw();
     widths.font_stretch = add_scaled(
         widths.font_stretch,
-        rounded_positive_ratio(stretch.0, stretch.1),
+        crate::expansion::scaled_ratio(stretch, efcode.clamp(0, 1000), 1000),
     );
     widths.font_shrink = add_scaled(
         widths.font_shrink,
-        rounded_positive_ratio(shrink.0, shrink.1),
+        crate::expansion::scaled_ratio(shrink, efcode.clamp(0, 1000), 1000),
     );
 }
 
@@ -408,14 +410,6 @@ fn glyph(node: NodeRef<'_>) -> Option<(tex_state::ids::FontId, u8)> {
         }
         _ => None,
     }
-}
-
-fn rounded_positive_ratio(value: i32, efcode: i32) -> Scaled {
-    let value = i64::from(value.max(0));
-    let efcode = i64::from(efcode.clamp(0, 1000));
-    Scaled::from_raw(
-        i32::try_from((value * efcode + 500) / 1000).expect("font kern capacity fits i32"),
-    )
 }
 
 pub(super) fn line_badness(
