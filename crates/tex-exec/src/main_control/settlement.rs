@@ -35,6 +35,7 @@ pub(super) struct DirectOperationMark<G> {
     pub(super) mode: crate::mode::ModeJournalCursor,
     pub(super) attempt: tex_command::CommandAttemptOperation,
     pub(super) page: tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
+    pub(super) active_box_len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -241,6 +242,7 @@ impl<G> MainControl<G> {
             mode: self.modes.begin_journal(),
             attempt: attempt.unwrap_or_else(|| self.command.begin_attempt_operation()),
             page: stores.page_node_cursor(),
+            active_box_len: self.boxes.active_boxes.len(),
         }
     }
 
@@ -367,6 +369,13 @@ impl<G> MainControl<G> {
         self.modes
             .rollback_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
+        // ReplayBoxes is deliberately outside Universe and ModeNest. Any box
+        // construction opened inside the rejected operation belongs to the
+        // same retryable suffix as those transactional roots, so discard its
+        // move-only owner before replay. BoxEndGroup retains pre-existing
+        // owners until its own fallible completion has succeeded, hence a
+        // rollback never needs to recreate an entry below this cursor.
+        self.boxes.active_boxes.truncate(mark.active_box_len);
         self.command
             .rollback_attempt_operation(mark.attempt)
             .expect("rollback owns valid command-attempt coordinates");

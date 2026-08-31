@@ -935,6 +935,19 @@ and proceeding as though a brace had been read; replay enters the typed box
 group without fabricating a command event, so that backed-up command becomes
 the first box-body material.
 
+`ActiveReplayBox` remains the move-only owner of §1086's saved box context
+until `BoxEndGroup` has committed every fallible packaging and disposition
+step. In particular, a format-restored font may first request its immutable
+host resource while the closing operation materializes the body's pending
+character run. Resource suspension restores the universe and mode nest but
+does not journal replay sidecars: the direct-operation mark therefore records
+the active-box length and truncates construction owners opened in a rejected
+suffix, while the box-closing entry itself stays resident through every
+fallible completion step. Only successful insertion completion, packing plus
+register/shipout/leader disposition, or ordinary append consumes that entry.
+Together those two sides preserve the exact box context across typed
+suspension without adding it to the hot operation slot.
+
 TeX82 §1099's `\insert<class>{...}` (`begin_insert_or_adjust`) follows the
 same box-opener split, minus the packing clause: `CommandProcessor` owns the
 raw `scan_int` class-number scan (any_mode; the reserved-255 rejection and the

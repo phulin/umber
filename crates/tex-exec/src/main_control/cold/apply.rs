@@ -3177,11 +3177,38 @@ pub(in crate::main_control) fn apply<G>(
             ships_out,
             current_line,
         } => {
-            let box_state = boxes.active_boxes.pop().ok_or(ExecError::MissingToken {
-                context: "box group",
-            })?;
-            if let ReplayBoxKind::Insert(class, pre) = box_state.kind {
-                return finish_insert_or_adjust_group(class, pre, modes, stores, command);
+            // `active_boxes` is the move-only counterpart of TeX82 §1086's
+            // saved box context. Keep it resident until every fallible part of
+            // `package` has committed: resource suspension rolls back the
+            // universe and mode nest, but this replay sidecar intentionally
+            // lives outside those transactional roots. Popping it before a
+            // pending character run requests its first format-restored font
+            // would make the retained `BoxEndGroup` retry consume the next
+            // enclosing box and eventually classify the original `}` as an
+            // extra right brace.
+            let (box_kind, group_kind, packing, leader_kind, shift, has_target) = boxes
+                .active_boxes
+                .last()
+                .map(|box_state| {
+                    (
+                        box_state.kind,
+                        box_state.group_kind,
+                        box_state.packing,
+                        box_state.leader_kind,
+                        box_state.shift,
+                        box_state.target.is_some(),
+                    )
+                })
+                .ok_or(ExecError::MissingToken {
+                    context: "box group",
+                })?;
+            if let ReplayBoxKind::Insert(class, pre) = box_kind {
+                let step = finish_insert_or_adjust_group(class, pre, modes, stores, command)?;
+                boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful insert completion retains its active owner");
+                return Ok(step);
             }
             // TeX82 §1085's `handle_right_brace` runs `end_graf` (§1096) for
             // `vbox_group` and `vtop_group` -- and only for those two -- before
@@ -3194,7 +3221,7 @@ pub(in crate::main_control) fn apply<G>(
             // `\vbox{\noindent A}` produced `\vbox(0.0+0.0)x0.0` holding a bare
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
-            if !box_state.kind.horizontal() {
+            if !box_kind.horizontal() {
                 let mut diagnostic_context = command_diagnostic_context(command, stores);
                 // The closing brace can exhaust and retire its source before
                 // this cold operation is applied. TeX82 §661 nevertheless
@@ -3251,7 +3278,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.state,
                 command.diagnostic_effects,
-                box_state.group_kind,
+                group_kind,
             )
             .map_err(|_| ExecError::MissingToken {
                 context: "box group",
@@ -3262,7 +3289,7 @@ pub(in crate::main_control) fn apply<G>(
             // §660/§674 diagnostics, this makes the enclosing h/v badness,
             // fuzz, and overfull-rule parameters authoritative. Max depth is
             // the exception: `package` saved it above before `unsave`.
-            let node = if box_state.kind.horizontal() {
+            let node = if box_kind.horizontal() {
                 let diagnostic_context = command_diagnostic_context(command, stores);
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 Node::HList(crate::box_runtime::hpack_with_overfull_rule(
@@ -3271,10 +3298,10 @@ pub(in crate::main_control) fn apply<G>(
                     &mut geometry,
                     &diagnostic_context,
                     children,
-                    box_state.packing,
+                    packing,
                 ))
             } else {
-                Node::VList(match box_state.kind {
+                Node::VList(match box_kind {
                     ReplayBoxKind::VBox | ReplayBoxKind::VCenter => {
                         let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut params = crate::packing_params::vpack_params(stores);
@@ -3286,7 +3313,7 @@ pub(in crate::main_control) fn apply<G>(
                             &mut geometry,
                             &diagnostic_context,
                             children,
-                            box_state.packing,
+                            packing,
                             params,
                         )
                         .node
@@ -3302,7 +3329,7 @@ pub(in crate::main_control) fn apply<G>(
                             &mut geometry,
                             &diagnostic_context,
                             children,
-                            box_state.packing,
+                            packing,
                             params,
                         )
                         .node
@@ -3327,21 +3354,33 @@ pub(in crate::main_control) fn apply<G>(
             // be neither a `\setbox` target, a `\shipout` operand, a leader
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
-            if box_state.kind == ReplayBoxKind::VCenter {
+            if box_kind == ReplayBoxKind::VCenter {
                 let boxed = stores.publish_page_nodes(vec![node]);
                 modes.current_list_mutation().push(
                     stores,
                     Node::MathNoad(MathNoad::new(NoadKind::VCenter, MathField::SubBox(boxed))),
                 );
+                boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful vcenter completion retains its active owner");
                 return Ok(ReplayStep::Continue);
             }
-            if let Some(kind) = box_state.leader_kind {
+            if let Some(kind) = leader_kind {
                 let payload =
                     crate::box_runtime::payload_from_node(node).ok_or(ExecError::MissingToken {
                         context: "leader box payload",
                     })?;
                 boxes.pending_leader = Some((kind, payload));
+                boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful leader completion retains its active owner");
             } else if *ships_out {
+                let box_state = boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful shipout packaging retains its active owner");
                 let region = box_state
                     .shipout_region
                     .expect("constructed shipout retains its page region");
@@ -3350,7 +3389,13 @@ pub(in crate::main_control) fn apply<G>(
                     source: PreparedShipoutSource::Page(node),
                     region: Some(region),
                 });
-            } else if let Some(target) = box_state.target {
+            } else if has_target {
+                let target = boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful setbox packaging retains its active owner")
+                    .target
+                    .expect("setbox completion retains its target");
                 let boxed = stores.publish_page_nodes(vec![node]);
                 commit_set_box_target(target, Some(boxed), stores, command);
             } else {
@@ -3375,7 +3420,7 @@ pub(in crate::main_control) fn apply<G>(
                 // `vmove`/`hmove`), so `box_state.shift` is only ever set
                 // here.
                 let mut node = node;
-                if let Some(shift) = box_state.shift {
+                if let Some(shift) = shift {
                     crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
                 crate::box_runtime::append_box_node_to_current_list(
@@ -3391,6 +3436,10 @@ pub(in crate::main_control) fn apply<G>(
                     command.diagnostic_effects,
                     command.state.state(),
                 )?;
+                boxes
+                    .active_boxes
+                    .pop()
+                    .expect("successful box append retains its active owner");
             }
             Ok(ReplayStep::Continue)
         }

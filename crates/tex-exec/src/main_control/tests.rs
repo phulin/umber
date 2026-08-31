@@ -384,6 +384,59 @@ fn math_choice_nested_font_definition_suspends_and_resumes_once() {
 }
 
 #[test]
+fn format_font_suspension_while_closing_box_retains_active_owner() {
+    // TeX82 §1086 keeps `box_context` and the scan-spec values live through
+    // `package`. A loaded format restores the logical font without carrying
+    // its host resource, so materializing the box's final pending character
+    // is a typed suspension inside that same packaging operation. Repeating
+    // the suspension proves retry does not consume the move-only box owner.
+    let image = crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(&mut control, br"\font\f=cmr10 \dump");
+        run_to_end(&mut control, stores);
+        control
+            .take_format_dump(stores)
+            .expect("quiescent font format captures")
+            .expect("INITEX produced a format")
+            .image
+    });
+
+    tex_state::with_materialized_format(
+        tex_state::interner::InternerBudget::new(16_384, 16_384, 1 << 20)
+            .expect("test interner budget"),
+        tex_state::World::memory(),
+        image,
+        |stores| {
+            tex_command::install_tex82_expandable_primitives(stores);
+            crate::install_unexpandable_primitives(stores);
+            let mut control = MainControl::with_profile(CommandProfile::TEX82);
+            control.set_preloaded_format(crate::PreloadedFormat {
+                dump_name: "box-font".to_owned(),
+                format_name: "box-font".to_owned(),
+                year: 2026,
+                month: 8,
+                day: 31,
+            });
+            control.begin_job(stores, "box-font.tex");
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            register_source(&mut control, br"\setbox0=\vbox{\hbox{\f X}}\count0=23\end");
+            run_to_end(&mut control, stores);
+
+            assert_eq!(stores.count(0).expect("count register"), 23);
+            assert!(stores.copy_box_to_page(0).is_some());
+            assert!(control.boxes.active_boxes.is_empty());
+            assert!(
+                !terminal_text(stores).contains("Too many }'s"),
+                "{}",
+                terminal_text(stores)
+            );
+        },
+    )
+    .expect("font format materializes");
+}
+
+#[test]
 fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
