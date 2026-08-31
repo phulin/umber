@@ -295,6 +295,52 @@ fn mixed_multi_page_markup_has_exact_embedded_and_manifest_goldens() {
 }
 
 #[test]
+fn stack_scalar_encoder_covers_decimal_hex_and_fixed_extrema() {
+    assert_eq!(AsciiScalar::unsigned_decimal(0).as_str(), "0");
+    assert_eq!(
+        AsciiScalar::unsigned_decimal(u128::MAX).as_str(),
+        "340282366920938463463374607431768211455"
+    );
+    assert_eq!(
+        AsciiScalar::signed_decimal(i128::MIN).as_str(),
+        "-170141183460469231731687303715884105728"
+    );
+    assert_eq!(
+        AsciiScalar::signed_decimal(i128::MAX).as_str(),
+        "170141183460469231731687303715884105727"
+    );
+    assert_eq!(AsciiScalar::lower_hex(0).as_str(), "0");
+    assert_eq!(AsciiScalar::lower_hex(u32::MAX).as_str(), "ffffffff");
+    assert_eq!(AsciiScalar::variation_decimal(0).as_str(), "0");
+    assert_eq!(
+        AsciiScalar::variation_decimal(i32::MAX).as_str(),
+        "32767.9999847412109375"
+    );
+    assert_eq!(AsciiScalar::variation_decimal(i32::MIN).as_str(), "-32768");
+}
+
+#[test]
+fn css_scalars_preserve_canonical_rounding_and_signs() {
+    fn css(raw: i32, mag: i32, extra_denominator: i128) -> String {
+        let mut out = String::new();
+        MarkupWriter::new(&mut out, usize::MAX).css_number(
+            Scaled::from_raw(raw),
+            mag,
+            extra_denominator,
+        );
+        out
+    }
+
+    assert_eq!(css(0, 1_000, 1), "0.00000000");
+    assert_eq!(css(1, 1_000, 1), "0.00002027");
+    assert_eq!(css(17, 1_000, 1), "0.00034457");
+    assert_eq!(css(-17, 1_000, 1), "-0.00034457");
+    assert_eq!(css(i32::MAX, i32::MAX, 1), "93474462913.57808221");
+    assert_eq!(css(i32::MIN, i32::MAX, 1), "-93474462957.10552096");
+    assert_eq!(css(655_360, 1_000, 1_000), "0.01328352");
+}
+
+#[test]
 fn warmed_markup_page_emission_allocates_zero_bytes() {
     let digest = RenderDigest::parse_hex(ZERO_DIGEST).expect("zero digest");
     let text = "direct accessibility <&> without a page-sized staging string";
@@ -311,8 +357,9 @@ fn warmed_markup_page_emission_allocates_zero_bytes() {
         counts: [0; 10],
         nodes: (0..1_024)
             .map(|ordinal| {
+                let event_ordinal = if ordinal == 1_023 { u32::MAX } else { ordinal };
                 text_node(
-                    ordinal,
+                    event_ordinal,
                     i32::try_from(ordinal).expect("test ordinal fits in i32") - 512,
                     Some(ordinal / 32),
                     text,
@@ -342,5 +389,7 @@ fn warmed_markup_page_emission_allocates_zero_bytes() {
     assert_eq!(after.requested_bytes, before.requested_bytes);
     assert_eq!(out.matches("<svg class=\"umber-run\"").count(), 1_024);
     assert_eq!(out.matches("<p class=\"umber-a11y-line\">").count(), 32);
+    assert!(out.contains("data-umber-page=\"4294967295\""));
+    assert!(out.contains("data-umber-event=\"4294967295\""));
     assert!(out.contains("data-umber-codes=\"0x0,0xffffffff,space\""));
 }

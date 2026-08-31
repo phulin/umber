@@ -3,8 +3,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::fmt::Write as _;
-
 use tex_arith::Scaled;
 
 use super::incremental;
@@ -28,6 +26,113 @@ pub(super) const BASE_CSS: &str = concat!(
     ".umber-a11y-line{display:block;margin:0;padding:0}\n",
     "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
 );
+
+const ASCII_SCALAR_CAPACITY: usize = 64;
+
+struct AsciiScalar {
+    bytes: [u8; ASCII_SCALAR_CAPACITY],
+    start: usize,
+}
+
+impl AsciiScalar {
+    fn unsigned_decimal(value: u128) -> Self {
+        let mut scalar = Self::empty();
+        scalar.prepend_digits(value, 10, 1);
+        scalar
+    }
+
+    fn signed_decimal(value: i128) -> Self {
+        let mut scalar = Self::empty();
+        scalar.prepend_digits(value.unsigned_abs(), 10, 1);
+        if value < 0 {
+            scalar.prepend(b'-');
+        }
+        scalar
+    }
+
+    fn lower_hex(value: u32) -> Self {
+        let mut scalar = Self::empty();
+        scalar.prepend_digits(u128::from(value), 16, 1);
+        scalar
+    }
+
+    fn rounded_decimal(value: u128, negative: bool, fraction_places: u32) -> Self {
+        let mut scalar = Self::empty();
+        let fraction_scale = 10_u128.pow(fraction_places);
+        scalar.prepend_digits(
+            value % fraction_scale,
+            10,
+            usize::try_from(fraction_places).expect("fraction width fits in usize"),
+        );
+        scalar.prepend(b'.');
+        scalar.prepend_digits(value / fraction_scale, 10, 1);
+        if negative && value != 0 {
+            scalar.prepend(b'-');
+        }
+        scalar
+    }
+
+    fn variation_decimal(value: i32) -> Self {
+        const BINARY_DENOMINATOR: u128 = 65_536;
+        const DECIMAL_FRACTION_FACTOR: u128 = 152_587_890_625; // 5^16
+
+        let mut scalar = Self::empty();
+        let magnitude = u128::from(value.unsigned_abs());
+        let integer = magnitude / BINARY_DENOMINATOR;
+        let remainder = magnitude % BINARY_DENOMINATOR;
+        if remainder == 0 {
+            scalar.prepend_digits(integer, 10, 1);
+        } else {
+            let mut fraction = remainder * DECIMAL_FRACTION_FACTOR;
+            let mut width = 16;
+            while fraction % 10 == 0 {
+                fraction /= 10;
+                width -= 1;
+            }
+            scalar.prepend_digits(fraction, 10, width);
+            scalar.prepend(b'.');
+            scalar.prepend_digits(integer, 10, 1);
+        }
+        if value < 0 {
+            scalar.prepend(b'-');
+        }
+        scalar
+    }
+
+    fn empty() -> Self {
+        Self {
+            bytes: [0; ASCII_SCALAR_CAPACITY],
+            start: ASCII_SCALAR_CAPACITY,
+        }
+    }
+
+    fn prepend_digits(&mut self, mut value: u128, radix: u8, mut minimum_width: usize) {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        let radix = u128::from(radix);
+        loop {
+            let digit = usize::try_from(value % radix).expect("digit fits in usize");
+            self.prepend(DIGITS[digit]);
+            value /= radix;
+            minimum_width = minimum_width.saturating_sub(1);
+            if value == 0 && minimum_width == 0 {
+                break;
+            }
+        }
+    }
+
+    fn prepend(&mut self, byte: u8) {
+        self.start = self
+            .start
+            .checked_sub(1)
+            .expect("ASCII scalar buffer has enough capacity");
+        self.bytes[self.start] = byte;
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[self.start..])
+            .expect("ASCII scalar encoder only initializes ASCII bytes")
+    }
+}
 
 pub(super) fn write_render_page(
     out: &mut String,
@@ -376,8 +481,8 @@ impl<'a> MarkupWriter<'a> {
             self.out.push('\'');
             self.write_css_tag(*tag);
             self.out.push_str("' ");
-            write!(self.out, "{}", f64::from(*value) / 65_536.0)
-                .expect("writing to a String cannot fail");
+            self.out
+                .push_str(AsciiScalar::variation_decimal(*value).as_str());
         }
     }
 
@@ -464,16 +569,13 @@ impl<'a> MarkupWriter<'a> {
         if remainder * 2 >= denominator {
             scaled += 1;
         }
-        if negative && scaled != 0 {
-            self.out.push('-');
-        }
-        self.unsigned_decimal(
-            u128::try_from(scaled / PLACES).expect("rounded CSS magnitude is nonnegative"),
-        );
-        self.out.push('.');
-        self.fixed_decimal(
-            u32::try_from(scaled % PLACES).expect("CSS fraction is below eight places"),
-            8,
+        self.out.push_str(
+            AsciiScalar::rounded_decimal(
+                u128::try_from(scaled).expect("rounded CSS magnitude is nonnegative"),
+                negative,
+                8,
+            )
+            .as_str(),
         );
     }
 
@@ -485,7 +587,7 @@ impl<'a> MarkupWriter<'a> {
             match unit {
                 TextUnit::Code(code) => {
                     self.out.push_str("0x");
-                    write!(self.out, "{code:x}").expect("writing to a String cannot fail");
+                    self.out.push_str(AsciiScalar::lower_hex(*code).as_str());
                 }
                 TextUnit::Space => self.out.push_str("space"),
             }
@@ -493,23 +595,13 @@ impl<'a> MarkupWriter<'a> {
     }
 
     fn signed_decimal(&mut self, value: i128) {
-        if value < 0 {
-            self.out.push('-');
-        }
-        self.unsigned_decimal(value.unsigned_abs());
+        self.out
+            .push_str(AsciiScalar::signed_decimal(value).as_str());
     }
 
     fn unsigned_decimal(&mut self, value: u128) {
-        write!(self.out, "{value}").expect("writing to a String cannot fail");
-    }
-
-    fn fixed_decimal(&mut self, value: u32, width: u32) {
-        let mut divisor = 10_u32.pow(width - 1);
-        while divisor > 0 {
-            let digit = u8::try_from((value / divisor) % 10).expect("decimal digit fits in u8");
-            self.out.push(char::from(b'0' + digit));
-            divisor /= 10;
-        }
+        self.out
+            .push_str(AsciiScalar::unsigned_decimal(value).as_str());
     }
 
     fn write_hex(&mut self, bytes: &[u8]) {
