@@ -2032,13 +2032,13 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
 
 #[test]
 fn easy_line_active_nodes_accumulate_in_source_order() {
-    let candidate = |position| Candidate {
-        serial: position,
+    let candidate = |serial, line, fitness, position| Candidate {
+        serial,
         position,
         break_site: INITIAL_BREAK_SITE,
         penalty: 0,
-        line: 9,
-        fitness: Fitness::Decent,
+        line,
+        fitness,
         path_demerits: 0,
         passive: None,
         previous: None,
@@ -2046,9 +2046,14 @@ fn easy_line_active_nodes_accumulate_in_source_order() {
         line_shortfall: sp(0),
         line_glue: sp(0),
     };
-    let candidates = [candidate(0), candidate(14), candidate(15)];
+    let candidates = [
+        candidate(0, 0, Fitness::Decent, 0),
+        candidate(1, 2, Fitness::Tight, 14),
+        candidate(2, 3, Fitness::Decent, 14),
+        candidate(3, 2, Fitness::Loose, 15),
+    ];
     let p = params(100);
-    let mut active = vec![candidates[2], candidates[1]];
+    let mut active = vec![candidates[3], candidates[1], candidates[2]];
 
     sort_active_candidates(&mut active, &p, tex_easy_line(&p));
 
@@ -2057,7 +2062,15 @@ fn easy_line_active_nodes_accumulate_in_source_order() {
             .iter()
             .map(|candidate| candidate.position)
             .collect::<Vec<_>>(),
-        vec![14, 15]
+        vec![14, 14, 15]
+    );
+    assert_eq!(
+        active
+            .iter()
+            .map(|candidate| candidate.fitness)
+            .collect::<Vec<_>>(),
+        vec![Fitness::Decent, Fitness::Tight, Fitness::Loose],
+        "TeX82 §§848/853 ignore raw line numbers beyond easy_line and retain fitness insertion order"
     );
 }
 

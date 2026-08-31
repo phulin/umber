@@ -1356,7 +1356,9 @@ fn trace_fitness(fitness: Fitness) -> i32 {
 }
 
 fn line_number_class(line: usize, easy_line: usize) -> usize {
-    if line > easy_line { easy_line } else { line }
+    // TeX82 §848 keeps `easy_line` itself distinct; only strictly later
+    // equal-width lines share the deferred class.
+    line.min(easy_line.saturating_add(1))
 }
 
 fn record_best_route(
@@ -1459,20 +1461,28 @@ fn active_candidate_order(
     params: &LineBreakParams,
     easy_line: usize,
 ) -> core::cmp::Ordering {
-    left.line
-        .cmp(&right.line)
+    let effective_line = |candidate: &Candidate| {
+        candidate
+            .line
+            .checked_add(1)
+            .and_then(|line| line.checked_add(params.shape.line_offset))
+            .expect("line number exceeds usize")
+    };
+    let left_line = effective_line(left);
+    let right_line = effective_line(right);
+    line_number_class(left_line, easy_line)
+        .cmp(&line_number_class(right_line, easy_line))
         .then_with(|| {
-            let effective_line = left
-                .line
-                .checked_add(1)
-                .and_then(|line| line.checked_add(params.shape.line_offset))
-                .expect("line number exceeds usize");
-            if effective_line > easy_line {
+            if left_line > easy_line {
                 left.position.cmp(&right.position)
             } else {
                 right.position.cmp(&left.position)
             }
         })
+        // TeX82 §853 inserts the four fitness-class champions in ascending
+        // class order. This is decisive when §858's final-pass fallback can
+        // admit only the last active route at an overfull forced break.
+        .then_with(|| trace_fitness(left.fitness).cmp(&trace_fitness(right.fitness)))
         // Candidate serials encode insertion/visit order. This makes the
         // comparator total while preserving stable-sort behavior for routes
         // with the same TeX active-list key.
