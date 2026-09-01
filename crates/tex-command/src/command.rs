@@ -379,13 +379,7 @@ impl<G> CurrentCommand<G> {
             counters.slot_initializations = counters.slot_initializations.saturating_add(1);
         });
         Self {
-            spelling: TracedTokenWord::pack(
-                Token::Char {
-                    ch: '\0',
-                    cat: Catcode::Other,
-                },
-                tex_state::token::OriginId::UNKNOWN,
-            ),
+            spelling: TracedTokenWord::INITIALIZED_PLACEHOLDER,
             meaning: ResolvedMeaning::Static(Meaning::Undefined),
             identity: CommandIdentity::Ordinary,
             control_sequence: None,

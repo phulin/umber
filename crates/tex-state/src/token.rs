@@ -531,6 +531,15 @@ pub struct TracedTokenWord(u64);
 impl TracedTokenWord {
     const PAYLOAD_SHIFT: u32 = 32;
 
+    /// Initialized storage for a destination that is not yet a delivered token.
+    ///
+    /// This value must be overwritten before a semantic consumer can observe
+    /// it. It lets safe destination-directed APIs initialize their final slot
+    /// without constructing a fake [`Token`] and running the checked semantic
+    /// packer for a value that is never delivered.
+    #[doc(hidden)]
+    pub const INITIALIZED_PLACEHOLDER: Self = Self(0);
+
     /// Packs a semantic token with its origin.
     #[must_use]
     pub fn pack(token: Token, origin: OriginId) -> Self {
