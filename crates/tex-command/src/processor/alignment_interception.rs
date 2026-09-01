@@ -158,7 +158,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             match level {
                 InputLevel::Tokens(cursor) => {
                     if cursor
-                        .token_at(
+                        .indexed_token_at_cold(
                             PackedTokenSources::new(
                                 &self.command.input.replay,
                                 self.command.attempt.arena(),

@@ -145,7 +145,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     InputLevel::Tokens(cursor) => {
                         (!matches!(cursor.behavior, TokenBehavior::VTemplate)
                             && cursor
-                                .token_at(
+                                .indexed_token_at_cold(
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
@@ -237,7 +237,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
             InputLevel::Tokens(cursor) => cursor
-                .token_at(
+                .indexed_token_at_cold(
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
@@ -257,7 +257,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
                             && cursor
-                                .token_at(PackedTokenSources::new(
+                                .indexed_token_at_cold(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
                                 ), self.state)
@@ -289,7 +289,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     {
                         Some(
                             cursor
-                                .token_at(
+                                .indexed_token_at_cold(
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
@@ -333,7 +333,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
             || cursor
-                .token_at(
+                .indexed_token_at_cold(
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
@@ -347,7 +347,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .command
                         .input
                         .replay
-                        .get(replay, 0)
+                        .indexed_get_cold(replay, 0)
                         .map(|spelling| spelling.semantic_token()),
                     _ => None,
                 },
@@ -551,7 +551,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
                         && cursor
-                            .token_at(
+                            .indexed_token_at_cold(
                                 PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),

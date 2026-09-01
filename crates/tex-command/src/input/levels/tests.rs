@@ -26,8 +26,8 @@ fn transient_payload_is_read_through_its_replay_coordinate() {
     let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         panic!("transient replay coordinate")
     };
-    assert_eq!(lane.get(replay, 0), Some(traced('a')));
-    assert_eq!(lane.get(replay, 1), Some(traced('b')));
+    assert_eq!(lane.indexed_get_cold(replay, 0), Some(traced('a')));
+    assert_eq!(lane.indexed_get_cold(replay, 1), Some(traced('b')));
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
     let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         panic!("escaping input replay coordinate")
     };
-    assert_eq!(lane.get(replay, 0), Some(traced('a')));
-    assert_eq!(lane.get(replay, 1), Some(traced('b')));
+    assert_eq!(lane.indexed_get_cold(replay, 0), Some(traced('a')));
+    assert_eq!(lane.indexed_get_cold(replay, 1), Some(traced('b')));
 
     let snapshot_payload = snapshot
         .finish_input_builder(builder)
@@ -60,8 +60,11 @@ fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
     else {
         panic!("snapshot replay coordinate")
     };
-    assert_eq!(snapshot.get(snapshot_replay, 0), Some(traced('a')));
-    assert_eq!(snapshot.get(snapshot_replay, 1), None);
+    assert_eq!(
+        snapshot.indexed_get_cold(snapshot_replay, 0),
+        Some(traced('a'))
+    );
+    assert_eq!(snapshot.indexed_get_cold(snapshot_replay, 1), None);
     assert!(
         lane.words.active.is_empty(),
         "escaping words are written only into their final replay entry"
@@ -89,7 +92,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
         lane.release(first).is_err(),
         "non-top replay must stay live"
     );
-    assert_eq!(lane.get(first, 0), Some(traced('a')));
+    assert_eq!(lane.indexed_get_cold(first, 0), Some(traced('a')));
     lane.release(second).expect("top replay retires");
     lane.release(first).expect("older replay retires after top");
 
@@ -104,7 +107,7 @@ fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
     let PackedTokenSpanHandle::Replay { replay: warmed, .. } = warmed else {
         panic!("warmed replay coordinate")
     };
-    assert_eq!(lane.get(warmed, 0), Some(traced('c')));
+    assert_eq!(lane.indexed_get_cold(warmed, 0), Some(traced('c')));
 }
 
 #[test]
@@ -131,8 +134,8 @@ fn replay_lane_clone_preserves_prior_payload_while_current_reuses_lifo_state() {
         panic!("candidate replay coordinate")
     };
 
-    assert_eq!(snapshot.get(prior, 0), Some(traced('p')));
-    assert_eq!(current.get(candidate, 0), Some(traced('c')));
+    assert_eq!(snapshot.indexed_get_cold(prior, 0), Some(traced('p')));
+    assert_eq!(current.indexed_get_cold(candidate, 0), Some(traced('c')));
 }
 
 #[test]
@@ -144,10 +147,16 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     assert_eq!(frame.position(), 0);
     let _ = frame.advance();
     let mut lane = ReplayLane::default();
+    let payload = PackedTokenSpanHandle::transient([traced('x')])
+        .admit(&mut lane)
+        .expect("replay admission");
     let cursor: TokenCursor<()> = TokenCursor {
-        span: PackedTokenSpanHandle::transient([traced('x')])
-            .admit(&mut lane)
-            .expect("replay admission"),
+        replay_cursor: match &payload {
+            PackedTokenSpanHandle::Replay { replay, .. } => lane.resident_cursor(*replay),
+            PackedTokenSpanHandle::DurableList { .. }
+            | PackedTokenSpanHandle::AttemptList { .. } => None,
+        },
+        span: payload,
         behavior,
         retirement,
         trace,
@@ -187,7 +196,10 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
     else {
         panic!("transient replay payload")
     };
-    assert_eq!(lane.get(stored, 0), lane.get(transient, 0));
+    assert_eq!(
+        lane.indexed_get_cold(stored, 0),
+        lane.indexed_get_cold(transient, 0)
+    );
 }
 
 #[test]
@@ -201,11 +213,11 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 80);
+    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
     assert_eq!(std::mem::size_of::<super::ResidentSpanCursor>(), 24);
     assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 48);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert!(std::mem::size_of::<super::SourceLevel<()>>() <= 48);
     assert!(
@@ -213,6 +225,103 @@ fn replay_coordinates_keep_input_frames_compact() {
         "source lex state is {} bytes",
         std::mem::size_of::<super::SourceLexExecutionState>()
     );
+}
+
+#[test]
+fn sequential_replay_inspects_only_crossed_segment_boundaries() {
+    for segments in [1_usize, 64, 4_096] {
+        let words = segments * super::REPLAY_SEGMENT_ITEMS;
+        let mut lane = ReplayLane::<()>::default();
+        let payload =
+            PackedTokenSpanHandle::<()>::transient(std::iter::repeat_n(traced('x'), words))
+                .admit(&mut lane)
+                .expect("adversarial replay span admits");
+        let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
+            unreachable!("transient span is replay-owned")
+        };
+        let mut cursor = lane
+            .resident_cursor(replay)
+            .expect("adversarial span has a resident cursor");
+        let mut inspections = 0;
+        let mut run_transitions = 0;
+        for _ in 0..words {
+            assert_eq!(
+                lane.advance_sequential(
+                    replay,
+                    &mut cursor,
+                    &mut inspections,
+                    &mut run_transitions,
+                ),
+                Some(traced('x'))
+            );
+        }
+        assert_eq!(
+            lane.advance_sequential(replay, &mut cursor, &mut inspections, &mut run_transitions,),
+            None
+        );
+        assert_eq!(inspections, (segments - 1) as u64);
+        assert_eq!(run_transitions, 0);
+    }
+}
+
+#[test]
+fn sequential_replay_crosses_prefix_body_and_owned_runs_exactly() {
+    let mut lane = ReplayLane::<()>::default();
+    let payload = PackedTokenSpanHandle::<()>::backed_up(std::iter::repeat_n(
+        BackedUpToken {
+            spelling: traced('b'),
+        },
+        300,
+    ))
+    .admit(&mut lane)
+    .expect("backed-up body admits");
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
+        unreachable!("backed-up span is replay-owned")
+    };
+    lane.prepend_backed_up(
+        replay,
+        std::iter::repeat_n(
+            BackedUpToken {
+                spelling: traced('p'),
+            },
+            300,
+        ),
+    )
+    .expect("prefix admits");
+    let mut cursor = lane.resident_cursor(replay).expect("prefixed cursor");
+    let mut inspections = 0;
+    let mut run_transitions = 0;
+    for expected in
+        std::iter::repeat_n(traced('p'), 300).chain(std::iter::repeat_n(traced('b'), 300))
+    {
+        assert_eq!(
+            lane.advance_sequential(replay, &mut cursor, &mut inspections, &mut run_transitions,),
+            Some(expected)
+        );
+    }
+    assert_eq!(inspections, 3);
+    assert_eq!(run_transitions, 1);
+
+    let builder = lane.begin_input_builder().expect("owned builder");
+    for _ in 0..300 {
+        lane.push_input_builder_word(builder, traced('o'))
+            .expect("owned word");
+    }
+    let owned = lane.finish_input_builder(builder).expect("owned replay");
+    let PackedTokenSpanHandle::Replay { replay, .. } = owned else {
+        unreachable!("owned span is replay-owned")
+    };
+    let mut cursor = lane.resident_cursor(replay).expect("owned cursor");
+    let mut inspections = 0;
+    let mut run_transitions = 0;
+    for _ in 0..300 {
+        assert_eq!(
+            lane.advance_sequential(replay, &mut cursor, &mut inspections, &mut run_transitions,),
+            Some(traced('o'))
+        );
+    }
+    assert_eq!(inspections, 1);
+    assert_eq!(run_transitions, 0);
 }
 
 #[test]

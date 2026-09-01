@@ -297,6 +297,9 @@ pub(crate) enum SourceRetirement {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenCursor<G> {
     pub(crate) span: PackedTokenSpanHandle<G>,
+    /// Sequential physical coordinate for replay-lane spans. Durable and
+    /// attempt spans use their existing direct indexed owners.
+    pub(crate) replay_cursor: Option<ResidentReplayCursor>,
     pub(crate) behavior: TokenBehavior,
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
@@ -382,13 +385,13 @@ impl<G> TokenCursor<G> {
     }
 
     /// Peeks without advancing for stack-conservation and lifecycle checks.
-    #[inline(always)]
-    pub(crate) fn token_at(
+    #[cold]
+    pub(crate) fn indexed_token_at_cold(
         &self,
         sources: PackedTokenSources<'_, G>,
         _state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
-        sources.token_at(&self.span, self.position())
+        sources.indexed_token_at_cold(&self.span, self.position())
     }
 }
 
@@ -402,8 +405,8 @@ pub(crate) type PackedTokenAt = (TokenWord, OriginId);
 /// Typed lifetime handle for one immutable packed-token span.
 ///
 /// The source domain is selected exactly once when the input level is
-/// created. Delivery thereafter uses [`PackedTokenSources::token_at`] with the
-/// same handle and the input frame's sole scalar position. The variants are a
+/// created. Cold inspection uses indexed lookup; delivery carries a sequential
+/// replay coordinate beside the input frame. The variants are a
 /// storage-boundary lifetime distinction, not separate delivery objects.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) enum PackedTokenSpanHandle<G> {
@@ -476,7 +479,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         match span {
             PackedTokenSpanHandle::Replay { replay, .. } => self
                 .replay
-                .get(*replay, index)
+                .indexed_get_cold(*replay, index)
                 .map(|word| (word.token_word(), word.origin())),
             PackedTokenSpanHandle::AttemptList { list, .. } => self
                 .attempt
@@ -490,7 +493,8 @@ impl<'a, G> PackedTokenSources<'a, G> {
     }
 
     /// Peeks through an admitted span without advancing its input frame.
-    pub(crate) fn token_at(
+    #[cold]
+    pub(crate) fn indexed_token_at_cold(
         &self,
         span: &PackedTokenSpanHandle<G>,
         index: usize,
@@ -498,7 +502,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         match span {
             PackedTokenSpanHandle::Replay { replay, .. } => self
                 .replay
-                .get(*replay, index)
+                .indexed_get_cold(*replay, index)
                 .map(|word| (word.token_word(), word.origin())),
             PackedTokenSpanHandle::AttemptList { list, .. } => self
                 .attempt
@@ -524,6 +528,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
 pub(crate) enum InputLevelInlineState {
     TokenPosition {
         position: u32,
+        replay_cursor: Option<ResidentReplayCursor>,
     },
     Tokens {
         frame: PackedInputFrame,
@@ -539,8 +544,14 @@ pub(crate) enum InputLevelInlineState {
 }
 
 impl InputLevelInlineState {
-    pub(crate) const fn token_position(position: u32) -> Self {
-        Self::TokenPosition { position }
+    pub(crate) const fn token_position(
+        position: u32,
+        replay_cursor: Option<ResidentReplayCursor>,
+    ) -> Self {
+        Self::TokenPosition {
+            position,
+            replay_cursor,
+        }
     }
 
     pub(crate) const fn new(frame: PackedInputFrame, retirement: RetirementBehavior) -> Self {
@@ -739,8 +750,12 @@ impl<G> InputLevel<G> {
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
             Self::Tokens(tokens) => match state {
-                InputLevelInlineState::TokenPosition { position } => {
+                InputLevelInlineState::TokenPosition {
+                    position,
+                    replay_cursor,
+                } => {
                     tokens.frame.swap_position(position);
+                    std::mem::swap(&mut tokens.replay_cursor, replay_cursor);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
                     std::mem::swap(&mut tokens.frame, frame);
@@ -873,6 +888,36 @@ struct ReplayLaneMark {
 struct ReplayLaneCursor {
     segment: u32,
     offset: u16,
+}
+
+/// Current physical replay run and segment coordinate for one resident input
+/// row. `remaining` and `segment_end` are scalar boundary coordinates, so a
+/// warm word neither rescans the run prefix nor rereads segment length.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ResidentReplayCursor {
+    run: ResidentReplayRun,
+    segment: u32,
+    remaining: u32,
+    offset: u16,
+    segment_end: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ResidentReplayRun {
+    Empty,
+    Prefix,
+    SegmentedBody,
+    OwnedBody,
+}
+
+impl ResidentReplayCursor {
+    pub(crate) const EMPTY: Self = Self {
+        run: ResidentReplayRun::Empty,
+        segment: 0,
+        remaining: 0,
+        offset: 0,
+        segment_end: 0,
+    };
 }
 
 #[derive(Debug)]
@@ -1035,7 +1080,59 @@ impl<T> SegmentedReplayLane<T> {
         })
     }
 
-    fn get(&self, start: ReplayLaneCursor, mut index: usize) -> Option<&T> {
+    fn resident_cursor(
+        &self,
+        start: ReplayLaneCursor,
+        len: u32,
+        run: ResidentReplayRun,
+    ) -> Option<ResidentReplayCursor> {
+        if len == 0 {
+            return Some(ResidentReplayCursor::EMPTY);
+        }
+        let segment = self.active.get(start.segment as usize)?;
+        (start.offset < segment.used).then_some(ResidentReplayCursor {
+            run,
+            segment: start.segment,
+            remaining: len,
+            offset: start.offset,
+            segment_end: segment.used,
+        })
+    }
+
+    #[inline(always)]
+    fn advance_sequential(
+        &self,
+        cursor: &mut ResidentReplayCursor,
+        #[cfg(any(test, feature = "profiling"))] segment_inspections: &mut u64,
+    ) -> Option<&T> {
+        if cursor.remaining == 0 {
+            return None;
+        }
+        if cursor.offset == cursor.segment_end {
+            cursor.segment = cursor.segment.checked_add(1)?;
+            cursor.offset = 0;
+            let segment = self.active.get(cursor.segment as usize)?;
+            cursor.segment_end = segment.used;
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                *segment_inspections = segment_inspections.saturating_add(1);
+            }
+        }
+        let value = self
+            .active
+            .get(cursor.segment as usize)?
+            .storage
+            .values
+            .get(usize::from(cursor.offset))?;
+        cursor.offset = cursor.offset.checked_add(1)?;
+        cursor.remaining -= 1;
+        Some(value)
+    }
+
+    /// Cold indexed lookup for diagnostics, checkpoint projection, and test
+    /// inspection. Resident delivery must use `advance_sequential`.
+    #[cold]
+    fn indexed_get_cold(&self, start: ReplayLaneCursor, mut index: usize) -> Option<&T> {
         let mut segment_index = start.segment as usize;
         let mut offset = usize::from(start.offset);
         loop {
@@ -1149,8 +1246,9 @@ impl Clone for OwnedReplayWords {
 }
 
 impl OwnedReplayWords {
-    fn get(&self, index: usize) -> Option<&TracedTokenWord> {
-        self.lane.get(
+    #[cold]
+    fn indexed_get_cold(&self, index: usize) -> Option<&TracedTokenWord> {
+        self.lane.indexed_get_cold(
             ReplayLaneCursor {
                 segment: 0,
                 offset: 0,
@@ -1405,7 +1503,9 @@ impl<G> ReplayLane<G> {
         builder: ReplayInputBuilderId<G>,
         index: usize,
     ) -> Option<&TracedTokenWord> {
-        self.input_builders.get(builder.slot as usize)?.get(index)
+        self.input_builders
+            .get(builder.slot as usize)?
+            .indexed_get_cold(index)
     }
 
     pub(crate) fn input_builder_len(&self, builder: ReplayInputBuilderId<G>) -> Option<u32> {
@@ -1464,7 +1564,97 @@ impl<G> ReplayLane<G> {
         Ok(())
     }
 
-    pub(crate) fn get(&self, replay: ReplayPayloadId<G>, index: usize) -> Option<TracedTokenWord> {
+    pub(crate) fn resident_cursor(
+        &self,
+        replay: ReplayPayloadId<G>,
+    ) -> Option<ResidentReplayCursor> {
+        let entry = self.entries.get(replay.entry as usize)?;
+        if entry.released {
+            return None;
+        }
+        if let Some(prefix) = entry.prefix_words.filter(|prefix| prefix.len != 0) {
+            return self
+                .words
+                .resident_cursor(prefix.start, prefix.len, ResidentReplayRun::Prefix);
+        }
+        self.body_resident_cursor(entry)
+    }
+
+    fn body_resident_cursor(&self, entry: &ReplayEntry) -> Option<ResidentReplayCursor> {
+        match &entry.body_words {
+            ReplayBodyWords::Segmented(words) => {
+                self.words
+                    .resident_cursor(words.start, words.len, ResidentReplayRun::SegmentedBody)
+            }
+            ReplayBodyWords::Owned(words) => words.lane.resident_cursor(
+                ReplayLaneCursor {
+                    segment: 0,
+                    offset: 0,
+                },
+                words.len,
+                ResidentReplayRun::OwnedBody,
+            ),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn advance_sequential(
+        &self,
+        replay: ReplayPayloadId<G>,
+        cursor: &mut ResidentReplayCursor,
+        #[cfg(any(test, feature = "profiling"))] segment_inspections: &mut u64,
+        #[cfg(any(test, feature = "profiling"))] run_transitions: &mut u64,
+    ) -> Option<TracedTokenWord> {
+        if cursor.remaining == 0 && cursor.run == ResidentReplayRun::Prefix {
+            let entry = self.entries.get(replay.entry as usize)?;
+            if entry.released {
+                return None;
+            }
+            *cursor = self.body_resident_cursor(entry)?;
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                *run_transitions = run_transitions.saturating_add(1);
+                if cursor.run != ResidentReplayRun::Empty {
+                    *segment_inspections = segment_inspections.saturating_add(1);
+                }
+            }
+        }
+        match cursor.run {
+            ResidentReplayRun::Empty => None,
+            ResidentReplayRun::Prefix | ResidentReplayRun::SegmentedBody => self
+                .words
+                .advance_sequential(
+                    cursor,
+                    #[cfg(any(test, feature = "profiling"))]
+                    segment_inspections,
+                )
+                .copied(),
+            ResidentReplayRun::OwnedBody => {
+                self.entries
+                    .get(replay.entry as usize)
+                    .and_then(|entry| match &entry.body_words {
+                        ReplayBodyWords::Owned(words) if !entry.released => words
+                            .lane
+                            .advance_sequential(
+                                cursor,
+                                #[cfg(any(test, feature = "profiling"))]
+                                segment_inspections,
+                            )
+                            .copied(),
+                        ReplayBodyWords::Segmented(_) | ReplayBodyWords::Owned(_) => None,
+                    })
+            }
+        }
+    }
+
+    /// Cold indexed lookup for diagnostic rendering, semantic projection, and
+    /// lifecycle probes. Ordinary resident delivery has no indexed replay API.
+    #[cold]
+    pub(crate) fn indexed_get_cold(
+        &self,
+        replay: ReplayPayloadId<G>,
+        index: usize,
+    ) -> Option<TracedTokenWord> {
         let entry = self.entries.get(replay.entry as usize)?;
         if entry.released {
             return None;
@@ -1475,12 +1665,14 @@ impl<G> ReplayLane<G> {
         let prefix_len = entry.prefix_words.map_or(0, |span| span.len as usize);
         if index < prefix_len {
             let words = entry.prefix_words?;
-            return self.words.get(words.start, index).copied();
+            return self.words.indexed_get_cold(words.start, index).copied();
         }
         let local = index - prefix_len;
         let spelling = match &entry.body_words {
-            ReplayBodyWords::Segmented(words) => *self.words.get(words.start, local)?,
-            ReplayBodyWords::Owned(words) => *words.get(local)?,
+            ReplayBodyWords::Segmented(words) => {
+                *self.words.indexed_get_cold(words.start, local)?
+            }
+            ReplayBodyWords::Owned(words) => *words.indexed_get_cold(local)?,
         };
         Some(spelling)
     }

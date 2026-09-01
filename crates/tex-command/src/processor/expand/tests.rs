@@ -666,8 +666,17 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 "suspend/resume/rollback must retain scalar delivery"
             );
             assert_eq!(intermediate, 0);
-            let (_selections, loads, advances, writes, lookups, _parameters, relays) =
-                processor.command.profile_stored_token_advance_counters();
+            let (
+                _selections,
+                loads,
+                advances,
+                writes,
+                lookups,
+                _parameters,
+                relays,
+                _segment_inspections,
+                _run_transitions,
+            ) = processor.command.profile_stored_token_advance_counters();
             assert!(loads > 0, "suspension fixture must traverse stored input");
             assert_eq!(advances, loads);
             assert_eq!(writes, loads);

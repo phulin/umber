@@ -709,6 +709,9 @@ fn fused_raw_expanded_delivery() {
         let mut fuel = CommandFuelLedger::default();
         let mut destination = None;
         command.profile_reset_stored_token_advance_counters();
+        let copies_before = command
+            .profile_timeline_counters()
+            .full_frame_history_clones;
         let work_before = fuel.work();
         let mut delivery_processor = processor(
             &mut context,
@@ -751,6 +754,10 @@ fn fused_raw_expanded_delivery() {
             expanded_elapsed = start.elapsed();
         });
         drop(delivery_processor);
+        let copies_after = command
+            .profile_timeline_counters()
+            .full_frame_history_clones;
+        assert_eq!(copies_after - copies_before, 0);
         let work_after = fuel.work();
         assert_eq!(
             work_after.fuel_charges - work_before.fuel_charges,
@@ -778,16 +785,21 @@ fn fused_raw_expanded_delivery() {
                 (DELIVERIES * 2) as u64,
                 0,
                 0,
+                ((REPLAY_WORDS - 1) / 256) as u64,
+                0,
             )
         );
+        let counters = command.profile_stored_token_advance_counters();
         println!(
-            "fused_raw_expanded_delivery raw={} expanded={} stored_sources=3 loads={} advances={} writes={} lookups={} relays=0 raw_ns_per_delivery={:.2} expanded_ns_per_delivery={:.2}",
+            "fused_raw_expanded_delivery raw={} expanded={} stored_sources=3 loads={} advances={} writes={} lookups={} relays=0 copies=0 replay_segment_inspections={} replay_run_transitions={} raw_ns_per_delivery={:.2} expanded_ns_per_delivery={:.2}",
             DELIVERIES,
             DELIVERIES,
             DELIVERIES * 2,
             DELIVERIES * 2,
             DELIVERIES * 2,
             DELIVERIES * 2,
+            counters.7,
+            counters.8,
             raw_elapsed.as_nanos() as f64 / DELIVERIES as f64,
             expanded_elapsed.as_nanos() as f64 / DELIVERIES as f64,
         );

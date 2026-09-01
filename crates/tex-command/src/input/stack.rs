@@ -577,12 +577,23 @@ impl<G> CommandState<G> {
         let span = source
             .admit(&mut self.input.replay)
             .expect("generation replay lane admission");
+        let replay_cursor = match &span {
+            PackedTokenSpanHandle::Replay { replay, .. } => Some(
+                self.input
+                    .replay
+                    .resident_cursor(*replay)
+                    .expect("admitted replay span has a resident coordinate"),
+            ),
+            PackedTokenSpanHandle::DurableList { .. }
+            | PackedTokenSpanHandle::AttemptList { .. } => None,
+        };
         let identity = self.allocate_input_level_identity();
         let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
         frame.set_source_context(self.input.levels.current_source_context());
         self.push_input_level(InputLevel::Tokens(TokenCursor {
             span,
+            replay_cursor,
             behavior,
             retirement,
             trace,

@@ -621,6 +621,7 @@ impl<G> InputStack<G> {
             let inline_state = match &self.rows[index] {
                 InputLevel::Tokens(cursor) => Some(InputLevelInlineState::token_position(
                     cursor.frame.position(),
+                    cursor.replay_cursor,
                 )),
                 InputLevel::MacroBody(cursor) => {
                     Some(InputLevelInlineState::macro_span(cursor.position()))
@@ -996,12 +997,40 @@ impl<G> crate::CommandState<G> {
                     let suppress_expandable = cursor.frame.flags().contains(
                         tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
                     );
-                    let sources = super::PackedTokenSources::new(
-                        &self.roots.input.replay,
-                        self.attempt.arena(),
-                    );
-                    if let Some((word, origin)) = sources.token_at(&cursor.span, position as usize)
-                    {
+                    let spelling = match &cursor.span {
+                        super::PackedTokenSpanHandle::Replay { replay, .. } => {
+                            let replay_cursor = cursor
+                                .replay_cursor
+                                .as_mut()
+                                .ok_or(super::ResidentCommandColdTransition::Failure)?;
+                            self.roots.input.replay.advance_sequential(
+                                *replay,
+                                replay_cursor,
+                                #[cfg(any(test, feature = "profiling"))]
+                                &mut self
+                                    .stored_token_advance_counters
+                                    .replay_segment_inspections,
+                                #[cfg(any(test, feature = "profiling"))]
+                                &mut self.stored_token_advance_counters.replay_run_transitions,
+                            )
+                        }
+                        super::PackedTokenSpanHandle::AttemptList { list, .. } => self
+                            .attempt
+                            .arena()
+                            .token_word(*list, position as usize)
+                            .ok(),
+                        super::PackedTokenSpanHandle::DurableList { list, .. } => {
+                            list.word_at(position as usize).map(|word| {
+                                tex_state::token::TracedTokenWord::from_parts(
+                                    word,
+                                    tex_state::token::OriginId::UNKNOWN,
+                                )
+                            })
+                        }
+                    };
+                    if let Some(spelling) = spelling {
+                        let word = spelling.token_word();
+                        let origin = spelling.origin();
                         #[cfg(any(test, feature = "profiling"))]
                         {
                             self.stored_token_advance_counters.packed_loads = self
@@ -1548,15 +1577,32 @@ impl<G> InputStack<G> {
         true
     }
 
-    pub(crate) fn extend_top_token_limit(&mut self, additional: u32) -> Option<bool> {
+    pub(crate) fn extend_top_token_limit(
+        &mut self,
+        additional: u32,
+        replay_cursor: super::ResidentReplayCursor,
+    ) -> Option<bool> {
         let index = self.top.checked_sub(1)?;
         let InputLevel::Tokens(_) = &self.rows[index] else {
             return None;
         };
+        if self.recording && self.touched[index] != self.interval {
+            let InputLevel::Tokens(cursor) = &self.rows[index] else {
+                unreachable!()
+            };
+            self.record_inline(
+                index,
+                InputLevelInlineState::token_position(
+                    cursor.frame.position(),
+                    cursor.replay_cursor,
+                ),
+            );
+        }
         self.record_token_state(index);
         let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
+        cursor.replay_cursor = Some(replay_cursor);
         let extended = cursor.frame.extend_limit(additional).is_some();
         Some(extended)
     }

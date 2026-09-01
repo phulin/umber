@@ -22,10 +22,10 @@ pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
     MacroArgumentCursor, MacroBodyCursor, PackedInputFrame, PackedTokenOwnership,
     PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId,
-    ReplayLane, ReplayPayloadId, ReplayTrace, ReplayTransientMark, ResidentSpanCursor,
-    RetirementBehavior, SourceLevel, SourceLevelExecutionState, SourceLexExecutionState,
-    SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey, StoredReplayReason,
-    TokenBehavior, TokenCursor, packed_token_frame,
+    ReplayLane, ReplayPayloadId, ReplayTrace, ReplayTransientMark, ResidentReplayCursor,
+    ResidentSpanCursor, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
+    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
+    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -521,7 +521,11 @@ fn project_token_cursor<G>(
     match &cursor.span {
         PackedTokenSpanHandle::Replay { replay, len } => {
             for index in 0..*len as usize {
-                project_token(hash, replay_lane.get(*replay, index)?.token()?, state)?;
+                project_token(
+                    hash,
+                    replay_lane.indexed_get_cold(*replay, index)?.token()?,
+                    state,
+                )?;
             }
         }
         PackedTokenSpanHandle::DurableList { list, .. } => {
@@ -1184,7 +1188,7 @@ impl<G> InputState<G> {
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             PackedTokenSources::new(replay_lane, attempt)
-                .token_at(&tokens.span, index)
+                .indexed_token_at_cold(&tokens.span, index)
                 .map(|(word, _)| word.semantic_token())
         }
 

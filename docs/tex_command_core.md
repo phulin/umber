@@ -2041,6 +2041,17 @@ replay uses its sealed fixed-block range. The semantic lane stores four-byte
 `TokenWord` values; exact provenance occupies coordinate-change runs alongside
 the lane, not a twelve-byte value for every captured token.
 
+A replay-backed token row also admits one sequential resident coordinate: its
+current prefix/body run, physical segment, in-segment offset, cached segment
+end, and remaining words in that run. An ordinary replay word performs one
+packed load and advances those scalars. Only an actual segment boundary
+inspects the next segment header, and only the e-TeX prepended-prefix boundary
+selects the body run. Cold diagnostic and semantic-projection consumers retain
+an explicitly indexed lookup; command delivery cannot call it. The input
+first-touch journal swaps the logical word position and this physical replay
+coordinate together, so rollback, retry, rejection, and acceptance resume the
+identical word without a prefix rescan.
+
 `CommandState::push_input_level` is the single live source/token frame
 transition. It updates TeX82's `max_in_stack` scalar on the singular live
 session owner and then makes the frame visible; it takes no lock and belongs to

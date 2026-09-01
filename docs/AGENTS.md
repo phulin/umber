@@ -97,7 +97,8 @@ canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 levels, command delivery, expansion, scanners, extensions, provenance,
 incrementality, one-owner bounded command snapshots, exact in-session suspended
 attempts, handle-free detached continuations, reference oracles, and
-optimization promotion.
+optimization promotion. Its replay-lane contract includes sequential resident
+segment coordinates and exact rollback of those scalar coordinates.
 
 `engine_architecture_decision.md` selects bounded mutable semantic episodes
 inside the one canonical engine from the `umber2-64v2` prototype evidence. It

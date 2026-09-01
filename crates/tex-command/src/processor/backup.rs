@@ -228,11 +228,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             };
             debug_assert_eq!(admitted, prepended);
+            let replay_cursor = self
+                .command
+                .input
+                .replay
+                .resident_cursor(replay)
+                .ok_or_else(CommandError::input_invariant)?;
             let extended = self
                 .command
                 .input
                 .levels
-                .extend_top_token_limit(prepended)
+                .extend_top_token_limit(prepended, replay_cursor)
                 .expect("back_input above installed a token-list level");
             if !extended {
                 return Err(CommandError::input_invariant());

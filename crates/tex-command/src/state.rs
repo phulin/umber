@@ -205,6 +205,8 @@ pub(crate) struct StoredTokenAdvanceCounters {
     pub(crate) meaning_lookups: u64,
     pub(crate) parameter_interceptions: u64,
     pub(crate) intermediate_relays: u64,
+    pub(crate) replay_segment_inspections: u64,
+    pub(crate) replay_run_transitions: u64,
 }
 
 #[cfg(test)]
@@ -1367,11 +1369,14 @@ impl<G> CommandState<G> {
     }
 
     /// Returns `(span selections, packed loads, cursor advances, command
-    /// writes, meaning lookups, parameter interceptions, intermediate relays)`.
+    /// writes, meaning lookups, parameter interceptions, intermediate relays,
+    /// replay segment inspections, replay run transitions)`.
     #[doc(hidden)]
     #[cfg(any(test, feature = "profiling"))]
     #[must_use]
-    pub fn profile_stored_token_advance_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+    pub fn profile_stored_token_advance_counters(
+        &self,
+    ) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64) {
         let counters = self.stored_token_advance_counters;
         (
             counters.span_selections,
@@ -1381,6 +1386,8 @@ impl<G> CommandState<G> {
             counters.meaning_lookups,
             counters.parameter_interceptions,
             counters.intermediate_relays,
+            counters.replay_segment_inspections,
+            counters.replay_run_transitions,
         )
     }
 
