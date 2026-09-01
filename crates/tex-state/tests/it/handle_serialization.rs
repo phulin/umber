@@ -13,7 +13,7 @@ fn downstream_serde_cannot_mint_or_construct_live_handles() {
         &manifest_dir.join("tests/ui/handle_serialization_forbidden.rs"),
         &dependencies,
         &[
-            "DefinitionId",
+            "DefinitionRef",
             "TokenListId",
             "GlueId",
             "ProvenanceId",

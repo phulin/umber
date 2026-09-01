@@ -22,6 +22,7 @@ pub struct BoundaryRecord {
     pub(crate) effect_prefix: usize,
     pub(crate) artifact_prefix: usize,
     pub(crate) reachable_state_identity: Option<ReachableStateIdentity>,
+    pub(crate) direct_convergence_source: Option<BoundaryKey>,
 }
 
 impl BoundaryRecord {
@@ -136,7 +137,10 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
             old_record.reachable_state_identity,
             new_record.reachable_state_identity,
         ) {
-            (Some(old_identity), Some(new_identity)) if old_identity == new_identity => {
+            (Some(old_identity), Some(new_identity))
+                if old_identity == new_identity
+                    && new_record.direct_convergence_source == Some(old_record.key) =>
+            {
                 convergence.get_or_insert(new_record.key);
             }
             _ => mismatches = mismatches.saturating_add(1),

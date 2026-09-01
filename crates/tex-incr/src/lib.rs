@@ -1251,22 +1251,20 @@ impl LiveHistoryState {
         }
     }
 
-    fn observe_convergence(&mut self, record: &BoundaryRecord) {
-        let Some(comparison) = self.convergence.as_mut() else {
-            return;
-        };
+    fn convergence_target(&mut self, record: &BoundaryRecord) -> Option<BoundaryKey> {
+        let comparison = self.convergence.as_mut()?;
         if comparison.matched.is_some() || comparison.schedule_diverged {
-            return;
+            return None;
         }
         // A restored rooted candidate carries the selected boundary as its
         // inherited first row. A materialized JobStart publishes the same
         // anchor before consuming input. Neither is newly executed work.
         if self.records.is_empty() && record.key == comparison.restart {
-            return;
+            return None;
         }
         let Some(old) = comparison.accepted.get(comparison.next_old) else {
             comparison.schedule_diverged = true;
-            return;
+            return None;
         };
         let mapped_position = comparison
             .edit
@@ -1274,7 +1272,7 @@ impl LiveHistoryState {
             .or_else(|| comparison.edit.is_none().then_some(old.key.position));
         let Some(mapped_position) = mapped_position else {
             comparison.schedule_diverged = true;
-            return;
+            return None;
         };
         let mapped = BoundaryKey {
             position: mapped_position,
@@ -1283,13 +1281,15 @@ impl LiveHistoryState {
         };
         if mapped != record.key {
             comparison.schedule_diverged = true;
-            return;
+            return None;
         }
         comparison.next_old = comparison.next_old.saturating_add(1);
-        if old.reachable_state_identity.is_some()
-            && old.reachable_state_identity == record.reachable_state_identity
-        {
-            comparison.matched = Some((old.key, record.key));
+        Some(old.key)
+    }
+
+    fn record_convergence_match(&mut self, old: BoundaryKey, new: BoundaryKey) {
+        if let Some(comparison) = self.convergence.as_mut() {
+            comparison.matched = Some((old, new));
         }
     }
 
@@ -1315,6 +1315,7 @@ impl LiveHistoryState {
             effect_prefix: evidence.effect_prefix(),
             artifact_prefix: evidence.artifact_prefix(),
             reachable_state_identity: evidence.reachable_state_identity(),
+            direct_convergence_source: None,
         });
         self.occurrences
             .insert((position, boundary), ordinal.saturating_add(1));
@@ -1475,7 +1476,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
         true
     }
 
-    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, universe: &tex_state::Universe<G>) {
         let position = checkpoint.root_anchor();
         let boundary = checkpoint.boundary();
         if boundary == EngineBoundary::OuterParagraphEnd {
@@ -1489,7 +1490,7 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
         self.state
             .occurrences
             .insert((position, boundary), ordinal.saturating_add(1));
-        let record = BoundaryRecord {
+        let mut record = BoundaryRecord {
             revision: self.state.revision,
             key: BoundaryKey {
                 position,
@@ -1499,8 +1500,19 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             effect_prefix: checkpoint.effect_prefix_len(),
             artifact_prefix: checkpoint.artifact_prefix_len(),
             reachable_state_identity: checkpoint.reachable_state_identity(),
+            direct_convergence_source: None,
         };
-        self.state.observe_convergence(&record);
+        if let Some(old_key) = self.state.convergence_target(&record)
+            && let Some(prior) = self.retained.detached_checkpoint_at(
+                old_key.position,
+                old_key.boundary,
+                old_key.ordinal,
+            )
+            && checkpoint.reachable_state_matches(prior, universe)
+        {
+            record.direct_convergence_source = Some(old_key);
+            self.state.record_convergence_match(old_key, record.key);
+        }
         self.state.records.push(record);
         let retention = checkpoint.retention();
         let evidence = tex_exec::RetainedBoundaryEvidence::new(

@@ -2,9 +2,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::InternerBudget;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{
-    DefinitionBuildError, DefinitionId, DefinitionIdentityPolicy, GlueId, ProvenanceId, TokenListId,
-};
+use tex_state::{DefinitionBuildError, DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
 use super::{
     AttemptArena, AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
@@ -44,7 +42,7 @@ enum TestRoot<Attempt, Durable> {
 struct TestPromotionDestination<G> {
     token_lists: Vec<TestRoot<AttemptTokenListId, TokenListId<G>>>,
     glue: Vec<TestRoot<AttemptGlueId, GlueId<G>>>,
-    definitions: Vec<TestRoot<AttemptDefinitionId, DefinitionId<G>>>,
+    definitions: Vec<TestRoot<AttemptDefinitionId, DefinitionRef<G>>>,
     provenance: Vec<TestRoot<AttemptProvenanceId, ProvenanceId<G>>>,
 }
 
@@ -77,7 +75,7 @@ impl<G> TestPromotionDestination<G> {
         }
     }
 
-    fn definition(&self, index: usize) -> &DefinitionId<G> {
+    fn definition(&self, index: usize) -> &DefinitionRef<G> {
         match &self.definitions[index] {
             TestRoot::Durable(definition) => definition,
             TestRoot::Attempt(_) => panic!("definition root was not settled"),
@@ -178,7 +176,11 @@ impl<G> AttemptPromotionDestination<G> for TestPromotionDestination<G> {
             .expect("definition root remains")
     }
 
-    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionId<G>) {
+    fn settle_definition_root(
+        &mut self,
+        source: AttemptDefinitionId,
+        definition: DefinitionRef<G>,
+    ) {
         let mut matched = 0;
         for root in &mut self.definitions {
             if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
@@ -228,7 +230,7 @@ fn definition<G>(
     replacement: &[TracedTokenWord],
 ) -> super::AttemptDefinitionId {
     let definition = attempt
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("definition builder");
     for word in parameters {
         attempt
@@ -379,7 +381,7 @@ fn generic_cold_promotion_preserves_checked_definition_content() {
         assert_eq!(promoted_view.replacement_text().len(), 32);
         assert!(attempt.definition_builder(definition).is_err());
         let recycled = attempt
-            .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+            .allocate_definition_builder()
             .expect("recycled builder");
         let recycled = attempt
             .definition_builder(recycled)
@@ -402,11 +404,6 @@ fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations
             .expect("warm generic promotion");
 
         let definition = definition(&mut attempt, &[], &[word('x')]);
-        let storage = attempt
-            .definition_builder(definition)
-            .expect("measured builder")
-            .words()
-            .as_ptr();
         let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         let mut destination = TestPromotionDestination::new(&[], &[], &[definition], &[]);
@@ -423,70 +420,6 @@ fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations
         let context = universe.command_context().expect("definition context");
         let promoted = context.definition(*destination.definition(0));
         assert_eq!(promoted.replacement_text(), [word('x').token_word()]);
-        assert_eq!(
-            promoted.replacement_text().as_ptr(),
-            storage,
-            "generic promotion moves the builder words without copying them"
-        );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn generic_policy_mismatch_restores_the_builder_and_publishes_nothing() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let token = attempt
-            .allocate_token_list([word('t')])
-            .expect("token root");
-        let glue = attempt.allocate_glue(glue(7)).expect("glue root");
-        let definition = attempt
-            .allocate_definition_builder(DefinitionIdentityPolicy::Enabled)
-            .expect("definition builder");
-        attempt
-            .finish_definition_parameters(definition)
-            .expect("parameter boundary");
-        attempt
-            .push_definition_replacement(definition, word('x').token_word())
-            .expect("replacement word");
-        attempt.finish_definition(definition).expect("definition");
-        let storage = attempt
-            .definition_builder(definition)
-            .expect("live builder")
-            .words()
-            .as_ptr();
-
-        let mut destination = TestPromotionDestination::new(&[token], &[glue], &[definition], &[]);
-        assert!(matches!(
-            attempt.promote_into(universe, &mut destination),
-            Err(AttemptError::Promotion(
-                tex_state::PromotionError::IdentityPolicyMismatch
-            ))
-        ));
-        assert_eq!(
-            attempt
-                .definition_builder(definition)
-                .expect("rejected builder is restored")
-                .words()
-                .as_ptr(),
-            storage
-        );
-        assert!(matches!(
-            destination.token_lists[0],
-            TestRoot::Attempt(root) if root == token
-        ));
-        assert!(matches!(
-            destination.glue[0],
-            TestRoot::Attempt(root) if root == glue
-        ));
-        assert!(matches!(
-            destination.definitions[0],
-            TestRoot::Attempt(root) if root == definition
-        ));
-        let retired = universe.retire().expect("retirement");
-        assert_eq!(retired.definition_rows(), 0);
-        assert_eq!(retired.token_list_rows(), 0);
-        assert_eq!(retired.glue_rows(), 0);
     })
     .expect("test fixture is valid");
 }
@@ -793,7 +726,7 @@ fn retired_definition_builder_reuses_its_word_allocation() {
     let mut attempt = AttemptArena::<()>::default();
     let mark = attempt.mark();
     let definition = attempt
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("definition builder");
     attempt
         .finish_definition_parameters(definition)
@@ -814,7 +747,7 @@ fn retired_definition_builder_reuses_its_word_allocation() {
 
     attempt.truncate(mark).expect("retire definition");
     let recycled = attempt
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("recycled builder");
     assert_eq!(
         attempt
@@ -837,7 +770,7 @@ fn retired_definition_builder_reuses_its_word_allocation() {
 fn definition_builder_ids_reject_foreign_stale_and_double_finish_without_mutation() {
     let mut first = AttemptArena::<()>::default();
     let definition = first
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("definition builder");
     let mut foreign = AttemptArena::<()>::default();
     let foreign_mark = foreign.mark();
@@ -875,7 +808,7 @@ fn definition_builder_ids_reject_foreign_stale_and_double_finish_without_mutatio
 
     let stale_mark = first.mark();
     let stale = first
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("stale candidate");
     first.truncate(stale_mark).expect("retire candidate");
     let after_retirement = first.mark();
@@ -893,7 +826,7 @@ fn warmed_definition_builder_attempts_allocate_zero_heap() {
     let run = |attempt: &mut AttemptArena<()>| {
         let mark = attempt.mark();
         let definition = attempt
-            .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+            .allocate_definition_builder()
             .expect("definition builder");
         attempt
             .finish_definition_parameters(definition)

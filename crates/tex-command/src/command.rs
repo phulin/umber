@@ -1,7 +1,7 @@
 //! Ephemeral current-command representation.
 
 use tex_state::CommandContext;
-use tex_state::DefinitionId;
+use tex_state::DefinitionRef;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
@@ -323,7 +323,7 @@ impl<G> PackedCommandTarget<G> for CurrentCommand<G> {
     }
 
     #[inline(always)]
-    fn write_macro_meaning(&mut self, flags: MeaningFlags, definition: DefinitionId<G>) {
+    fn write_macro_meaning(&mut self, flags: MeaningFlags, definition: DefinitionRef<G>) {
         self.identity = CommandIdentity::Ordinary;
         self.meaning = ResolvedMeaning::Macro { flags, definition };
     }

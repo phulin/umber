@@ -6,7 +6,7 @@
 //! token -- the value scanners, `\meaning`, and §310's `show_context` -- reads
 //! one implementation.
 
-use crate::definition_arena::DefinitionId;
+use crate::definition_arena::DefinitionRef;
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
 use crate::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
@@ -53,7 +53,8 @@ impl<G> TokenDisplayState for Universe<G> {
 pub(crate) trait MeaningDisplayState<G>: TokenDisplayState {
     fn display_active_character_symbol(&self, ch: char) -> Option<crate::interner::Symbol>;
     fn display_meaning(&self, symbol: crate::interner::Symbol) -> Option<ResolvedMeaning<G>>;
-    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>);
+    fn display_macro_words(&self, definition: DefinitionRef<G>)
+    -> (Vec<TokenWord>, Vec<TokenWord>);
     fn display_font_name(&self, font: crate::ids::FontId) -> String;
     fn display_primitive_name(&self, meaning: Meaning) -> Option<&str>;
     fn display_symbol_name(&self, symbol: crate::interner::Symbol) -> Option<&str>;
@@ -69,7 +70,10 @@ impl<G> MeaningDisplayState<G> for Universe<G> {
         self.meaning(symbol).ok()
     }
 
-    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>) {
+    fn display_macro_words(
+        &self,
+        definition: DefinitionRef<G>,
+    ) -> (Vec<TokenWord>, Vec<TokenWord>) {
         let admitted = self.admitted().expect("live universe");
         let definition = admitted.definition(definition);
         (
@@ -100,7 +104,10 @@ impl<G> MeaningDisplayState<G> for CommandContext<'_, G> {
         Some(self.meaning(symbol))
     }
 
-    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>) {
+    fn display_macro_words(
+        &self,
+        definition: DefinitionRef<G>,
+    ) -> (Vec<TokenWord>, Vec<TokenWord>) {
         let definition = self.definition(definition);
         (
             definition.parameter_text().to_vec(),

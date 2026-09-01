@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use core::num::NonZeroU64;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::rc::Rc;
 
@@ -24,19 +25,6 @@ const PARAMETER_START: u8 = 0;
 const PARAMETER_END: u8 = 1;
 const REPLACEMENT_START: u8 = 2;
 const REPLACEMENT_END: u8 = 3;
-
-/// Identity work admitted by one destination generation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum DefinitionIdentityPolicy {
-    Disabled,
-    Enabled,
-}
-
-impl DefinitionIdentityPolicy {
-    const fn enabled(self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-}
 
 /// Monotonic mutable phase of an unpublished definition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,44 +59,31 @@ struct DefinitionData {
     parameter_len: u32,
     replacement_len: u32,
     pattern: MacroParameterPatternBuilder,
-    identity: Option<StateHasher>,
-    sealed_identity: u64,
-    policy: DefinitionIdentityPolicy,
     phase: DefinitionBuildPhase,
     #[cfg(test)]
     fail_next_reserve: bool,
 }
 
 impl DefinitionData {
-    fn new(policy: DefinitionIdentityPolicy) -> Self {
+    fn new() -> Self {
         let mut data = Self {
             words: Vec::new(),
             parameter_len: 0,
             replacement_len: 0,
             pattern: MacroParameterPatternBuilder::new(),
-            identity: None,
-            sealed_identity: 0,
-            policy,
             phase: DefinitionBuildPhase::OpenParameters,
             #[cfg(test)]
             fail_next_reserve: false,
         };
-        data.reset(policy);
+        data.reset();
         data
     }
 
-    fn reset(&mut self, policy: DefinitionIdentityPolicy) {
+    fn reset(&mut self) {
         self.words.clear();
         self.parameter_len = 0;
         self.replacement_len = 0;
         self.pattern = MacroParameterPatternBuilder::new();
-        self.identity = policy.enabled().then(|| {
-            let mut hasher = StateHasher::new(DEFINITION_IDENTITY_V2_DOMAIN);
-            hasher.tag(PARAMETER_START);
-            hasher
-        });
-        self.sealed_identity = 0;
-        self.policy = policy;
         self.phase = DefinitionBuildPhase::OpenParameters;
         #[cfg(test)]
         {
@@ -128,17 +103,23 @@ pub struct DefinitionBuilder {
     data: DefinitionData,
 }
 
+impl Default for DefinitionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefinitionBuilder {
     #[must_use]
-    pub fn new(policy: DefinitionIdentityPolicy) -> Self {
+    pub fn new() -> Self {
         Self {
-            data: DefinitionData::new(policy),
+            data: DefinitionData::new(),
         }
     }
 
     /// Clears one recycled cold-path staging row.
-    pub fn reset(&mut self, policy: DefinitionIdentityPolicy) {
-        self.data.reset(policy);
+    pub fn reset(&mut self) {
+        self.data.reset();
     }
 
     pub fn push_parameter(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
@@ -155,9 +136,6 @@ impl DefinitionBuilder {
         Self::reserve_word(data)?;
         data.parameter_len = parameter_len;
         data.pattern = pattern;
-        if let Some(identity) = &mut data.identity {
-            identity.u32(word.raw());
-        }
         data.words.push(word);
         Ok(())
     }
@@ -166,11 +144,6 @@ impl DefinitionBuilder {
         let data = self.data_mut();
         if data.phase != DefinitionBuildPhase::OpenParameters {
             return Err(DefinitionBuildError::InvalidPhase);
-        }
-        if let Some(identity) = &mut data.identity {
-            identity.tag(PARAMETER_END);
-            identity.u32(data.parameter_len);
-            identity.tag(REPLACEMENT_START);
         }
         data.phase = DefinitionBuildPhase::OpenReplacement;
         Ok(())
@@ -187,9 +160,6 @@ impl DefinitionBuilder {
             .checked_add(1)
             .ok_or(DefinitionBuildError::CapacityOverflow)?;
         Self::reserve_word(data)?;
-        if let Some(identity) = &mut data.identity {
-            identity.u32(word.raw());
-        }
         data.words.push(word);
         data.replacement_len = replacement_len;
         Ok(())
@@ -200,11 +170,6 @@ impl DefinitionBuilder {
         if data.phase != DefinitionBuildPhase::OpenReplacement {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        if let Some(mut identity) = data.identity.take() {
-            identity.tag(REPLACEMENT_END);
-            identity.u32(data.replacement_len);
-            data.sealed_identity = identity.finish().max(1);
-        }
         data.phase = DefinitionBuildPhase::Sealed;
         Ok(())
     }
@@ -212,11 +177,6 @@ impl DefinitionBuilder {
     #[must_use]
     pub fn phase(&self) -> DefinitionBuildPhase {
         self.data().phase
-    }
-
-    #[must_use]
-    pub fn policy(&self) -> DefinitionIdentityPolicy {
-        self.data().policy
     }
 
     #[must_use]
@@ -275,28 +235,14 @@ impl DefinitionBuilder {
     }
 }
 
-/// Compact coordinate of one immutable macro definition.
-pub struct DefinitionId<G> {
-    region: DefinitionRegionCoordinate,
-    row: NonZeroU32,
+/// Compact opaque reference to one immutable macro definition.
+///
+/// The packed region and row are private to this store. Callers may copy and
+/// compare the reference, but cannot decode or manufacture storage
+/// coordinates.
+pub struct DefinitionRef<G> {
+    packed: NonZeroU64,
     _brand: PhantomData<fn(&G) -> &G>,
-}
-
-/// Non-owning four-byte region coordinate reserved in full for region
-/// addressing. No bit is borrowed for a carrier tag, so a later compact
-/// definition key can pair this coordinate with its four-byte row unchanged.
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-struct DefinitionRegionCoordinate(NonZeroU32);
-
-impl DefinitionRegionCoordinate {
-    fn new(raw: u32) -> Self {
-        Self(NonZeroU32::new(raw).expect("definition region is nonzero"))
-    }
-
-    const fn get(self) -> u32 {
-        self.0.get()
-    }
 }
 
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -310,51 +256,53 @@ pub fn definition_retain_count() -> u64 {
     DEFINITION_RETAIN_COUNT.with(Cell::get)
 }
 
-impl<G> Clone for DefinitionId<G> {
+impl<G> Clone for DefinitionRef<G> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<G> Copy for DefinitionId<G> {}
+impl<G> Copy for DefinitionRef<G> {}
 
-impl<G> PartialEq for DefinitionId<G> {
+impl<G> PartialEq for DefinitionRef<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.region == other.region && self.row == other.row
+        self.packed == other.packed
     }
 }
 
-impl<G> Eq for DefinitionId<G> {}
+impl<G> Eq for DefinitionRef<G> {}
 
-impl<G> core::hash::Hash for DefinitionId<G> {
+impl<G> core::hash::Hash for DefinitionRef<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.region.hash(state);
-        self.row.hash(state);
+        self.packed.hash(state);
     }
 }
 
-impl<G> core::fmt::Debug for DefinitionId<G> {
+impl<G> core::fmt::Debug for DefinitionRef<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("DefinitionId(..)")
+        formatter.write_str("DefinitionRef(..)")
     }
 }
 
-impl<G> DefinitionId<G> {
-    pub(crate) const fn format_index(self) -> u32 {
-        self.row.get() - 1
-    }
-
-    #[must_use]
-    pub(crate) const fn region(self) -> u32 {
-        self.region.get()
-    }
-
-    fn new(region: u32, row: NonZeroU32, _semantic_identity: u64) -> Self {
+impl<G> DefinitionRef<G> {
+    fn new(region: u32, row: NonZeroU32) -> Self {
+        let packed = (u64::from(region) << 32) | u64::from(row.get());
         Self {
-            region: DefinitionRegionCoordinate::new(region),
-            row,
+            packed: NonZeroU64::new(packed).expect("definition reference is nonzero"),
             _brand: PhantomData,
         }
+    }
+
+    const fn row(self) -> NonZeroU32 {
+        NonZeroU32::new(self.packed.get() as u32).expect("definition row is nonzero")
+    }
+
+    const fn row_index(self) -> u32 {
+        self.row().get() - 1
+    }
+
+    const fn region(self) -> u32 {
+        (self.packed.get() >> 32) as u32
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -370,12 +318,12 @@ struct DefinitionHeader {
     parameter_len: u32,
     end: u32,
     origin: crate::token::OriginId,
-    semantic_identity: u64,
     pattern: MacroParameterPattern,
 }
 
 const FORMAT_REGION: u32 = 1;
 const GLOBAL_REGION: u32 = 2;
+const DEFINITION_WORD_CHUNK_CAPACITY: usize = 4096;
 const LOCAL_SLOT_CHUNK_LEN: usize = 64;
 const LOCAL_SLOT_ADDRESS_CAPACITY: usize = u16::MAX as usize - 2;
 
@@ -396,7 +344,8 @@ fn local_region_address(key: u32) -> Option<(usize, u16)> {
 
 struct DefinitionRegion {
     headers: Vec<DefinitionHeader>,
-    words: Vec<TokenWord>,
+    owner: Option<Rc<DefinitionRegionOwner>>,
+    word_head: u32,
     parent: u32,
     promotions: Vec<DefinitionPromotion>,
     changed_epoch: u64,
@@ -407,7 +356,8 @@ impl DefinitionRegion {
     fn new(parent: u32) -> Self {
         Self {
             headers: Vec::new(),
-            words: Vec::new(),
+            owner: None,
+            word_head: 0,
             parent,
             promotions: Vec::new(),
             changed_epoch: 0,
@@ -420,20 +370,184 @@ impl DefinitionRegion {
             cursor as usize <= self.headers.len(),
             "definition cursor is beyond the region"
         );
-        let word_end = if cursor == 0 {
-            0
-        } else {
-            self.headers[cursor as usize - 1].end as usize
-        };
         for header in &self.headers[cursor as usize..] {
             accounting.release_shared_dynamic(definition_memory_words(
                 (header.end - header.start) as usize,
             ));
         }
         self.headers.truncate(cursor as usize);
-        self.words.truncate(word_end);
         self.promotions
             .retain(|promotion| promotion.source_row < cursor);
+    }
+
+    fn begin_word_span(&self) -> u32 {
+        self.word_head
+    }
+
+    fn push_word(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
+        let next = self
+            .word_head
+            .checked_add(1)
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        self.owner
+            .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new()))
+            .push_word(self.word_head, word)?;
+        self.word_head = next;
+        Ok(())
+    }
+
+    fn reserve(&mut self, rows: usize, words: usize) -> Result<(), DefinitionBuildError> {
+        self.headers
+            .len()
+            .checked_add(rows)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        let words = u32::try_from(words).map_err(|_| DefinitionBuildError::CapacityOverflow)?;
+        let word_end = self
+            .word_head
+            .checked_add(words)
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        self.headers
+            .try_reserve(rows)
+            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+        if rows != 0 || words != 0 {
+            let owner = self
+                .owner
+                .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new()));
+            owner
+                .headers
+                .borrow_mut()
+                .try_reserve(rows)
+                .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+            owner.reserve_word_span(self.word_head, word_end)?;
+        }
+        Ok(())
+    }
+
+    fn extend_words(&mut self, source: &[TokenWord]) -> Result<(u32, u32), DefinitionBuildError> {
+        let start = self.word_head;
+        for word in source {
+            self.push_word(*word)?;
+        }
+        Ok((start, self.word_head))
+    }
+
+    fn word(&self, index: u32) -> Option<TokenWord> {
+        self.owner.as_ref()?.word(index)
+    }
+
+    fn push_header(&mut self, header: DefinitionHeader) {
+        self.owner
+            .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new()))
+            .headers
+            .borrow_mut()
+            .push(header);
+        self.headers.push(header);
+    }
+}
+
+struct DefinitionWordChunk {
+    words: Box<[Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]>,
+}
+
+impl DefinitionWordChunk {
+    fn new() -> Result<Self, DefinitionBuildError> {
+        let mut words = Vec::new();
+        words
+            .try_reserve_exact(DEFINITION_WORD_CHUNK_CAPACITY)
+            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+        words.resize_with(DEFINITION_WORD_CHUNK_CAPACITY, || {
+            Cell::new(TokenWord::from_raw(0))
+        });
+        let words = words
+            .into_boxed_slice()
+            .try_into()
+            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+        Ok(Self { words })
+    }
+}
+
+const DEFINITION_WORD_DIRECTORY_PAGE_LEN: usize = 64;
+
+struct DefinitionWordDirectoryPage {
+    chunks: Box<[std::cell::OnceCell<DefinitionWordChunk>; DEFINITION_WORD_DIRECTORY_PAGE_LEN]>,
+    next: std::cell::OnceCell<Box<DefinitionWordDirectoryPage>>,
+}
+
+impl DefinitionWordDirectoryPage {
+    fn new() -> Self {
+        Self {
+            chunks: Box::new(core::array::from_fn(|_| std::cell::OnceCell::new())),
+            next: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn page(&self, index: usize) -> &Self {
+        let mut page = self;
+        for _ in 0..index {
+            page = page.next.get_or_init(|| Box::new(Self::new()));
+        }
+        page
+    }
+
+    fn existing_page(&self, index: usize) -> Option<&Self> {
+        let mut page = self;
+        for _ in 0..index {
+            page = page.next.get()?;
+        }
+        Some(page)
+    }
+}
+
+struct DefinitionRegionOwner {
+    words: DefinitionWordDirectoryPage,
+    headers: RefCell<Vec<DefinitionHeader>>,
+}
+
+impl DefinitionRegionOwner {
+    fn new() -> Self {
+        Self {
+            words: DefinitionWordDirectoryPage::new(),
+            headers: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn push_word(&self, index: u32, word: TokenWord) -> Result<(), DefinitionBuildError> {
+        let chunk = self.ensure_chunk(index as usize / DEFINITION_WORD_CHUNK_CAPACITY)?;
+        chunk.words[index as usize % DEFINITION_WORD_CHUNK_CAPACITY].set(word);
+        Ok(())
+    }
+
+    fn ensure_chunk(&self, chunk: usize) -> Result<&DefinitionWordChunk, DefinitionBuildError> {
+        let page = self.words.page(chunk / DEFINITION_WORD_DIRECTORY_PAGE_LEN);
+        let slot = &page.chunks[chunk % DEFINITION_WORD_DIRECTORY_PAGE_LEN];
+        if slot.get().is_none() {
+            let new_chunk = DefinitionWordChunk::new()?;
+            let _ = slot.set(new_chunk);
+        }
+        Ok(slot.get().expect("definition word chunk was initialized"))
+    }
+
+    fn reserve_word_span(&self, start: u32, end: u32) -> Result<(), DefinitionBuildError> {
+        if start == end {
+            return Ok(());
+        }
+        let first = start as usize / DEFINITION_WORD_CHUNK_CAPACITY;
+        let last = (end - 1) as usize / DEFINITION_WORD_CHUNK_CAPACITY;
+        for chunk in first..=last {
+            self.ensure_chunk(chunk)?;
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn word(&self, index: u32) -> Option<TokenWord> {
+        let chunk = index as usize / DEFINITION_WORD_CHUNK_CAPACITY;
+        let page = self
+            .words
+            .existing_page(chunk / DEFINITION_WORD_DIRECTORY_PAGE_LEN)?;
+        let chunk = page.chunks[chunk % DEFINITION_WORD_DIRECTORY_PAGE_LEN].get()?;
+        Some(chunk.words[index as usize % DEFINITION_WORD_CHUNK_CAPACITY].get())
     }
 }
 
@@ -441,7 +555,6 @@ impl DefinitionRegion {
 struct DefinitionPromotion {
     source_row: u32,
     destination_row: NonZeroU32,
-    destination_identity: u64,
 }
 
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -795,6 +908,7 @@ impl LocalDefinitionSlots {
         self.rows.get()
     }
 
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         self.row_count() == 0
     }
@@ -874,9 +988,72 @@ pub struct DefinitionBuildKey<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
-pub struct DefinitionRegionLease<G> {
+struct LocalRegionPin<G> {
     region: Option<LocalDefinitionRegionLease>,
     _brand: PhantomData<fn(&G) -> &G>,
+}
+
+/// Store-minted resident cursor for one executing macro replacement body.
+///
+/// The definition store resolves the opaque reference and immutable header
+/// once at admission. The cursor then retains the exact replacement extent
+/// and the exact region owner; downstream command
+/// code can neither inspect nor manufacture its storage coordinates.
+pub struct ResidentMacroBody<G> {
+    definition: DefinitionRef<G>,
+    owner: Rc<DefinitionRegionOwner>,
+    start: u32,
+    replacement_len: u32,
+}
+
+impl<G> ResidentMacroBody<G> {
+    #[must_use]
+    pub const fn definition_ref(&self) -> DefinitionRef<G> {
+        self.definition
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.replacement_len as usize
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.replacement_len == 0
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub fn word(&self, position: usize) -> Option<TokenWord> {
+        (position < self.replacement_len as usize)
+            .then(|| self.owner.word(self.start + position as u32))?
+    }
+}
+
+impl<G> core::fmt::Debug for ResidentMacroBody<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("ResidentMacroBody(..)")
+    }
+}
+
+impl<G> PartialEq for ResidentMacroBody<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.definition == other.definition
+            && self.start == other.start
+            && self.replacement_len == other.replacement_len
+            && Rc::ptr_eq(&self.owner, &other.owner)
+    }
+}
+
+impl<G> Eq for ResidentMacroBody<G> {}
+
+impl<G> core::hash::Hash for ResidentMacroBody<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.definition.hash(state);
+        self.start.hash(state);
+        self.replacement_len.hash(state);
+        (Rc::as_ptr(&self.owner) as usize).hash(state);
+    }
 }
 
 struct LocalDefinitionRegionLease {
@@ -885,7 +1062,7 @@ struct LocalDefinitionRegionLease {
 }
 
 pub(crate) struct DefinitionCheckpointLease<G> {
-    region: DefinitionRegionLease<G>,
+    region: LocalRegionPin<G>,
 }
 
 impl<G> Clone for DefinitionCheckpointLease<G> {
@@ -896,7 +1073,7 @@ impl<G> Clone for DefinitionCheckpointLease<G> {
     }
 }
 
-impl<G> Clone for DefinitionRegionLease<G> {
+impl<G> Clone for LocalRegionPin<G> {
     fn clone(&self) -> Self {
         if let Some(region) = &self.region {
             assert!(region.slots.acquire(region.key));
@@ -914,7 +1091,7 @@ impl<G> Clone for DefinitionRegionLease<G> {
     }
 }
 
-impl<G> Drop for DefinitionRegionLease<G> {
+impl<G> Drop for LocalRegionPin<G> {
     fn drop(&mut self) {
         if let Some(region) = self.region.take() {
             region.slots.release(region.key);
@@ -922,13 +1099,13 @@ impl<G> Drop for DefinitionRegionLease<G> {
     }
 }
 
-impl<G> core::fmt::Debug for DefinitionRegionLease<G> {
+impl<G> core::fmt::Debug for LocalRegionPin<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("DefinitionRegionLease(..)")
+        formatter.write_str("LocalRegionPin(..)")
     }
 }
 
-impl<G> PartialEq for DefinitionRegionLease<G> {
+impl<G> PartialEq for LocalRegionPin<G> {
     fn eq(&self, other: &Self) -> bool {
         match (&self.region, &other.region) {
             (Some(left), Some(right)) => {
@@ -940,9 +1117,9 @@ impl<G> PartialEq for DefinitionRegionLease<G> {
     }
 }
 
-impl<G> Eq for DefinitionRegionLease<G> {}
+impl<G> Eq for LocalRegionPin<G> {}
 
-impl<G> core::hash::Hash for DefinitionRegionLease<G> {
+impl<G> core::hash::Hash for LocalRegionPin<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.region
             .as_ref()
@@ -982,21 +1159,19 @@ struct ActiveDefinitionBuild {
     parameter_len: u32,
     replacement_len: u32,
     pattern: MacroParameterPatternBuilder,
-    identity: Option<StateHasher>,
     origin: crate::token::OriginId,
     phase: DefinitionBuildPhase,
 }
 
 struct DefinitionRegionSuffix {
     headers: Vec<DefinitionHeader>,
-    words: Vec<TokenWord>,
+    owner: Option<Rc<DefinitionRegionOwner>>,
     promotions: Vec<DefinitionPromotion>,
 }
 
 #[derive(Clone, Copy)]
 struct DefinitionRegionMark {
     headers: u32,
-    words: u32,
     promotions: u32,
     retired: bool,
 }
@@ -1027,7 +1202,7 @@ struct AcceptedRegionMutation {
 pub(crate) struct AcceptedDefinitionTail<G> {
     head: DefinitionArenaCursor,
     accepted: Vec<AcceptedRegionMutation>,
-    _head_lease: DefinitionRegionLease<G>,
+    _head_lease: LocalRegionPin<G>,
     next_build_serial: u32,
     _brand: PhantomData<fn(&G) -> &G>,
 }
@@ -1037,7 +1212,6 @@ pub enum DefinitionAllocationError {
     CapacityOverflow,
     AllocationFailed,
     InvalidDefinition,
-    IdentityPolicyMismatch,
 }
 
 /// Revision-owned packed definition headers and words.
@@ -1051,30 +1225,157 @@ pub(crate) struct DefinitionArena<G> {
     next_build_serial: u32,
     active_build: Option<ActiveDefinitionBuild>,
     accounting: MemoryAccounting,
-    semantic_identity_enabled: bool,
     #[cfg(any(test, feature = "profiling", feature = "testing"))]
     retirement_counters: Rc<DefinitionRetirementCounterCells>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
 impl<G> DefinitionArena<G> {
+    pub(crate) fn admit_macro_body(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<(MacroParameterPattern, usize, ResidentMacroBody<G>)> {
+        let region_id = id.region();
+        let region = self.region(region_id)?;
+        let header = *region.headers.get(id.row_index() as usize)?;
+        let replacement_start = header.start.checked_add(header.parameter_len)?;
+        let replacement_len = header.end.checked_sub(replacement_start)?;
+        let owner = Rc::clone(region.owner.as_ref()?);
+        let parameter_len = header.parameter_len as usize;
+        let pattern = header.pattern;
+        drop(region);
+        Some((
+            pattern,
+            parameter_len,
+            ResidentMacroBody {
+                definition: id,
+                owner,
+                start: replacement_start,
+                replacement_len,
+            },
+        ))
+    }
+
+    fn try_get(&self, id: DefinitionRef<G>) -> Option<DefinitionView<'_, G>> {
+        let region = self.region(id.region())?;
+        let row = id.row_index() as usize;
+        region.headers.get(row)?;
+        Some(DefinitionView {
+            region,
+            row,
+            _brand: PhantomData,
+        })
+    }
+
+    fn raw_contents_equal(
+        left_pattern: MacroParameterPattern,
+        left_parameters: DefinitionWords<'_>,
+        left_replacement: DefinitionWords<'_>,
+        right_pattern: MacroParameterPattern,
+        right_parameters: DefinitionWords<'_>,
+        right_replacement: DefinitionWords<'_>,
+    ) -> bool {
+        left_pattern == right_pattern
+            && left_parameters.len() == right_parameters.len()
+            && left_parameters.iter().eq(right_parameters.iter())
+            && left_replacement.len() == right_replacement.len()
+            && left_replacement.iter().eq(right_replacement.iter())
+    }
+
+    pub(crate) fn contents_equal(&self, left: DefinitionRef<G>, right: DefinitionRef<G>) -> bool {
+        if left == right {
+            return true;
+        }
+        let Some(left) = self.try_get(left) else {
+            return false;
+        };
+        let Some(right) = self.try_get(right) else {
+            return false;
+        };
+        Self::raw_contents_equal(
+            left.parameter_pattern(),
+            left.parameter_text(),
+            left.replacement_text(),
+            right.parameter_pattern(),
+            right.parameter_text(),
+            right.replacement_text(),
+        )
+    }
+
+    pub(crate) fn current_and_accepted_contents_equal(
+        &self,
+        accepted: &AcceptedDefinitionTail<G>,
+        current: DefinitionRef<G>,
+        prior: DefinitionRef<G>,
+    ) -> bool {
+        if current == prior {
+            return true;
+        }
+        let Some(current) = self.try_get(current) else {
+            return false;
+        };
+        if let Some(prior) = self.try_get(prior) {
+            return Self::raw_contents_equal(
+                current.parameter_pattern(),
+                current.parameter_text(),
+                current.replacement_text(),
+                prior.parameter_pattern(),
+                prior.parameter_text(),
+                prior.replacement_text(),
+            );
+        }
+        for mutation in &accepted.accepted {
+            let DefinitionRegionMutation::Existing { region, mark, .. } = &mutation.mutation else {
+                continue;
+            };
+            if *region != prior.region() {
+                continue;
+            }
+            let Some(suffix) = mutation.suffix.as_ref() else {
+                return false;
+            };
+            let Some(suffix_row) = prior.row_index().checked_sub(mark.headers) else {
+                continue;
+            };
+            let Some(header) = suffix.headers.get(suffix_row as usize) else {
+                continue;
+            };
+            return current.parameter_pattern() == header.pattern
+                && current
+                    .parameter_text()
+                    .iter()
+                    .eq((header.start..header.start + header.parameter_len)
+                        .filter_map(|index| suffix.owner.as_ref()?.word(index)))
+                && current
+                    .replacement_text()
+                    .iter()
+                    .eq((header.start + header.parameter_len..header.end)
+                        .filter_map(|index| suffix.owner.as_ref()?.word(index)));
+        }
+        false
+    }
+
     fn split_region_suffix(
         region: &mut DefinitionRegion,
         mark: DefinitionRegionMark,
     ) -> DefinitionRegionSuffix {
         assert!(mark.headers as usize <= region.headers.len());
-        assert!(mark.words as usize <= region.words.len());
         assert!(mark.promotions as usize <= region.promotions.len());
+        let headers = region.headers.split_off(mark.headers as usize);
         DefinitionRegionSuffix {
-            headers: region.headers.split_off(mark.headers as usize),
-            words: region.words.split_off(mark.words as usize),
+            headers,
+            owner: region.owner.as_ref().map(Rc::clone),
             promotions: region.promotions.split_off(mark.promotions as usize),
         }
     }
 
     fn append_region_suffix(region: &mut DefinitionRegion, mut suffix: DefinitionRegionSuffix) {
         region.headers.append(&mut suffix.headers);
-        region.words.append(&mut suffix.words);
+        debug_assert!(match (&region.owner, &suffix.owner) {
+            (Some(region), Some(suffix)) => Rc::ptr_eq(region, suffix),
+            (None, None) => true,
+            _ => false,
+        });
         region.promotions.append(&mut suffix.promotions);
     }
 
@@ -1111,7 +1412,6 @@ impl<G> DefinitionArena<G> {
                     region: region_id,
                     mark: DefinitionRegionMark {
                         headers: self.format.headers.len() as u32,
-                        words: self.format.words.len() as u32,
                         promotions: self.format.promotions.len() as u32,
                         retired: false,
                     },
@@ -1128,7 +1428,6 @@ impl<G> DefinitionArena<G> {
                     region: region_id,
                     mark: DefinitionRegionMark {
                         headers: self.global.headers.len() as u32,
-                        words: self.global.words.len() as u32,
                         promotions: self.global.promotions.len() as u32,
                         retired: false,
                     },
@@ -1149,7 +1448,6 @@ impl<G> DefinitionArena<G> {
                     region: region_id,
                     mark: DefinitionRegionMark {
                         headers: region.data.headers.len() as u32,
-                        words: region.data.words.len() as u32,
                         promotions: region.data.promotions.len() as u32,
                         retired: region.retired,
                     },
@@ -1189,15 +1487,15 @@ impl<G> DefinitionArena<G> {
         }
     }
 
-    fn lease_active_region(&self, key: u32) -> DefinitionRegionLease<G> {
+    fn pin_active_region(&self, key: u32) -> LocalRegionPin<G> {
         if key == 0 {
-            return DefinitionRegionLease {
+            return LocalRegionPin {
                 region: None,
                 _brand: PhantomData,
             };
         }
         assert!(self.local_slots.acquire(key));
-        DefinitionRegionLease {
+        LocalRegionPin {
             region: Some(LocalDefinitionRegionLease {
                 slots: Rc::clone(&self.local_slots),
                 key,
@@ -1297,7 +1595,7 @@ impl<G> DefinitionArena<G> {
         assert!(self.validates_cursor(cursor));
         assert!(self.active_build.is_none());
         let head = self.cursor();
-        let head_lease = self.lease_active_region(head.active_local);
+        let head_lease = self.pin_active_region(head.active_local);
         let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
         let mut accepted = Vec::with_capacity(mutations.len());
         for mutation in mutations.into_iter().rev() {
@@ -1378,7 +1676,7 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn restore_cursor(&mut self, cursor: DefinitionArenaCursor) {
         assert!(self.validates_cursor(cursor));
         self.abort_active_build();
-        let current_lease = self.lease_active_region(self.active_local);
+        let current_lease = self.pin_active_region(self.active_local);
         let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
         for mutation in mutations.into_iter().rev() {
             let accepted = self.undo_mutation(mutation);
@@ -1419,7 +1717,6 @@ impl<G> DefinitionArena<G> {
             next_build_serial: 1,
             active_build: None,
             accounting,
-            semantic_identity_enabled: false,
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             retirement_counters,
             _brand: PhantomData,
@@ -1430,7 +1727,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.allocate_from_iter(
             parameter_text.iter().copied(),
             replacement_text.iter().copied(),
@@ -1441,12 +1738,12 @@ impl<G> DefinitionArena<G> {
         &mut self,
         parameter_text: Parameters,
         replacement_text: Replacement,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError>
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError>
     where
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
     {
-        let mut builder = DefinitionBuilder::new(self.identity_policy());
+        let mut builder = DefinitionBuilder::new();
         for word in parameter_text {
             builder.push_parameter(word).map_err(map_build_error)?;
         }
@@ -1461,7 +1758,7 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn publish(
         &mut self,
         builder: &mut DefinitionBuilder,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.validate_builder(builder)?;
         self.reserve_batch(1, builder.words().len())?;
         Ok(self.publish_prevalidated(builder))
@@ -1470,14 +1767,14 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn publish_prevalidated(
         &mut self,
         builder: &mut DefinitionBuilder,
-    ) -> DefinitionId<G> {
+    ) -> DefinitionRef<G> {
         self.publish_prevalidated_to(builder, GLOBAL_REGION)
     }
 
     pub(crate) fn publish_format_prevalidated(
         &mut self,
         builder: &mut DefinitionBuilder,
-    ) -> DefinitionId<G> {
+    ) -> DefinitionRef<G> {
         self.publish_prevalidated_to(builder, FORMAT_REGION)
     }
 
@@ -1485,7 +1782,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         builder: &mut DefinitionBuilder,
         region_id: u32,
-    ) -> DefinitionId<G> {
+    ) -> DefinitionRef<G> {
         self.record_region_change(region_id);
         let accounting = self.accounting.clone();
         let mut region = self
@@ -1496,21 +1793,20 @@ impl<G> DefinitionArena<G> {
                 .expect("batch preflight reserved a definition row"),
         )
         .expect("definition row zero is not publishable");
-        let start = u32::try_from(region.words.len()).expect("reserved word extent");
-        region.words.extend_from_slice(builder.words());
-        let end = u32::try_from(region.words.len()).expect("reserved word extent");
-        region.headers.push(DefinitionHeader {
+        let (start, end) = region
+            .extend_words(builder.words())
+            .expect("batch preflight reserved a definition word extent");
+        region.push_header(DefinitionHeader {
             start,
             parameter_len: builder.data.parameter_len,
             end,
             origin: crate::token::OriginId::UNKNOWN,
-            semantic_identity: builder.data.sealed_identity,
             pattern: builder.data.pattern.finish(),
         });
         drop(region);
         accounting.allocate_shared_dynamic(definition_memory_words(builder.words().len()));
         builder.data.phase = DefinitionBuildPhase::Published;
-        DefinitionId::new(region_id, row, builder.data.sealed_identity)
+        DefinitionRef::new(region_id, row)
     }
 
     pub(crate) fn validate_builder(
@@ -1518,35 +1814,9 @@ impl<G> DefinitionArena<G> {
         builder: &DefinitionBuilder,
     ) -> Result<(), DefinitionAllocationError> {
         builder.validate_completed()?;
-        if builder.policy() != self.identity_policy() {
-            return Err(DefinitionAllocationError::IdentityPolicyMismatch);
-        }
         u32::try_from(builder.words().len())
             .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         Ok(())
-    }
-
-    #[must_use]
-    pub(crate) const fn identity_policy(&self) -> DefinitionIdentityPolicy {
-        if self.semantic_identity_enabled {
-            DefinitionIdentityPolicy::Enabled
-        } else {
-            DefinitionIdentityPolicy::Disabled
-        }
-    }
-
-    pub(crate) fn enable_semantic_identity(&mut self) -> bool {
-        if self.semantic_identity_enabled {
-            return true;
-        }
-        if !self.format.headers.is_empty()
-            || !self.global.headers.is_empty()
-            || !self.local_slots.is_empty()
-        {
-            return false;
-        }
-        self.semantic_identity_enabled = true;
-        true
     }
 
     pub(crate) fn reserve_batch(
@@ -1554,21 +1824,7 @@ impl<G> DefinitionArena<G> {
         rows: usize,
         words: usize,
     ) -> Result<(), DefinitionAllocationError> {
-        self.global
-            .headers
-            .len()
-            .checked_add(rows)
-            .and_then(|len| u32::try_from(len).ok())
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        self.global
-            .headers
-            .try_reserve(rows)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.global
-            .words
-            .try_reserve(words)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        Ok(())
+        self.global.reserve(rows, words).map_err(map_build_error)
     }
 
     pub(crate) fn reserve_format_batch(
@@ -1576,21 +1832,7 @@ impl<G> DefinitionArena<G> {
         rows: usize,
         words: usize,
     ) -> Result<(), DefinitionAllocationError> {
-        self.format
-            .headers
-            .len()
-            .checked_add(rows)
-            .and_then(|len| u32::try_from(len).ok())
-            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        self.format
-            .headers
-            .try_reserve(rows)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.format
-            .words
-            .try_reserve(words)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        Ok(())
+        self.format.reserve(rows, words).map_err(map_build_error)
     }
 
     fn fixed_region(&self, id: u32) -> Option<&DefinitionRegion> {
@@ -1618,10 +1860,6 @@ impl<G> DefinitionArena<G> {
                 .map(DefinitionRegionMut::Local),
             _ => None,
         }
-    }
-
-    fn region_word_len(&self, id: u32) -> Option<usize> {
-        self.region(id).map(|region| region.words.len())
     }
 
     pub(crate) fn begin_group(&mut self) -> Result<(), DefinitionAllocationError> {
@@ -1673,23 +1911,6 @@ impl<G> DefinitionArena<G> {
         self.local_slots.retire(child);
     }
 
-    pub(crate) fn lease(&self, id: DefinitionId<G>) -> DefinitionRegionLease<G> {
-        let region = (id.region() >= 3).then(|| {
-            assert!(
-                self.local_slots.acquire(id.region()),
-                "definition lease names a live region"
-            );
-            LocalDefinitionRegionLease {
-                slots: Rc::clone(&self.local_slots),
-                key: id.region(),
-            }
-        });
-        DefinitionRegionLease {
-            region,
-            _brand: PhantomData,
-        }
-    }
-
     pub(crate) fn checkpoint_lease(&self) -> DefinitionCheckpointLease<G> {
         if self.active_local != 0 {
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -1701,7 +1922,22 @@ impl<G> DefinitionArena<G> {
             );
         }
         DefinitionCheckpointLease {
-            region: self.lease_active_region(self.active_local),
+            region: self.pin_active_region(self.active_local),
+        }
+    }
+
+    #[cfg(test)]
+    fn lease(&self, id: DefinitionRef<G>) -> LocalRegionPin<G> {
+        let region = (id.region() >= 3).then(|| {
+            assert!(self.local_slots.acquire(id.region()));
+            LocalDefinitionRegionLease {
+                slots: Rc::clone(&self.local_slots),
+                key: id.region(),
+            }
+        });
+        LocalRegionPin {
+            region,
+            _brand: PhantomData,
         }
     }
 
@@ -1724,22 +1960,16 @@ impl<G> DefinitionArena<G> {
             }
         };
         self.record_region_change(region);
-        let word_start = u32::try_from(
-            self.region_word_len(region)
-                .expect("selected definition region exists"),
-        )
-        .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
+        let word_start = self
+            .region_mut(region)
+            .expect("selected definition region exists")
+            .begin_word_span();
         let serial = NonZeroU32::new(self.next_build_serial)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         self.next_build_serial = self
             .next_build_serial
             .checked_add(1)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let identity = self.semantic_identity_enabled.then(|| {
-            let mut hasher = StateHasher::new(DEFINITION_IDENTITY_V2_DOMAIN);
-            hasher.tag(PARAMETER_START);
-            hasher
-        });
         self.active_build = Some(ActiveDefinitionBuild {
             serial,
             region,
@@ -1747,7 +1977,6 @@ impl<G> DefinitionArena<G> {
             parameter_len: 0,
             replacement_len: 0,
             pattern: MacroParameterPatternBuilder::new(),
-            identity,
             origin,
             phase: DefinitionBuildPhase::OpenParameters,
         });
@@ -1785,19 +2014,10 @@ impl<G> DefinitionArena<G> {
         let region_id = build.region;
         self.region_mut(region_id)
             .expect("active build region exists")
-            .words
-            .try_reserve(1)
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+            .push_word(word)?;
         let build = self.active_build_mut(key)?;
         build.parameter_len = parameter_len;
         build.pattern = pattern;
-        if let Some(identity) = &mut build.identity {
-            identity.u32(word.raw());
-        }
-        self.region_mut(region_id)
-            .expect("active build region exists")
-            .words
-            .push(word);
         Ok(())
     }
 
@@ -1808,11 +2028,6 @@ impl<G> DefinitionArena<G> {
         let build = self.active_build_mut(key)?;
         if build.phase != DefinitionBuildPhase::OpenParameters {
             return Err(DefinitionBuildError::InvalidPhase);
-        }
-        if let Some(identity) = &mut build.identity {
-            identity.tag(PARAMETER_END);
-            identity.u32(build.parameter_len);
-            identity.tag(REPLACEMENT_START);
         }
         build.phase = DefinitionBuildPhase::OpenReplacement;
         Ok(())
@@ -1835,25 +2050,16 @@ impl<G> DefinitionArena<G> {
         let region_id = build.region;
         self.region_mut(region_id)
             .expect("active build region exists")
-            .words
-            .try_reserve(1)
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+            .push_word(word)?;
         let build = self.active_build_mut(key)?;
         build.replacement_len = replacement_len;
-        if let Some(identity) = &mut build.identity {
-            identity.u32(word.raw());
-        }
-        self.region_mut(region_id)
-            .expect("active build region exists")
-            .words
-            .push(word);
         Ok(())
     }
 
     pub(crate) fn seal_build(
         &mut self,
         key: DefinitionBuildKey<G>,
-    ) -> Result<DefinitionId<G>, DefinitionBuildError> {
+    ) -> Result<DefinitionRef<G>, DefinitionBuildError> {
         let Some(build) = self
             .active_build
             .as_ref()
@@ -1865,26 +2071,14 @@ impl<G> DefinitionArena<G> {
             return Err(DefinitionBuildError::InvalidPhase);
         }
         let region_id = build.region;
-        let end = u32::try_from(
-            self.region(region_id)
-                .expect("active build region exists")
-                .words
-                .len(),
-        )
-        .map_err(|_| DefinitionBuildError::CapacityOverflow)?;
+        let end = self
+            .region(region_id)
+            .expect("active build region exists")
+            .word_head;
         self.region_mut(region_id)
             .expect("active build region exists")
-            .headers
-            .try_reserve(1)
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
-        let mut build = self.active_build.take().expect("validated active build");
-        let semantic_identity = if let Some(mut identity) = build.identity.take() {
-            identity.tag(REPLACEMENT_END);
-            identity.u32(build.replacement_len);
-            identity.finish().max(1)
-        } else {
-            0
-        };
+            .reserve(1, 0)?;
+        let build = self.active_build.take().expect("validated active build");
         let parameter_len = build.parameter_len;
         let start = build.word_start;
         let origin = build.origin;
@@ -1897,12 +2091,11 @@ impl<G> DefinitionArena<G> {
                 .map_err(|_| DefinitionBuildError::CapacityOverflow)?,
         )
         .expect("definition row is nonzero");
-        region.headers.push(DefinitionHeader {
+        region.push_header(DefinitionHeader {
             start,
             parameter_len,
             end,
             origin,
-            semantic_identity,
             pattern: build.pattern.finish(),
         });
         drop(region);
@@ -1910,7 +2103,7 @@ impl<G> DefinitionArena<G> {
             self.local_slots.add_rows(1);
         }
         accounting.allocate_shared_dynamic(definition_memory_words((end - start) as usize));
-        Ok(DefinitionId::new(region_id, row, semantic_identity))
+        Ok(DefinitionRef::new(region_id, row))
     }
 
     pub(crate) fn abort_build(&mut self, key: DefinitionBuildKey<G>) {
@@ -1924,18 +2117,13 @@ impl<G> DefinitionArena<G> {
     }
 
     fn abort_active_build(&mut self) {
-        if let Some(build) = self.active_build.take() {
-            self.region_mut(build.region)
-                .expect("active build region exists")
-                .words
-                .truncate(build.word_start as usize);
-        }
+        let _ = self.active_build.take();
     }
 
     pub(crate) fn promote_global(
         &mut self,
-        id: DefinitionId<G>,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+        id: DefinitionRef<G>,
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         if id.region() == GLOBAL_REGION || id.region() == FORMAT_REGION {
             return Ok(id);
         }
@@ -1948,69 +2136,61 @@ impl<G> DefinitionArena<G> {
         if let Some(promotion) = source_region
             .promotions
             .iter()
-            .find(|promotion| promotion.source_row == id.format_index())
+            .find(|promotion| promotion.source_row == id.row_index())
         {
-            return Ok(DefinitionId::new(
-                GLOBAL_REGION,
-                promotion.destination_row,
-                promotion.destination_identity,
-            ));
+            return Ok(DefinitionRef::new(GLOBAL_REGION, promotion.destination_row));
         }
         let source_header = *source_region
             .headers
-            .get(id.format_index() as usize)
+            .get(id.row_index() as usize)
             .ok_or(DefinitionAllocationError::InvalidDefinition)?;
-        let source_word_len = (source_header.end - source_header.start) as usize;
         self.global
-            .headers
-            .try_reserve(1)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.global
-            .words
-            .try_reserve(source_word_len)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
+            .reserve(1, (source_header.end - source_header.start) as usize)
+            .map_err(map_build_error)?;
         source_region
             .promotions
             .try_reserve(1)
             .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        let source_words =
-            &source_region.words[source_header.start as usize..source_header.end as usize];
-        let start = u32::try_from(self.global.words.len())
-            .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
-        self.global.words.extend_from_slice(source_words);
-        let end = u32::try_from(self.global.words.len())
-            .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
+        let source_words = (source_header.start..source_header.end)
+            .map(|index| {
+                source_region
+                    .word(index)
+                    .ok_or(DefinitionAllocationError::InvalidDefinition)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (start, end) = self
+            .global
+            .extend_words(&source_words)
+            .map_err(map_build_error)?;
         let row = NonZeroU32::new(
             u32::try_from(self.global.headers.len() + 1)
                 .map_err(|_| DefinitionAllocationError::CapacityOverflow)?,
         )
         .expect("definition row is nonzero");
-        self.global.headers.push(DefinitionHeader {
+        self.global.push_header(DefinitionHeader {
             start,
             parameter_len: source_header.parameter_len,
             end,
             origin: source_header.origin,
-            semantic_identity: source_header.semantic_identity,
             pattern: source_header.pattern,
         });
         self.accounting
             .allocate_shared_dynamic(definition_memory_words(source_words.len()));
-        let promoted = DefinitionId::new(GLOBAL_REGION, row, source_header.semantic_identity);
+        let promoted = DefinitionRef::new(GLOBAL_REGION, row);
         source_region.promotions.push(DefinitionPromotion {
-            source_row: id.format_index(),
+            source_row: id.row_index(),
             destination_row: row,
-            destination_identity: source_header.semantic_identity,
         });
         Ok(promoted)
     }
 
     pub(crate) fn set_origin(
         &mut self,
-        id: DefinitionId<G>,
+        id: DefinitionRef<G>,
         origin: crate::token::OriginId,
     ) -> Result<(), DefinitionAllocationError> {
         let region_id = id.region();
-        let row = id.format_index();
+        let row = id.row_index();
         let old_origin = self
             .region(region_id)
             .and_then(|region| region.headers.get(row as usize).map(|header| header.origin))
@@ -2053,11 +2233,11 @@ impl<G> DefinitionArena<G> {
 
     #[must_use]
     #[inline(always)]
-    pub(crate) fn get(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn get(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
         let region = self.region(id.region()).expect("definition region is live");
         DefinitionView {
             region,
-            row: id.format_index() as usize,
+            row: id.row_index() as usize,
             _brand: PhantomData,
         }
     }
@@ -2130,14 +2310,100 @@ pub struct DefinitionView<'a, G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
+#[derive(Clone, Copy)]
+pub struct DefinitionWords<'a> {
+    owner: &'a DefinitionRegionOwner,
+    start: u32,
+    len: u32,
+}
+
+impl<'a> DefinitionWords<'a> {
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<TokenWord> {
+        (index < self.len as usize).then(|| self.owner.word(self.start + index as u32))?
+    }
+
+    #[must_use]
+    pub const fn iter(self) -> DefinitionWordIter<'a> {
+        DefinitionWordIter {
+            words: self,
+            position: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn to_vec(self) -> Vec<TokenWord> {
+        self.iter().collect()
+    }
+}
+
+impl core::fmt::Debug for DefinitionWords<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T> PartialEq<T> for DefinitionWords<'_>
+where
+    T: AsRef<[TokenWord]> + ?Sized,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.len() == other.as_ref().len() && self.iter().eq(other.as_ref().iter().copied())
+    }
+}
+
+impl PartialEq for DefinitionWords<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for DefinitionWords<'_> {}
+
+impl<'a> IntoIterator for DefinitionWords<'a> {
+    type Item = TokenWord;
+    type IntoIter = DefinitionWordIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+pub struct DefinitionWordIter<'a> {
+    words: DefinitionWords<'a>,
+    position: u32,
+}
+
+impl Iterator for DefinitionWordIter<'_> {
+    type Item = TokenWord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let word = self.words.get(self.position as usize)?;
+        self.position += 1;
+        Some(word)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.words.len() - self.position as usize;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for DefinitionWordIter<'_> {}
+
 impl<'a, G> DefinitionView<'a, G> {
     fn header(&self) -> &DefinitionHeader {
         &self.region.headers[self.row]
-    }
-
-    fn words(&self) -> &[TokenWord] {
-        let header = self.header();
-        &self.region.words[header.start as usize..header.end as usize]
     }
 
     #[must_use]
@@ -2146,22 +2412,56 @@ impl<'a, G> DefinitionView<'a, G> {
     }
 
     #[must_use]
-    pub fn parameter_text(&self) -> &[TokenWord] {
-        &self.words()[..self.header().parameter_len as usize]
+    pub fn parameter_text(&self) -> DefinitionWords<'_> {
+        let header = self.header();
+        DefinitionWords {
+            owner: self
+                .region
+                .owner
+                .as_deref()
+                .expect("definition region owns parameter words"),
+            start: header.start,
+            len: header.parameter_len,
+        }
     }
 
     #[must_use]
-    pub fn replacement_text(&self) -> &[TokenWord] {
-        &self.words()[self.header().parameter_len as usize..]
+    pub fn replacement_text(&self) -> DefinitionWords<'_> {
+        let header = self.header();
+        DefinitionWords {
+            owner: self
+                .region
+                .owner
+                .as_deref()
+                .expect("definition region owns replacement words"),
+            start: header.start + header.parameter_len,
+            len: header.end - header.start - header.parameter_len,
+        }
     }
 
     #[must_use]
     pub fn replacement_word(&self, index: usize) -> Option<TokenWord> {
-        self.replacement_text().get(index).copied()
+        self.replacement_text().get(index)
     }
 
+    /// Computes the allocation-independent content identity only at a cold
+    /// semantic-state boundary. Definition construction and delivery never
+    /// maintain or carry this value.
     pub(crate) fn semantic_identity(&self) -> Option<u64> {
-        (self.header().semantic_identity != 0).then_some(self.header().semantic_identity)
+        let mut identity = StateHasher::new(DEFINITION_IDENTITY_V2_DOMAIN);
+        identity.tag(PARAMETER_START);
+        for word in self.parameter_text().iter() {
+            identity.u32(word.raw());
+        }
+        identity.tag(PARAMETER_END);
+        identity.u32(self.parameter_text().len() as u32);
+        identity.tag(REPLACEMENT_START);
+        for word in self.replacement_text().iter() {
+            identity.u32(word.raw());
+        }
+        identity.tag(REPLACEMENT_END);
+        identity.u32(self.replacement_text().len() as u32);
+        Some(identity.finish().max(1))
     }
 
     #[must_use]

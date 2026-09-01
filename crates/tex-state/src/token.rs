@@ -201,7 +201,7 @@ pub trait PackedCommandTarget<G> {
     fn write_macro_meaning(
         &mut self,
         flags: crate::meaning::MeaningFlags,
-        definition: crate::DefinitionId<G>,
+        definition: crate::DefinitionRef<G>,
     );
 }
 

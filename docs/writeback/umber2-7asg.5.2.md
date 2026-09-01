@@ -89,7 +89,7 @@ The archived DWARF and generated assembly establish the relevant layouts:
 | Value                                               |  Size |
 | --------------------------------------------------- | ----: |
 | `TracedTokenWord`                                   |   8 B |
-| `DefinitionId<G>`                                   |   8 B |
+| `DefinitionRef<G>`                                  |   8 B |
 | `MeaningWord<G>`                                    |  24 B |
 | `ResolvedMeaning<G>`                                |  24 B |
 | meaning `BankCell<MeaningWord<G>>` stride           |  32 B |
@@ -144,7 +144,7 @@ does not remove the required final owner for a macro definition.
 Recommended for the implementation follow-up. The default control-sequence
 representation already supplies the required stable `Symbol` index. A
 borrow-scoped dense-bank accessor can bounds-check once, borrow the row, copy
-or decode a static word, and clone a macro `DefinitionId` exactly once into
+or decode a static word, and clone a macro `DefinitionRef` exactly once into
 the final owned command. The borrow ends before any mutable command work. The
 assignment level remains in the bank and does not enter `CurrentCommand`;
 journaling, local/global restoration, operation rollback, and format loading

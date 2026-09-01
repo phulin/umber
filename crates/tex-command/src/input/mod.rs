@@ -876,7 +876,7 @@ impl<G> InputState<G> {
         body: &MacroBodyCursor<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        let definition = stores.definition(body.definition);
+        let definition = stores.definition(body.body.definition_ref());
         let count = definition.replacement_text().len();
         let split = body.position().min(count);
         let render = |token: tex_state::token::Token| {

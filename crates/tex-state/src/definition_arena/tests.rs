@@ -1,6 +1,5 @@
 use super::{
     DefinitionAllocationError, DefinitionBuildError, DefinitionBuildPhase, DefinitionBuilder,
-    DefinitionIdentityPolicy,
 };
 use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
@@ -10,7 +9,7 @@ fn direct_definition<G>(
     destination: super::DefinitionDestination,
     parameter: &[TokenWord],
     replacement: &[TokenWord],
-) -> super::DefinitionId<G> {
+) -> super::DefinitionRef<G> {
     let build = arena
         .begin_build(destination, crate::token::OriginId::UNKNOWN)
         .expect("definition transaction");
@@ -31,11 +30,10 @@ fn origin(raw: u32) -> crate::token::OriginId {
 }
 
 fn checked_builder(
-    policy: DefinitionIdentityPolicy,
     parameter_text: &[TokenWord],
     replacement_text: &[TokenWord],
 ) -> DefinitionBuilder {
-    let mut builder = DefinitionBuilder::new(policy);
+    let mut builder = DefinitionBuilder::new();
     for &word in parameter_text {
         builder.push_parameter(word).expect("parameter word");
     }
@@ -49,11 +47,10 @@ fn checked_builder(
 
 #[test]
 fn definition_key_fits_the_coordinated_compact_boundary() {
-    assert_eq!(std::mem::size_of::<super::DefinitionId<()>>(), 8);
-    assert_eq!(std::mem::size_of::<super::DefinitionRegionCoordinate>(), 4);
+    assert_eq!(std::mem::size_of::<super::DefinitionRef<()>>(), 8);
     assert_eq!(
         std::mem::size_of::<super::DefinitionCheckpointLease<()>>(),
-        std::mem::size_of::<super::DefinitionRegionLease<()>>(),
+        std::mem::size_of::<super::LocalRegionPin<()>>(),
         "one current-region checkpoint pin has no stale multi-region container"
     );
 }
@@ -101,9 +98,18 @@ fn direct_definition_seals_the_transactional_destination_without_a_body_copy() {
         arena
             .push_replacement(build, word)
             .expect("replacement word");
-        let before = arena.global.words.as_ptr();
+        let before = std::rc::Rc::as_ptr(
+            arena
+                .global
+                .owner
+                .as_ref()
+                .expect("word push creates owner"),
+        );
         let definition = arena.seal_build(build).expect("sealed definition");
-        assert_eq!(arena.global.words.as_ptr(), before);
+        assert_eq!(
+            std::rc::Rc::as_ptr(arena.global.owner.as_ref().expect("sealed owner")),
+            before
+        );
         assert_eq!(arena.get(definition).replacement_text(), [word]);
     });
 }
@@ -672,9 +678,9 @@ fn checkpoint_rejection_restores_parent_written_after_ending_checkpoint_child() 
         assert_eq!(arena.get(accepted_parent).replacement_text().len(), 1);
         assert_eq!(arena.get(child_root).replacement_text().len(), 1);
         assert!(
-            arena.region(rejected_child.region()).is_some_and(
-                |region| rejected_child.format_index() as usize >= region.headers.len()
-            )
+            arena
+                .region(rejected_child.region())
+                .is_some_and(|region| rejected_child.row_index() as usize >= region.headers.len())
         );
         drop(checkpoint_lease);
         arena.end_group();
@@ -723,7 +729,7 @@ fn checkpoint_acceptance_keeps_restored_child_and_discards_later_parent_write() 
             1,
             "the parent row written after the checkpoint is not part of the candidate"
         );
-        assert_eq!(discarded_parent.format_index(), 1);
+        assert_eq!(discarded_parent.row_index(), 1);
         drop(checkpoint_lease);
         arena.end_group();
         arena.end_group();
@@ -784,7 +790,7 @@ fn checkpoint_rejection_discards_only_candidate_promotion_mappings() {
         arena.reject_checkpoint_candidate(checkpoint, tail);
 
         let replacement = arena.promote_global(source).expect("replacement promotion");
-        assert_eq!(replacement.format_index(), 0);
+        assert_eq!(replacement.row_index(), 0);
         assert_eq!(arena.get(replacement).replacement_text().len(), 1);
     });
 }
@@ -805,7 +811,7 @@ fn checkpoint_acceptance_discards_only_detached_prior_promotion_mappings() {
         let prior = arena.promote_global(source).expect("prior promotion");
         let tail = arena.begin_checkpoint_candidate(checkpoint);
         let candidate = arena.promote_global(source).expect("candidate promotion");
-        assert_eq!(candidate.format_index(), prior.format_index());
+        assert_eq!(candidate.row_index(), prior.row_index());
         arena.accept_checkpoint_candidate(tail);
         assert_eq!(
             arena.promote_global(source).expect("reused candidate"),
@@ -983,7 +989,7 @@ fn definition_region_truncation_releases_complete_suffix() {
 #[test]
 fn one_way_builder_transfer_prevents_cross_generation_aliasing() {
     let word = TokenWord::pack(Token::frozen_relax());
-    let mut builder = checked_builder(DefinitionIdentityPolicy::Disabled, &[], &[word]);
+    let mut builder = checked_builder(&[], &[word]);
     with_generation(|mut first_generation| {
         let first_baseline = first_generation.memory_accounting().words(false);
         let first_cursor = first_generation.definitions().cursor();
@@ -1011,7 +1017,7 @@ fn one_way_builder_transfer_prevents_cross_generation_aliasing() {
                 second_baseline
             );
 
-            builder.reset(DefinitionIdentityPolicy::Disabled);
+            builder.reset();
             builder.finish_parameters().expect("empty parameter text");
             builder.seal().expect("empty replacement text");
             let second = second_generation
@@ -1094,11 +1100,7 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
             parameters.push(TokenWord::pack(Token::param(slot)));
         }
         let replacement = [TokenWord::pack(Token::param(9))];
-        let mut builder = checked_builder(
-            DefinitionIdentityPolicy::Disabled,
-            &parameters,
-            &replacement,
-        );
+        let mut builder = checked_builder(&parameters, &replacement);
         let definition = generation
             .definitions_mut()
             .publish(&mut builder)
@@ -1116,7 +1118,7 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
 
 #[test]
 fn builder_checks_monotonic_phases_and_replacement_references() {
-    let mut builder = DefinitionBuilder::new(DefinitionIdentityPolicy::Disabled);
+    let mut builder = DefinitionBuilder::new();
     assert_eq!(builder.phase(), DefinitionBuildPhase::OpenParameters);
     builder
         .push_parameter(TokenWord::pack(Token::param(1)))
@@ -1152,7 +1154,7 @@ fn builder_checks_monotonic_phases_and_replacement_references() {
 
 #[test]
 fn zero_parameter_builder_has_one_monotonic_boundary() {
-    let mut builder = DefinitionBuilder::new(DefinitionIdentityPolicy::Disabled);
+    let mut builder = DefinitionBuilder::new();
     builder.finish_parameters().expect("empty parameter text");
     builder
         .push_replacement(TokenWord::pack(Token::frozen_relax()))
@@ -1164,8 +1166,8 @@ fn zero_parameter_builder_has_one_monotonic_boundary() {
 }
 
 #[test]
-fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() {
-    let mut builder = DefinitionBuilder::new(DefinitionIdentityPolicy::Enabled);
+fn injected_reserve_failure_preserves_validated_contents_and_reusable_capacity() {
+    let mut builder = DefinitionBuilder::new();
     let phase = builder.phase();
     let capacity = builder.capacity();
     builder.force_next_reserve_failure();
@@ -1186,12 +1188,10 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
     builder.seal().expect("sealed row");
 
     let mut reference = checked_builder(
-        DefinitionIdentityPolicy::Enabled,
         &[TokenWord::pack(Token::param(1))],
         &[TokenWord::pack(Token::param(1))],
     );
     with_generation(|mut generation| {
-        assert!(generation.enable_semantic_identity());
         let after_failure = generation
             .definitions_mut()
             .publish(&mut builder)
@@ -1200,12 +1200,10 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
             .definitions_mut()
             .publish(&mut reference)
             .expect("reference row");
-        assert_eq!(
+        assert!(
             generation
                 .definitions()
-                .get(after_failure)
-                .semantic_identity(),
-            generation.definitions().get(reference).semantic_identity()
+                .contents_equal(after_failure, reference)
         );
         assert_eq!(
             generation
@@ -1218,26 +1216,8 @@ fn injected_reserve_failure_preserves_metadata_identity_and_reusable_capacity() 
 }
 
 #[test]
-fn destination_policy_mismatch_changes_no_serial_or_accounting() {
+fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
     with_generation(|mut generation| {
-        let mut builder = DefinitionBuilder::new(DefinitionIdentityPolicy::Enabled);
-        builder.finish_parameters().expect("empty parameter text");
-        builder.seal().expect("empty replacement text");
-        let cursor = generation.definitions().cursor();
-        let accounting = generation.memory_accounting().words(false);
-        assert_eq!(
-            generation.definitions_mut().publish(&mut builder),
-            Err(DefinitionAllocationError::IdentityPolicyMismatch)
-        );
-        assert_eq!(generation.definitions().cursor(), cursor);
-        assert_eq!(generation.memory_accounting().words(false), accounting);
-    });
-}
-
-#[test]
-fn v2_identity_is_shared_by_streaming_and_ordinary_paths_and_frames_boundaries() {
-    with_generation(|mut generation| {
-        assert!(generation.enable_semantic_identity());
         let a = TokenWord::pack(Token::frozen_relax());
         let b = TokenWord::pack(Token::Char {
             ch: 'b',
@@ -1248,7 +1228,7 @@ fn v2_identity_is_shared_by_streaming_and_ordinary_paths_and_frames_boundaries()
             .allocate(&[a], &[b])
             .expect("ordinary allocation");
 
-        let mut streamed = DefinitionBuilder::new(DefinitionIdentityPolicy::Enabled);
+        let mut streamed = DefinitionBuilder::new();
         streamed.push_parameter(a).expect("parameter");
         streamed.finish_parameters().expect("boundary");
         streamed.push_replacement(b).expect("replacement");
@@ -1257,26 +1237,107 @@ fn v2_identity_is_shared_by_streaming_and_ordinary_paths_and_frames_boundaries()
             .definitions_mut()
             .publish(&mut streamed)
             .expect("streamed publication");
-        assert_eq!(
-            generation.definitions().get(ordinary).semantic_identity(),
-            generation.definitions().get(streamed).semantic_identity()
-        );
+        assert_ne!(ordinary, streamed);
+        assert!(generation.definitions().contents_equal(ordinary, ordinary));
+        assert!(generation.definitions().contents_equal(ordinary, streamed));
 
         let differently_framed = generation
             .definitions_mut()
             .allocate(&[a, b], &[])
             .expect("different framing");
-        assert_ne!(
-            generation.definitions().get(ordinary).semantic_identity(),
-            generation
+        assert!(
+            !generation
                 .definitions()
-                .get(differently_framed)
-                .semantic_identity()
+                .contents_equal(ordinary, differently_framed)
         );
-        assert_eq!(
-            generation.definitions().get(ordinary).semantic_identity(),
-            Some(10_092_552_631_538_213_390),
-            "definition identity v2 known vector"
+
+        let different_replacement = generation
+            .definitions_mut()
+            .allocate(&[a], &[a])
+            .expect("different replacement");
+        assert!(
+            !generation
+                .definitions()
+                .contents_equal(ordinary, different_replacement)
         );
+    });
+}
+
+#[test]
+fn resident_local_body_retains_one_exact_region_after_group_retirement() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("local definition group");
+        let words = [
+            TokenWord::from_raw(17),
+            TokenWord::from_raw(23),
+            TokenWord::from_raw(29),
+        ];
+        let definition = direct_definition(arena, super::DefinitionDestination::Local, &[], &words);
+        let (_, _, body) = arena
+            .admit_macro_body(definition)
+            .expect("resident local body");
+        assert_eq!(std::rc::Rc::strong_count(&body.owner), 2);
+
+        arena.end_group();
+
+        assert!(arena.region(definition.region()).is_none());
+        assert_eq!(std::rc::Rc::strong_count(&body.owner), 1);
+        assert_eq!(body.word(0), Some(words[0]));
+        assert_eq!(body.word(1), Some(words[1]));
+        assert_eq!(body.word(2), Some(words[2]));
+        assert_eq!(body.word(3), None);
+    });
+}
+
+#[test]
+fn resident_body_walks_chunk_boundary_and_large_definition_directly() {
+    with_generation(|mut generation| {
+        let replacement = (0..super::DEFINITION_WORD_CHUNK_CAPACITY + 19)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("large definition");
+        let (_, _, body) = generation
+            .definitions()
+            .admit_macro_body(definition)
+            .expect("resident large body");
+
+        for (position, expected) in replacement.iter().copied().enumerate() {
+            assert_eq!(body.word(position), Some(expected));
+        }
+        assert_eq!(body.word(replacement.len()), None);
+    });
+}
+
+#[test]
+fn differing_refs_compare_across_word_chunks_without_materializing_contents() {
+    with_generation(|mut generation| {
+        let replacement = (0..super::DEFINITION_WORD_CHUNK_CAPACITY + 7)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let first = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("first large definition");
+        let second = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("second large definition");
+        assert_ne!(first, second);
+        assert!(generation.definitions().contents_equal(first, second));
+
+        let mut changed = replacement;
+        *changed.last_mut().expect("nonempty replacement") = TokenWord::pack(Token::Char {
+            ch: 'z',
+            cat: Catcode::Other,
+        });
+        let third = generation
+            .definitions_mut()
+            .allocate(&[], &changed)
+            .expect("changed large definition");
+        assert!(!generation.definitions().contents_equal(first, third));
     });
 }

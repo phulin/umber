@@ -706,7 +706,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // A resource suspension has already moved the exact command
                 // into its typed expansion frame. Every other failure abandons
                 // the delivery. In both cases the caller slot and its
-                // DefinitionId owner must be empty, just as they were before
+                // DefinitionRef owner must be empty, just as they were before
                 // raw delivery started, and a later episode must mint a fresh
                 // delivery proof.
                 destination.take();
@@ -1786,21 +1786,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: tex_state::DefinitionId<G>,
-        definition_region: tex_state::DefinitionRegionLease<G>,
+        body: tex_state::ResidentMacroBody<G>,
         call_site: OriginId,
         arguments: Option<ArgumentSetId<G>>,
-        replacement_len: usize,
     ) -> InputLevelId {
         let invocation = call_site;
-        self.command.push_macro_activation(
-            name,
-            definition,
-            definition_region,
-            arguments,
-            invocation,
-            replacement_len,
-        )
+        self.command
+            .push_macro_activation(name, body, arguments, invocation)
     }
 }
 

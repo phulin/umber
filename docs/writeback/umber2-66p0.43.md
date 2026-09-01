@@ -7,7 +7,7 @@ caller-local `CurrentCommand` slots while scanner status is temporarily
 `normal`. Those slots now remain the sole operand owners through the entire
 comparison. `evaluate_ifx` borrows each `ResolvedMeaning` with `meaning_ref`;
 the macro case compares flags and borrows parameter and replacement spans
-directly through each existing `DefinitionId`.
+directly through each existing `DefinitionRef`.
 
 The former two owned `ResolvedMeaning` constructions, two cloned definition
 owners, and two owning `DefinitionView` reconstructions are absent. No cache,

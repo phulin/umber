@@ -559,7 +559,7 @@ impl<G> From<tex_command::AttemptTokenListId> for OperationTokenRoot<G> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::main_control) enum OperationDefinitionRoot<G> {
     Attempt(tex_command::AttemptDefinitionId),
-    Prepared(Option<tex_state::DefinitionId<G>>),
+    Prepared(Option<tex_state::DefinitionRef<G>>),
 }
 
 impl<G> OperationDefinitionRoot<G> {
@@ -574,7 +574,7 @@ impl<G> OperationDefinitionRoot<G> {
         }
     }
 
-    pub(in crate::main_control) fn prepared(&self) -> &tex_state::DefinitionId<G> {
+    pub(in crate::main_control) fn prepared(&self) -> &tex_state::DefinitionRef<G> {
         match self {
             Self::Prepared(Some(id)) => id,
             Self::Attempt(_) | Self::Prepared(None) => {
@@ -583,7 +583,7 @@ impl<G> OperationDefinitionRoot<G> {
         }
     }
 
-    pub(in crate::main_control) fn take_prepared(&mut self) -> tex_state::DefinitionId<G> {
+    pub(in crate::main_control) fn take_prepared(&mut self) -> tex_state::DefinitionRef<G> {
         match self {
             Self::Prepared(id) => id
                 .take()
@@ -592,7 +592,7 @@ impl<G> OperationDefinitionRoot<G> {
         }
     }
 
-    fn prepare(&mut self, id: tex_state::DefinitionId<G>) -> Result<(), ColdPreparationError> {
+    fn prepare(&mut self, id: tex_state::DefinitionRef<G>) -> Result<(), ColdPreparationError> {
         if !matches!(self, Self::Attempt(_)) {
             return Err(ColdPreparationError::ReceiptRemainder);
         }
@@ -1562,7 +1562,7 @@ impl<G> tex_command::AttemptPromotionDestination<G> for ColdOperationPromotion<'
     fn settle_definition_root(
         &mut self,
         source: tex_command::AttemptDefinitionId,
-        definition: tex_state::DefinitionId<G>,
+        definition: tex_state::DefinitionRef<G>,
     ) {
         let mut definition = Some(definition);
         self.operation.visit_definition_roots_mut(&mut |root| {

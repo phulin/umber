@@ -755,6 +755,20 @@ impl<G> SaveJournal<G> {
             .expect("dense accepted suffix redoes in place");
     }
 
+    pub(crate) fn visit_detached_prefix(
+        &self,
+        cursor: JournalCursor<G>,
+        visit: impl FnMut(&CheckpointDelta<G>),
+    ) -> bool {
+        self.checkpoint_arena
+            .visit_detached_checkpoint_prefix(
+                &self.checkpoint_pool,
+                cursor.checkpoint_mark(),
+                visit,
+            )
+            .is_ok()
+    }
+
     /// Moves the accepted suffix out of the live lane and opens an empty
     /// candidate suffix at `cursor`.
     pub(crate) fn begin_checkpoint_candidate(

@@ -6,7 +6,7 @@ Commit `647680943` exposes a borrow-scoped direct `DenseBank` row read through
 `DenseState::meaning_word` and
 `CommandContext::compact_control_sequence_meaning_word`. The existing owned
 `compact_control_sequence_meaning` handoff now resolves from that borrowed row.
-Static meanings decode in place; a macro `DefinitionId<G>` is cloned once into
+Static meanings decode in place; a macro `DefinitionRef<G>` is cloned once into
 the owned `ResolvedMeaning` retained by the final `CurrentCommand`. Frozen
 primitive resolution likewise resolves from its borrowed slice row instead of
 cloning a complete `MeaningWord` first.

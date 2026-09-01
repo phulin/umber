@@ -2,7 +2,6 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use tex_state::DefinitionId;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
 use crate::execution_scratch::ArgumentSetId;
@@ -538,11 +537,9 @@ impl<G> CommandState<G> {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: DefinitionId<G>,
-        definition_region: tex_state::DefinitionRegionLease<G>,
+        body: tex_state::ResidentMacroBody<G>,
         arguments: Option<ArgumentSetId<G>>,
         invocation: OriginId,
-        replacement_len: usize,
     ) -> InputLevelId {
         let parameter_count = arguments.map_or(0, |arguments| {
             self.scratch
@@ -556,12 +553,11 @@ impl<G> CommandState<G> {
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
         let identity = self.allocate_input_level_identity();
-        let mut frame = super::ResidentSpanCursor::new(identity, replacement_len);
+        let mut frame = super::ResidentSpanCursor::new(identity, body.len());
         frame.set_source_context(self.input.levels.current_source_context());
         self.input.levels.push_macro_body(
             InputLevel::MacroBody(super::MacroBodyCursor {
-                definition,
-                definition_region,
+                body,
                 arguments,
                 name,
                 invocation,

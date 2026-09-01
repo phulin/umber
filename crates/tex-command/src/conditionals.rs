@@ -1317,10 +1317,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         if first_flags != second_flags {
             return false;
         }
-        let first = self.state.definition(*first_definition);
-        let second = self.state.definition(*second_definition);
-        first.parameter_text() == second.parameter_text()
-            && first.replacement_text() == second.replacement_text()
+        self.state
+            .definition_contents_equal(*first_definition, *second_definition)
     }
 
     /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the

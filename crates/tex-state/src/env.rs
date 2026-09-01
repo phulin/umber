@@ -487,7 +487,7 @@ pub(crate) struct DenseState<G> {
     /// historically reachable from eqtb. The hot meaning row remains the
     /// compact non-owning coordinate; checkpoint hashing consults this side
     /// table only when maintained semantic identity is enabled.
-    definition_identities: std::collections::HashMap<crate::DefinitionId<G>, u64>,
+    definition_identities: std::collections::HashMap<crate::DefinitionRef<G>, u64>,
 }
 
 /// Accepted dense suffix retained while the current candidate mutates the
@@ -506,6 +506,72 @@ pub struct DenseStateCursor {
 }
 
 impl<G> DenseState<G> {
+    pub(crate) fn definition_meanings_match_accepted_checkpoint(
+        &self,
+        restart: JournalCursor<G>,
+        prior: JournalCursor<G>,
+        mut definitions_equal: impl FnMut(crate::DefinitionRef<G>, crate::DefinitionRef<G>) -> bool,
+    ) -> bool {
+        fn meaning_index<G>(delta: &crate::journal::CheckpointDelta<G>) -> Option<u32> {
+            match (delta.cell, &delta.alternate) {
+                (StateCell::Meaning(index), StateWord::Meaning(_)) => Some(index),
+                _ => None,
+            }
+        }
+
+        for (index, current) in self.meanings.values().enumerate() {
+            let index = index as u32;
+            let mut restart_value = current;
+            let mut candidate_touched = false;
+            self.journal().visit_checkpoint_suffix(restart, |delta| {
+                if !candidate_touched && meaning_index(delta) == Some(index) {
+                    let StateWord::Meaning(value) = delta.alternate else {
+                        unreachable!("meaning cell carries a meaning word")
+                    };
+                    restart_value = value;
+                    candidate_touched = true;
+                }
+            });
+
+            let mut prior_value = restart_value;
+            let mut prior_touched = false;
+            if !self.journal().visit_detached_prefix(prior, |delta| {
+                if meaning_index(delta) == Some(index) {
+                    let StateWord::Meaning(value) = delta.alternate else {
+                        unreachable!("meaning cell carries a meaning word")
+                    };
+                    prior_value = value;
+                    prior_touched = true;
+                }
+            }) {
+                return false;
+            }
+            if !(candidate_touched || prior_touched) {
+                continue;
+            }
+
+            let equal = match (current, prior_value) {
+                (MeaningWord::Static(left), MeaningWord::Static(right)) => left == right,
+                (MeaningWord::Font(left), MeaningWord::Font(right)) => left == right,
+                (
+                    MeaningWord::Macro {
+                        flags: left_flags,
+                        definition: left,
+                    },
+                    MeaningWord::Macro {
+                        flags: right_flags,
+                        definition: right,
+                    },
+                ) => left_flags == right_flags && definitions_equal(left, right),
+                _ => false,
+            };
+            if !equal {
+                return false;
+            }
+        }
+        true
+    }
+
     fn journal(&self) -> &SaveJournal<G> {
         self.journal
             .as_ref()
@@ -583,7 +649,7 @@ impl<G> DenseState<G> {
 
     pub(crate) fn capture_format_cells(
         &self,
-        mut definition_row: impl FnMut(crate::DefinitionId<G>) -> Result<u32, String>,
+        mut definition_row: impl FnMut(crate::DefinitionRef<G>) -> Result<u32, String>,
         _node_row: impl FnMut(DurableNodeMetadata) -> Result<u32, String>,
     ) -> Result<Vec<crate::format::schema::FormatCell>, String> {
         use crate::format::schema::{FormatCell, FormatMeaning};
@@ -701,7 +767,7 @@ impl<G> DenseState<G> {
     pub(crate) fn install_format_cells(
         &mut self,
         cells: &[crate::format::schema::FormatCell],
-        definitions: &[Option<crate::DefinitionId<G>>],
+        definitions: &[Option<crate::DefinitionRef<G>>],
         token_lists: &[crate::TokenListId<G>],
         glue_values: &[crate::GlueId<G>],
         _node_lists: &[crate::page_node_arena::PageListId],
@@ -887,7 +953,7 @@ impl<G> DenseState<G> {
 
     pub(crate) fn enable_reachable_state_identity(
         &mut self,
-        mut definition_identity: impl FnMut(crate::DefinitionId<G>) -> Option<u64>,
+        mut definition_identity: impl FnMut(crate::DefinitionRef<G>) -> Option<u64>,
     ) -> bool {
         if self.reachable_state_identity.is_some() {
             return true;
@@ -2320,7 +2386,7 @@ impl<G> DenseState<G> {
 
 #[derive(Clone)]
 pub(crate) enum DynamicMemoryRoot<G> {
-    Definition(crate::DefinitionId<G>),
+    Definition(crate::DefinitionRef<G>),
     TokenList(crate::TokenListId<G>),
 }
 
@@ -2462,7 +2528,7 @@ fn font_runtime_cell_semantic_key(cell: FontRuntimeCell) -> u64 {
 fn state_word_semantic_contribution<G>(
     cell: StateCell,
     word: &StateWord<G>,
-    definition_identities: &std::collections::HashMap<crate::DefinitionId<G>, u64>,
+    definition_identities: &std::collections::HashMap<crate::DefinitionRef<G>, u64>,
 ) -> Result<Option<u64>, ()> {
     let is_default = match (cell, word) {
         (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,

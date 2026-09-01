@@ -178,8 +178,8 @@ pub use command_context::{
 pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
     DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey, DefinitionBuildPhase,
-    DefinitionBuilder, DefinitionDestination, DefinitionId, DefinitionIdentityPolicy,
-    DefinitionRegionLease, DefinitionView,
+    DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView, DefinitionWords,
+    ResidentMacroBody,
 };
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,

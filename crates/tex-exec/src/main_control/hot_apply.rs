@@ -20,7 +20,7 @@ use super::*;
 pub(super) enum HotOperation<G> {
     MacroDefinition {
         target: Symbol,
-        definition: tex_state::DefinitionId<G>,
+        definition: tex_state::DefinitionRef<G>,
         flags: MeaningFlags,
         global: bool,
     },
@@ -239,7 +239,7 @@ pub(super) fn apply<G>(
 
 fn apply_macro_definition<G>(
     target: Symbol,
-    definition: tex_state::DefinitionId<G>,
+    definition: tex_state::DefinitionRef<G>,
     flags: MeaningFlags,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,

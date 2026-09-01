@@ -3439,6 +3439,51 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Visits the accepted detached prefix from the fork point through one
+    /// pre-fork checkpoint. The checkpoint is meaningful only while the sole
+    /// candidate transaction keeps that detached suffix parked.
+    #[doc(hidden)]
+    pub fn visit_detached_checkpoint_prefix(
+        &self,
+        pool: &ChunkPool<T>,
+        mark: CheckpointMark<Lane>,
+        mut visit: impl FnMut(&T),
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        let ForkOwnership::Forked {
+            prefix,
+            detached_prior,
+            ..
+        } = &self.ownership
+        else {
+            return Err(ForkArenaError::NotForked);
+        };
+        let prefix_payload = self
+            .base_payload_chunks
+            .saturating_add(prefix.payload.len() as u32);
+        let detached_end = prefix_payload.saturating_add(detached_prior.payload.len() as u32);
+        if mark.arena != self.owner
+            || mark.payload_chunks < prefix_payload
+            || mark.payload_chunks > detached_end
+            || mark.descriptor_chunks
+                != self.base_descriptor_chunks + prefix.descriptors.len() as u32
+        {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        let count = (mark.payload_chunks - prefix_payload) as usize;
+        for key in detached_prior.payload.iter().take(count) {
+            let used = pool.payload.used(*key, self.owner)?;
+            for offset in 0..used {
+                visit(
+                    pool.payload
+                        .get(*key, self.owner, offset)
+                        .ok_or(ForkArenaError::InvalidChunk)?,
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn visit_live_payload_range_mut_reverse(
         &mut self,
         pool: &mut ChunkPool<T>,

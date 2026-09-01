@@ -781,7 +781,7 @@ pub struct ScannedMacroDefinition<G> {
     /// executor never has to reopen raw input between the primitive and its
     /// single-builder parameter/replacement scan.
     pub target: Symbol,
-    pub definition: tex_state::DefinitionId<G>,
+    pub definition: tex_state::DefinitionRef<G>,
     pub provenance: StructuredProvenance,
 }
 

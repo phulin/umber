@@ -2,7 +2,7 @@
 
 use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
 use crate::command_context::{CommandContext, CommandContextParts};
-use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
+use crate::definition_arena::{DefinitionAllocationError, DefinitionRef};
 use crate::dependency::{
     AcceptedDependencyTail, DependencyRegionError, DependencyRegionToken, DependencyRuntime,
     ObservedDependency, TrackedRegionBarrier,
@@ -643,7 +643,7 @@ pub struct TokenListPromotion<'a> {
 /// Definition positions retain the wire row numbering so sparse environment
 /// roots can relocate directly without materializing unreachable history.
 pub(crate) struct FormatPromotionReceipt<G> {
-    pub definitions: Vec<Option<DefinitionId<G>>>,
+    pub definitions: Vec<Option<DefinitionRef<G>>>,
     pub token_lists: Vec<TokenListId<G>>,
     pub glue: Vec<GlueId<G>>,
 }
@@ -654,7 +654,6 @@ pub enum PromotionError {
     CapacityOverflow,
     AllocationFailed,
     InvalidDefinition,
-    IdentityPolicyMismatch,
     Retired,
     GenerationInUse,
 }
@@ -665,7 +664,6 @@ impl From<DefinitionAllocationError> for PromotionError {
             DefinitionAllocationError::CapacityOverflow => Self::CapacityOverflow,
             DefinitionAllocationError::AllocationFailed => Self::AllocationFailed,
             DefinitionAllocationError::InvalidDefinition => Self::InvalidDefinition,
-            DefinitionAllocationError::IdentityPolicyMismatch => Self::IdentityPolicyMismatch,
         }
     }
 }
@@ -693,7 +691,7 @@ impl From<DurableAllocationError> for PromotionError {
 /// Destination coordinates published together after complete batch staging.
 #[derive(Debug)]
 pub struct PromotionReceipt<G> {
-    pub definitions: SmallVec<[DefinitionId<G>; 4]>,
+    pub definitions: SmallVec<[DefinitionRef<G>; 4]>,
     pub token_lists: SmallVec<[TokenListId<G>; 4]>,
     pub glue: SmallVec<[GlueId<G>; 4]>,
     pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
@@ -718,7 +716,7 @@ pub trait ResidentPromotionBatch<G> {
     fn definition_count(&self) -> usize;
     fn definition(&self, index: usize) -> &crate::DefinitionBuilder;
     fn next_definition_mut(&mut self) -> &mut crate::DefinitionBuilder;
-    fn settle_next_definition(&mut self, definition: DefinitionId<G>);
+    fn settle_next_definition(&mut self, definition: DefinitionRef<G>);
 
     fn token_list_source_count(&self) -> usize;
     fn token_list_count(&self) -> usize;
@@ -839,6 +837,24 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    /// Compares only macro-definition-bearing eqtb meanings against one
+    /// retained accepted checkpoint. All other reachable-state components are
+    /// covered by the aggregate identity before this cold path is entered.
+    #[doc(hidden)]
+    pub fn definitions_match_accepted_checkpoint(&self, prior: &RuntimeCheckpoint<G>) -> bool {
+        let Some(transaction) = self.checkpoint_candidate.as_ref() else {
+            return false;
+        };
+        let Some(core) = self.core.as_ref() else {
+            return false;
+        };
+        core.definition_meanings_match_accepted_checkpoint(
+            *transaction.mark.journal(),
+            *prior.state.mark().journal(),
+            &transaction.core,
+        )
+    }
+
     fn checkpoint_state_is_ready(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
         self.checkpoint_state_is_ready_with_durable(
             checkpoint,
@@ -2027,7 +2043,7 @@ impl<G> Universe<G> {
         &mut self,
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
-    ) -> Result<DefinitionId<G>, UniverseError> {
+    ) -> Result<DefinitionRef<G>, UniverseError> {
         let id = self
             .core
             .as_mut()
@@ -2050,7 +2066,7 @@ impl<G> Universe<G> {
         &mut self,
         parameter_text: Parameters,
         replacement_text: Replacement,
-    ) -> Result<DefinitionId<G>, PromotionError>
+    ) -> Result<DefinitionRef<G>, PromotionError>
     where
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
@@ -2083,7 +2099,7 @@ impl<G> Universe<G> {
     pub fn promote_definition_builder(
         &mut self,
         builder: &mut crate::DefinitionBuilder,
-    ) -> Result<DefinitionId<G>, PromotionError> {
+    ) -> Result<DefinitionRef<G>, PromotionError> {
         let transient_words = builder
             .parameter_text()
             .len()
@@ -2103,15 +2119,6 @@ impl<G> Universe<G> {
         self.engine_usage
             .observe_transient_memory(0, transient_words);
         Ok(id)
-    }
-
-    #[must_use]
-    pub fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
-        self.core
-            .as_ref()
-            .expect("live universe")
-            .admit()
-            .definition_identity_policy()
     }
 
     pub(crate) fn glue_value(&self, id: GlueId<G>) -> GlueSpec {

@@ -1274,18 +1274,13 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .intern("mixeddelivery")
                 .expect("mixed delivery macro name")
                 .symbol();
-            let definition_region = universe
+            let body = universe
                 .command_context()
                 .expect("mixed delivery definition context")
-                .definition_region_lease(definition);
-            command.push_macro_activation(
-                macro_name,
-                definition,
-                definition_region,
-                Some(argument_set),
-                OriginId::UNKNOWN,
-                operations,
-            );
+                .admit_macro_body(definition)
+                .expect("resident mixed delivery definition")
+                .2;
+            command.push_macro_activation(macro_name, body, Some(argument_set), OriginId::UNKNOWN);
             let range = command
                 .scratch
                 .argument_range(argument_set, 1)

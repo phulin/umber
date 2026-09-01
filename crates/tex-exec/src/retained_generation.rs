@@ -389,6 +389,16 @@ pub struct RetainedCheckpointStore<'a, G> {
 }
 
 impl<G> RetainedCheckpointStore<'_, G> {
+    pub fn detached_checkpoint_at(
+        &self,
+        position: usize,
+        boundary: crate::EngineBoundary,
+        ordinal: u32,
+    ) -> Option<&EngineCheckpoint<G>> {
+        self.boundaries
+            .detached_checkpoint_at(position, boundary, ordinal)
+    }
+
     pub fn retain(&mut self, checkpoint: EngineCheckpoint<G>) -> RetainedCheckpointKey {
         let evidence = RetainedBoundaryEvidence::from_checkpoint(0, 0, &checkpoint);
         self.boundaries.append(checkpoint, evidence)
@@ -1538,6 +1548,29 @@ impl<G> Default for BoundaryLane<G> {
 }
 
 impl<G> BoundaryLane<G> {
+    fn detached_checkpoint_at(
+        &self,
+        position: usize,
+        boundary: crate::EngineBoundary,
+        ordinal: u32,
+    ) -> Option<&EngineCheckpoint<G>> {
+        let BoundaryOwnership::Forked { detached_prior, .. } = &self.ownership else {
+            return None;
+        };
+        detached_prior.iter().find_map(|key| {
+            let row = self.slot_by_index(key.slot);
+            let cell = row
+                .cell
+                .as_ref()
+                .filter(|_| row.generation == key.generation)?;
+            (cell.evidence.position == position
+                && cell.evidence.boundary == boundary
+                && cell.evidence.ordinal == ordinal)
+                .then_some(cell.checkpoint.as_ref())
+                .flatten()
+        })
+    }
+
     fn storage(&self) -> BoundaryLaneStorage {
         BoundaryLaneStorage {
             live_rows: self.visible_len(),

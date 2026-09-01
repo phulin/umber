@@ -1,6 +1,8 @@
 //! Coarse revision-generation owner and admitted state views.
 
-use crate::definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
+use crate::definition_arena::{
+    DefinitionAllocationError, DefinitionRef, DefinitionView, ResidentMacroBody,
+};
 use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
@@ -59,12 +61,33 @@ pub(crate) struct AcceptedStateCoreTail<G> {
 
 type CapturedFormatValues<G> = (
     Vec<crate::format::schema::FormatDefinition>,
-    Vec<(DefinitionId<G>, u32)>,
+    Vec<(DefinitionRef<G>, u32)>,
     Vec<Vec<u32>>,
     Vec<crate::format::schema::FormatGlue>,
 );
 
 impl<G> StateCore<G> {
+    pub(crate) fn definition_meanings_match_accepted_checkpoint(
+        &self,
+        restart: crate::journal::JournalCursor<G>,
+        prior: crate::journal::JournalCursor<G>,
+        accepted: &AcceptedStateCoreTail<G>,
+    ) -> bool {
+        self.state.definition_meanings_match_accepted_checkpoint(
+            restart,
+            prior,
+            |current, prior| {
+                self.generation
+                    .generation()
+                    .current_and_accepted_definition_contents_equal(
+                        &accepted.generation,
+                        current,
+                        prior,
+                    )
+            },
+        )
+    }
+
     /// Selects semantic identities for immutable format payloads before the
     /// destination publishes them. Dense cells are deliberately enabled only
     /// after materialization, because format installation writes those banks
@@ -283,7 +306,7 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
         self.generation.definitions().get(id)
     }
 
@@ -295,10 +318,6 @@ impl<'a, G> AdmittedState<'a, G> {
     #[inline(always)]
     pub(crate) fn glue(&self, id: GlueId<G>) -> GlueSpec {
         self.generation.glue().get(id)
-    }
-
-    pub(crate) fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
-        self.generation.definitions().identity_policy()
     }
 
     #[cfg(test)]
@@ -341,15 +360,27 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
         self.generation.definitions().get(id)
     }
 
-    pub(crate) fn definition_region_lease(
+    pub(crate) fn definition_contents_equal(
         &self,
-        id: DefinitionId<G>,
-    ) -> crate::DefinitionRegionLease<G> {
-        self.generation.definitions().lease(id)
+        left: DefinitionRef<G>,
+        right: DefinitionRef<G>,
+    ) -> bool {
+        self.generation.definitions().contents_equal(left, right)
+    }
+
+    pub(crate) fn admit_macro_body(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<(
+        crate::macro_definition::MacroParameterPattern,
+        usize,
+        ResidentMacroBody<G>,
+    )> {
+        self.generation.definitions().admit_macro_body(id)
     }
 
     #[inline(always)]
@@ -375,7 +406,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         &mut self,
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.generation
             .definitions_mut()
             .allocate(parameter_text, replacement_text)
@@ -385,7 +416,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         &mut self,
         parameter_text: Parameters,
         replacement_text: Replacement,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError>
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError>
     where
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
@@ -398,12 +429,8 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn publish_definition_builder(
         &mut self,
         builder: &mut crate::DefinitionBuilder,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.generation.definitions_mut().publish(builder)
-    }
-
-    pub(crate) fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
-        self.generation.definitions().identity_policy()
     }
 
     pub(crate) fn begin_definition_build(
@@ -446,7 +473,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn seal_definition_build(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
-    ) -> Result<DefinitionId<G>, crate::DefinitionBuildError> {
+    ) -> Result<DefinitionRef<G>, crate::DefinitionBuildError> {
         self.generation.definitions_mut().seal_build(build)
     }
 
@@ -456,14 +483,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     pub(crate) fn promote_definition_global(
         &mut self,
-        definition: DefinitionId<G>,
-    ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+        definition: DefinitionRef<G>,
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.generation.definitions_mut().promote_global(definition)
     }
 
     pub(crate) fn set_definition_origin(
         &mut self,
-        definition: DefinitionId<G>,
+        definition: DefinitionRef<G>,
         origin: crate::token::OriginId,
     ) -> Result<(), DefinitionAllocationError> {
         self.generation
@@ -692,7 +719,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .provenance_mut()
             .reserve_batch(provenance_count)?;
 
-        let mut promoted_definitions = SmallVec::<[DefinitionId<G>; 4]>::new();
+        let mut promoted_definitions = SmallVec::<[DefinitionRef<G>; 4]>::new();
         let mut promoted_token_lists = SmallVec::<[TokenListId<G>; 4]>::new();
         let mut promoted_glue = SmallVec::<[GlueId<G>; 4]>::new();
         let mut promoted_provenance = SmallVec::<[ProvenanceId<G>; 4]>::new();
@@ -780,14 +807,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_fold(0usize, |total, words| total.checked_add(words.len()))
             .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
 
-        let policy = self.generation.definitions().identity_policy();
         let mut definition_builders = Vec::new();
         definition_builders
             .try_reserve_exact(definitions.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         for (definition, live) in definitions.iter().zip(&live_definitions) {
             definition_builders.push(if *live {
-                let mut builder = crate::DefinitionBuilder::new(policy);
+                let mut builder = crate::DefinitionBuilder::new();
                 for &word in &definition.parameter_text {
                     builder.push_parameter(TokenWord::from_raw(word))?;
                 }

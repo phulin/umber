@@ -2,7 +2,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{DefinitionId, DefinitionIdentityPolicy, GlueId, ProvenanceId, TokenListId};
+use tex_state::{DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
 use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
 use crate::processor::AlignmentIdentity;
@@ -20,7 +20,7 @@ enum ResidentRoot<Attempt, Durable> {
 struct ResidentPromotion<G> {
     tokens: Vec<ResidentRoot<AttemptTokenListId, TokenListId<G>>>,
     glue: Vec<ResidentRoot<AttemptGlueId, GlueId<G>>>,
-    definitions: Vec<ResidentRoot<AttemptDefinitionId, DefinitionId<G>>>,
+    definitions: Vec<ResidentRoot<AttemptDefinitionId, DefinitionRef<G>>>,
     provenance: Vec<ResidentRoot<AttemptProvenanceId, ProvenanceId<G>>>,
 }
 
@@ -61,7 +61,7 @@ impl<G> ResidentPromotion<G> {
         }
     }
 
-    fn definition(&self, index: usize) -> &DefinitionId<G> {
+    fn definition(&self, index: usize) -> &DefinitionRef<G> {
         match &self.definitions[index] {
             ResidentRoot::Durable(definition) => definition,
             ResidentRoot::Attempt(_) => panic!("definition root was not settled"),
@@ -162,7 +162,11 @@ impl<G> AttemptPromotionDestination<G> for ResidentPromotion<G> {
             .expect("definition root remains")
     }
 
-    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionId<G>) {
+    fn settle_definition_root(
+        &mut self,
+        source: AttemptDefinitionId,
+        definition: DefinitionRef<G>,
+    ) {
         let mut matched = 0;
         for root in &mut self.definitions {
             if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
@@ -321,7 +325,7 @@ fn attempt_definition<G>(
     let definition = state
         .attempt
         .arena_mut()
-        .allocate_definition_builder(DefinitionIdentityPolicy::Disabled)
+        .allocate_definition_builder()
         .expect("definition builder");
     for word in parameters {
         state
@@ -708,7 +712,7 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_warmed_resident_promotions_allocate_zero_and_keep_owners_stationary() {
+fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_stationary() {
     fn evidence(
         repetitions: usize,
     ) -> (
@@ -753,8 +757,14 @@ fn one_and_4096_warmed_resident_promotions_allocate_zero_and_keep_owners_station
             for index in 0..repetitions {
                 let definition = admitted.definition(*destination.definition(index));
                 assert_eq!(definition.replacement_text(), [word('x').token_word()]);
-                checksum ^= (definition.replacement_text().as_ptr() as usize as u64)
-                    .rotate_left((index & 63) as u32);
+                checksum ^= u64::from(
+                    definition
+                        .replacement_text()
+                        .get(0)
+                        .expect("replacement word")
+                        .raw(),
+                )
+                .rotate_left((index & 63) as u32);
             }
             (
                 tex_state::measurement::HotCoreAllocationMeasurement {
@@ -771,8 +781,11 @@ fn one_and_4096_warmed_resident_promotions_allocate_zero_and_keep_owners_station
     let (many_allocations, many_address_changes, many_checksum) = evidence(4_096);
     assert_eq!(one_allocations.calls, 0);
     assert_eq!(one_allocations.requested_bytes, 0);
-    assert_eq!(many_allocations.calls, 0);
-    assert_eq!(many_allocations.requested_bytes, 0);
+    assert_eq!(
+        many_allocations.calls, 3,
+        "one word chunk and the live/owner header directories grow"
+    );
+    assert!(many_allocations.requested_bytes > 0);
     assert_eq!(one_address_changes, 0);
     assert_eq!(many_address_changes, 0);
     assert_ne!(one_checksum, many_checksum);
@@ -964,18 +977,13 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .scratch
             .commit_macro_match(matching)
             .expect("sealed empty frame");
-        let definition_region = universe
+        let body = universe
             .command_context()
             .expect("command context")
-            .definition_region_lease(definition);
-        let level = state.push_macro_activation(
-            name,
-            definition,
-            definition_region,
-            Some(frame),
-            OriginId::UNKNOWN,
-            0,
-        );
+            .admit_macro_body(definition)
+            .expect("resident macro body")
+            .2;
+        let level = state.push_macro_activation(name, body, Some(frame), OriginId::UNKNOWN);
 
         let pending = state
             .suspend_attempt(
@@ -1017,11 +1025,12 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
             for _ in 0..activations {
                 let level = state.push_macro_activation(
                     name,
-                    definition,
-                    context.definition_region_lease(definition),
+                    context
+                        .admit_macro_body(definition)
+                        .expect("resident macro body")
+                        .2,
                     None,
                     OriginId::UNKNOWN,
-                    0,
                 );
                 let body = state
                     .input
@@ -1032,7 +1041,7 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
                         _ => None,
                     })
                     .expect("live macro body");
-                assert_eq!(body.definition.semantic_owner_count(), 0);
+                assert_eq!(body.body.definition_ref().semantic_owner_count(), 0);
                 assert!(matches!(
                     state.input.levels.last(),
                     Some(crate::input::InputLevel::MacroBody(_))

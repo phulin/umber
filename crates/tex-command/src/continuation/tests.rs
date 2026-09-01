@@ -342,7 +342,7 @@ fn detached_schema_source_names_no_runtime_storage_types() {
     for forbidden in [
         "tex_state::",
         "Symbol",
-        "DefinitionId",
+        "DefinitionRef",
         "NodeId",
         "SourceId",
         "ArenaOffset",

@@ -20,7 +20,7 @@ use tex_state::token::{Catcode, Token, TokenWord};
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
-    assert!(std::mem::size_of::<tex_state::DefinitionId<()>>() <= 8);
+    assert!(std::mem::size_of::<tex_state::DefinitionRef<()>>() <= 8);
     assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
     assert!(std::mem::size_of::<tex_state::PrimitiveHandle<()>>() <= 16);
     assert_eq!(std::mem::size_of::<tex_command::CurrentCommand<()>>(), 72);

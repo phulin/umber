@@ -198,7 +198,7 @@ impl<G> CheckpointSink<G> for ProfileCheckpointSink {
         self.enabled
     }
 
-    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, _universe: &tex_state::Universe<G>) {
         self.count += 1;
         let identity = checkpoint.reachable_state_identity().map_or_else(
             || {

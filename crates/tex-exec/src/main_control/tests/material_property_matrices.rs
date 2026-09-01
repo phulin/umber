@@ -273,7 +273,7 @@ fn macro_text<G>(universe: &mut Universe<G>, name: &str) -> String {
         let ResolvedMeaning::Macro { definition, .. } = context.meaning(symbol) else {
             panic!("probe is a macro")
         };
-        word_text(context.definition(definition).replacement_text())
+        word_text(&context.definition(definition).replacement_text().to_vec())
     })
 }
 

@@ -1,6 +1,6 @@
 //! Private canonical scalar macro-call state machine.
 #![allow(dead_code)] // expansion dispatch is the next ordered integration slice
-use tex_state::DefinitionId;
+use tex_state::DefinitionRef;
 use tex_state::env::banks::IntParam;
 use tex_state::macro_definition::MacroParameterPattern;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
@@ -24,7 +24,7 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct MacroDelimiter<'definition, G> {
-    definition: &'definition DefinitionId<G>,
+    definition: &'definition DefinitionRef<G>,
     start: usize,
     len: usize,
 }
@@ -76,11 +76,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         let call_site = call.origin();
-        let definition_view = self.state.definition(definition);
-        let pattern = definition_view.parameter_pattern();
-        let parameter_len = definition_view.parameter_text().len();
-        let replacement_len = definition_view.replacement_text().len();
-        drop(definition_view);
+        let (pattern, parameter_len, body) = self
+            .state
+            .admit_macro_body(definition)
+            .ok_or_else(CommandError::input_invariant)?;
         self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
@@ -197,15 +196,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|_| CommandError::input_invariant())?;
             Some(frame)
         };
-        let definition_region = self.state.definition_region_lease(definition);
-        let _level = self.push_macro_activation(
-            macro_name,
-            definition,
-            definition_region,
-            call_site,
-            arguments,
-            replacement_len,
-        );
+        let _level = self.push_macro_activation(macro_name, body, call_site, arguments);
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -237,7 +228,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         matching: Option<&PendingArgumentSet<G>>,
         macro_name: tex_state::interner::Symbol,
-        definition: &DefinitionId<G>,
+        definition: &DefinitionRef<G>,
         flags: MeaningFlags,
         pattern: MacroParameterPattern,
         parameter_len: usize,
@@ -348,7 +339,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn macro_parameter_token(
         &self,
-        definition: &DefinitionId<G>,
+        definition: &DefinitionRef<G>,
         index: usize,
     ) -> Result<Token, CommandError> {
         self.state
@@ -371,7 +362,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .definition(*delimiter.definition)
             .parameter_text()
             .get(delimiter.start + index)
-            .copied()
             .ok_or(CommandError::input_invariant())
     }
 
@@ -380,7 +370,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn trace_macro_invocation(
         &mut self,
         macro_name: tex_state::interner::Symbol,
-        definition: &DefinitionId<G>,
+        definition: &DefinitionRef<G>,
     ) {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return;
@@ -394,14 +384,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let definition = self.state.definition(*definition);
         crate::processor::expand_render::append_meaning_token_words(
             self.state,
-            definition.parameter_text(),
+            definition.parameter_text().iter(),
             false,
             &mut text,
         );
         text.push_str("->");
         crate::processor::expand_render::append_meaning_token_words(
             self.state,
-            definition.replacement_text(),
+            definition.replacement_text().iter(),
             false,
             &mut text,
         );

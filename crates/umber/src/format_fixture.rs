@@ -936,7 +936,12 @@ impl<G> CheckpointSink<G> for NoCheckpoints {
         false
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
+    fn checkpoint(
+        &mut self,
+        _checkpoint: tex_exec::EngineCheckpoint<G>,
+        _universe: &tex_state::Universe<G>,
+    ) {
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -985,7 +990,12 @@ impl<G> CheckpointSink<G> for &GuardCheckpoints {
         failure.is_some()
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
+    fn checkpoint(
+        &mut self,
+        _checkpoint: tex_exec::EngineCheckpoint<G>,
+        _universe: &tex_state::Universe<G>,
+    ) {
+    }
 }
 
 fn finish_guarded_run<T>(

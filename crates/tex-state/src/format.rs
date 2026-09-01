@@ -846,7 +846,7 @@ fn validate_logical_rows(
     for definition in definitions {
         validate_words(&definition.parameter_text)?;
         validate_words(&definition.replacement_text)?;
-        let mut builder = crate::DefinitionBuilder::new(crate::DefinitionIdentityPolicy::Disabled);
+        let mut builder = crate::DefinitionBuilder::new();
         for &raw in &definition.parameter_text {
             builder
                 .push_parameter(crate::token::TokenWord::from_raw(raw))

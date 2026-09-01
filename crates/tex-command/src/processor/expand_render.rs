@@ -225,11 +225,16 @@ fn append_meaning_text_with_token_selector<G>(
             text.push(' ');
         }
         text.push_str("macro:");
-        append_meaning_token_words(state, macro_meaning.parameter_text(), active_selector, text);
+        append_meaning_token_words(
+            state,
+            macro_meaning.parameter_text().iter(),
+            active_selector,
+            text,
+        );
         text.push_str("->");
         append_meaning_token_words(
             state,
-            macro_meaning.replacement_text(),
+            macro_meaning.replacement_text().iter(),
             active_selector,
             text,
         );
@@ -302,7 +307,12 @@ fn append_meaning_text_with_token_selector<G>(
             );
             text.push(':');
             let tokens = state.page_mark(page_mark(primitive));
-            append_meaning_token_words(state, tokens.words(), active_selector, text);
+            append_meaning_token_words(
+                state,
+                tokens.words().iter().copied(),
+                active_selector,
+                text,
+            );
         }
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
             append_meaning_control_sequence_text(state, command, meaning, text);
@@ -314,18 +324,18 @@ fn append_meaning_text_with_token_selector<G>(
 
 pub(crate) fn append_meaning_token_words<G>(
     state: &tex_state::CommandContext<'_, G>,
-    tokens: &[tex_state::token::TokenWord],
+    tokens: impl IntoIterator<Item = tex_state::token::TokenWord>,
     active_selector: bool,
     text: &mut String,
 ) {
-    let mut index = 0;
-    while index < tokens.len() {
-        let token = tokens[index].token().expect("durable token word is valid");
+    let mut tokens = tokens.into_iter().peekable();
+    while let Some(word) = tokens.next() {
+        let token = word.token().expect("durable token word is valid");
         if let Token::Char {
             ch,
             cat: Catcode::Parameter,
         } = token
-            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
+            && let Some(Token::Param(slot)) = tokens.peek().and_then(|word| word.token())
         {
             let raw = [ch, char::from(b'0' + slot)]
                 .into_iter()
@@ -335,7 +345,7 @@ pub(crate) fn append_meaning_token_words<G>(
             } else {
                 text.push_str(&raw);
             }
-            index += 2;
+            let _ = tokens.next();
             continue;
         }
         if active_selector {
@@ -343,7 +353,6 @@ pub(crate) fn append_meaning_token_words<G>(
         } else {
             state.append_token_show_text(token, text);
         }
-        index += 1;
     }
 }
 

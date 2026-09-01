@@ -263,11 +263,14 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 processor.command.scratch.frame_len(),
                 usize::from(has_arguments)
             );
-            assert_eq!(body.definition.semantic_owner_count(), owners_before);
+            assert_eq!(
+                body.body.definition_ref().semantic_owner_count(),
+                owners_before
+            );
             assert_eq!(
                 processor
                     .state
-                    .definition(body.definition)
+                    .definition(body.body.definition_ref())
                     .replacement_text()
                     .len(),
                 expected_replacement_len

@@ -215,6 +215,16 @@ pub(crate) struct GenerationRetirement {
 }
 
 impl<G> Generation<G> {
+    pub(crate) fn current_and_accepted_definition_contents_equal(
+        &self,
+        accepted: &AcceptedGenerationTail<G>,
+        current: crate::DefinitionRef<G>,
+        prior: crate::DefinitionRef<G>,
+    ) -> bool {
+        self.definitions
+            .current_and_accepted_contents_equal(&accepted.definitions, current, prior)
+    }
+
     pub(crate) fn new() -> Self {
         let accounting = MemoryAccounting::default();
         Self {
@@ -254,10 +264,9 @@ impl<G> Generation<G> {
     /// publishes semantic payload. A late request fails closed instead of
     /// walking already-published values or hashing their coordinates.
     pub(crate) fn enable_semantic_identity(&mut self) -> bool {
-        let definitions = self.definitions.enable_semantic_identity();
         let token_lists = self.token_lists.enable_semantic_identity();
         let glue = self.glue.enable_semantic_identity();
-        definitions && token_lists && glue
+        token_lists && glue
     }
 
     pub(crate) fn begin_checkpoint_candidate(

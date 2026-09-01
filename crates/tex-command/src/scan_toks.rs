@@ -198,7 +198,7 @@ enum ScannedToksStorage<G> {
         parameter: AttemptTokenListId,
         replacement: AttemptTokenListId,
     },
-    Definition(tex_state::DefinitionId<G>),
+    Definition(tex_state::DefinitionRef<G>),
     AttemptDefinition(AttemptDefinitionId),
     ReplayInputBuilder {
         builder: crate::input::ReplayInputBuilderId<G>,
@@ -554,7 +554,7 @@ pub(crate) struct ScannedToksBuffers<G> {
 }
 
 impl<G> ScannedToksBuffers<G> {
-    pub(crate) fn definition(self) -> Option<tex_state::DefinitionId<G>> {
+    pub(crate) fn definition(self) -> Option<tex_state::DefinitionRef<G>> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
             ScannedToksStorage::Tokens { .. }
@@ -720,7 +720,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .command
                     .attempt
                     .arena_mut()
-                    .allocate_definition_builder(self.state.definition_identity_policy())
+                    .allocate_definition_builder()
                     .map_err(attempt_command_error)?;
                 TokenCollector::attempt_definition(definition)
             }
@@ -2543,10 +2543,7 @@ fn definition_allocation_command_error(
         | tex_state::DefinitionAllocationError::CapacityOverflow => {
             CommandError::Fatal(crate::FatalError::overflow("definition arena", i32::MAX))
         }
-        tex_state::DefinitionAllocationError::InvalidDefinition
-        | tex_state::DefinitionAllocationError::IdentityPolicyMismatch => {
-            CommandError::input_invariant()
-        }
+        tex_state::DefinitionAllocationError::InvalidDefinition => CommandError::input_invariant(),
     }
 }
 

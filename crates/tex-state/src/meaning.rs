@@ -1,6 +1,6 @@
 //! Meaning word encoding and decoding.
 
-use crate::definition_arena::DefinitionId;
+use crate::definition_arena::DefinitionRef;
 use crate::ids::FontId;
 use crate::page::{PageDimension, PageInteger};
 use crate::token::Catcode;
@@ -118,7 +118,7 @@ pub enum MeaningWord<G> {
     Font(FontId),
     Macro {
         flags: MeaningFlags,
-        definition: DefinitionId<G>,
+        definition: DefinitionRef<G>,
     },
 }
 
@@ -186,7 +186,7 @@ impl<G> core::fmt::Debug for MeaningWord<G> {
             Self::Macro { flags, .. } => formatter
                 .debug_struct("Macro")
                 .field("flags", flags)
-                .field("definition", &"DefinitionId(..)")
+                .field("definition", &"DefinitionRef(..)")
                 .finish(),
         }
     }
@@ -228,7 +228,7 @@ impl<G> MeaningWord<G> {
     }
 
     #[must_use]
-    pub const fn macro_definition(flags: MeaningFlags, definition: DefinitionId<G>) -> Self {
+    pub const fn macro_definition(flags: MeaningFlags, definition: DefinitionRef<G>) -> Self {
         Self::Macro { flags, definition }
     }
 
@@ -328,7 +328,7 @@ pub enum ResolvedMeaning<G> {
     Static(Meaning),
     Macro {
         flags: MeaningFlags,
-        definition: DefinitionId<G>,
+        definition: DefinitionRef<G>,
     },
 }
 
@@ -347,7 +347,7 @@ impl<G> core::fmt::Debug for ResolvedMeaning<G> {
             Self::Macro { flags, .. } => formatter
                 .debug_struct("Macro")
                 .field("flags", flags)
-                .field("definition", &"DefinitionId(..)")
+                .field("definition", &"DefinitionRef(..)")
                 .finish(),
         }
     }

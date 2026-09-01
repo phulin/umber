@@ -218,7 +218,12 @@ impl<G> CheckpointSink<G> for NoCheckpoints {
         false
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
+    fn checkpoint(
+        &mut self,
+        _checkpoint: tex_exec::EngineCheckpoint<G>,
+        _universe: &tex_state::Universe<G>,
+    ) {
+    }
 }
 
 /// Runs one retained immutable root through canonical main control.

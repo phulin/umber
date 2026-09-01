@@ -87,10 +87,19 @@ fn macro_materialization_stages_then_publishes_one_definition() {
             .expect("test fixture is valid");
         let definition = context.definition(definition);
         assert_eq!(
-            definition.parameter_text()[0].semantic_token(),
+            definition
+                .parameter_text()
+                .get(0)
+                .expect("parameter")
+                .semantic_token(),
             Token::param(1)
         );
-        let Token::Cs(symbol) = definition.replacement_text()[0].semantic_token() else {
+        let Token::Cs(symbol) = definition
+            .replacement_text()
+            .get(0)
+            .expect("replacement")
+            .semantic_token()
+        else {
             panic!("replacement control sequence")
         };
         assert_eq!(context.resolve(symbol), "x");
@@ -161,10 +170,7 @@ fn memo_publication_uses_destination_definition_identity_policy() {
             panic!("macro meaning")
         };
         let context = destination.command_context().expect("command context");
-        assert_eq!(
-            context.definition(direct).semantic_identity(),
-            context.definition(imported).semantic_identity()
-        );
+        assert!(context.definition_contents_equal(direct, imported));
     })
     .expect("test fixture is valid");
 }

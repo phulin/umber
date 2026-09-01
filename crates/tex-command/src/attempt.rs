@@ -12,8 +12,8 @@ use tex_state::glue::GlueSpec;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
-    DefinitionBuildError, DefinitionBuilder, DefinitionId, DefinitionIdentityPolicy,
-    GenerationOwner, GlueId, PromotionError, ProvenanceId, TokenListId, Universe,
+    DefinitionBuildError, DefinitionBuilder, DefinitionRef, GenerationOwner, GlueId,
+    PromotionError, ProvenanceId, TokenListId, Universe,
 };
 
 mod token_lane;
@@ -255,7 +255,7 @@ pub trait AttemptPromotionDestination<G> {
     fn definition_root_count(&self) -> usize;
     fn definition_root(&self, index: usize) -> AttemptDefinitionId;
     fn next_definition_root(&self) -> AttemptDefinitionId;
-    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionId<G>);
+    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionRef<G>);
 
     fn provenance_root_count(&self) -> usize;
     fn provenance_root(&self, index: usize) -> AttemptProvenanceId;
@@ -1082,7 +1082,6 @@ impl<G> AttemptArena<G> {
 
     pub(crate) fn allocate_definition_builder(
         &mut self,
-        policy: DefinitionIdentityPolicy,
     ) -> Result<AttemptDefinitionId, AttemptError> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
@@ -1096,11 +1095,8 @@ impl<G> AttemptArena<G> {
         self.definitions
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
-        let mut builder = self
-            .recycled_definition_builders
-            .pop()
-            .unwrap_or_else(|| DefinitionBuilder::new(policy));
-        builder.reset(policy);
+        let mut builder = self.recycled_definition_builders.pop().unwrap_or_default();
+        builder.reset();
         self.definitions.push(AttemptRow {
             serial: id.serial,
             value: AttemptDefinition {
@@ -1454,7 +1450,7 @@ impl<G> AttemptArena<G> {
         &mut self,
         universe: &mut Universe<G>,
         id: AttemptDefinitionId,
-    ) -> Result<DefinitionId<G>, AttemptError> {
+    ) -> Result<DefinitionRef<G>, AttemptError> {
         self.validate_key(id.key)?;
         let definition = self
             .definitions
@@ -1521,7 +1517,7 @@ where
             .expect("the next preflighted definition source remains resident")
     }
 
-    fn settle_next_definition(&mut self, definition: DefinitionId<G>) {
+    fn settle_next_definition(&mut self, definition: DefinitionRef<G>) {
         let source = self.destination.next_definition_root();
         self.destination.settle_definition_root(source, definition);
         let builder = self

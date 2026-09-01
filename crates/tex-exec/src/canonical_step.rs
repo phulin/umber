@@ -464,7 +464,7 @@ impl OutputLedger {
                 sink.wants_reachable_state_identity(boundary),
             )?;
             checkpoint.set_output_ledger(self.checkpoint());
-            sink.checkpoint(checkpoint);
+            sink.checkpoint(checkpoint, universe);
             while let Some(release) = sink.take_checkpoint_release() {
                 release.apply(control, universe);
             }

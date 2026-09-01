@@ -1,7 +1,7 @@
 //! Already-admitted, interpretation-neutral command-state borrow.
 
 use crate::InteractionMode;
-use crate::definition_arena::{DefinitionId, DefinitionView};
+use crate::definition_arena::{DefinitionRef, DefinitionView, ResidentMacroBody};
 use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
 use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
@@ -889,12 +889,31 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
         self.admitted.definition(id)
     }
 
-    pub fn definition_region_lease(&self, id: DefinitionId<G>) -> crate::DefinitionRegionLease<G> {
-        self.admitted.definition_region_lease(id)
+    #[must_use]
+    pub fn definition_contents_equal(
+        &self,
+        left: DefinitionRef<G>,
+        right: DefinitionRef<G>,
+    ) -> bool {
+        self.admitted.definition_contents_equal(left, right)
+    }
+
+    /// Resolves one opaque definition reference into the exact resident macro
+    /// body state. Header decoding and the optional local-region lease happen
+    /// once here, before the input row becomes visible.
+    pub fn admit_macro_body(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<(
+        crate::macro_definition::MacroParameterPattern,
+        usize,
+        ResidentMacroBody<G>,
+    )> {
+        self.admitted.admit_macro_body(id)
     }
 
     pub fn begin_definition_build(
@@ -936,7 +955,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn seal_definition_build(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
-    ) -> Result<DefinitionId<G>, crate::DefinitionBuildError> {
+    ) -> Result<DefinitionRef<G>, crate::DefinitionBuildError> {
         self.admitted.seal_definition_build(build)
     }
 
@@ -946,14 +965,14 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn promote_definition_global(
         &mut self,
-        definition: DefinitionId<G>,
-    ) -> Result<DefinitionId<G>, crate::DefinitionAllocationError> {
+        definition: DefinitionRef<G>,
+    ) -> Result<DefinitionRef<G>, crate::DefinitionAllocationError> {
         self.admitted.promote_definition_global(definition)
     }
 
     pub fn set_definition_origin(
         &mut self,
-        definition: DefinitionId<G>,
+        definition: DefinitionRef<G>,
         origin: crate::token::OriginId,
     ) -> Result<(), crate::DefinitionAllocationError> {
         self.admitted.set_definition_origin(definition, origin)
@@ -967,14 +986,6 @@ impl<'a, G> CommandContext<'a, G> {
         words: usize,
     ) -> Result<(), crate::DefinitionAllocationError> {
         self.admitted.reserve_definition_arena(rows, words)
-    }
-
-    /// Identity policy fixed by this command context's admitted destination
-    /// generation. Attempt builders capture it once and publication rejects a
-    /// builder from a differently configured generation.
-    #[inline(always)]
-    pub fn definition_identity_policy(&self) -> crate::DefinitionIdentityPolicy {
-        self.admitted.definition_identity_policy()
     }
 
     #[inline(always)]

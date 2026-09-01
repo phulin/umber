@@ -1045,7 +1045,7 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
 }
 
 #[test]
-fn format_materialization_rebuilds_definition_and_state_identity() {
+fn format_materialization_rebuilds_definition_contents_and_state_identity() {
     let (image, source_definition_identity) = with_universe(budget(), |universe| {
         assert!(universe.enable_reachable_state_identity());
         let command = universe.intern("identitymacro").expect("command name");
@@ -1057,11 +1057,6 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
         let definition = universe
             .allocate_definition(&parameter, &replacement)
             .expect("source definition");
-        let definition_identity = universe
-            .command_context()
-            .expect("source command context")
-            .definition(definition)
-            .semantic_identity();
         universe
             .assign_meaning(
                 command,
@@ -1069,6 +1064,11 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
                 AssignmentScope::Global,
             )
             .expect("source meaning");
+        let definition_identity = universe
+            .command_context()
+            .expect("source context")
+            .definition(definition)
+            .semantic_identity();
         (
             universe.capture_format_image().expect("capture format"),
             definition_identity,
@@ -1079,7 +1079,7 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
     struct ReadLoadedIdentity;
 
     impl RetainedStateOperation for ReadLoadedIdentity {
-        type Output = (Option<u64>, Option<u64>);
+        type Output = (Vec<TokenWord>, Vec<TokenWord>, Option<u64>, Option<u64>);
 
         fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
             let universe = admitted.universe();
@@ -1097,12 +1097,14 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
                 .expect("loaded identity checkpoint")
                 .reachable_state_identity_roots()
                 .core();
-            let definition_identity = universe
-                .command_context()
-                .expect("loaded command context")
-                .definition(definition)
-                .semantic_identity();
-            (definition_identity, core_identity)
+            let context = universe.command_context().expect("loaded context");
+            let view = context.definition(definition);
+            (
+                view.parameter_text().to_vec(),
+                view.replacement_text().to_vec(),
+                core_identity,
+                view.semantic_identity(),
+            )
         }
     }
 
@@ -1114,7 +1116,7 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
         true,
     )
     .expect("identity-enabled format materialization");
-    let (loaded_definition_identity, loaded_core_identity) =
+    let (loaded_parameters, loaded_replacement, loaded_core_identity, loaded_definition_identity) =
         loaded.with_admitted(ReadLoadedIdentity);
     let second_store = ReachabilityStore::new(budget());
     let mut second = RetainedStateGeneration::from_format_owned_with_page_node_identity_demand(
@@ -1124,10 +1126,20 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
         true,
     )
     .expect("second identity-enabled format materialization");
-    let (second_definition_identity, second_core_identity) =
+    let (second_parameters, second_replacement, second_core_identity, second_definition_identity) =
         second.with_admitted(ReadLoadedIdentity);
+    assert_eq!(loaded_parameters, [TokenWord::pack(Token::frozen_relax())]);
+    assert_eq!(
+        loaded_replacement,
+        [TokenWord::pack(Token::Char {
+            ch: 'b',
+            cat: Catcode::Letter,
+        })]
+    );
+    assert_eq!(second_parameters, loaded_parameters);
+    assert_eq!(second_replacement, loaded_replacement);
     assert_eq!(loaded_definition_identity, source_definition_identity);
-    assert_eq!(second_definition_identity, source_definition_identity);
+    assert_eq!(second_definition_identity, loaded_definition_identity);
     assert_eq!(second_core_identity, loaded_core_identity);
 }
 

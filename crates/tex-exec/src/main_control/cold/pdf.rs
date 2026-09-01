@@ -1890,8 +1890,8 @@ pub(in crate::main_control) fn meaning_mutation_value<G>(
 /// The macro body as stored by TeX82 §294 and e-TeX change section [49].
 pub(in crate::main_control) fn observed_stored_macro_body<G>(
     flags: MeaningFlags,
-    parameter_text: &[tex_state::token::TokenWord],
-    replacement_text: &[tex_state::token::TokenWord],
+    parameter_text: tex_state::DefinitionWords<'_>,
+    replacement_text: tex_state::DefinitionWords<'_>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = observed_macro_body(parameter_text, replacement_text, stores);
@@ -1912,8 +1912,8 @@ pub(in crate::main_control) fn observed_stored_macro_body<G>(
 /// §294's stored macro body: parameter text, the separating `end_match`, then
 /// replacement text, as one token sequence.
 pub(in crate::main_control) fn observed_macro_body<G>(
-    parameter_text: &[tex_state::token::TokenWord],
-    replacement_text: &[tex_state::token::TokenWord],
+    parameter_text: tex_state::DefinitionWords<'_>,
+    replacement_text: tex_state::DefinitionWords<'_>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = parameter_text
@@ -1934,7 +1934,7 @@ pub(in crate::main_control) fn observed_macro_body<G>(
 
 /// §482 constructs a parameterless macro body for §1225's `define`.
 pub(in crate::main_control) fn observed_read_body<G>(
-    definition: &tex_state::DefinitionId<G>,
+    definition: &tex_state::DefinitionRef<G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = vec![ObservedToken::MacroEndMatch];
@@ -1943,7 +1943,6 @@ pub(in crate::main_control) fn observed_read_body<G>(
             .definition(*definition)
             .replacement_text()
             .iter()
-            .copied()
             .map(|word| observed_macro_token(word.semantic_token(), stores)),
     );
     tokens

@@ -1977,8 +1977,7 @@ enum PackedTokenSpanHandle {
 }
 
 struct MacroBodyCursor {
-    definition: DefinitionId,
-    definition_region: DefinitionRegionLease,
+    body: ResidentMacroBody,
     arguments: Option<ArgumentSetId>,
     name: Symbol,
     invocation: OriginId,
@@ -2013,12 +2012,11 @@ The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
 for generic token lists. `MacroBodyCursor` and `MacroArgumentCursor` do not
 wrap it: each stores a 24-byte `ResidentSpanCursor` with only identity, bounds,
 position, and optional source coordinates. On the supported 64-bit host the
-complete body cursor is 64 bytes and the argument cursor is 48 bytes. The body
-row is the macro call. It stores the eight-byte non-owning definition
-coordinate, and it is also the only invocation-side lease for a local definition region. Format and
-revision-global definitions admit a no-op lease. Only parameterized macros
-store an `ArgumentSetId`; parameterless macros allocate and push only the body
-row.
+body row is the macro call. Eqtb stores the eight-byte non-owning
+`DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
+owns the exact format, revision-global, or local-group semantic region plus an
+opaque replacement span and scalar position. Only parameterized macros store
+an `ArgumentSetId`; parameterless macros allocate and push only the body row.
 
 The argument cursor locates its opening provenance run once at admission and
 then advances that run index only when sequential replay crosses a provenance
@@ -2030,19 +2028,19 @@ active input rows.
 Every ordinary token-list source is adapted once at level creation into a
 `PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
 instead borrows a `DefinitionView` synchronously, records its compact
-`DefinitionId`, existing coarse region lease, and opaque replacement cursor,
+`DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
 then pushes the specialized body row. Resident selection yields that bare
 cursor, creates checkpoint state only on a real first touch, reads one packed
 word, and increments one scalar position. It tests `Token::Param` before the
 final `CurrentCommand` write; a parameter pushes its already-admitted argument
 cursor and continues in the same loop. Otherwise the sole packed resolver
 writes the reusable destination with at most one dense control-sequence
-lookup. The current key-to-word read is the narrow stable coarse-storage seam:
-it must become an opaque cursor operation without exposing coordinates or
-adding definition ownership. Neither path clones an owner or copies token
-words. The semantic lane stores four-byte `TokenWord` values; exact provenance
-occupies coordinate-change runs alongside the lane, not a twelve-byte value
-for every captured token.
+lookup. Admission clones the exact semantic-region owner once; subsequent body
+words are direct stable chunk loads with no definition decode, region/header
+lookup, `RefCell` borrow, owner operation, allocation, or token copy. Parameter
+replay uses its sealed fixed-block range. The semantic lane stores four-byte
+`TokenWord` values; exact provenance occupies coordinate-change runs alongside
+the lane, not a twelve-byte value for every captured token.
 
 `CommandState::push_input_level` is the single live source/token frame
 transition. It updates TeX82's `max_in_stack` scalar on the singular live

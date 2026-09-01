@@ -7497,7 +7497,10 @@ fn prefixed_definition_scanner_resumes_its_exact_substantive_command() {
             let replacement = definition.replacement_text();
             assert_eq!(replacement.len(), 1);
             assert_eq!(
-                replacement[0].semantic_token(),
+                replacement
+                    .get(0)
+                    .expect("replacement word")
+                    .semantic_token(),
                 Token::Char {
                     ch: '2',
                     cat: Catcode::Other,

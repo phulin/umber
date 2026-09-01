@@ -6,7 +6,7 @@
 //! one destination-local arena batch. No live coordinate, owner, cursor, or
 //! borrow enters the envelope.
 
-use crate::definition_arena::DefinitionId;
+use crate::definition_arena::DefinitionRef;
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::glue::{GlueSpec, Order};
 use crate::interner::ControlSequenceKind;
@@ -482,20 +482,18 @@ impl<G> Universe<G> {
     pub fn detach_macro_meaning(
         &self,
         flags: MeaningFlags,
-        id: DefinitionId<G>,
+        id: DefinitionRef<G>,
     ) -> Result<DetachedMemoValue, MemoValueError> {
         let admitted = self.admitted().map_err(|_| MemoValueError::LiveState)?;
         let definition = admitted.definition(id);
         let parameter_text = definition
             .parameter_text()
             .iter()
-            .copied()
             .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         let replacement_text = definition
             .replacement_text()
             .iter()
-            .copied()
             .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         DetachedMemoValue::encode(
@@ -525,7 +523,7 @@ impl<G> Universe<G> {
             .into_iter()
             .map(|token| import_token(self, token))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut builder = crate::DefinitionBuilder::new(self.definition_identity_policy());
+        let mut builder = crate::DefinitionBuilder::new();
         for word in parameter_text {
             builder.push_parameter(word).map_err(PromotionError::from)?;
         }

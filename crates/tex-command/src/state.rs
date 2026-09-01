@@ -811,7 +811,7 @@ impl<G> CommandState<G> {
         &mut self,
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptDefinitionId,
-    ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
+    ) -> Result<tex_state::DefinitionRef<G>, crate::AttemptError> {
         self.attempt.arena_mut().promote_definition(universe, id)
     }
 

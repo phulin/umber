@@ -101,7 +101,7 @@ process
 ```
 
 Macro definitions and stored token lists deliberately have different lifetime
-mechanisms. `DefinitionId<G>` is a `Copy`, at-most-16-byte region/row/identity
+mechanisms. `DefinitionRef<G>` is a `Copy`, at-most-16-byte region/row/identity
 key. Region ownership is structural through the format owner, revision,
 checkpoint boundary, group stack, and active local macro-input rows. Stored
 token lists retain their private `Rc<[TokenWord]>`; moving transfers an owner
@@ -321,19 +321,19 @@ view interface:
   ancestry iteratively, so maximum supported group depth does not become Rust
   call-stack depth.
 
-`DefinitionId<G>` is only an eight-byte stable storage key. Its region and row
-locate one immutable header plus the contiguous `[parameter][replacement]`
-word span. The header stores span boundaries, origin, content identity, and
-the validated at-most-nine-marker parameter pattern. `DefinitionView<'a, G>`
-borrows that metadata and span for one synchronous use, so invocation never
-rescans the parameter text. Cold checkpoint identity resolves the key through
-arena metadata and records the result in a separate identity-only table; the
-hot key and `CurrentCommand` carry no content hash. Equal definitions retain
-distinct storage keys but have equal content identities regardless of
-allocation order. A global `let` repeats the exceptional promotion of the same
-local key by reusing its cached global key. That mapping remains owned by the
-source local region, so exact region retirement and checkpoint settlement
-discard it without a generation-wide promotion sweep.
+`DefinitionRef<G>` is an opaque eight-byte stable storage key. Only the
+definition store decodes its packed region and row to locate one immutable
+header plus the contiguous `[parameter][replacement]` word span. The header
+stores span boundaries, origin, and the validated at-most-nine-marker
+parameter pattern; neither the reference nor the header stores eager semantic
+identity. `DefinitionView<'a, G>` borrows that metadata and span for one
+synchronous use, so invocation never rescans parameter text. Cold convergence
+accepts equal references immediately; differing macro references compare
+flags, parameter patterns, and packed replacement words directly without
+allocating or copying. A global `let` repeats the exceptional promotion of the
+same local reference by reusing its cached global reference. That mapping
+remains owned by the source local region, so exact region retirement and
+checkpoint settlement discard it without a generation-wide promotion sweep.
 
 Ordinary `def` and `gdef` know their destination before scanning. The scanner
 opens a transactional word mark in that final local or global region, validates
@@ -347,9 +347,8 @@ only for cold format/memo/import batches whose source is already outside the
 live scanner.
 
 ```rust
-pub struct DefinitionId<G> {
-    region: DefinitionRegionCoordinate,
-    row: NonZeroU32,
+pub struct DefinitionRef<G> {
+    packed: NonZeroU64,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -362,7 +361,7 @@ pub struct DefinitionArena<G> {
 }
 
 impl<G> DefinitionArena<G> {
-    pub fn get(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+    pub fn get(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
         // O(1) checked region/row admission into immutable words.
     }
 }
@@ -394,7 +393,7 @@ acceptance releases them.
 The four-byte region coordinate reserves all of its bits for addressing:
 values 1 and 2 name the fixed format and global regions, while local values
 encode a 16-bit slot address plus a nonzero 16-bit incarnation. It contains no
-macro-carrier or locality flag. A later eight-byte non-owning `DefinitionId`
+macro-carrier or locality flag. A later eight-byte non-owning `DefinitionRef`
 can therefore pair this explicit coordinate with its four-byte row without
 reinterpreting a flag bit. Reuse stops permanently when one slot reaches
 incarnation 65,535; allocation then consumes another address, and exhaustion
@@ -471,7 +470,7 @@ integer cursors:
 
 ```rust
 struct MacroBodyCursor<G> {
-    definition: DefinitionId<G>,
+    definition: DefinitionRef<G>,
     definition_region: DefinitionRegionLease<G>,
     arguments: Option<ArgumentSet<G>>,
     frame: ResidentSpanCursor,
@@ -1100,7 +1099,7 @@ Formats, resource continuations which leave the engine session, pure memo
 entries, committed output, and every value crossing a serialization, process,
 or thread boundary are handle-free DTOs. They contain validated scalars,
 strings, bytes, canonical content identities, source recipes, and DTO-local
-indices. They contain no `Symbol`, `DefinitionId`, node id, source id, arena
+indices. They contain no `Symbol`, `DefinitionRef`, node id, source id, arena
 offset, Rust reference, `Arc`, journal cursor, or generation key.
 
 Detachment walks an explicit typed root set and assigns dense DTO-local indices.
@@ -1223,7 +1222,7 @@ The following designs are forbidden:
 - self-referential arena owners or continuations;
 - arena allocation of eqtb-equivalent current-value banks;
 - content interning, hash lookup, binary lookup, or liveness search for
-  `DefinitionId` resolution;
+  `DefinitionRef` resolution;
 - rollback by cloning a live object graph or scanning all live values;
 - per-value `Arc`, `Weak`, atomic counts, owner registries, or implicit
   drop-driven store callbacks; private non-atomic shared ownership remains only

@@ -153,8 +153,7 @@ impl ResidentSpanCursor {
 /// Specialized resident cursor over a definition arena replacement span.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroBodyCursor<G> {
-    pub(crate) definition: tex_state::DefinitionId<G>,
-    pub(crate) definition_region: tex_state::DefinitionRegionLease<G>,
+    pub(crate) body: tex_state::ResidentMacroBody<G>,
     pub(crate) arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
     pub(crate) name: tex_state::interner::Symbol,
     pub(crate) invocation: OriginId,
@@ -176,11 +175,10 @@ impl<G> MacroBodyCursor<G> {
 
     pub(crate) fn token_at(
         &self,
-        state: &tex_state::CommandContext<'_, G>,
+        _state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
-        state
-            .definition(self.definition)
-            .replacement_word(self.position())
+        self.body
+            .word(self.position())
             .map(|word| (word, OriginId::UNKNOWN))
     }
 
@@ -193,10 +191,10 @@ impl<G> MacroBodyCursor<G> {
     #[inline(always)]
     pub(super) fn advance_word(
         &mut self,
-        state: &tex_state::CommandContext<'_, G>,
+        _state: &tex_state::CommandContext<'_, G>,
     ) -> Result<Option<TokenWord>, ()> {
         let position = self.frame.position as usize;
-        let Some(word) = state.definition(self.definition).replacement_word(position) else {
+        let Some(word) = self.body.word(position) else {
             return Ok(None);
         };
         if self.frame.advance() != Some(position as u32) {

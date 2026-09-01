@@ -837,6 +837,16 @@ impl<G> EngineCheckpoint<G> {
         self.reachable_state_identity
     }
 
+    /// Cold equality check for two mapped named boundaries. The aggregate
+    /// identity rejects ordinary differences first; macro definitions then
+    /// compare their immutable contents when their opaque references differ.
+    #[doc(hidden)]
+    pub fn reachable_state_matches(&self, prior: &Self, universe: &Universe<G>) -> bool {
+        self.reachable_state_identity.is_some()
+            && self.reachable_state_identity == prior.reachable_state_identity
+            && universe.definitions_match_accepted_checkpoint(&prior.runtime)
+    }
+
     /// Exposes owner-published component roots to the focused checkpoint gate.
     #[cfg(feature = "profiling")]
     #[must_use]
@@ -949,7 +959,7 @@ pub trait CheckpointSink<G> {
         false
     }
 
-    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>);
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, universe: &Universe<G>);
 
     /// Returns one pruning transaction after publication. The executor drains
     /// this hook synchronously while every mutable aggregate owner is still
@@ -961,7 +971,7 @@ pub trait CheckpointSink<G> {
 }
 
 impl<G> CheckpointSink<G> for Vec<EngineCheckpoint<G>> {
-    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, _universe: &Universe<G>) {
         self.push(checkpoint);
     }
 }

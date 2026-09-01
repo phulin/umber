@@ -1019,6 +1019,7 @@ fn macro_definition_scan_shares_one_checked_builder_coordinate() {
         assert_eq!(
             definition
                 .replacement_text()
+                .iter()
                 .last()
                 .map(|word| word.semantic_token()),
             Some(Token::Param(1))
