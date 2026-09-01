@@ -1268,12 +1268,24 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
         arena.begin_group().expect("local definition group");
+        let parameters = [
+            TokenWord::pack(Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            }),
+            TokenWord::pack(Token::param(1)),
+        ];
         let words = [
             TokenWord::from_raw(17),
             TokenWord::from_raw(23),
             TokenWord::from_raw(29),
         ];
-        let definition = direct_definition(arena, super::DefinitionDestination::Local, &[], &words);
+        let definition = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &parameters,
+            &words,
+        );
         let (_, _, body) = arena
             .admit_macro_body(definition)
             .expect("resident local body");
@@ -1283,6 +1295,10 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
 
         assert!(arena.region(definition.region()).is_none());
         assert_eq!(std::rc::Rc::strong_count(&body.owner), 1);
+        assert_eq!(body.parameter_len(), parameters.len());
+        assert_eq!(body.parameter_word(0), Some(parameters[0]));
+        assert_eq!(body.parameter_word(1), Some(parameters[1]));
+        assert_eq!(body.parameter_word(2), None);
         assert_eq!(body.word(0), Some(words[0]));
         assert_eq!(body.word(1), Some(words[1]));
         assert_eq!(body.word(2), Some(words[2]));

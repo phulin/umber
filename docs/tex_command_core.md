@@ -2180,8 +2180,10 @@ and is present on source, stored-token, macro-body, and argument rows.
 An executing macro borrows its `DefinitionView` synchronously, completes any
 argument matching, and admits the immutable replacement cursor. The input row
 is the local-region structural lease; format and revision-global definitions
-pay no per-invocation lifetime operation. Diagnostic context borrows through
-the same coordinate. No macro object or definition owner is reified.
+pay no per-invocation lifetime operation. Diagnostic context reads the
+parameter and replacement spans through the already-admitted resident owner;
+it does not re-resolve the non-owning coordinate after a defining group may
+have retired. No separate macro object is reified.
 
 The centralized transient and backed-up constructors avoid caller-side rich
 staging for fixed insertions and stream directly into the replay lane. e-TeX's

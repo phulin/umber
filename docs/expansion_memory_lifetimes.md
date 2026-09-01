@@ -465,6 +465,12 @@ immutable format region. There is no runtime compaction, forwarding pointer,
 id rewrite, or move to another generation apart from the explicit one-time
 local-to-global promotion.
 
+The resident owner is also the diagnostic authority for an active macro.
+TeX82 §§323/319 keep the macro token-list reference on the input level, so
+`show_context` reads the resident parameter and replacement spans even after
+the defining local group has retired its structural region. It never
+re-resolves the row's non-owning `DefinitionRef` for that projection.
+
 Execution scratch blocks can recycle because their last semantic user is
 known. A specialized macro-body input row is the call record: it holds the
 8-byte non-owning definition key, optional coarse local-region lease, and an

@@ -1038,6 +1038,7 @@ pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
 pub struct ResidentMacroBody<G> {
     definition: DefinitionRef<G>,
     owner: Rc<DefinitionRegionOwner>,
+    parameter_start: u32,
     start: u32,
     position: u32,
     end: u32,
@@ -1057,6 +1058,20 @@ impl<G> ResidentMacroBody<G> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.start == self.end
+    }
+
+    /// Number of parameter-text words retained with this active macro.
+    #[must_use]
+    pub const fn parameter_len(&self) -> usize {
+        (self.start - self.parameter_start) as usize
+    }
+
+    /// Reads one parameter-text word from the resident definition owner.
+    #[must_use]
+    #[inline(always)]
+    pub fn parameter_word(&self, position: usize) -> Option<TokenWord> {
+        (position < self.parameter_len()).then_some(())?;
+        self.owner.word(self.parameter_start + position as u32)
     }
 
     /// Current replacement-relative delivery position.
@@ -1362,6 +1377,7 @@ impl<G> DefinitionArena<G> {
             ResidentMacroBody {
                 definition: id,
                 owner,
+                parameter_start: header.start,
                 start: replacement_start,
                 position: replacement_start,
                 end: header.end,

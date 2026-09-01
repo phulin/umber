@@ -892,8 +892,12 @@ impl<G> InputState<G> {
         body: &MacroBodyCursor<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        let definition = stores.definition(body.body.definition_ref());
-        let count = definition.replacement_text().len();
+        // TeX82 §§323/319 keep a macro's token-list reference on the
+        // input level and pseudoprint that same live list. The defining group
+        // can already be gone here (notably after §800's two `unsave`s), so
+        // diagnostic projection must use the resident body owner rather than
+        // re-resolving its non-owning definition coordinate.
+        let count = body.body.len();
         let split = body.position().min(count);
         let render = |token: tex_state::token::Token| {
             let mut raw = String::new();
@@ -907,20 +911,16 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            before.prepend_str(&render(
-                definition.replacement_text().get(index)?.semantic_token(),
-            ));
+            before.prepend_str(&render(body.body.word(index)?.semantic_token()));
         }
         if !before.is_complete() {
             before.prepend_str("->");
         }
-        for index in (0..definition.parameter_text().len()).rev() {
+        for index in (0..body.body.parameter_len()).rev() {
             if before.is_complete() {
                 break;
             }
-            before.prepend_str(&render(
-                definition.parameter_text().get(index)?.semantic_token(),
-            ));
+            before.prepend_str(&render(body.body.parameter_word(index)?.semantic_token()));
         }
         let (before, before_chars) = before.finish();
         let label = crate::processor::expand_render::token_list_token_text(
@@ -937,9 +937,7 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            after.push_str(&render(
-                definition.replacement_text().get(index)?.semantic_token(),
-            ));
+            after.push_str(&render(body.body.word(index)?.semantic_token()));
         }
         let (after, after_chars) = after.finish();
         Some(

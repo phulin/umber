@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tex_state::env::{AssignmentScope, CodeTableKind};
 use tex_state::meaning::Meaning;
-use tex_state::token::Catcode;
+use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
 use crate::{
     CommandHostCapabilities, CommandSemanticDiagnostic, CommandState, RegisteredSourceKind,
@@ -10,6 +10,62 @@ use crate::{
 };
 
 use super::ErrorContextSelection;
+
+#[test]
+fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
+    // TeX82 §§323/319: `begin_token_list` retains the macro token list, and
+    // `show_context` pseudoprints that live list. Alignment completion can
+    // perform §800's two `unsave`s while the macro input level is still open,
+    // so the defining local group is not a valid diagnostic owner.
+    crate::test_harness::with_universe(|universe| {
+        let name = universe.intern("residentcontext").expect("macro name");
+        universe
+            .begin_group(tex_state::GroupKind::Simple, 1)
+            .expect("defining group");
+        let body = {
+            let mut stores = universe.command_context().expect("command context");
+            let build = stores
+                .begin_definition_build(false, OriginId::UNKNOWN)
+                .expect("local definition build");
+            stores
+                .push_definition_parameter(build, TokenWord::pack(Token::param(1)))
+                .expect("parameter word");
+            stores
+                .finish_definition_parameters(build)
+                .expect("parameter boundary");
+            for token in [
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                Token::param(1),
+            ] {
+                stores
+                    .push_definition_replacement(build, TokenWord::pack(token))
+                    .expect("replacement word");
+            }
+            let definition = stores
+                .seal_definition_build(build)
+                .expect("local definition");
+            stores
+                .admit_macro_body(definition)
+                .expect("resident macro body")
+                .2
+        };
+        let mut command = CommandState::default();
+        command.push_macro_activation(name.symbol(), body, None, OriginId::UNKNOWN);
+
+        universe
+            .end_group(tex_state::GroupKind::Simple)
+            .expect("defining group retires");
+        let stores = universe.command_context().expect("diagnostic context");
+        let rendered = command.output_open_context(&stores);
+
+        assert!(rendered.contains("residentcontext"), "{rendered:?}");
+        assert!(rendered.contains("#1->"), "{rendered:?}");
+        assert!(rendered.contains("x#1"), "{rendered:?}");
+    });
+}
 
 #[test]
 fn diagnostic_coordinate_allocates_only_when_published_and_rejects_stale_input() {
