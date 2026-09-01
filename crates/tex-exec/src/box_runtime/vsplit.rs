@@ -208,9 +208,9 @@ fn update_split_marks<G>(
             if let Node::Mark { class, tokens } = node {
                 let (first, bot) = classes.entry(*class).or_insert((None, None));
                 if first.is_none() {
-                    *first = Some(tokens.clone());
+                    *first = Some(*tokens);
                 }
-                *bot = Some(tokens.clone());
+                *bot = Some(*tokens);
             }
         });
     for (class, (first, bot)) in classes {

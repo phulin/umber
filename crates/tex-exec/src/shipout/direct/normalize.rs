@@ -492,7 +492,7 @@ fn prepare_whatsit<G, Glue: Copy, Tokens: Clone>(
     index: usize,
     resolve_glue: impl Fn(Glue) -> tex_state::glue::GlueSpec,
 ) -> PreparedWhatsit<G> {
-    let identifier = |identifier: &tex_state::node::NodePdfActionIdentifier,
+    let identifier = |identifier: &tex_state::node::NodePdfActionIdentifier<Tokens>,
                       field: tex_state::ShipoutTokenField| {
         match identifier {
             tex_state::node::NodePdfActionIdentifier::Name(_)

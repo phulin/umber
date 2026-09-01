@@ -8,7 +8,6 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
-use tex_state::token::{Catcode, Token};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -439,11 +438,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     // measuring, breaking, executing, or reordering them. Language-state
     // interpretation belongs to the executor's pre-hyphenation visit.
     let universe = TestState::new();
-    let tokens =
-        tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(Token::Char {
-            ch: 'w',
-            cat: Catcode::Letter,
-        })]);
+    let tokens = tex_state::node::NodeTokenKey::default();
     let whatsits = vec![
         Node::Whatsit(Whatsit::OpenOut {
             slot: tex_state::StreamSlot::new(15),
@@ -451,7 +446,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
         }),
         Node::Whatsit(Whatsit::DeferredWrite {
             sink: tex_state::PrintSink::Log,
-            tokens: tokens.clone(),
+            tokens,
         }),
         Node::Whatsit(Whatsit::CloseOut {
             slot: Some(tex_state::StreamSlot::new(0)),
@@ -478,13 +473,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     assert_eq!(breakpoints.len(), 1);
     assert_eq!(breakpoints[0].position, paragraph.len());
     assert_eq!(&paragraph[..whatsits.len()], whatsits);
-    assert_eq!(
-        tokens.words(),
-        [tex_state::token::TokenWord::pack(Token::Char {
-            ch: 'w',
-            cat: Catcode::Letter,
-        })]
-    );
+    assert!(tokens.is_empty());
 }
 
 #[test]
@@ -2908,17 +2897,13 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = TestState::new();
     let empty_glue = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
-    let mark_tokens =
-        tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(Token::Char {
-            ch: 'm',
-            cat: Catcode::Letter,
-        })]);
+    let mark_tokens = tex_state::node::NodeTokenKey::default();
     let adjust_content = universe.publish_page_nodes(&[kern(7)]);
     let nodes = vec![
         rule(10),
         Node::Mark {
             class: 0,
-            tokens: mark_tokens.clone(),
+            tokens: mark_tokens,
         },
         Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
         Node::Penalty(-10_000),

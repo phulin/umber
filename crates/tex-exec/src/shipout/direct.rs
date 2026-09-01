@@ -605,11 +605,16 @@ impl<G> ShipoutPayload<G> for PagePayload {
         glue
     }
     fn visit_tokens<E>(
-        _stores: &CommandContext<'_, G>,
+        stores: &CommandContext<'_, G>,
         tokens: &Self::Tokens,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        tokens.words().iter().copied().try_for_each(&mut visit)
+        stores
+            .node_token_words(*tokens)
+            .expect("page node token key belongs to the admitted generation")
+            .iter()
+            .copied()
+            .try_for_each(&mut visit)
     }
 }
 
@@ -625,11 +630,16 @@ impl<G> ShipoutPayload<G> for ScratchPayload {
         glue
     }
     fn visit_tokens<E>(
-        _stores: &CommandContext<'_, G>,
+        stores: &CommandContext<'_, G>,
         tokens: &Self::Tokens,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        tokens.words().iter().copied().try_for_each(&mut visit)
+        stores
+            .node_token_words(*tokens)
+            .expect("scratch node token key belongs to the admitted generation")
+            .iter()
+            .copied()
+            .try_for_each(&mut visit)
     }
 }
 

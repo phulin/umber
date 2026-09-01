@@ -57,7 +57,7 @@ fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
         AlignmentPackSpec::Natural,
         vec![
             AlignColumn {
-                u_template: empty.clone(),
+                u_template: empty,
                 v_template: empty,
             };
             columns

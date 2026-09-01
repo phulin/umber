@@ -229,10 +229,15 @@ trait DumpTokensProjection<G> {
 impl<G> DumpTokensProjection<G> for tex_state::node::NodeTokenList {
     fn visit(
         &self,
-        _stores: &CommandContext<'_, G>,
+        stores: &CommandContext<'_, G>,
         visit: impl FnMut(tex_state::token::TokenWord),
     ) {
-        self.words().iter().copied().for_each(visit);
+        stores
+            .node_token_words(*self)
+            .expect("node token key belongs to the admitted generation")
+            .iter()
+            .copied()
+            .for_each(visit);
     }
 }
 
@@ -1722,13 +1727,12 @@ mod unset_diagnostic_tests {
         // TeX82 §§63/200: the mark-node arm routes its name through
         // `print_esc`, including suppression for a negative `\escapechar`.
         with_context(|context| {
-            let tokens =
-                tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(
-                    Token::Char {
-                        ch: 'x',
-                        cat: tex_state::token::Catcode::Letter,
-                    },
-                )]);
+            let tokens = context
+                .allocate_node_token_list(&[tex_state::token::TokenWord::pack(Token::Char {
+                    ch: 'x',
+                    cat: tex_state::token::Catcode::Letter,
+                })])
+                .expect("test node token list");
             let nodes = [Node::Mark { class: 0, tokens }];
             let config = DumpConfig {
                 breadth: 5,

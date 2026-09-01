@@ -323,14 +323,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         let tokens = self
             .state
             .page_mark_class_value(page_mark(primitive), class);
-        if let Some(tokens) = tokens.cloned() {
+        if let Some(tokens) = tokens.copied() {
             self.push_mark_text(&tokens);
         }
         Ok(())
     }
 
     fn push_mark_text(&mut self, tokens: &tex_state::node::NodeTokenList) {
-        let words = tokens.words();
+        let words = self
+            .state
+            .node_token_words(*tokens)
+            .expect("page mark token key belongs to the admitted generation");
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::stored_semantic(words),
             TokenBehavior::Ordinary,

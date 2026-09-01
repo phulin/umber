@@ -143,7 +143,8 @@ struct DecodedFormat {
     cells: Vec<FormatCell>,
 }
 
-struct FormatNodeCollector<'a> {
+struct FormatNodeCollector<'a, G> {
+    core: &'a crate::stores::StateCore<G>,
     page_nodes: crate::page_node_arena::PageMaterialView<'a>,
     token_lists: &'a mut Vec<Vec<u32>>,
     glue: &'a mut Vec<FormatGlue>,
@@ -157,13 +158,15 @@ struct FormatNodeCollector<'a> {
     >,
 }
 
-impl<'a> FormatNodeCollector<'a> {
+impl<'a, G> FormatNodeCollector<'a, G> {
     fn new(
+        core: &'a crate::stores::StateCore<G>,
         page_nodes: crate::page_node_arena::PageMaterialView<'a>,
         token_lists: &'a mut Vec<Vec<u32>>,
         glue: &'a mut Vec<FormatGlue>,
     ) -> Self {
         Self {
+            core,
             page_nodes,
             token_lists,
             glue,
@@ -233,8 +236,11 @@ impl<'a> FormatNodeCollector<'a> {
                         },
                         |tokens| {
                             let row = self.token_lists.len() as u32;
-                            self.token_lists
-                                .push(tokens.words().iter().map(|word| word.raw()).collect());
+                            self.token_lists.push(
+                                self.core.capture_node_token_list(tokens).expect(
+                                    "format node token key belongs to the admitted generation",
+                                ),
+                            );
                             row
                         },
                     );
@@ -333,8 +339,12 @@ impl DetachedFormatImage {
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        let mut node_lists =
-            FormatNodeCollector::new(universe.page_region.nodes(), &mut token_lists, &mut glue);
+        let mut node_lists = FormatNodeCollector::new(
+            core,
+            universe.page_region.nodes(),
+            &mut token_lists,
+            &mut glue,
+        );
         let pdf = universe
             .pdf
             .capture_format_bytes(
@@ -1048,7 +1058,7 @@ fn validate_logical_rows(
 }
 
 fn validate_node_rows(
-    names: &[FormatName],
+    _names: &[FormatName],
     token_lists: &[Vec<u32>],
     glue: &[FormatGlue],
     fonts: &[FormatFont],
@@ -1075,31 +1085,9 @@ fn validate_node_rows(
                     "format node reference is out of range or not topological".to_owned(),
                 ));
             }
-            validate_node_embedded_tokens(&node, names)?;
         }
     }
     Ok(())
-}
-
-fn validate_node_embedded_tokens(
-    node: &crate::node::Node<u32, u32, u32>,
-    names: &[FormatName],
-) -> Result<(), FormatError> {
-    let mut valid = true;
-    node.visit_embedded_token_words(|word| {
-        if let Some(crate::token::Token::Cs(symbol)) = word.token() {
-            valid &= names
-                .get(symbol.raw() as usize)
-                .is_some_and(|name| name.kind != 5);
-        }
-    });
-    if valid {
-        Ok(())
-    } else {
-        Err(FormatError::InvalidState(
-            "format node token name reference is out of range".to_owned(),
-        ))
-    }
 }
 
 fn validate_pdf_format_roots(
@@ -1609,7 +1597,11 @@ impl<G> Universe<G> {
                             })
                             .map_payloads(
                                 |value| admitted.glue(glue[value as usize]),
-                                |value| token_lists[value as usize].node_payload(),
+                                |value| {
+                                    admitted
+                                        .node_token_key(&token_lists[value as usize])
+                                        .expect("format token list is live")
+                                },
                             )
                             .map_fonts(|font: crate::ids::FontId| fonts[font.raw() as usize]);
                         Ok(node)

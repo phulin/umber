@@ -2954,7 +2954,7 @@ impl NodeRef<'_> {
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class: *class,
-                tokens: (*tokens).clone(),
+                tokens: **tokens,
             },
             Self::Ins {
                 class,

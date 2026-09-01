@@ -4628,9 +4628,15 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
             Some(Node::VList(_))
         ));
         for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
-            let tokens = admitted!(stores, |context| context.page_mark(mark));
+            let tokens = admitted!(stores, |context| {
+                let key = context.page_mark(mark);
+                context
+                    .node_token_words(key)
+                    .expect("live page mark")
+                    .to_vec()
+            });
             assert_eq!(
-                tokens.words(),
+                tokens,
                 [
                     Token::Char {
                         ch: 'f',
@@ -4796,7 +4802,10 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
             .expect("payload remains defined")
             .symbol();
         assert_eq!(
-            tokens.words(),
+            admitted!(stores, |context| context
+                .node_token_words(*tokens)
+                .expect("live deferred write")
+                .to_vec()),
             [tex_state::token::TokenWord::pack(Token::Cs(payload_symbol))]
         );
         assert_eq!(*close_slot, None);
@@ -8895,13 +8904,7 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
             },
         ],
     );
-    let tokens = tex_state::node::NodeTokenList::new(
-        admitted!(stores, |context| context
-            .token_list(tokens)
-            .iter()
-            .collect::<Vec<_>>())
-        .to_vec(),
-    );
+    let tokens = admitted!(stores, |context| context.node_token_list(&tokens));
     let pre = crate::test_harness::publish_page_nodes(
         stores,
         [Node::Char {
@@ -9074,7 +9077,7 @@ fn recursive_owned_node_signature<G>(
                 recursive_owned_node_signature(stores, replace)
             ),
             Node::Mark { class, tokens } => {
-                format!("mark={class}/tokens={:?}", tokens.words())
+                format!("mark={class}/tokens={tokens:?}")
             }
             Node::Ins {
                 class,
@@ -9132,7 +9135,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
             matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if spec.width.raw() == 301)
         );
         assert!(
-            matches!(&children[3], Node::Mark { tokens, .. } if tokens.words() == [
+            matches!(&children[3], Node::Mark { tokens, .. } if admitted!(stores, |context| context.node_token_words(*tokens).expect("live mark").to_vec()) == [
                 tex_state::token::TokenWord::pack(Token::Char { ch: 'm', cat: Catcode::Letter }),
                 tex_state::token::TokenWord::pack(Token::Char { ch: '!', cat: Catcode::Other }),
             ])
@@ -9547,14 +9550,16 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
                     class: 32_767,
                     tokens,
                 } => Some(
-                    tokens
-                        .words()
-                        .iter()
-                        .filter_map(|token| match token.token() {
-                            Some(Token::Char { ch, .. }) => Some(ch),
-                            Some(Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) | None => None,
-                        })
-                        .collect::<String>(),
+                    admitted!(stores, |context| context
+                        .node_token_words(*tokens)
+                        .expect("live numbered mark")
+                        .to_vec())
+                    .iter()
+                    .filter_map(|token| match token.token() {
+                        Some(Token::Char { ch, .. }) => Some(ch),
+                        Some(Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) | None => None,
+                    })
+                    .collect::<String>(),
                 ),
                 _ => None,
             })

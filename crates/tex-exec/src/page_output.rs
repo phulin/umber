@@ -189,7 +189,7 @@ fn update_page_marks_at_fire_up<G>(
         .nodes()
         .iter()
         .filter_map(|node| match node {
-            Node::Mark { class, tokens } => Some((*class, tokens.clone())),
+            Node::Mark { class, tokens } => Some((*class, *tokens)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -202,7 +202,7 @@ fn update_page_marks_at_fire_up<G>(
         // previous top and first marks. The previous bot mark becomes the new
         // top mark unless its token list is empty; an empty bot mark is made
         // null so the sparse mark-class node can eventually disappear.
-        let old_bot = stores.page_mark_class_value(PageMark::Bot, class).cloned();
+        let old_bot = stores.page_mark_class_value(PageMark::Bot, class).copied();
         stores.clear_page_mark_class(PageMark::Top, class);
         stores.clear_page_mark_class(PageMark::First, class);
         // TeX82 §1012 copies class zero's `bot_mark` pointer even when its
@@ -214,7 +214,7 @@ fn update_page_marks_at_fire_up<G>(
             old_bot.filter(|tokens| !tokens.is_empty())
         };
         match top.as_ref() {
-            Some(top) => stores.set_page_mark_class(PageMark::Top, class, top.clone()),
+            Some(top) => stores.set_page_mark_class(PageMark::Top, class, *top),
             None => stores.clear_page_mark_class(PageMark::Bot, class),
         }
 
@@ -223,9 +223,9 @@ fn update_page_marks_at_fire_up<G>(
         for (node_class, tokens) in &marks {
             if *node_class == class {
                 if first.is_none() {
-                    first = Some(tokens.clone());
+                    first = Some(*tokens);
                 }
-                bot = Some(tokens.clone());
+                bot = Some(*tokens);
             }
         }
 
@@ -237,8 +237,8 @@ fn update_page_marks_at_fire_up<G>(
             _ => {
                 if let Some(top) = top.as_ref() {
                     // e-TeX 2.6 `etex.ch` [26.1397] `fire_up_done`.
-                    stores.set_page_mark_class(PageMark::First, class, top.clone());
-                    stores.set_page_mark_class(PageMark::Bot, class, top.clone());
+                    stores.set_page_mark_class(PageMark::First, class, *top);
+                    stores.set_page_mark_class(PageMark::Bot, class, *top);
                 } else {
                     stores.clear_page_mark_class(PageMark::First, class);
                     stores.clear_page_mark_class(PageMark::Bot, class);

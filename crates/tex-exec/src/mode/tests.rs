@@ -795,44 +795,52 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
 
 #[test]
 fn alignment_template_coordinates_survive_destructive_journal_rollback() {
-    let u_template = tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(
-        tex_state::token::Token::Char {
-            ch: 'u',
-            cat: tex_state::token::Catcode::Other,
-        },
-    )]);
-    let v_template = tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(
-        tex_state::token::Token::Char {
-            ch: 'v',
-            cat: tex_state::token::Catcode::Other,
-        },
-    )]);
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation()
-        .set_align_state(AlignState::new(
-            AlignmentKind::HAlign,
-            AlignmentPackSpec::Natural,
-            vec![super::AlignColumn {
-                u_template: u_template.clone(),
-                v_template: v_template.clone(),
-            }],
-            vec![tex_state::glue::GlueSpec::ZERO],
-            tex_state::glue::GlueSpec::ZERO,
-            None,
-        ));
-    nest.reset_journal_for_test();
-    let cursor = nest.begin_journal();
+    crate::test_harness::with_nonstop_tex82_universe(|universe| {
+        crate::test_harness::with_admitted(universe, |context| {
+            let u_template = context
+                .allocate_node_token_list(&[tex_state::token::TokenWord::pack(
+                    tex_state::token::Token::Char {
+                        ch: 'u',
+                        cat: tex_state::token::Catcode::Other,
+                    },
+                )])
+                .expect("u template");
+            let v_template = context
+                .allocate_node_token_list(&[tex_state::token::TokenWord::pack(
+                    tex_state::token::Token::Char {
+                        ch: 'v',
+                        cat: tex_state::token::Catcode::Other,
+                    },
+                )])
+                .expect("v template");
+            let mut nest = ModeNest::new();
+            nest.current_list_mutation()
+                .set_align_state(AlignState::new(
+                    AlignmentKind::HAlign,
+                    AlignmentPackSpec::Natural,
+                    vec![super::AlignColumn {
+                        u_template,
+                        v_template,
+                    }],
+                    vec![tex_state::glue::GlueSpec::ZERO],
+                    tex_state::glue::GlueSpec::ZERO,
+                    None,
+                ));
+            nest.reset_journal_for_test();
+            let cursor = nest.begin_journal();
 
-    let _ = nest.current_list_mutation().take_align_state();
-    nest.rollback_journal(cursor).expect("alignment rollback");
+            let _ = nest.current_list_mutation().take_align_state();
+            nest.rollback_journal(cursor).expect("alignment rollback");
 
-    let current_list = nest.current_list();
-    let column = &current_list
-        .align_state()
-        .expect("alignment restored")
-        .columns()[0];
-    assert_eq!(column.u_template, u_template);
-    assert_eq!(column.v_template, v_template);
+            let current_list = nest.current_list();
+            let column = &current_list
+                .align_state()
+                .expect("alignment restored")
+                .columns()[0];
+            assert_eq!(column.u_template, u_template);
+            assert_eq!(column.v_template, v_template);
+        });
+    });
 }
 
 #[test]

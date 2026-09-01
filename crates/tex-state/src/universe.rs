@@ -102,6 +102,17 @@ impl<G> EngineBoundaryHasher<'_, G> {
         }
     }
 
+    pub fn node_token_key(&mut self, key: crate::node::NodeTokenKey) {
+        let admitted = self.universe.admitted().expect("live boundary generation");
+        let words = admitted
+            .node_token_words(key)
+            .expect("node token key belongs to the live boundary generation");
+        self.hasher.usize(words.len());
+        for word in words {
+            self.hasher.u32(word.raw());
+        }
+    }
+
     pub fn glue(&mut self, id: GlueId<G>) {
         self.glue_value(self.universe.glue_value(id));
     }
@@ -932,12 +943,7 @@ impl<G> Universe<G> {
         page.set_mark_class(
             crate::page::PageMark::Bot,
             7,
-            crate::node::NodeTokenList::new([crate::token::TokenWord::pack(
-                crate::token::Token::Char {
-                    ch: 'c',
-                    cat: crate::token::Catcode::Other,
-                },
-            )]),
+            crate::node::NodeTokenKey::default(),
         );
         self.page_region
             .reject_checkpoint_candidate(tail)

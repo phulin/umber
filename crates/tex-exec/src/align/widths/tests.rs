@@ -12,7 +12,7 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     let empty = NodeTokenList::default();
     vec![
         AlignColumn {
-            u_template: empty.clone(),
+            u_template: empty,
             v_template: empty,
         };
         count

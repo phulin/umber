@@ -201,23 +201,25 @@ fn token_list_aliases_release_exactly_on_owner_drop() {
             .token_lists_mut()
             .allocate(&[TokenWord::from_raw(7)])
             .expect("published list");
-        assert_eq!(id.semantic_owner_count(), 1);
+        // The generation store retains one immutable owner independently of
+        // transient command handles.
+        assert_eq!(id.semantic_owner_count(), 2);
 
         let alias = id.clone();
-        assert_eq!(id.semantic_owner_count(), 2);
-        let view = generation.token_lists().get(alias);
-        assert_eq!(id.semantic_owner_count(), 2);
-        let cursor = view.cursor();
         assert_eq!(id.semantic_owner_count(), 3);
+        let view = generation.token_lists().get(alias);
+        assert_eq!(id.semantic_owner_count(), 3);
+        let cursor = view.cursor();
+        assert_eq!(id.semantic_owner_count(), 4);
         drop(cursor);
         drop(view);
-        assert_eq!(id.semantic_owner_count(), 1);
+        assert_eq!(id.semantic_owner_count(), 2);
     });
 }
 
 #[cfg(feature = "profiling")]
 #[test]
-fn node_payload_aliases_stored_tokens_without_copy_or_allocation() {
+fn node_key_publication_and_copy_allocate_zero_heap() {
     with_generation(|mut generation| {
         let id = generation
             .token_lists_mut()
@@ -225,9 +227,17 @@ fn node_payload_aliases_stored_tokens_without_copy_or_allocation() {
             .expect("published list");
         let owner = crate::measurement::HotCoreAllocationOwner::SemanticApply;
         let before = crate::measurement::hot_core_thread_allocation_measurement(owner);
-        let payload = {
+        let key = {
             let _scope = crate::measurement::hot_core_allocation_scope(owner);
-            id.node_payload()
+            let key = generation
+                .token_lists()
+                .node_key(&id)
+                .expect("published token list has a node coordinate");
+            for _ in 0..8_192 {
+                let copy = key;
+                core::hint::black_box(copy);
+            }
+            key
         };
         let after = crate::measurement::hot_core_thread_allocation_measurement(owner);
 
@@ -235,8 +245,187 @@ fn node_payload_aliases_stored_tokens_without_copy_or_allocation() {
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
         assert_eq!(id.semantic_owner_count(), 2);
         assert_eq!(
-            payload.words(),
-            [TokenWord::from_raw(7), TokenWord::from_raw(9)]
+            generation.token_lists().node_words(key),
+            Some([TokenWord::from_raw(7), TokenWord::from_raw(9)].as_slice())
+        );
+    });
+}
+
+#[test]
+fn node_token_keys_are_compact_copy_coordinates_with_exact_alias_replay() {
+    assert_eq!(core::mem::size_of::<crate::node::NodeTokenKey>(), 24);
+    assert_eq!(core::mem::align_of::<crate::node::NodeTokenKey>(), 4);
+    assert!(!core::mem::needs_drop::<crate::node::NodeTokenKey>());
+
+    with_generation(|mut generation| {
+        let id = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(7), TokenWord::from_raw(9)])
+            .expect("published list");
+        let key = generation
+            .token_lists()
+            .node_key(&id)
+            .expect("published token list has a node coordinate");
+        let alias = key;
+
+        assert_eq!(key, alias);
+        assert_eq!(id.semantic_owner_count(), 2);
+        assert_eq!(
+            generation.token_lists().node_words(alias),
+            Some([TokenWord::from_raw(7), TokenWord::from_raw(9)].as_slice())
+        );
+    });
+}
+
+#[test]
+fn generation_store_owns_node_words_and_releases_accounting_at_retirement() {
+    let accounting = with_generation(|mut generation| {
+        let accounting = generation.memory_accounting();
+        let id = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(7), TokenWord::from_raw(9)])
+            .expect("published list");
+        let key = generation
+            .token_lists()
+            .node_key(&id)
+            .expect("node coordinate");
+        drop(id);
+
+        assert_eq!(accounting.words(false), (0, 3));
+        assert_eq!(
+            generation.token_lists().node_words(key),
+            Some([TokenWord::from_raw(7), TokenWord::from_raw(9)].as_slice())
+        );
+        accounting
+    });
+
+    assert_eq!(accounting.words(false), (0, 0));
+}
+
+#[test]
+fn token_coordinate_cutover_preserves_the_resident_node_stage_boundary() {
+    assert_eq!(core::mem::size_of::<crate::node::Node>(), 168);
+    assert!(core::mem::needs_drop::<crate::node::Node>());
+    assert_eq!(core::mem::size_of::<crate::node::Whatsit>(), 56);
+    assert_eq!(core::mem::size_of::<crate::node::PdfDestinationNode>(), 60);
+    assert_eq!(core::mem::size_of::<crate::node::PdfThreadNode>(), 80);
+}
+
+#[test]
+fn node_token_keys_reject_foreign_and_reused_rows() {
+    with_generation(|mut generation| {
+        let checkpoint = generation.token_lists().cursor();
+        let first = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(7)])
+            .expect("first publication");
+        let stale = generation
+            .token_lists()
+            .node_key(&first)
+            .expect("first node key");
+        let [owner, row, incarnation, offset, len, publication] = stale.coordinates();
+        let foreign = crate::node::NodeTokenKey::new(
+            owner.wrapping_add(1),
+            row,
+            incarnation,
+            offset,
+            len,
+            publication,
+        );
+        assert_eq!(generation.token_lists().node_words(foreign), None);
+        let malformed_empty = crate::node::NodeTokenKey::new(owner, row, 1, 0, 0, publication);
+        assert_eq!(generation.token_lists().node_words(malformed_empty), None);
+        assert_eq!(
+            generation
+                .token_lists()
+                .node_words(crate::node::NodeTokenKey::default()),
+            Some([].as_slice())
+        );
+
+        generation.token_lists_mut().restore_cursor(checkpoint);
+        let replacement = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(9)])
+            .expect("replacement publication");
+        let replacement_key = generation
+            .token_lists()
+            .node_key(&replacement)
+            .expect("replacement node key");
+
+        assert_eq!(generation.token_lists().node_words(stale), None);
+        assert_eq!(
+            generation.token_lists().node_words(replacement_key),
+            Some([TokenWord::from_raw(9)].as_slice())
+        );
+    });
+}
+
+#[test]
+fn node_token_keys_settle_accepted_and_candidate_suffixes_exactly() {
+    with_generation(|mut generation| {
+        let prefix = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(1)])
+            .expect("prefix publication");
+        let checkpoint = generation.token_lists().cursor();
+        let accepted = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(2)])
+            .expect("accepted publication");
+        let prefix_key = generation
+            .token_lists()
+            .node_key(&prefix)
+            .expect("prefix key");
+        let accepted_key = generation
+            .token_lists()
+            .node_key(&accepted)
+            .expect("accepted key");
+
+        let tail = generation
+            .token_lists_mut()
+            .begin_checkpoint_candidate(checkpoint);
+        let rejected = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(3)])
+            .expect("candidate publication");
+        let rejected_key = generation
+            .token_lists()
+            .node_key(&rejected)
+            .expect("candidate key");
+        assert_eq!(generation.token_lists().node_words(accepted_key), None);
+        generation
+            .token_lists_mut()
+            .reject_checkpoint_candidate(checkpoint, tail);
+
+        assert_eq!(
+            generation.token_lists().node_words(prefix_key),
+            Some([TokenWord::from_raw(1)].as_slice())
+        );
+        assert_eq!(
+            generation.token_lists().node_words(accepted_key),
+            Some([TokenWord::from_raw(2)].as_slice())
+        );
+        assert_eq!(generation.token_lists().node_words(rejected_key), None);
+
+        let tail = generation
+            .token_lists_mut()
+            .begin_checkpoint_candidate(checkpoint);
+        let selected = generation
+            .token_lists_mut()
+            .allocate(&[TokenWord::from_raw(4)])
+            .expect("selected publication");
+        let selected_key = generation
+            .token_lists()
+            .node_key(&selected)
+            .expect("selected key");
+        generation
+            .token_lists_mut()
+            .accept_checkpoint_candidate(tail);
+
+        assert_eq!(generation.token_lists().node_words(accepted_key), None);
+        assert_eq!(
+            generation.token_lists().node_words(selected_key),
+            Some([TokenWord::from_raw(4)].as_slice())
         );
     });
 }

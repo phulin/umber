@@ -2441,11 +2441,11 @@ impl PageBuilderState {
         successor.restore_scalars(self.scalar_snapshot());
         successor.insertions = self.insertions.clone();
         successor.insertion_positions = self.insertion_positions.clone();
-        successor.top_mark = self.top_mark.clone();
-        successor.first_mark = self.first_mark.clone();
-        successor.bot_mark = self.bot_mark.clone();
-        successor.split_first_mark = self.split_first_mark.clone();
-        successor.split_bot_mark = self.split_bot_mark.clone();
+        successor.top_mark = self.top_mark;
+        successor.first_mark = self.first_mark;
+        successor.bot_mark = self.bot_mark;
+        successor.split_first_mark = self.split_first_mark;
+        successor.split_bot_mark = self.split_bot_mark;
         successor.mark_classes = self.mark_classes.clone();
         successor.mark_class_positions = self.mark_class_positions.clone();
         successor.identity_enabled = self.identity_enabled;
@@ -3361,11 +3361,11 @@ impl PageBuilderState {
         }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::Marks([
-                self.top_mark.clone(),
-                self.first_mark.clone(),
-                self.bot_mark.clone(),
-                self.split_first_mark.clone(),
-                self.split_bot_mark.clone(),
+                self.top_mark,
+                self.first_mark,
+                self.bot_mark,
+                self.split_first_mark,
+                self.split_bot_mark,
             ]));
         }
         *match mark {
@@ -3385,11 +3385,11 @@ impl PageBuilderState {
         }
         if !self.checkpoint_journal.frames.is_empty() {
             self.record_page_inverse(PageInverse::Marks([
-                self.top_mark.clone(),
-                self.first_mark.clone(),
-                self.bot_mark.clone(),
-                self.split_first_mark.clone(),
-                self.split_bot_mark.clone(),
+                self.top_mark,
+                self.first_mark,
+                self.bot_mark,
+                self.split_first_mark,
+                self.split_bot_mark,
             ]));
         }
         *match mark {

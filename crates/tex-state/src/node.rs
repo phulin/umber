@@ -5,77 +5,42 @@ use crate::ids::FontId;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::node_arena::PageListId;
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token::{OriginId, TokenWord};
+use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
-
-/// Node-owned token payload used before and inside node arenas.
+/// Copy-only coordinate for immutable token words owned by one generation.
 ///
-/// Stored token-list transitions clone the existing generation-branded
-/// non-atomic owner, so the words remain in their final immutable allocation.
-/// Standalone construction is reserved for detached/cold values and tests.
-#[derive(Debug, Default)]
-pub struct NodeTokenList {
-    words: Option<Rc<[TokenWord]>>,
-    accounting: Option<crate::memory_accounting::MemoryAccounting>,
+/// The six words mirror the compact-node contract. Construction and
+/// resolution remain inside the generation token store; an all-zero key is
+/// the canonical empty list and is valid in every generation.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(C)]
+pub struct NodeTokenKey {
+    owner: u32,
+    block_ordinal: u32,
+    logical_block_incarnation: u32,
+    word_offset: u32,
+    word_len: u32,
+    publication_serial: u32,
 }
 
-impl Clone for NodeTokenList {
-    fn clone(&self) -> Self {
-        Self {
-            words: self.words.as_ref().map(Rc::clone),
-            accounting: self.accounting.clone(),
-        }
+/// Transitional spelling retained while enum consumers move to `NodeView`.
+/// The value is a copy-only generation coordinate, not a token owner.
+pub type NodeTokenList = NodeTokenKey;
+
+impl serde::Serialize for NodeTokenKey {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "runtime node token coordinates are not serializable",
+        ))
     }
 }
 
-impl Drop for NodeTokenList {
-    fn drop(&mut self) {
-        if let Some(words) = &self.words
-            && Rc::strong_count(words) == 1
-            && let Some(accounting) = &self.accounting
-        {
-            accounting
-                .release_shared_dynamic(words.len().checked_add(1).expect("token word count"));
-        }
-    }
-}
-
-impl PartialEq for NodeTokenList {
-    fn eq(&self, other: &Self) -> bool {
-        self.words() == other.words()
-    }
-}
-
-impl Eq for NodeTokenList {}
-
-impl Hash for NodeTokenList {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.words().hash(state);
-    }
-}
-
-impl serde::Serialize for NodeTokenList {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(
-            &self
-                .words()
-                .iter()
-                .map(|word| word.raw())
-                .collect::<Vec<_>>(),
-            serializer,
-        )
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for NodeTokenList {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let words = <Vec<u32> as serde::Deserialize>::deserialize(deserializer)?
-            .into_iter()
-            .map(TokenWord::from_raw)
-            .collect::<Vec<_>>();
-        Ok(Self::new(words))
+impl<'de> serde::Deserialize<'de> for NodeTokenKey {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "runtime node token coordinates are not deserializable",
+        ))
     }
 }
 
@@ -94,34 +59,39 @@ fn deserialize_font_id<'de, D: serde::Deserializer<'de>>(
     )?))
 }
 
-impl NodeTokenList {
+impl NodeTokenKey {
     #[must_use]
-    pub fn new(words: impl Into<Box<[TokenWord]>>) -> Self {
-        let words = words.into();
-        Self {
-            words: (!words.is_empty()).then(|| Rc::from(words)),
-            accounting: None,
-        }
+    pub const fn is_empty(self) -> bool {
+        self.word_len == 0
     }
 
-    pub(crate) fn shared(
-        words: Rc<[TokenWord]>,
-        accounting: crate::memory_accounting::MemoryAccounting,
+    pub(crate) const fn new(
+        owner: u32,
+        block_ordinal: u32,
+        logical_block_incarnation: u32,
+        word_offset: u32,
+        word_len: u32,
+        publication_serial: u32,
     ) -> Self {
         Self {
-            words: Some(words),
-            accounting: Some(accounting),
+            owner,
+            block_ordinal,
+            logical_block_incarnation,
+            word_offset,
+            word_len,
+            publication_serial,
         }
     }
 
-    #[must_use]
-    pub fn words(&self) -> &[TokenWord] {
-        self.words.as_deref().unwrap_or(&[])
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.words().is_empty()
+    pub(crate) const fn coordinates(self) -> [u32; 6] {
+        [
+            self.owner,
+            self.block_ordinal,
+            self.logical_block_incarnation,
+            self.word_offset,
+            self.word_len,
+            self.publication_serial,
+        ]
     }
 }
 
@@ -216,7 +186,7 @@ impl NodeKind {
     serialize = "List: serde::Serialize, Glue: serde::Serialize, Tokens: serde::Serialize",
     deserialize = "List: serde::Deserialize<'de>, Glue: serde::Deserialize<'de>, Tokens: serde::Deserialize<'de>"
 ))]
-pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
+pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenKey> {
     Char {
         #[serde(
             serialize_with = "serialize_font_id",
@@ -527,27 +497,6 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
             Self::Mark { tokens, .. } => visit_tokens(tokens),
             Self::Ins { split_top_skip, .. } => visit_glue(split_top_skip),
             Self::Whatsit(whatsit) => whatsit.visit_payloads(visit_glue, visit_tokens),
-            _ => {}
-        }
-    }
-
-    /// Visits token words embedded directly in rare PDF action identifiers.
-    /// Generic token-list payload coordinates are reported by `visit_payloads`;
-    /// this companion visitor covers the node-owned name/raw spellings.
-    pub(crate) fn visit_embedded_token_words(&self, mut visit: impl FnMut(TokenWord)) {
-        let mut identifier = |identifier: &NodePdfActionIdentifier| match identifier {
-            NodePdfActionIdentifier::Name(tokens) | NodePdfActionIdentifier::Raw(tokens) => {
-                for &word in tokens.words() {
-                    visit(word);
-                }
-            }
-            NodePdfActionIdentifier::Number(_) => {}
-        };
-        match self {
-            Self::Whatsit(Whatsit::PdfDestination(destination)) => {
-                identifier(&destination.identifier);
-            }
-            Self::Whatsit(Whatsit::PdfThread(thread)) => identifier(&thread.identifier),
             _ => {}
         }
     }
@@ -1446,7 +1395,7 @@ pub enum Whatsit<Glue = GlueSpec, Tokens = NodeTokenList> {
         height: Scaled,
         depth: Scaled,
     },
-    PdfDestination(Box<PdfDestinationNode>),
+    PdfDestination(Box<PdfDestinationNode<Tokens>>),
     PdfThread(Box<PdfThreadNode<Tokens>>),
     PdfEndThread,
     Language {
@@ -1467,7 +1416,13 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
             | Self::DeferredSpecial { tokens, .. }
             | Self::DeferredPdfLiteral { tokens, .. } => visit_tokens(tokens),
             Self::PdfSnapY { glue } => visit_glue(glue),
-            Self::PdfThread(thread) => visit_tokens(&thread.attributes),
+            Self::PdfDestination(destination) => {
+                destination.identifier.visit_tokens(&mut visit_tokens)
+            }
+            Self::PdfThread(thread) => {
+                thread.identifier.visit_tokens(&mut visit_tokens);
+                visit_tokens(&thread.attributes);
+            }
             _ => {}
         }
     }
@@ -1532,9 +1487,13 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
                 height,
                 depth,
             },
-            Self::PdfDestination(value) => Whatsit::PdfDestination(value),
+            Self::PdfDestination(value) => Whatsit::PdfDestination(Box::new(PdfDestinationNode {
+                identifier: value.identifier.map_tokens(&mut map_tokens),
+                structure: value.structure,
+                kind: value.kind,
+            })),
             Self::PdfThread(value) => Whatsit::PdfThread(Box::new(PdfThreadNode {
-                identifier: value.identifier,
+                identifier: value.identifier.map_tokens(&mut map_tokens),
                 dimensions: value.dimensions,
                 attributes: map_tokens(value.attributes),
                 running: value.running,
@@ -1556,7 +1515,7 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
 /// Rare article-thread marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfThreadNode<Tokens = NodeTokenList> {
-    pub identifier: NodePdfActionIdentifier,
+    pub identifier: NodePdfActionIdentifier<Tokens>,
     pub dimensions: crate::PdfAnnotationDimensions,
     pub attributes: Tokens,
     pub running: bool,
@@ -1564,18 +1523,38 @@ pub struct PdfThreadNode<Tokens = NodeTokenList> {
 
 /// Rare destination marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct PdfDestinationNode {
-    pub identifier: NodePdfActionIdentifier,
+pub struct PdfDestinationNode<Tokens = NodeTokenList> {
+    pub identifier: NodePdfActionIdentifier<Tokens>,
     pub structure: Option<u32>,
     pub kind: PdfDestinationKind,
 }
 
 /// A navigation identifier copied into the semantic lifetime of a node.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum NodePdfActionIdentifier {
-    Name(NodeTokenList),
+pub enum NodePdfActionIdentifier<Tokens = NodeTokenList> {
+    Name(Tokens),
     Number(u32),
-    Raw(NodeTokenList),
+    Raw(Tokens),
+}
+
+impl<Tokens> NodePdfActionIdentifier<Tokens> {
+    fn visit_tokens(&self, visit: &mut impl FnMut(&Tokens)) {
+        match self {
+            Self::Name(tokens) | Self::Raw(tokens) => visit(tokens),
+            Self::Number(_) => {}
+        }
+    }
+
+    fn map_tokens<Other>(
+        self,
+        map: &mut impl FnMut(Tokens) -> Other,
+    ) -> NodePdfActionIdentifier<Other> {
+        match self {
+            Self::Name(tokens) => NodePdfActionIdentifier::Name(map(tokens)),
+            Self::Number(number) => NodePdfActionIdentifier::Number(number),
+            Self::Raw(tokens) => NodePdfActionIdentifier::Raw(map(tokens)),
+        }
+    }
 }
 
 /// A page destination view, retained until final traversal resolves geometry.

@@ -1927,13 +1927,14 @@ mod tests {
         crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let tokens =
-                tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(
+            let tokens = stores
+                .allocate_node_token_list(&[tex_state::token::TokenWord::pack(
                     tex_state::token::Token::Char {
                         ch: 'w',
                         cat: tex_state::token::Catcode::Letter,
                     },
-                )]);
+                )])
+                .expect("test node token list");
             let nodes = vec![
                 Node::Whatsit(tex_state::node::Whatsit::OpenOut {
                     slot: tex_state::StreamSlot::new(15),
@@ -1941,7 +1942,7 @@ mod tests {
                 }),
                 Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
                     sink: tex_state::PrintSink::Log,
-                    tokens: tokens.clone(),
+                    tokens,
                 }),
                 Node::Whatsit(tex_state::node::Whatsit::CloseOut {
                     slot: Some(tex_state::StreamSlot::new(0)),
@@ -2007,7 +2008,9 @@ mod tests {
                 "the actual pre-hyphenation traversal applies the language node's state"
             );
             assert_eq!(
-                tokens.words(),
+                stores
+                    .node_token_words(tokens)
+                    .expect("live node token key"),
                 [tex_state::token::TokenWord::pack(
                     tex_state::token::Token::Char {
                         ch: 'w',

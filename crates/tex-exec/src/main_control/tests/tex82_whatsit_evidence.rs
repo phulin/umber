@@ -65,12 +65,13 @@ fn state_box<G>(
     }
 }
 
-fn base_whatsits<G>(_context: &mut tex_state::CommandContext<'_, G>) -> Vec<Node> {
-    let write =
-        tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(Token::Char {
+fn base_whatsits<G>(context: &mut tex_state::CommandContext<'_, G>) -> Vec<Node> {
+    let write = context
+        .allocate_node_token_list(&[tex_state::token::TokenWord::pack(Token::Char {
             ch: 'w',
             cat: Catcode::Letter,
-        })]);
+        })])
+        .expect("test node token list");
     vec![
         Node::Whatsit(Whatsit::OpenOut {
             slot: tex_state::StreamSlot::new(0),
@@ -419,10 +420,8 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         run_to_end(&mut control, universe);
 
         let nodes = box_child_nodes(universe, 1);
-        let payload_symbol = crate::test_harness::with_admitted(universe, |context| {
-            context.symbol("payload").expect("payload")
-        });
-        assert!(
+        let payload_matches = crate::test_harness::with_admitted(universe, |context| {
+            let payload_symbol = context.symbol("payload").expect("payload");
             matches!(
                 nodes.as_slice(),
                 [
@@ -440,12 +439,12 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
                     && *close == tex_state::StreamSlot::new(0)
                     && class == "dvi"
                     && payload == b"early"
-                    && tokens.words() == [tex_state::token::TokenWord::pack(Token::Cs(
-                        payload_symbol
-                    ))]
-            ),
-            "constructed nodes: {nodes:#?}"
-        );
+                    && context.node_token_words(*tokens) == Some(&[
+                        tex_state::token::TokenWord::pack(Token::Cs(payload_symbol))
+                    ])
+            )
+        });
+        assert!(payload_matches, "constructed nodes: {nodes:#?}");
         assert!(box_child_nodes(universe, 0).is_empty());
         crate::test_harness::with_admitted(universe, |context| {
             assert!(

@@ -129,11 +129,11 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
         assert_eq!(definition.semantic_owner_count(), 0);
-        assert_eq!(tokens.semantic_owner_count(), 2);
+        assert_eq!(tokens.semantic_owner_count(), 3);
 
         state.restore(before).expect("rollback");
         assert_eq!(definition.semantic_owner_count(), 0);
-        assert_eq!(tokens.semantic_owner_count(), 1);
+        assert_eq!(tokens.semantic_owner_count(), 2);
     });
 }
 

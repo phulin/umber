@@ -263,8 +263,15 @@ fn word_text(words: &[TokenWord]) -> String {
         .collect()
 }
 
-fn rooted_text(tokens: &tex_state::node::NodeTokenList) -> String {
-    word_text(tokens.words())
+fn rooted_text<G>(
+    context: &CommandContext<'_, G>,
+    tokens: tex_state::node::NodeTokenKey,
+) -> String {
+    word_text(
+        context
+            .node_token_words(tokens)
+            .expect("live node token key"),
+    )
 }
 
 fn macro_text<G>(universe: &mut Universe<G>, name: &str) -> String {
@@ -279,7 +286,7 @@ fn macro_text<G>(universe: &mut Universe<G>, name: &str) -> String {
 
 fn page_mark_text<G>(universe: &mut Universe<G>, mark: PageMark) -> String {
     crate::test_harness::with_admitted(universe, |context| {
-        word_text(context.page_mark(mark).words())
+        rooted_text(context, context.page_mark(mark))
     })
 }
 
@@ -342,7 +349,7 @@ fn shapes_context<G>(context: &CommandContext<'_, G>, nodes: &[Node]) -> Vec<Sha
                 shift: boxed.shift.raw(),
                 children: shapes_context(context, &page_vec_context(context, boxed.children)),
             },
-            Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(tokens)),
+            Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(context, *tokens)),
             Node::Ins {
                 class,
                 size,

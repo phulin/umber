@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
 use crate::generation::ArenaToken;
@@ -20,6 +21,15 @@ pub(super) enum ProvenanceNamespace {}
 
 const TOKEN_CHUNK_WORDS: usize = 64;
 const NO_CHUNK: u32 = u32::MAX;
+static NEXT_TOKEN_STORE_OWNER: AtomicU32 = AtomicU32::new(1);
+
+fn fresh_token_store_owner() -> u32 {
+    NEXT_TOKEN_STORE_OWNER
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |owner| {
+            owner.checked_add(1)
+        })
+        .expect("generation token-store owner domain exhausted")
+}
 
 macro_rules! semantic_dense_id {
     ($name:ident) => {
@@ -216,10 +226,6 @@ impl<G> TokenListId<G> {
 
     pub(crate) fn capture_format(&self) -> Vec<u32> {
         self.words.iter().map(|word| word.raw()).collect()
-    }
-
-    pub(crate) fn node_payload(&self) -> crate::node::NodeTokenList {
-        crate::node::NodeTokenList::shared(Rc::clone(&self.words), self.accounting.clone())
     }
 
     #[cfg(test)]
@@ -507,9 +513,13 @@ impl<G> IntoIterator for TokenListView<G> {
 ///
 /// Builder chunks are reusable scratch for publication. Sealing copies the
 /// words into their final shared allocation and immediately recycles the
-/// builder chain; the publisher does not retain the published payload.
+/// builder chain. The publisher retains one owner so node token coordinates
+/// remain valid until rollback removes their row or the generation retires.
 pub(crate) struct TokenListArena<G> {
+    owner: u32,
     next_serial: u32,
+    next_publication_serial: u32,
+    published: Vec<PublishedTokenList>,
     chunks: Vec<TokenChunk>,
     builder_slots: Vec<BuilderSlot>,
     free_builder_slots: Vec<u32>,
@@ -518,6 +528,25 @@ pub(crate) struct TokenListArena<G> {
     accounting: MemoryAccounting,
     semantic_identity_enabled: bool,
     _brand: PhantomData<fn(&G) -> &G>,
+}
+
+struct PublishedTokenList {
+    words: Rc<[TokenWord]>,
+    publication_serial: u32,
+    accounting: MemoryAccounting,
+}
+
+impl Drop for PublishedTokenList {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.words) == 1 {
+            self.accounting
+                .release_shared_dynamic(token_list_memory_words(self.words.len()));
+        }
+    }
+}
+
+pub(crate) struct AcceptedTokenListTail {
+    published: Vec<PublishedTokenList>,
 }
 
 impl<G> TokenListArena<G> {
@@ -532,19 +561,7 @@ impl<G> TokenListArena<G> {
             self.next_serial
         );
         assert!(self.builder_slots.iter().all(|slot| !slot.live));
-        self.next_serial = cursor;
-        self.chunks.clear();
-        self.builder_slots.clear();
-        self.free_builder_slots.clear();
-        self.free_chunk_head = NO_CHUNK;
-        self.next_builder_serial = 1;
-    }
-
-    /// Restores the saved accepted publisher coordinate after discarding a
-    /// candidate. Published payloads live in their durable handles rather
-    /// than this publisher, so rejection replays only the scalar coordinate.
-    pub(crate) fn restore_accepted_cursor(&mut self, cursor: u32) {
-        assert!(self.builder_slots.iter().all(|slot| !slot.live));
+        self.published.truncate(cursor as usize);
         self.next_serial = cursor;
         self.chunks.clear();
         self.builder_slots.clear();
@@ -558,7 +575,10 @@ impl<G> TokenListArena<G> {
         accounting: MemoryAccounting,
     ) -> Self {
         Self {
+            owner: fresh_token_store_owner(),
             next_serial: 0,
+            next_publication_serial: 1,
+            published: Vec::new(),
             chunks: Vec::new(),
             builder_slots: Vec::new(),
             free_builder_slots: Vec::new(),
@@ -623,6 +643,9 @@ impl<G> TokenListArena<G> {
         self.chunks
             .try_reserve(chunks)
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        self.published
+            .try_reserve(rows)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
         if self.builder_slots.is_empty() {
             self.builder_slots
                 .try_reserve(1)
@@ -639,6 +662,88 @@ impl<G> TokenListArena<G> {
     pub(crate) fn get(&self, id: TokenListId<G>) -> TokenListView<G> {
         TokenListView { list: id }
     }
+
+    #[must_use]
+    pub(crate) fn node_words(&self, key: crate::node::NodeTokenKey) -> Option<&[TokenWord]> {
+        if key.is_empty() {
+            return (key == crate::node::NodeTokenKey::default()).then_some(&[]);
+        }
+        let [
+            owner,
+            block_ordinal,
+            incarnation,
+            offset,
+            len,
+            publication_serial,
+        ] = key.coordinates();
+        if owner != self.owner || incarnation != 1 || offset != 0 {
+            return None;
+        }
+        let published = self.published.get(block_ordinal as usize)?;
+        if published.publication_serial != publication_serial
+            || published.words.len() != len as usize
+        {
+            return None;
+        }
+        Some(&published.words)
+    }
+
+    pub(crate) fn node_key(&self, id: &TokenListId<G>) -> Option<crate::node::NodeTokenKey> {
+        let block_ordinal = id.format_index();
+        let published = self.published.get(block_ordinal as usize)?;
+        if !Rc::ptr_eq(&published.words, &id.words) {
+            return None;
+        }
+        if published.words.is_empty() {
+            return Some(crate::node::NodeTokenKey::default());
+        }
+        Some(crate::node::NodeTokenKey::new(
+            self.owner,
+            block_ordinal,
+            1,
+            0,
+            u32::try_from(published.words.len()).ok()?,
+            published.publication_serial,
+        ))
+    }
+
+    pub(crate) fn append_node_words_to_builder(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        key: crate::node::NodeTokenKey,
+    ) -> Result<(), DurableAllocationError> {
+        if key.is_empty() {
+            return (key == crate::node::NodeTokenKey::default())
+                .then_some(())
+                .ok_or(DurableAllocationError::CapacityOverflow);
+        }
+        self.node_words(key)
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        let words = Rc::clone(&self.published[key.coordinates()[1] as usize].words);
+        for &word in words.iter() {
+            self.push_builder_word(builder, word)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(&mut self, cursor: u32) -> AcceptedTokenListTail {
+        assert!(cursor <= self.next_serial);
+        let published = self.published.split_off(cursor as usize);
+        self.next_serial = cursor;
+        AcceptedTokenListTail { published }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        cursor: u32,
+        mut tail: AcceptedTokenListTail,
+    ) {
+        self.restore_cursor(cursor);
+        self.published.append(&mut tail.published);
+        self.next_serial = self.published.len() as u32;
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(&mut self, _tail: AcceptedTokenListTail) {}
 
     pub(crate) fn begin_builder(&mut self) -> Result<TokenListBuilder<G>, DurableAllocationError> {
         let slot = if let Some(slot) = self.free_builder_slots.pop() {
@@ -731,6 +836,11 @@ impl<G> TokenListArena<G> {
             Some(word)
         })
         .collect::<Rc<[_]>>();
+        let publication_serial = self.next_publication_serial;
+        self.next_publication_serial = self
+            .next_publication_serial
+            .checked_add(1)
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
         let semantic_identity = if self.semantic_identity_enabled {
             crate::state_hash::semantic_scalar_root(0x746f_6b65_6e73_7631, |hasher| {
                 hasher.usize(words.len());
@@ -743,6 +853,11 @@ impl<G> TokenListArena<G> {
             0
         };
         self.release_builder_slot(builder, true)?;
+        self.published.push(PublishedTokenList {
+            words: Rc::clone(&words),
+            publication_serial,
+            accounting: self.accounting.clone(),
+        });
         self.next_serial = serial.get();
         Ok(TokenListId::from_words(
             serial,

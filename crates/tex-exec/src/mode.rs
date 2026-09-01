@@ -1891,10 +1891,7 @@ fn hash_node_tokens<G>(
     tokens: &tex_state::node::NodeTokenList,
     projection: &mut EngineBoundaryHasher<'_, G>,
 ) {
-    projection.usize(tokens.words().len());
-    for token in tokens.words() {
-        projection.u32(token.raw());
-    }
+    projection.node_token_key(*tokens);
 }
 
 fn hash_node_glue<G>(

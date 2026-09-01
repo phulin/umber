@@ -24,6 +24,13 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
+fn node_token_coordinates_keep_the_same_copy_layout_in_wasm() {
+    assert_eq!(core::mem::size_of::<tex_state::node::NodeTokenKey>(), 24);
+    assert_eq!(core::mem::align_of::<tex_state::node::NodeTokenKey>(), 4);
+    assert!(!core::mem::needs_drop::<tex_state::node::NodeTokenKey>());
+}
+
+#[wasm_bindgen_test]
 fn editor_binding_exposes_provisional_and_stable_binary_outputs() {
     let options = options("main.tex");
     let mut session =

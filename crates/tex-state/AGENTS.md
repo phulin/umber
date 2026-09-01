@@ -74,7 +74,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   store coordinate. Exact per-word structural counters are test-only;
   profiling gates derive their known sequential volumes at the boundary.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
-  token-list owners, reusable publication builders, allocation-free owning
+  token-list owners, reusable publication builders, retained immutable rows
+  addressed by compact node token coordinates, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and
   provenance publication.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
@@ -221,7 +222,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   shim used by executable profiling builds to attribute allocation calls and
   requested bytes to nested hot-core owner scopes.
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
-  provenance, directly owned glue, shared immutable stored-token payloads, and
+  provenance, directly owned glue, compact generation token coordinates, and
   typed list coordinates.
 - `src/node_sequence.rs`: Explicit mirrored-or-distinct semantic and
   TeX-physical operation buffers. Mirrored hot lists store one node/inline

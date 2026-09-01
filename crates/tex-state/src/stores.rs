@@ -67,6 +67,17 @@ type CapturedFormatValues<G> = (
 );
 
 impl<G> StateCore<G> {
+    pub(crate) fn capture_node_token_list(
+        &self,
+        key: crate::node::NodeTokenKey,
+    ) -> Option<Vec<u32>> {
+        self.generation
+            .generation()
+            .token_lists()
+            .node_words(key)
+            .map(|words| words.iter().map(|word| word.raw()).collect())
+    }
+
     pub(crate) fn definition_meanings_match_accepted_checkpoint(
         &self,
         restart: crate::journal::JournalCursor<G>,
@@ -316,6 +327,15 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
+    pub(crate) fn node_token_words(&self, key: crate::node::NodeTokenKey) -> Option<&[TokenWord]> {
+        self.generation.token_lists().node_words(key)
+    }
+
+    pub(crate) fn node_token_key(&self, id: &TokenListId<G>) -> Option<crate::node::NodeTokenKey> {
+        self.generation.token_lists().node_key(id)
+    }
+
+    #[inline(always)]
     pub(crate) fn glue(&self, id: GlueId<G>) -> GlueSpec {
         self.generation.glue().get(id)
     }
@@ -386,6 +406,15 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     #[inline(always)]
     pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.generation.token_lists().get(id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_token_words(&self, key: crate::node::NodeTokenKey) -> Option<&[TokenWord]> {
+        self.generation.token_lists().node_words(key)
+    }
+
+    pub(crate) fn node_token_key(&self, id: &TokenListId<G>) -> Option<crate::node::NodeTokenKey> {
+        self.generation.token_lists().node_key(id)
     }
 
     #[inline(always)]
@@ -550,6 +579,16 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         builder: TokenListBuilder<G>,
     ) -> Result<(), DurableAllocationError> {
         self.generation.token_lists_mut().discard_builder(builder)
+    }
+
+    pub(crate) fn append_node_tokens_to_builder(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        key: crate::node::NodeTokenKey,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation
+            .token_lists_mut()
+            .append_node_words_to_builder(builder, key)
     }
 
     pub(crate) fn allocate_glue(

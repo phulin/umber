@@ -34,13 +34,18 @@ fn assign_int<G>(context: &mut tex_state::CommandContext<'_, G>, parameter: IntP
         .expect("node-dump fixture integer assignment");
 }
 
-fn node_tokens(tokens: impl IntoIterator<Item = Token>) -> tex_state::node::NodeTokenList {
-    tex_state::node::NodeTokenList::new(
-        tokens
-            .into_iter()
-            .map(tex_state::token::TokenWord::pack)
-            .collect::<Vec<_>>(),
-    )
+fn node_tokens<G>(
+    context: &mut tex_state::CommandContext<'_, G>,
+    tokens: impl IntoIterator<Item = Token>,
+) -> tex_state::node::NodeTokenKey {
+    context
+        .allocate_node_token_list(
+            &tokens
+                .into_iter()
+                .map(tex_state::token::TokenWord::pack)
+                .collect::<Vec<_>>(),
+        )
+        .expect("test node token list")
 }
 
 fn page_vec<G>(context: &tex_state::CommandContext<'_, G>, root: PageListId) -> Vec<Node> {
@@ -162,13 +167,16 @@ fn noad_dump_renders_the_packed_delimiter_field() {
 fn deferred_write_dump_uses_show_token_list_control_word_separator() {
     with_context(|context| {
         let help = context.intern_relaxed_control_sequence("help");
-        let tokens = node_tokens([
-            Token::Cs(help),
-            Token::Char {
-                ch: '!',
-                cat: Catcode::Other,
-            },
-        ]);
+        let tokens = node_tokens(
+            context,
+            [
+                Token::Cs(help),
+                Token::Char {
+                    ch: '!',
+                    cat: Catcode::Other,
+                },
+            ],
+        );
         let write = Node::Whatsit(Whatsit::DeferredWrite {
             sink: tex_state::PrintSink::TerminalAndLog,
             tokens,
@@ -193,7 +201,7 @@ fn deferred_write_dump_uses_show_token_list_control_word_separator() {
 fn whatsit_dump_uses_live_escape_character() {
     with_context(|context| {
         assign_int(context, IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let tokens = node_tokens([]);
+        let tokens = node_tokens(context, []);
         let write = Node::Whatsit(Whatsit::DeferredWrite {
             sink: tex_state::PrintSink::Log,
             tokens,
@@ -1464,16 +1472,19 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
             height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
             depth: Some(Scaled::from_raw(0)),
         }]);
-        let mark_tokens = node_tokens([
-            tex_state::token::Token::Char {
-                ch: 'h',
-                cat: tex_state::token::Catcode::Letter,
-            },
-            tex_state::token::Token::Char {
-                ch: 'i',
-                cat: tex_state::token::Catcode::Letter,
-            },
-        ]);
+        let mark_tokens = node_tokens(
+            context,
+            [
+                tex_state::token::Token::Char {
+                    ch: 'h',
+                    cat: tex_state::token::Catcode::Letter,
+                },
+                tex_state::token::Token::Char {
+                    ch: 'i',
+                    cat: tex_state::token::Catcode::Letter,
+                },
+            ],
+        );
         let nodes = [
             Node::Ins {
                 class: 3,
@@ -1512,26 +1523,35 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
 fn mark_dump_prints_token_list_once() {
     with_plain_context(|context| {
         let foo = context.intern_relaxed_control_sequence("foo");
-        let literal = node_tokens([tex_state::token::Token::Char {
-            ch: 'A',
-            cat: tex_state::token::Catcode::Letter,
-        }]);
-        let control_sequence = node_tokens([tex_state::token::Token::Cs(foo)]);
-        let empty = node_tokens([]);
-        let literal_before = literal.words().to_vec();
-        let control_sequence_before = control_sequence.words().to_vec();
+        let literal = node_tokens(
+            context,
+            [tex_state::token::Token::Char {
+                ch: 'A',
+                cat: tex_state::token::Catcode::Letter,
+            }],
+        );
+        let control_sequence = node_tokens(context, [tex_state::token::Token::Cs(foo)]);
+        let empty = node_tokens(context, []);
+        let literal_before = context
+            .node_token_words(literal)
+            .expect("literal key")
+            .to_vec();
+        let control_sequence_before = context
+            .node_token_words(control_sequence)
+            .expect("control sequence key")
+            .to_vec();
         let nodes = [
             Node::Mark {
                 class: 0,
-                tokens: literal.clone(),
+                tokens: literal,
             },
             Node::Mark {
                 class: 0,
-                tokens: control_sequence.clone(),
+                tokens: control_sequence,
             },
             Node::Mark {
                 class: 0,
-                tokens: empty.clone(),
+                tokens: empty,
             },
         ];
         let source = context.publish_page_nodes(nodes.to_vec());
@@ -1562,8 +1582,14 @@ fn mark_dump_prints_token_list_once() {
         else {
             panic!("mark fixture changed shape")
         };
-        assert_eq!(literal.words(), literal_before);
-        assert_eq!(control_sequence.words(), control_sequence_before);
+        assert_eq!(
+            context.node_token_words(*literal),
+            Some(literal_before.as_slice())
+        );
+        assert_eq!(
+            context.node_token_words(*control_sequence),
+            Some(control_sequence_before.as_slice())
+        );
         assert!(empty.is_empty());
     });
 }
@@ -1634,19 +1660,16 @@ fn insertion_node_dump_prints_all_web_fields() {
 #[test]
 fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
     with_plain_context(|context| {
-        let tokens = node_tokens([tex_state::token::Token::Char {
-            ch: 'x',
-            cat: tex_state::token::Catcode::Letter,
-        }]);
+        let tokens = node_tokens(
+            context,
+            [tex_state::token::Token::Char {
+                ch: 'x',
+                cat: tex_state::token::Catcode::Letter,
+            }],
+        );
         let list = context.publish_page_nodes(vec![
-            Node::Mark {
-                class: 0,
-                tokens: tokens.clone(),
-            },
-            Node::Mark {
-                class: 255,
-                tokens: tokens.clone(),
-            },
+            Node::Mark { class: 0, tokens },
+            Node::Mark { class: 255, tokens },
             Node::Mark { class: 256, tokens },
         ]);
 

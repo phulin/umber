@@ -309,7 +309,11 @@ fn append_meaning_text_with_token_selector<G>(
             let tokens = state.page_mark(page_mark(primitive));
             append_meaning_token_words(
                 state,
-                tokens.words().iter().copied(),
+                state
+                    .node_token_words(tokens)
+                    .expect("page mark token key belongs to the admitted generation")
+                    .iter()
+                    .copied(),
                 active_selector,
                 text,
             );

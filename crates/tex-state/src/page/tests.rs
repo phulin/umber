@@ -25,14 +25,12 @@ fn kern(value: i32) -> Node {
 }
 
 fn tokens(tokens: &[Token]) -> NodeTokenList {
-    NodeTokenList::new(
-        tokens
-            .iter()
-            .copied()
-            .map(TokenWord::pack)
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    )
+    let serial = tokens
+        .iter()
+        .copied()
+        .map(TokenWord::pack)
+        .fold(1_u32, |hash, word| hash.wrapping_mul(33) ^ word.raw());
+    NodeTokenList::new(1, serial, 1, 0, tokens.len() as u32, serial)
 }
 
 fn publish_nodes(
@@ -121,8 +119,8 @@ fn scalar_and_class_marks_store_handle_free_page_values() {
     let mut page = PageBuilderState::default();
     let scalar = tokens(&[Token::param(3)]);
     let class = tokens(&[Token::param(7)]);
-    page.set_mark(PageMark::Bot, scalar.clone());
-    page.set_mark_class(PageMark::SplitFirst, 19, class.clone());
+    page.set_mark(PageMark::Bot, scalar);
+    page.set_mark_class(PageMark::SplitFirst, 19, class);
 
     assert_eq!(page.mark(PageMark::Bot), scalar);
     assert_eq!(page.mark_class(PageMark::SplitFirst, 19), class);
@@ -140,18 +138,18 @@ fn sparse_mark_classes_use_dense_positions_and_canonical_order() {
     let low = tokens(&[Token::param(1)]);
     let middle = tokens(&[Token::param(2)]);
     let high = tokens(&[Token::param(3)]);
-    page.set_mark_class(PageMark::Bot, 32_767, high.clone());
-    page.set_mark_class(PageMark::First, 7, low.clone());
-    page.set_mark_class(PageMark::SplitBot, 255, middle.clone());
+    page.set_mark_class(PageMark::Bot, 32_767, high);
+    page.set_mark_class(PageMark::First, 7, low);
+    page.set_mark_class(PageMark::SplitBot, 255, middle);
 
     assert_eq!(page.mark_class_ids().collect::<Vec<_>>(), [7, 255, 32_767]);
     assert_eq!(page.mark_class(PageMark::Bot, 32_767), high);
     assert_eq!(page.mark_class(PageMark::First, 7), low);
 
     let mut same_semantics = PageBuilderState::default();
-    same_semantics.set_mark_class(PageMark::First, 7, low.clone());
-    same_semantics.set_mark_class(PageMark::SplitBot, 255, middle.clone());
-    same_semantics.set_mark_class(PageMark::Bot, 32_767, high.clone());
+    same_semantics.set_mark_class(PageMark::First, 7, low);
+    same_semantics.set_mark_class(PageMark::SplitBot, 255, middle);
+    same_semantics.set_mark_class(PageMark::Bot, 32_767, high);
     assert_eq!(
         hash_page(&same_semantics, &arena),
         hash_page(&page, &arena),
@@ -159,7 +157,7 @@ fn sparse_mark_classes_use_dense_positions_and_canonical_order() {
     );
 
     page.clear_mark_class(PageMark::SplitBot, 255);
-    page.set_mark_class(PageMark::Top, 128, middle.clone());
+    page.set_mark_class(PageMark::Top, 128, middle);
     assert_eq!(page.mark_class_ids().collect::<Vec<_>>(), [7, 128, 32_767]);
     assert_eq!(page.mark_class(PageMark::Top, 128), middle);
     assert!(page.mark_class(PageMark::SplitBot, 255).is_empty());
@@ -172,7 +170,7 @@ fn runtime_checkpoint_restores_sparse_mark_class_positions() {
         let expected = tokens(&[Token::param(4)]);
         {
             let mut context = universe.command_context().expect("command context");
-            context.set_page_mark_class(PageMark::Bot, 32_767, expected.clone());
+            context.set_page_mark_class(PageMark::Bot, 32_767, expected);
         }
         let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
         {
@@ -279,7 +277,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     page.push_page_discard(&mut arena, kern(-3));
     set_split_discards(&mut page, &mut arena, [kern(-4)]);
     page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-5)));
-    page.set_mark_class(PageMark::Bot, 7, rooted_mark.clone());
+    page.set_mark_class(PageMark::Bot, 7, rooted_mark);
     let checkpoint = page.checkpoint_mark();
 
     for index in 0..4_096 {
@@ -509,8 +507,8 @@ fn page_identity_is_order_invariant_for_sparse_maps_and_constant_read_after_suff
     let mark8 = tokens(&[Token::param(8)]);
     left.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(70)));
     left.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(80)));
-    left.set_mark_class(PageMark::First, 7, mark7.clone());
-    left.set_mark_class(PageMark::Bot, 8, mark8.clone());
+    left.set_mark_class(PageMark::First, 7, mark7);
+    left.set_mark_class(PageMark::Bot, 8, mark8);
     right.set_mark_class(PageMark::Bot, 8, mark8);
     right.set_mark_class(PageMark::First, 7, mark7);
     right.upsert_page_insertion(PageInsertion::new(8, Scaled::from_raw(80)));

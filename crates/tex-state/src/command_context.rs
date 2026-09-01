@@ -993,9 +993,17 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.token_list(id)
     }
 
-    /// Shares a stored token payload with a final generation-owned node.
-    pub fn node_token_list(&self, id: &TokenListId<G>) -> crate::node::NodeTokenList {
-        id.node_payload()
+    /// Publishes a copy-only coordinate for a final generation-owned node.
+    pub fn node_token_list(&self, id: &TokenListId<G>) -> crate::node::NodeTokenKey {
+        self.admitted
+            .node_token_key(id)
+            .expect("stored token list belongs to the admitted generation")
+    }
+
+    /// Resolves a node coordinate through this already-admitted generation.
+    #[must_use]
+    pub fn node_token_words(&self, key: crate::node::NodeTokenKey) -> Option<&[TokenWord]> {
+        self.admitted.node_token_words(key)
     }
 
     #[inline(always)]
@@ -1017,6 +1025,16 @@ impl<'a, G> CommandContext<'a, G> {
         self.engine_usage
             .observe_transient_memory(0, words.len().saturating_add(1));
         Ok(id)
+    }
+
+    /// Publishes a synthesized node-only immutable list once in this
+    /// generation and returns its copy-only node coordinate.
+    pub fn allocate_node_token_list(
+        &mut self,
+        words: &[TokenWord],
+    ) -> Result<crate::node::NodeTokenKey, DurableAllocationError> {
+        let id = self.allocate_token_list(words)?;
+        Ok(self.node_token_list(&id))
     }
 
     /// Begins destination-directed construction in this generation's final
@@ -3993,7 +4011,7 @@ impl<'a, G> CommandContext<'a, G> {
         fn identifier<List, Glue, Tokens>(
             node: &crate::node::Node<List, Glue, Tokens>,
             field: crate::ShipoutTokenField,
-        ) -> Option<&crate::node::NodeTokenList> {
+        ) -> Option<&Tokens> {
             let identifier = match (node, field) {
                 (
                     crate::node::Node::Whatsit(crate::node::Whatsit::PdfThread(thread)),
@@ -4020,16 +4038,15 @@ impl<'a, G> CommandContext<'a, G> {
                     .ok()
                     .and_then(|list| list.nodes().get(source.index))
                     .expect("shipout token source belongs to the live page row");
-                if let Some(identifier) = identifier(tokens, source.field) {
-                    identifier.words().iter().copied().try_for_each(&mut visit)
-                } else {
-                    payload(tokens, source.field)
-                        .expect("shipout token field belongs to its page source")
-                        .words()
-                        .iter()
-                        .copied()
-                        .try_for_each(&mut visit)
-                }
+                let key = identifier(tokens, source.field)
+                    .or_else(|| payload(tokens, source.field))
+                    .expect("shipout token field belongs to its page source");
+                self.admitted
+                    .node_token_words(*key)
+                    .expect("page shipout token key belongs to the admitted generation")
+                    .iter()
+                    .copied()
+                    .try_for_each(&mut visit)
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
@@ -4037,16 +4054,15 @@ impl<'a, G> CommandContext<'a, G> {
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
                     .expect("shipout token source belongs to the active scratch row");
-                if let Some(identifier) = identifier(node, source.field) {
-                    identifier.words().iter().copied().try_for_each(&mut visit)
-                } else {
-                    payload(node, source.field)
-                        .expect("shipout token field belongs to its scratch source")
-                        .words()
-                        .iter()
-                        .copied()
-                        .try_for_each(&mut visit)
-                }
+                let key = identifier(node, source.field)
+                    .or_else(|| payload(node, source.field))
+                    .expect("shipout token field belongs to its scratch source");
+                self.admitted
+                    .node_token_words(*key)
+                    .expect("scratch shipout token key belongs to the admitted generation")
+                    .iter()
+                    .copied()
+                    .try_for_each(&mut visit)
             }
         }
     }
@@ -4058,12 +4074,6 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::ShipoutTokenSource<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
         let builder = self.begin_token_list_builder()?;
-        let append = |admitted: &mut AdmittedStateMut<'_, G>, words: &[TokenWord]| {
-            for &word in words {
-                admitted.append_token_list_word(&builder, word)?;
-            }
-            Ok::<(), DurableAllocationError>(())
-        };
         match source.list {
             crate::ShipoutListId::Page(list) => {
                 let node = self
@@ -4093,10 +4103,11 @@ impl<'a, G> CommandContext<'a, G> {
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredPdfLiteral,
-                    ) => tokens.words(),
+                    ) => *tokens,
                     _ => panic!("page shipout token field matches its source node"),
                 };
-                append(&mut self.admitted, tokens)?;
+                self.admitted
+                    .append_node_tokens_to_builder(&builder, tokens)?;
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
@@ -4125,10 +4136,11 @@ impl<'a, G> CommandContext<'a, G> {
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredPdfLiteral,
-                    ) => tokens.words(),
+                    ) => *tokens,
                     _ => panic!("scratch shipout token field matches its source node"),
                 };
-                append(&mut self.admitted, tokens)?;
+                self.admitted
+                    .append_node_tokens_to_builder(&builder, tokens)?;
             }
         }
         self.seal_token_list_builder(builder)

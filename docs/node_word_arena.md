@@ -141,16 +141,16 @@ alignment 8 and `needs_drop::<Node<PageListId>>() == true`. The audit command
 uses compiler layout output for the concrete page monomorphization, not an
 estimate from source syntax. Its important component widths are:
 
-| Component                          | Size / alignment | Ownership                                                                 |
-| ---------------------------------- | ---------------: | ------------------------------------------------------------------------- |
-| `FontId`                           |           16 / 8 | Copy generation coordinate                                                |
-| `PageListId`                       |           40 / 8 | Copy owner-relative list coordinate and optional semantic identity        |
-| `GlueSpec`                         |           16 / 4 | Copy value                                                                |
-| `NodeTokenList`                    |           24 / 8 | `Rc<[TokenWord]>` plus accounting; has `Drop`                             |
-| `BoxNode<PageListId>`              |          120 / 8 | Copy scalars, one child, one optional diagnostic child                    |
-| `UnsetNode<PageListId>`            |           72 / 8 | Copy scalars and one child                                                |
-| `MathField<PageListId>`            |           48 / 8 | Copy tagged field; its largest alternative is one 40-byte child           |
-| `Whatsit<GlueSpec, NodeTokenList>` |           56 / 8 | Mixed; some alternatives own `String`, `Vec`, `Box`, or node token owners |
+| Component                          | Size / alignment | Ownership                                                               |
+| ---------------------------------- | ---------------: | ----------------------------------------------------------------------- |
+| `FontId`                           |           16 / 8 | Copy generation coordinate                                              |
+| `PageListId`                       |           40 / 8 | Copy owner-relative list coordinate and optional semantic identity      |
+| `GlueSpec`                         |           16 / 4 | Copy value                                                              |
+| `NodeTokenList`                    |           24 / 4 | Transitional alias for copy-only `NodeTokenKey`; no `Drop`              |
+| `BoxNode<PageListId>`              |          120 / 8 | Copy scalars, one child, one optional diagnostic child                  |
+| `UnsetNode<PageListId>`            |           72 / 8 | Copy scalars and one child                                              |
+| `MathField<PageListId>`            |           48 / 8 | Copy tagged field; its largest alternative is one 40-byte child         |
+| `Whatsit<GlueSpec, NodeTokenList>` |           56 / 8 | Mixed; some alternatives own `String`, `Vec`, or `Box`; tokens are keys |
 
 The number in the current-size column below is the compiler-reported variant
 payload after the one-byte outer discriminant, including variant-local
@@ -169,7 +169,7 @@ padding. A variant which has no owned field still pays the 168-byte enum width.
 | `VList`        |          127 | `BoxNode<PageListId>` 120; Copy                                                  | Typed `BoxPayload`                                                         |
 | `Unset`        |           79 | `UnsetNode<PageListId>` 72; Copy                                                 | Typed `UnsetPayload`                                                       |
 | `Disc`         |          127 | Three 40-byte child coordinates, kind, and physical replace count; Copy          | Typed `DiscPayload`                                                        |
-| `Mark`         |           31 | class 2 plus owned 24-byte `NodeTokenList`                                       | Class inline and a generation-owned `NodeTokenKey` inline                  |
+| `Mark`         |           31 | class 2 plus copy-only 24-byte `NodeTokenList` coordinate                        | Class inline and a generation-owned `NodeTokenKey` inline                  |
 | `Ins`          |           71 | class, size, `GlueSpec`, depth, penalty, and one 40-byte child; Copy             | Typed `InsertionPayload`                                                   |
 | `Whatsit`      |           63 | One 56-byte whatsit; ownership varies by subtype and is audited below            | Scalar subtypes inline; typed annex record or span for dynamic subtypes    |
 | `MathOn`       |            7 | `Scaled`; Copy                                                                   | Inline                                                                     |
@@ -186,25 +186,25 @@ padding. A variant which has no owned field still pays the 168-byte enum width.
 The whatsit audit is exhaustive because it contains most of the hidden
 ownership:
 
-| Whatsit subtype                                                          | Current size | Owned field                                      | Selected placement                                               |
-| ------------------------------------------------------------------------ | -----------: | ------------------------------------------------ | ---------------------------------------------------------------- |
-| `OpenOut`                                                                |           31 | `String` path                                    | Inline typed UTF-8 annex span                                    |
-| `CloseOut`                                                               |            2 | none                                             | Inline                                                           |
-| `DeferredWrite`                                                          |           31 | `NodeTokenList`                                  | Inline `NodeTokenKey`                                            |
-| `Special`                                                                |           55 | `String` class and `Vec<u8>` payload             | Typed `SpecialPayload` containing two annex spans                |
-| `DeferredSpecial`                                                        |           55 | `String` class and `NodeTokenList`               | Typed `DeferredSpecialPayload` containing one span and token key |
-| `PdfReferenceObject`, `PdfAnnotation`, `PdfLinkStart`, `PdfLinkEnd`      |            7 | none                                             | Inline                                                           |
-| `PdfAccessibility`, `PdfRunningLink`                                     |            1 | none                                             | Header subtype/flag                                              |
-| `PdfLiteral`                                                             |           31 | `Vec<u8>`                                        | Mode in header and inline annex span                             |
-| `DeferredPdfLiteral`                                                     |           31 | `NodeTokenList`                                  | Mode in header and inline token key                              |
-| `PdfSetMatrix`                                                           |           31 | `Vec<u8>`                                        | Inline annex span                                                |
-| `PdfSave`, `PdfRestore`, `PdfSavePos`, `PdfSnapRefPoint`, `PdfEndThread` |            0 | none                                             | Header subtype                                                   |
-| `PdfColorStack`                                                          |           39 | `Vec<u8>` in `Set` or `Push`                     | Id/action in header/word and inline annex span                   |
-| `PdfSnapY`                                                               |           19 | none; `GlueSpec` is Copy                         | Inline                                                           |
-| `PdfSnapYComp`, `Language`                                               |            3 | none                                             | Inline                                                           |
-| `PdfRefXForm`, `PdfRefXImage`                                            |           19 | none                                             | Inline                                                           |
-| `PdfDestination`                                                         |           15 | boxed 64-byte record; identifier may own tokens  | Typed `PdfDestinationPayload`; identifier stores a token key     |
-| `PdfThread`                                                              |           15 | boxed 88-byte record and two token-owning fields | Typed `PdfThreadPayload`; both token values are coordinates      |
+| Whatsit subtype                                                          | Current size | Owned field                                    | Selected placement                                               |
+| ------------------------------------------------------------------------ | -----------: | ---------------------------------------------- | ---------------------------------------------------------------- |
+| `OpenOut`                                                                |           31 | `String` path                                  | Inline typed UTF-8 annex span                                    |
+| `CloseOut`                                                               |            2 | none                                           | Inline                                                           |
+| `DeferredWrite`                                                          |           31 | Copy-only `NodeTokenList` coordinate           | Inline `NodeTokenKey`                                            |
+| `Special`                                                                |           55 | `String` class and `Vec<u8>` payload           | Typed `SpecialPayload` containing two annex spans                |
+| `DeferredSpecial`                                                        |           55 | `String` class and copy-only token coordinate  | Typed `DeferredSpecialPayload` containing one span and token key |
+| `PdfReferenceObject`, `PdfAnnotation`, `PdfLinkStart`, `PdfLinkEnd`      |            7 | none                                           | Inline                                                           |
+| `PdfAccessibility`, `PdfRunningLink`                                     |            1 | none                                           | Header subtype/flag                                              |
+| `PdfLiteral`                                                             |           31 | `Vec<u8>`                                      | Mode in header and inline annex span                             |
+| `DeferredPdfLiteral`                                                     |           31 | Copy-only `NodeTokenList` coordinate           | Mode in header and inline token key                              |
+| `PdfSetMatrix`                                                           |           31 | `Vec<u8>`                                      | Inline annex span                                                |
+| `PdfSave`, `PdfRestore`, `PdfSavePos`, `PdfSnapRefPoint`, `PdfEndThread` |            0 | none                                           | Header subtype                                                   |
+| `PdfColorStack`                                                          |           39 | `Vec<u8>` in `Set` or `Push`                   | Id/action in header/word and inline annex span                   |
+| `PdfSnapY`                                                               |           19 | none; `GlueSpec` is Copy                       | Inline                                                           |
+| `PdfSnapYComp`, `Language`                                               |            3 | none                                           | Inline                                                           |
+| `PdfRefXForm`, `PdfRefXImage`                                            |           19 | none                                           | Inline                                                           |
+| `PdfDestination`                                                         |           15 | boxed 60-byte record; identifier stores a key  | Typed `PdfDestinationPayload`; identifier stores a token key     |
+| `PdfThread`                                                              |           15 | boxed 80-byte record and two token coordinates | Typed `PdfThreadPayload`; both token values are coordinates      |
 
 No retained field in the replacement record owns a `Vec`, `String`, `Box`,
 `Rc`, allocator callback, reference count, or destructor obligation.

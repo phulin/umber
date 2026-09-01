@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::definition_arena::{
     AcceptedDefinitionTail, DefinitionArena, DefinitionArenaCursor, DefinitionCheckpointLease,
 };
-use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
+use crate::durable_arena::{AcceptedTokenListTail, GlueArena, ProvenanceArena, TokenListArena};
 use crate::memory_accounting::MemoryAccounting;
 use crate::provenance::OriginRecord;
 
@@ -65,8 +65,8 @@ pub(crate) struct GenerationCursor {
 }
 
 pub(crate) struct AcceptedGenerationTail<G> {
-    head: GenerationCursor,
     definitions: AcceptedDefinitionTail<G>,
+    token_lists: AcceptedTokenListTail,
     glue: Vec<crate::glue::GlueSpec>,
     provenance: Vec<OriginRecord>,
 }
@@ -274,16 +274,17 @@ impl<G> Generation<G> {
         cursor: GenerationCursor,
     ) -> AcceptedGenerationTail<G> {
         assert!(self.validates_cursor(cursor));
-        let head = self.cursor();
         let definitions = self
             .definitions
             .begin_checkpoint_candidate(cursor.definitions);
         let glue = self.glue.split_off(cursor.glue);
         let provenance = self.provenance.split_off(cursor.provenance);
-        self.token_lists.restore_cursor(cursor.token_lists);
+        let token_lists = self
+            .token_lists
+            .begin_checkpoint_candidate(cursor.token_lists);
         AcceptedGenerationTail {
-            head,
             definitions,
+            token_lists,
             glue,
             provenance,
         }
@@ -307,12 +308,14 @@ impl<G> Generation<G> {
         self.definitions
             .reject_checkpoint_candidate(cursor.definitions, tail.definitions);
         self.token_lists
-            .restore_accepted_cursor(tail.head.token_lists);
+            .reject_checkpoint_candidate(cursor.token_lists, tail.token_lists);
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedGenerationTail<G>) {
         self.definitions
             .accept_checkpoint_candidate(tail.definitions);
+        self.token_lists
+            .accept_checkpoint_candidate(tail.token_lists);
     }
 
     #[must_use]
