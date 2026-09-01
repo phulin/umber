@@ -209,15 +209,14 @@ impl SourceToken {
     }
 }
 
-/// One call-local tokenizer spelling before the owning or compact projection.
+/// One call-local control-sequence spelling before projection.
 ///
-/// Ordinary, untransformed control words borrow their semantic text directly
-/// from the current contiguous source backing. The public tokenizer projection
-/// converts that text to its owned [`SourceToken`] representation, while the
-/// command-delivery projection consumes the borrow immediately for lookup or
-/// interning. A spelling whose semantic characters differ from its raw bytes
-/// uses the existing owned representation instead.
-enum ScannedSourceToken<'line> {
+/// Ordinary characters project directly into their owning or compact
+/// destination and never enter this owned-name-sized carrier. An untransformed
+/// control word can still borrow its semantic text from the current contiguous
+/// source backing; a spelling whose semantic characters differ from its raw
+/// bytes uses the owned representation.
+enum ScannedControlSequence<'line> {
     Owned(SourceToken),
     BorrowedControlWord {
         name: &'line str,
@@ -227,44 +226,29 @@ enum ScannedSourceToken<'line> {
     },
 }
 
-impl ScannedSourceToken<'_> {
-    fn into_owned(self, mode: CharacterMode) -> SourceToken {
-        match self {
-            Self::Owned(token) => token,
-            Self::BorrowedControlWord {
-                name,
-                range,
-                scalar_range,
-                location,
-            } => {
-                let name = match mode {
-                    CharacterMode::EightBitExact => name
-                        .bytes()
-                        .map(CharacterCode::from_byte)
-                        .collect::<ControlSequenceName>(),
-                    CharacterMode::UnicodeExtended => name
-                        .chars()
-                        .map(CharacterCode::from)
-                        .collect::<ControlSequenceName>(),
-                };
-                SourceToken::ControlSequence {
-                    name,
-                    kind: SourceControlSequenceKind::Word,
-                    range,
-                    scalar_range,
-                    location,
-                }
-            }
-        }
-    }
-
-    fn provenance(&self) -> SourceProvenance {
-        match self {
-            Self::Owned(token) => token.provenance(),
-            Self::BorrowedControlWord {
-                range, location, ..
-            } => SourceProvenance::from_range_and_location(*range, *location),
-        }
+fn own_borrowed_control_word(
+    name: &str,
+    range: SourceRange,
+    scalar_range: SourceScalarRange,
+    location: SourceLocation,
+    mode: CharacterMode,
+) -> SourceToken {
+    let name = match mode {
+        CharacterMode::EightBitExact => name
+            .bytes()
+            .map(CharacterCode::from_byte)
+            .collect::<ControlSequenceName>(),
+        CharacterMode::UnicodeExtended => name
+            .chars()
+            .map(CharacterCode::from)
+            .collect::<ControlSequenceName>(),
+    };
+    SourceToken::ControlSequence {
+        name,
+        kind: SourceControlSequenceKind::Word,
+        range,
+        scalar_range,
+        location,
     }
 }
 
@@ -433,7 +417,16 @@ impl SourceCursor {
                 superscript: SuperscriptPolicy::ExactByte,
             },
             queries,
-            &mut |_, token| token.into_owned(CharacterMode::EightBitExact),
+            &mut |_, token| token,
+            &mut |_, name, range, scalar_range, location| {
+                own_borrowed_control_word(
+                    name,
+                    range,
+                    scalar_range,
+                    location,
+                    CharacterMode::EightBitExact,
+                )
+            },
         ) {
             SourceStep::Token(token) => CursorSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(invalid) => {
@@ -457,7 +450,16 @@ impl SourceCursor {
                 superscript: SuperscriptPolicy::UnicodeExtended,
             },
             queries,
-            &mut |_, token| token.into_owned(CharacterMode::UnicodeExtended),
+            &mut |_, token| token,
+            &mut |_, name, range, scalar_range, location| {
+                own_borrowed_control_word(
+                    name,
+                    range,
+                    scalar_range,
+                    location,
+                    CharacterMode::UnicodeExtended,
+                )
+            },
         ) {
             SourceStep::Token(token) => CursorSourceTokenizationStep::Token(token),
             SourceStep::InvalidCharacter(invalid) => {
@@ -482,13 +484,12 @@ impl SourceCursor {
             queries,
             &mut |queries, token| {
                 let provenance = token.provenance();
-                let word = match token {
-                    ScannedSourceToken::Owned(token) => queries.compact_source_token(&token),
-                    ScannedSourceToken::BorrowedControlWord { name, .. } => {
-                        queries.compact_control_word(name)
-                    }
-                };
+                let word = queries.compact_source_token(&token);
                 CompactSourceToken { word, provenance }
+            },
+            &mut |queries, name, range, _, location| CompactSourceToken {
+                word: queries.compact_control_word(name),
+                provenance: SourceProvenance::from_range_and_location(range, location),
             },
         ) {
             SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
@@ -512,13 +513,12 @@ impl SourceCursor {
             queries,
             &mut |queries, token| {
                 let provenance = token.provenance();
-                let word = match token {
-                    ScannedSourceToken::Owned(token) => queries.compact_source_token(&token),
-                    ScannedSourceToken::BorrowedControlWord { name, .. } => {
-                        queries.compact_control_word(name)
-                    }
-                };
+                let word = queries.compact_source_token(&token);
                 CompactSourceToken { word, provenance }
+            },
+            &mut |queries, name, range, _, location| CompactSourceToken {
+                word: queries.compact_control_word(name),
+                provenance: SourceProvenance::from_range_and_location(range, location),
             },
         ) {
             SourceStep::Token(token) => CompactSourceTokenizationStep::Token(token),
@@ -532,7 +532,14 @@ impl SourceCursor {
         &mut self,
         controls: SourceStepControls,
         queries: &mut Q,
-        emit: &mut impl for<'line> FnMut(&mut Q, ScannedSourceToken<'line>) -> T,
+        emit_owned: &mut impl FnMut(&mut Q, SourceToken) -> T,
+        emit_borrowed_control_word: &mut impl for<'line> FnMut(
+            &mut Q,
+            &'line str,
+            SourceRange,
+            SourceScalarRange,
+            SourceLocation,
+        ) -> T,
     ) -> SourceStep<T> {
         let SourceStepControls {
             force_eof,
@@ -616,7 +623,18 @@ impl SourceCursor {
                         superscript,
                         &mut catcode,
                     );
-                    return SourceStep::Token(emit(queries, token));
+                    let projected = match token {
+                        ScannedControlSequence::Owned(token) => emit_owned(queries, token),
+                        ScannedControlSequence::BorrowedControlWord {
+                            name,
+                            range,
+                            scalar_range,
+                            location,
+                        } => {
+                            emit_borrowed_control_word(queries, name, range, scalar_range, location)
+                        }
+                    };
+                    return SourceStep::Token(projected);
                 }
                 Catcode::Active => {
                     line.cursor.lexer_state = LexerState::MidLine;
@@ -627,7 +645,7 @@ impl SourceCursor {
                         scalar_range,
                         location: character.range().terminal_location(),
                     };
-                    return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
+                    return SourceStep::Token(emit_owned(queries, token));
                 }
                 Catcode::Space => match line.cursor.lexer_state {
                     LexerState::MidLine => {
@@ -638,7 +656,7 @@ impl SourceCursor {
                             range: character.range(),
                             scalar_range,
                         };
-                        return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
+                        return SourceStep::Token(emit_owned(queries, token));
                     }
                     LexerState::SkipBlanks | LexerState::NewLine => continue,
                 },
@@ -659,7 +677,7 @@ impl SourceCursor {
                             range: character.range(),
                             scalar_range,
                         };
-                        return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
+                        return SourceStep::Token(emit_owned(queries, token));
                     }
                     let range = line_end_anchor(line, bytes, mode);
                     let state = line.cursor.lexer_state;
@@ -673,10 +691,7 @@ impl SourceCursor {
                                 range,
                                 scalar_range,
                             };
-                            return SourceStep::Token(emit(
-                                queries,
-                                ScannedSourceToken::Owned(token),
-                            ));
+                            return SourceStep::Token(emit_owned(queries, token));
                         }
                         LexerState::SkipBlanks => continue,
                         LexerState::NewLine => {
@@ -691,10 +706,7 @@ impl SourceCursor {
                                 scalar_range,
                                 location: range.terminal_location(),
                             };
-                            return SourceStep::Token(emit(
-                                queries,
-                                ScannedSourceToken::Owned(token),
-                            ));
+                            return SourceStep::Token(emit_owned(queries, token));
                         }
                     }
                 }
@@ -706,7 +718,7 @@ impl SourceCursor {
                         range: character.range(),
                         scalar_range,
                     };
-                    return SourceStep::Token(emit(queries, ScannedSourceToken::Owned(token)));
+                    return SourceStep::Token(emit_owned(queries, token));
                 }
             }
         }
@@ -719,11 +731,11 @@ impl SourceCursor {
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
         catcode: &mut impl FnMut(CharacterCode) -> Catcode,
-    ) -> ScannedSourceToken<'line> {
+    ) -> ScannedControlSequence<'line> {
         let Some(first) =
             Self::next_reduced_character(line, bytes, mode, superscript, false, catcode)
         else {
-            return ScannedSourceToken::Owned(SourceToken::ControlSequence {
+            return ScannedControlSequence::Owned(SourceToken::ControlSequence {
                 name: ControlSequenceName::new(),
                 kind: SourceControlSequenceKind::Null,
                 range: escape.range(),
@@ -798,7 +810,7 @@ impl SourceCursor {
         if kind == SourceControlSequenceKind::Word
             && let Some(name) = owned_name
         {
-            return ScannedSourceToken::Owned(SourceToken::ControlSequence {
+            return ScannedControlSequence::Owned(SourceToken::ControlSequence {
                 name,
                 kind,
                 range,
@@ -811,14 +823,14 @@ impl SourceCursor {
             let end = usize::try_from(end).expect("source offset fits backing index");
             let name = std::str::from_utf8(&bytes[start..end])
                 .expect("unchanged source control word is UTF-8 text");
-            return ScannedSourceToken::BorrowedControlWord {
+            return ScannedControlSequence::BorrowedControlWord {
                 name,
                 range,
                 scalar_range,
                 location,
             };
         }
-        ScannedSourceToken::Owned(SourceToken::ControlSequence {
+        ScannedControlSequence::Owned(SourceToken::ControlSequence {
             name: owned_name.unwrap_or_else(|| std::iter::once(first.code()).collect()),
             kind,
             range,

@@ -244,7 +244,10 @@ One physical-line acquisition transition owns those operations, updates the
 authoritative TeX `line` scalar only when its value changes, and then retries
 delivery. Source retirement restores the enclosing source's line immediately;
 token-list push and pop leave it unchanged. Exact per-token provenance still
-comes from the tokenizer and is copied into the same command value.
+comes from the tokenizer and is written into the same command value. Ordinary
+characters project directly into the owning or compact destination; they do
+not pass through the control-sequence carrier whose width is set by an inline
+owned name.
 
 An exhausted input row advances that same delivery loop through one compact
 retirement phase. The exact top identity is validated before mutation;
@@ -2316,12 +2319,16 @@ the next command.
 
 `SourceToken` remains owned for tokenizer and CLI consumers that need the
 semantic name itself. Production source tokenization uses the same state
-machine with a destination projection. An untransformed multi-character
-control word scans byte boundaries in the current contiguous source backing
-and passes that `&str` slice directly to the creating or non-creating interner
-boundary. If `^^` reduction or exact-byte character encoding makes the
-semantic name differ from the raw bytes, one owned `ControlSequenceName`
-fallback accumulates the logical character codes instead. The boundary
+machine with separate owning and compact destination projections. Ordinary
+characters enter the selected projection directly; only escape scanning
+constructs the borrowed-or-owned control-sequence discriminant, so the compact
+path never transports a character through the owned-name-sized carrier. An
+untransformed multi-character control word scans byte boundaries in the current
+contiguous source backing and passes that `&str` slice directly to the creating
+or non-creating interner boundary. If `^^` reduction or exact-byte character
+encoding makes the semantic name differ from the raw bytes, one owned
+`ControlSequenceName` fallback accumulates the logical character codes instead.
+The boundary
 resolves either call-local spelling to a packed `TokenWord`, and only that
 compact identity plus direct-source provenance crosses into canonical command
 delivery. Delivery performs only

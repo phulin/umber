@@ -224,9 +224,11 @@ collector (see `src/conditionals.rs`).
   and focused line-contract tests.
 - `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
   token-at-a-time exact-byte and separately identified UnicodeExtended M/N/S
-  tokenization, semantic control-sequence spelling, production projection of a
-  borrowed untransformed control-word slice or owned superscript fallback into
-  packed identity plus direct provenance, profile-specific superscript notation,
+  tokenization, semantic control-sequence spelling, direct production
+  projection of ordinary characters without an owned-name-sized carrier,
+  projection of a borrowed untransformed control-word slice or owned
+  superscript fallback into packed identity plus direct provenance,
+  profile-specific superscript notation,
   invalid-character recovery steps, byte/scalar ranges, and focused conformance
   tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
   belongs to the singular input-top owner and never receives a backing registry
