@@ -72,6 +72,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   provenance publication.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
+  Definition content identity stays out of the compact meaning carrier: a
+  parallel dense scalar and its exact journal alternate preserve identity
+  across local-row reuse without a historical coordinate map.
 - `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
   durable node-closure register owners, exact group/operation/checkpoint
   owner swaps, bounded history-preservation copies, and lifecycle tests.

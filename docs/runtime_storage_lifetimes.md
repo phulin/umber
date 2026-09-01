@@ -327,13 +327,17 @@ word span. The header stores span boundaries, origin, content identity, and
 the validated at-most-nine-marker parameter pattern. `DefinitionView<'a, G>`
 borrows that metadata and span for one synchronous use, so invocation never
 rescans the parameter text. Cold checkpoint identity resolves the key through
-arena metadata and records the result in a separate identity-only table; the
-hot key and `CurrentCommand` carry no content hash. Equal definitions retain
-distinct storage keys but have equal content identities regardless of
-allocation order. A global `let` repeats the exceptional promotion of the same
-local key by reusing its cached global key. That mapping remains owned by the
-source local region, so exact region retirement and checkpoint settlement
-discard it without a generation-wide promotion sweep.
+arena metadata when a meaning enters dense state, then carries that scalar in
+the parallel meaning-identity cell and its exact journal alternate. There is no
+coordinate-keyed historical identity map: rollback may reuse the same local
+region and row for different detached headers without aliasing their content
+identities or retaining retired incarnations. The hot key and `CurrentCommand`
+carry no content hash. Equal definitions retain distinct storage keys but have
+equal content identities regardless of allocation order. A global `let`
+repeats the exceptional promotion of the same local key by reusing its cached
+global key. That mapping remains owned by the source local region, so exact
+region retirement and checkpoint settlement discard it without a
+generation-wide promotion sweep.
 
 Ordinary `def` and `gdef` know their destination before scanning. The scanner
 opens a transactional word mark in that final local or global region, validates
