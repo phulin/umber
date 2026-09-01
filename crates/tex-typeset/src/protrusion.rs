@@ -97,8 +97,13 @@ fn margin_kern_variation(state: &impl TypesetState, glyph: Glyph) -> (Scaled, Sc
 ///
 /// The input is the post-line-break list, so named left/right skip glue is
 /// already present. Margin kerns sit inside those skips, exactly as in
-/// pdfTeX's `post_line_break`.
-pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
+/// pdfTeX's `post_line_break`. `material_start` is the first node after the
+/// synthetic finalized left boundary.
+pub fn insert_margin_kerns(
+    state: &impl TypesetState,
+    nodes: &mut Vec<Node>,
+    material_start: usize,
+) {
     let right = edge_glyph_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), Edge::Right);
     if let Some(glyph) = right.filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Right);
@@ -115,7 +120,13 @@ pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
             },
         );
     }
-    let left = finalized_left_edge_glyph_cursor(state, NodeCursor::owned(nodes));
+    let left = edge_glyph_cursor(
+        state,
+        NodeCursor::owned(nodes),
+        material_start,
+        nodes.len(),
+        Edge::Left,
+    );
     if let Some(glyph) = left.filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Left);
         let at =
@@ -142,8 +153,15 @@ pub struct MarginKernPlan {
 }
 
 /// Plans margin-kern insertion without materializing the source list.
+///
+/// `material_start` is the first node after the synthetic finalized left
+/// boundary; named glue at or after that coordinate remains semantic material.
 #[must_use]
-pub fn plan_margin_kerns(state: &impl TypesetState, nodes: NodeCursor<'_>) -> MarginKernPlan {
+pub fn plan_margin_kerns(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+    material_start: usize,
+) -> MarginKernPlan {
     let right = edge_glyph_cursor(state, nodes, 0, nodes.len(), Edge::Right);
     let right = right
         .filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0)
@@ -163,9 +181,9 @@ pub fn plan_margin_kerns(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Ma
         });
     // pdftex.web §1061 discovers the left marginal character before
     // prepending `\leftskip`. This planner receives an already finalized
-    // line, so exclude that synthetic boundary node while retaining every
-    // blocker inside the actual line material.
-    let left = finalized_left_edge_glyph_cursor(state, nodes);
+    // line, so begin at the caller's exact material boundary rather than
+    // filtering named glue that may also occur inside the material.
+    let left = edge_glyph_cursor(state, nodes, material_start, nodes.len(), Edge::Left);
     let left = left
         .filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0)
         .map(|glyph| {
@@ -345,29 +363,6 @@ enum Search {
     Glyph(Glyph),
     Skip,
     Block,
-}
-
-fn finalized_left_edge_glyph_cursor(
-    state: &impl TypesetState,
-    nodes: NodeCursor<'_>,
-) -> Option<Glyph> {
-    for node in nodes.iter() {
-        if matches!(
-            node,
-            Node::Glue {
-                kind: GlueKind::LeftSkip,
-                ..
-            }
-        ) {
-            continue;
-        }
-        match search_node(state, node, Edge::Left) {
-            Search::Glyph(glyph) => return Some(glyph),
-            Search::Skip => {}
-            Search::Block => return None,
-        }
-    }
-    None
 }
 
 fn edge_glyph_cursor(

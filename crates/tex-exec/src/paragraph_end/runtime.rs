@@ -36,6 +36,7 @@ struct ArenaPostLineChannel {
 
 struct ArenaBrokenLine {
     nodes: tex_state::node_arena::PageListId,
+    material_start: usize,
     diagnostic_nodes: Option<tex_state::node_arena::PageListId>,
     allocator_high_cell_overlap: u32,
     penalty_after: Option<i32>,
@@ -91,6 +92,8 @@ impl ArenaPostLineMaterializer {
             ..decision
         };
         let dimensions = self.params.shape.dimensions(self.line_no + 1);
+        let material_start = usize::from(self.params.left_skip != GlueSpec::ZERO)
+            + self.semantic.active_directions.len();
         let nodes = self.semantic.materialize(
             stores,
             decision,
@@ -124,6 +127,7 @@ impl ArenaPostLineMaterializer {
         self.line_no += 1;
         Some(ArenaBrokenLine {
             nodes,
+            material_start,
             diagnostic_nodes: diagnostic,
             allocator_high_cell_overlap,
             penalty_after,
@@ -707,6 +711,7 @@ pub(crate) fn break_current_paragraph<G>(
         broken.nodes = materialize_pdf_line_list(
             stores,
             broken.nodes,
+            broken.material_start,
             broken.dimensions.width,
             adjusts_spacing,
             protrudes_chars,
@@ -1032,6 +1037,7 @@ fn append_migrated_contributions<G>(
 fn materialize_pdf_line_list<G>(
     stores: &mut CommandContext<'_, G>,
     mut nodes: tex_state::node_arena::PageListId,
+    material_start: usize,
     target: Scaled,
     adjusts_spacing: bool,
     protrudes_chars: bool,
@@ -1046,6 +1052,7 @@ fn materialize_pdf_line_list<G>(
                 .page_node_list(nodes)
                 .expect("finalized line belongs to the live page arena")
                 .nodes(),
+            material_start,
         );
         if plan.left.is_some() || plan.right.is_some() {
             let mut left = plan.left;

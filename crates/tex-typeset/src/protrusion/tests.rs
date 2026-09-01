@@ -260,7 +260,7 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
         },
     ];
 
-    insert_margin_kerns(&state, &mut nodes);
+    insert_margin_kerns(&state, &mut nodes, 1);
 
     assert!(matches!(
         nodes[1],
@@ -326,7 +326,7 @@ fn finalized_nonzero_leftskip_does_not_block_margin_kern_planning() {
         },
     ];
 
-    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes));
+    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes), 1);
 
     assert!(matches!(
         plan.left,
@@ -340,6 +340,36 @@ fn finalized_nonzero_leftskip_does_not_block_margin_kern_planning() {
             }
         )) if amount == sp(-5 * 65_536) && source_font == font
     ));
+}
+
+#[test]
+fn later_leftskip_remains_a_left_edge_blocker() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
+    let centered = GlueSpec {
+        stretch: sp(65_536),
+        stretch_order: Order::Fil,
+        ..GlueSpec::ZERO
+    };
+    let nodes = [
+        Node::Glue {
+            spec: centered,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        },
+        Node::Penalty(0),
+        Node::Glue {
+            spec: centered,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        },
+        character(font, 'A'),
+    ];
+
+    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes), 1);
+
+    assert_eq!(plan.left, None);
 }
 
 #[test]
