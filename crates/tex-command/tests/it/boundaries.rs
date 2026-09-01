@@ -172,17 +172,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(input_history.contains("crate::command::EmptyCommand<'_, G>"));
     assert!(!input_stack.contains("enum InputTopTransition {"));
     assert!(!input_history.contains("InputTopTransition"));
-    assert_eq!(input_history.matches("fn select_resident_top(").count(), 1);
-    assert!(input_history.contains("enum ResidentInputTop<'a, G>"));
-    assert!(input_history.contains("ResidentInputTop::Source(ResidentSourceTop"));
-    assert!(input_history.contains("ResidentInputTop::ReplayToken(cursor)"));
-    assert!(input_history.contains("ResidentInputTop::DurableToken(cursor)"));
-    assert!(input_history.contains("ResidentInputTop::AttemptToken(cursor)"));
+    assert!(!input_history.contains("fn select_resident_top("));
+    assert!(!input_history.contains("enum ResidentInputTop<'a, G>"));
     assert!(!input_history.contains("match &cursor.span"));
     assert!(!input_history.contains("ResidentStoredTokenTop"));
     assert!(!format!("{input_history}\n{levels}").contains("StoredTokenAdvance"));
-    assert!(input_history.contains("ResidentInputTop::MacroBody(cursor)"));
-    assert!(input_history.contains("ResidentInputTop::MacroArgument(cursor)"));
     assert!(!input_history.contains("ResidentMacroBodyTop"));
     assert!(!input_history.contains("ResidentMacroArgumentTop"));
     assert!(input_history.contains("#[inline(always)]\n    fn settle_resident_delivery("));
@@ -215,14 +209,20 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .nth(1)
         .and_then(|tail| tail.split("fn settle_resident_delivery(").next())
         .expect("locate typed resident-delivery front");
-    assert_eq!(resident_front.matches(".select_resident_top()").count(), 1);
+    assert_eq!(
+        resident_front
+            .matches("match &mut self.roots.input.levels.rows")
+            .count(),
+        1,
+        "the owning input row must dispatch directly without a universal top carrier"
+    );
     for branch in [
-        "ResidentInputTop::Source(top)",
-        "ResidentInputTop::ReplayToken(cursor)",
-        "ResidentInputTop::DurableToken(cursor)",
-        "ResidentInputTop::AttemptToken(cursor)",
-        "ResidentInputTop::MacroBody(top)",
-        "ResidentInputTop::MacroArgument(top)",
+        "InputLevel::Source(source) =>",
+        "InputLevel::ReplayTokens(cursor) =>",
+        "InputLevel::DurableTokens(cursor) =>",
+        "InputLevel::AttemptTokens(cursor) =>",
+        "InputLevel::MacroBody(top) =>",
+        "InputLevel::MacroArgument(top) =>",
     ] {
         assert_eq!(
             resident_front.matches(branch).count(),
@@ -232,6 +232,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     }
     for retired in [
         "advance_resident_top_into",
+        "ResidentInputTop",
+        "select_resident_top",
+        "let inline_state = match",
+        "let transition = match",
+        "match transition",
         "InputTopTransition",
         "fallback",
         "cache",
@@ -242,6 +247,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "resident front must not retain alternate machinery through {retired}"
         );
     }
+    assert!(resident_front.contains("return self.settle_resident_delivery("));
     assert!(!input_stack.contains("fn deliver_top_into("));
     assert!(!input_history.contains("let Some(level) = roots.input.levels.last()"));
     let input_top_transition = input_history

@@ -193,8 +193,9 @@ The authoritative `CommandState` resident transition then reclaims its
 original destination: it applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
-can require it. That transition selects the semantic top once, advances the
-resident cursor once, and handles a macro `Param` by pushing the admitted
+can require it. That transition reads the semantic top index once, matches the
+authoritative input row directly, advances its resident cursor once, and
+handles a macro `Param` by pushing the admitted
 argument and continuing internally. An ordinary body or argument word writes
 the reusable destination through at most one dense meaning lookup and returns
 only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
@@ -218,7 +219,8 @@ flags directly into `CurrentCommand`, and advances the fixed frame in place.
 Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
 whole packed frame before that advance. The warm loop neither matches a
-storage handle nor constructs a storage-domain wrapper per word.
+storage handle nor constructs a universal resident-top or storage-domain
+wrapper per word.
 The resident row's concrete variant is already the domain proof. Test builds
 retain counters for structural assertions, but an ordinary profiling build
 does not update a second per-domain census after making that required variant
@@ -1891,11 +1893,12 @@ node and update the head. Rejected probes restore the copied head, so the
 authoritative line remains singular and there is no parallel mutable
 character-index representation.
 
-Ordinary delivery selects and discriminates the semantic top once inside the
-authoritative `InputStack`, producing a branch-owned source, stored-token, or
-macro-argument view that borrows only that kind's cursor and first-touch
-journal fields. Shared fuel, alignment, and final-command settlement begins
-only after that typed branch borrow ends. Exhausted ordinary token and macro-argument rows
+Ordinary delivery reads the semantic top index once and matches the
+authoritative `InputLevel` row directly. It constructs no universal top enum
+and performs no second row discrimination. The selected source, stored-token,
+or macro-argument arm borrows only that kind's cursor and first-touch journal
+fields. Shared fuel, alignment, and final-command settlement begins only after
+that concrete branch borrow ends. Exhausted ordinary token and macro-argument rows
 are popped from that already-selected resident coordinate, their macro/replay/
 alignment and observation effects settle there, and the same transition
 continues immediately from the new top. TeX82 §357 applies that same resident

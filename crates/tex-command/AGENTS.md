@@ -311,10 +311,12 @@ collector (see `src/conditionals.rs`).
   owners live only in checked reusable slabs; there is no generic logical-stack
   adapter or second input representation.
   Typed cold source operations and one `CommandState`-owned resident front
-  are the only mutable access. That front selects the semantic top once into
-  a source, replay-token, durable-token, attempt-token, macro-body, or
-  macro-argument view; each view borrows only its
-  cursor and matching first-touch journal fields. Stored rows lend their
+  are the only mutable access. That front reads the semantic top index once
+  and matches the authoritative `InputLevel` row directly; it does not first
+  encode the row as a universal resident-top carrier and redispatch it. Each
+  concrete source, replay-token, durable-token, attempt-token, macro-body, or
+  macro-argument arm borrows only its cursor and matching first-touch journal
+  fields. Stored rows lend their
   cursor directly: no storage-handle match, stored-top wrapper, advance result, or redispatch
   survives selection. Their first warm checkpoint touch journals the scalar
   resident replay cursor, including its logical position and run/segment

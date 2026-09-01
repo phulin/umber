@@ -874,10 +874,12 @@ every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
 The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
-resident transition borrows the `InputStack` and looks up and discriminates the
-semantic top once. Its source branch lends the row and resident slot together,
-while its concrete replay, durable, attempt, and macro-argument branches borrow
-the admitted span directly;
+resident transition reads the `InputStack` top index once and matches the
+authoritative `InputLevel` row directly. It constructs no universal resident-
+top enum, repeats no row discrimination, and returns no cursor carrier. Its
+source branch lends the row and resident slot together, while its concrete
+replay, durable, attempt, and macro-argument arms borrow the admitted span
+directly;
 each writes the caller's final command and advances the compact position before
 that top borrow ends. The same transition settles fuel, suppression, alignment,
 or parameter replay and returns only its final status. No cursor/token carrier,
