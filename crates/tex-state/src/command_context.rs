@@ -358,7 +358,28 @@ pub(crate) struct EngineUsageOperationMark {
     memory: MainMemoryRuntime,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EngineUsageCheckpoint {
+    profile: crate::EngineCapacityProfile,
+    strings: usize,
+    characters: usize,
+    init_str_ptr: usize,
+    init_pool_ptr: usize,
+    max_strings: usize,
+    pool_size: usize,
+    recycled: crate::string_pool::RecycledStringPoolMark,
+    operation_depth: usize,
+    memory: MainMemoryRuntime,
+}
+
+#[derive(Debug)]
+pub(crate) struct EngineUsageCandidate {
+    checkpoint: EngineUsageCheckpoint,
+    live: EngineUsageCheckpoint,
+    recycled: crate::string_pool::RecycledStringPoolSuffix,
+}
+
+#[derive(Debug)]
 pub(crate) struct EngineUsageRuntime {
     profile: crate::EngineCapacityProfile,
     strings: usize,
@@ -392,6 +413,58 @@ impl Default for EngineUsageRuntime {
 }
 
 impl EngineUsageRuntime {
+    pub(crate) fn checkpoint(&self) -> EngineUsageCheckpoint {
+        EngineUsageCheckpoint {
+            profile: self.profile,
+            strings: self.strings,
+            characters: self.characters,
+            init_str_ptr: self.init_str_ptr,
+            init_pool_ptr: self.init_pool_ptr,
+            max_strings: self.max_strings,
+            pool_size: self.pool_size,
+            recycled: self.recycled.mark(),
+            operation_depth: self.operation_depth,
+            memory: self.memory,
+        }
+    }
+
+    pub(crate) fn restore_checkpoint(&mut self, checkpoint: EngineUsageCheckpoint) {
+        self.recycled.rollback_to(checkpoint.recycled);
+        self.restore_checkpoint_scalars(checkpoint);
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        checkpoint: EngineUsageCheckpoint,
+    ) -> EngineUsageCandidate {
+        let live = self.checkpoint();
+        let recycled = self.recycled.detach_suffix(checkpoint.recycled);
+        self.restore_checkpoint_scalars(checkpoint);
+        EngineUsageCandidate {
+            checkpoint,
+            live,
+            recycled,
+        }
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(&mut self, candidate: EngineUsageCandidate) {
+        self.recycled
+            .restore_suffix(candidate.checkpoint.recycled, candidate.recycled);
+        self.restore_checkpoint_scalars(candidate.live);
+    }
+
+    fn restore_checkpoint_scalars(&mut self, checkpoint: EngineUsageCheckpoint) {
+        self.profile = checkpoint.profile;
+        self.strings = checkpoint.strings;
+        self.characters = checkpoint.characters;
+        self.init_str_ptr = checkpoint.init_str_ptr;
+        self.init_pool_ptr = checkpoint.init_pool_ptr;
+        self.max_strings = checkpoint.max_strings;
+        self.pool_size = checkpoint.pool_size;
+        self.operation_depth = checkpoint.operation_depth;
+        self.memory = checkpoint.memory;
+    }
+
     fn allocate_strings(&mut self, strings: usize, characters: usize) {
         self.strings = self.strings.saturating_add(strings);
         self.characters = self.characters.saturating_add(characters);

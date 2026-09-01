@@ -234,6 +234,7 @@ struct CheckpointStateCandidate<G> {
     world: AcceptedWorldTail,
     dependencies: AcceptedDependencyTail,
     hyphenation: crate::hyphenation::HyphenationCandidate,
+    engine_usage: crate::command_context::EngineUsageCandidate,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -253,7 +254,7 @@ pub struct RuntimeCheckpoint<G> {
     dependencies: crate::dependency::DependencyTrackerSnapshot,
     interaction_mode: InteractionMode,
     prepared_mag: Option<i32>,
-    engine_usage: crate::command_context::EngineUsageRuntime,
+    engine_usage: crate::command_context::EngineUsageCheckpoint,
     identity_roots: RuntimeCheckpointIdentityRoots,
     retention: RuntimeCheckpointRetention,
 }
@@ -422,7 +423,7 @@ impl<G> Clone for RuntimeCheckpoint<G> {
             dependencies: self.dependencies,
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
-            engine_usage: self.engine_usage.clone(),
+            engine_usage: self.engine_usage,
             identity_roots: self.identity_roots,
             retention: self.retention,
         }
@@ -1079,6 +1080,8 @@ impl<G> Universe<G> {
         let hyphenation_tail = self
             .hyphenation
             .begin_checkpoint_candidate(&checkpoint.hyphenation);
+        let mut engine_usage = std::mem::take(&mut self.engine_usage);
+        let engine_usage_tail = engine_usage.begin_checkpoint_candidate(checkpoint.engine_usage);
         let core = self
             .core
             .take()
@@ -1112,6 +1115,7 @@ impl<G> Universe<G> {
                 world: world_tail,
                 dependencies: dependency_tail,
                 hyphenation: hyphenation_tail,
+                engine_usage: engine_usage_tail,
             }),
             shipout_scratch: ShipoutScratchArena::default(),
             fonts,
@@ -1124,7 +1128,7 @@ impl<G> Universe<G> {
             interaction_mode: checkpoint.interaction_mode,
             prepared_mag: checkpoint.prepared_mag,
             error_context_widths: self.error_context_widths,
-            engine_usage: checkpoint.engine_usage.clone(),
+            engine_usage,
             provenance_demand: self.provenance_demand,
             provenance_budgets: self.provenance_budgets,
             primitive_registry: Rc::clone(&self.primitive_registry),
@@ -1164,6 +1168,9 @@ impl<G> Universe<G> {
         candidate
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
+        candidate
+            .engine_usage
+            .reject_checkpoint_candidate(transaction.engine_usage);
         candidate.durable_boxes.reject_checkpoint_candidate(
             &mut candidate.page_region.nodes_mut(),
             *mark.durable(),
@@ -1194,6 +1201,7 @@ impl<G> Universe<G> {
         self.world = std::mem::take(&mut candidate.world);
         self.dependencies = std::mem::take(&mut candidate.dependencies);
         self.hyphenation = std::mem::take(&mut candidate.hyphenation);
+        self.engine_usage = std::mem::take(&mut candidate.engine_usage);
         self.pdf.return_rejected(&mut candidate.pdf);
         self.page_lent_to_candidate = false;
     }
@@ -2809,7 +2817,7 @@ impl<G> Universe<G> {
             dependencies: self.dependencies.snapshot_tracker(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
-            engine_usage: self.engine_usage.clone(),
+            engine_usage: self.engine_usage.checkpoint(),
             // Component owners publish roots here. No aggregate fallback is
             // allowed: missing hooks remain explicit until their mutation
             // journals maintain a complete canonical semantic root.
@@ -2978,7 +2986,8 @@ impl<G> Universe<G> {
         self.dependencies.restore_tracker(&checkpoint.dependencies);
         self.interaction_mode = checkpoint.interaction_mode;
         self.prepared_mag = checkpoint.prepared_mag;
-        self.engine_usage = checkpoint.engine_usage.clone();
+        self.engine_usage
+            .restore_checkpoint(checkpoint.engine_usage);
         transfer_external_roots();
         self.fonts.truncate_to(checkpoint.fonts);
         self.sources.truncate_to(checkpoint.sources);

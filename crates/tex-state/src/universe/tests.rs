@@ -88,6 +88,47 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
 }
 
 #[test]
+fn rejected_runtime_fork_restores_live_string_pool_membership() {
+    with_universe(budget(), |universe| {
+        universe
+            .command_context()
+            .expect("initial context")
+            .slow_make_string_pool_string("retained-prefix");
+        let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        universe
+            .command_context()
+            .expect("live context")
+            .slow_make_string_pool_string("accepted-later");
+
+        let mut fork = universe
+            .fork_runtime_checkpoint(&checkpoint)
+            .expect("checkpoint fork");
+        fork.admit_session_epoch(universe.release_session_epoch());
+        {
+            let mut context = fork.command_context().expect("candidate context");
+            let before = context.detach_engine_usage_statistics();
+            context.slow_make_string_pool_string("retained-prefix");
+            assert_eq!(context.detach_engine_usage_statistics(), before);
+            context.slow_make_string_pool_string("candidate-only");
+        }
+        universe.admit_session_epoch(fork.release_session_epoch());
+        universe.reject_checkpoint_candidate(&mut fork);
+
+        let mut context = universe.command_context().expect("restored live context");
+        let restored = context.detach_engine_usage_statistics();
+        context.slow_make_string_pool_string("accepted-later");
+        assert_eq!(context.detach_engine_usage_statistics(), restored);
+        context.slow_make_string_pool_string("candidate-only");
+        assert_eq!(
+            context.detach_engine_usage_statistics().strings,
+            restored.strings + 1,
+            "candidate-only membership leaves with the rejected fork"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn runtime_identity_demand_publishes_every_authoritative_owner_root() {
     with_universe(budget(), |universe| {
         let ordinary = universe.runtime_checkpoint().expect("ordinary checkpoint");

@@ -19,7 +19,16 @@ pub(crate) struct RecycledStringPoolMark {
     entries: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+/// The post-checkpoint owner suffix detached while a candidate owns the
+/// retained prefix. The stored end offsets remain absolute, so rejection can
+/// append both lanes directly before rebuilding the sole lookup index.
+#[derive(Debug, Default)]
+pub(crate) struct RecycledStringPoolSuffix {
+    bytes: Vec<u8>,
+    ends: Vec<u32>,
+}
+
+#[derive(Debug, Default)]
 pub(crate) struct RecycledStringPool {
     /// One retained byte per byte of each distinct UTF-8 spelling.
     bytes: Vec<u8>,
@@ -92,13 +101,34 @@ impl RecycledStringPool {
         }
         self.bytes.truncate(mark.bytes);
         self.ends.truncate(mark.entries);
-        self.buckets.fill(EMPTY_BUCKET);
-        for index in 0..self.ends.len() {
-            let index = u32::try_from(index)
-                .expect("TeX string-pool entry count fits its executable capacity");
-            let hash = string_hash(self.value(index));
-            insert_bucket(&mut self.buckets, index, hash);
-        }
+        self.rebuild_index_in_place();
+    }
+
+    /// Gives a checkpoint candidate the existing prefix and retains only the
+    /// later owner suffix needed to reject it. The retained prefix never moves.
+    pub(crate) fn detach_suffix(
+        &mut self,
+        mark: RecycledStringPoolMark,
+    ) -> RecycledStringPoolSuffix {
+        self.assert_contains_mark(mark);
+        let suffix = RecycledStringPoolSuffix {
+            bytes: self.bytes.split_off(mark.bytes),
+            ends: self.ends.split_off(mark.entries),
+        };
+        self.rebuild_index_in_place();
+        suffix
+    }
+
+    /// Rejects candidate-local additions and rejoins the detached live suffix.
+    pub(crate) fn restore_suffix(
+        &mut self,
+        mark: RecycledStringPoolMark,
+        mut suffix: RecycledStringPoolSuffix,
+    ) {
+        self.rollback_to(mark);
+        self.bytes.append(&mut suffix.bytes);
+        self.ends.append(&mut suffix.ends);
+        self.rebuild_index_in_place();
     }
 
     pub(crate) fn to_format_strings(&self) -> BTreeSet<String> {
@@ -156,6 +186,16 @@ impl RecycledStringPool {
             insert_bucket(&mut buckets, index, hash);
         }
         self.buckets = buckets;
+    }
+
+    fn rebuild_index_in_place(&mut self) {
+        self.buckets.fill(EMPTY_BUCKET);
+        for index in 0..self.ends.len() {
+            let index = u32::try_from(index)
+                .expect("TeX string-pool entry count fits its executable capacity");
+            let hash = string_hash(self.value(index));
+            insert_bucket(&mut self.buckets, index, hash);
+        }
     }
 
     fn insert_index(&mut self, index: u32, hash: u64) {

@@ -355,7 +355,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   installation, and coarse retirement tests.
 - `src/string_pool.rs` and `src/string_pool/tests.rs`: Dense append-only UTF-8
   ownership, compact end-offset/open-addressed recycling index, O(1) nested
-  operation marks with cold in-place suffix rollback, cold format projection,
+  operation and runtime-checkpoint marks, candidate-owned prefix transfer with
+  a detachable rejection suffix, cold in-place rollback and format projection,
   and layout, allocation-reuse, collision, and rollback tests.
 - `src/tests.rs`: Crate-level semantic unit tests and module test wiring.
 - `src/tests/node_semantics.rs`: Canonical node equality/hash coverage proving

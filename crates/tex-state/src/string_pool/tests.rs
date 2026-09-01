@@ -159,19 +159,26 @@ fn colliding_buckets_still_use_exact_spelling_equality() {
 }
 
 #[test]
-fn clone_preserves_a_rollback_prefix_with_independent_suffixes() {
-    let mut current = RecycledStringPool::default();
-    assert!(current.insert("retained"));
-    let checkpoint = current.clone();
-    assert!(current.insert("speculative"));
-    assert_eq!(current.len(), 2);
-    assert_eq!(checkpoint.len(), 1);
+fn candidate_prefix_rejection_restores_the_detached_live_suffix() {
+    let mut pool = RecycledStringPool::default();
+    pool.reserve(8, 128);
+    assert!(pool.insert("retained"));
+    let checkpoint = pool.mark();
+    assert!(pool.insert("accepted-later"));
 
-    current = checkpoint;
-    assert!(!current.insert("retained"));
-    assert!(current.insert("replacement"));
-    assert_eq!(current.len(), 2);
-    assert_eq!(current.character_len(), "retainedreplacement".len());
+    let suffix = pool.detach_suffix(checkpoint);
+    assert!(!pool.insert("retained"));
+    assert!(pool.insert("candidate-only"));
+    pool.restore_suffix(checkpoint, suffix);
+
+    assert!(!pool.insert("retained"));
+    assert!(!pool.insert("accepted-later"));
+    assert!(pool.insert("candidate-only"));
+    assert_eq!(pool.len(), 3);
+    assert_eq!(
+        pool.character_len(),
+        "retainedaccepted-latercandidate-only".len()
+    );
 }
 
 #[test]
