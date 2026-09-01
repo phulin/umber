@@ -2760,8 +2760,11 @@ remain isolated functions outside the token-delivery loop.
 
 The physical implementation follows that semantic boundary without creating
 new runtime owners. `processor/expand.rs` owns the destination-directed driver,
-one borrowed classification that selects the exact static dispatch, fuel and
-trace order, and typed continuation transitions. Structural, source,
+one borrowed classification that selects the exact static dispatch and hands
+that non-optional scalar directly to the shared expansion body, fuel and trace
+order, and typed continuation transitions. Exact `expand` callers classify in
+their wrapper; an already-classified expanded delivery is never wrapped and
+rediscriminated at the call boundary. Structural, source,
 TeX/e-TeX conversion, pdfTeX state/object,
 pdfTeX string/regular-expression, and immutable-file enquiry handlers are
 ordinary sibling modules implemented directly on the same borrowed

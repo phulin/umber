@@ -1293,14 +1293,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // up for that loop; an EOF recovery paragraph was consumed
                     // by the failed match instead.
                     let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                    let failure = match self.expand_into(destination, Some(dispatch), report_trace)
-                    {
-                        Ok(()) => {
-                            fetch = true;
-                            continue;
-                        }
-                        Err(failure) => failure,
-                    };
+                    let failure =
+                        match self.expand_classified_into(destination, dispatch, report_trace) {
+                            Ok(()) => {
+                                fetch = true;
+                                continue;
+                            }
+                            Err(failure) => failure,
+                        };
                     // TeX82 §394 resumes expanded delivery after both an
                     // ordinary runaway paragraph and §23's outer-validity
                     // recovery has aborted a macro match. The latter leaves
@@ -1407,15 +1407,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn expand_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        classified: Option<ExpansionDispatch>,
         mut report_trace: bool,
     ) -> Result<(), CommandError> {
-        let resumed_here = self.resumed_expansion.is_some();
-        let mut expansion_resume = self
-            .resumed_expansion
-            .take()
-            .unwrap_or(crate::state::PendingExpansionResume::Dispatch);
-        if !resumed_here
+        if self.resumed_expansion.is_none()
             && self.scanner_resume.is_some()
             && !self
                 .scanner_resume
@@ -1424,7 +1418,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return Err(CommandError::input_invariant());
         }
-        if !resumed_here
+        if self.resumed_expansion.is_none()
             && self
                 .scanner_resume
                 .as_ref()
@@ -1450,7 +1444,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 return Err(CommandError::input_invariant());
             }
-            expansion_resume = retained.resume;
             if let Some(child) = retained.child.take() {
                 let (key, destination) = child.restore();
                 if destination != crate::state::PendingExpansionChildDestination::Dispatch {
@@ -1459,6 +1452,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.scanner_resume = Some(key);
             }
             *destination = Some(retained.command);
+            self.resumed_expansion = Some(retained.resume);
             self.resume_current_command(
                 destination
                     .as_ref()
@@ -1466,27 +1460,44 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
             report_trace = false;
         }
+        let dispatch = match classify_expanded_command(
+            destination
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?,
+            ProtectedMacroHandling::Expand,
+            UndefinedHandling::Diagnose,
+        ) {
+            ExpandedCommandAction::Expand(dispatch) => dispatch,
+            // Direct callers implement TeX82 §366 `expand`, where the
+            // `end_template` branch inserts frozen `endv`; only §380's
+            // expanded-delivery classifier handles it inline.
+            ExpandedCommandAction::EndTemplate => {
+                ExpansionDispatch::Primitive(ExpandablePrimitive::EndTemplate)
+            }
+            ExpandedCommandAction::Return => return Err(CommandError::input_invariant()),
+        };
+        self.expand_classified_into(destination, dispatch, report_trace)
+    }
+
+    /// Executes the dispatch selected by the expanded-delivery classifier
+    /// without wrapping and rediscriminating it at the expansion boundary.
+    fn expand_classified_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        dispatch: ExpansionDispatch,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        let resumed_here = self.resumed_expansion.is_some();
+        let mut expansion_resume = self
+            .resumed_expansion
+            .take()
+            .unwrap_or(crate::state::PendingExpansionResume::Dispatch);
+        if !resumed_here && self.scanner_resume.is_some() {
+            return Err(CommandError::input_invariant());
+        }
         let command = destination
             .as_mut()
             .ok_or_else(CommandError::input_invariant)?;
-        let dispatch = if let Some(dispatch) = classified {
-            dispatch
-        } else {
-            match classify_expanded_command(
-                command,
-                ProtectedMacroHandling::Expand,
-                UndefinedHandling::Diagnose,
-            ) {
-                ExpandedCommandAction::Expand(dispatch) => dispatch,
-                // Direct callers implement TeX82 §366 `expand`, where the
-                // `end_template` branch inserts frozen `endv`; only §380's
-                // expanded-delivery classifier handles it inline.
-                ExpandedCommandAction::EndTemplate => {
-                    ExpansionDispatch::Primitive(ExpandablePrimitive::EndTemplate)
-                }
-                ExpandedCommandAction::Return => return Err(CommandError::input_invariant()),
-            }
-        };
         #[cfg(feature = "profiling")]
         {
             if !is_ranked_fused_expansion(dispatch) {

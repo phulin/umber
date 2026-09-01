@@ -145,7 +145,10 @@ collector (see `src/conditionals.rs`).
   same resident command without a second command handoff. It also includes one
   main-control preflight entry that raw-fetches into the caller's destination,
   classifies that resident command once, publishes an ordinary unexpandable
-  result directly, and continues through expansion in place only when needed.
+  result directly, and passes an expandable command's exact dispatch directly
+  into expansion without an optional classification carrier. Exact `expand`
+  callers classify in their wrapper; the shared dispatch body never repeats
+  that decision. It continues through expansion in place only when needed.
   Undefined commands are reported and discarded before the following command
   returns to the executor. The ordinary driver owns one live
   current command and lends it through macro and ranked primitive expansion;

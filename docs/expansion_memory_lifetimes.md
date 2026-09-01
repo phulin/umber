@@ -755,6 +755,11 @@ only when an expanded definition genuinely suspends. Raw definition scanning is
 synchronous. Scalar, alignment, and structured continuations share the bounded
 heterogeneous lane. Its lightweight expansion wrapper carries
 only an `ExpansionWork` key when a nested scanner still owns the caller route.
+Ordinary synchronous expanded delivery passes its already-selected exact
+dispatch directly into the expansion body; it constructs no optional dispatch
+carrier. Exact `expand` callers classify in their wrapper, and only a genuine
+suspension restores the parked command and typed resume phase before making
+that decision.
 Their backing vectors grow only when a generation reaches a new simultaneous
 high-water mark; freed slots are reused with a new serial, so a stale or
 double-consumed key is rejected.

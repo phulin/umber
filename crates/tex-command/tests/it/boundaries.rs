@@ -610,11 +610,15 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         );
     }
     let expansion_dispatch = expansion
-        .split("pub(crate) fn expand_into(")
+        .split("fn expand_classified_into(")
         .nth(1)
         .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
         .expect("locate exact expansion dispatch");
-    assert!(expansion.contains("self.expand_into(destination, Some(dispatch), report_trace)"));
+    assert!(expansion.contains("self.expand_classified_into(destination, dispatch, report_trace)"));
+    assert!(
+        !expansion_dispatch.contains("Option<ExpansionDispatch>"),
+        "an already-classified delivery must not wrap its dispatch for handoff"
+    );
     assert!(
         !expansion_dispatch.contains("command.meaning_ref()"),
         "the selected macro/undefined/primitive dispatch must not reread the resident meaning"
@@ -745,7 +749,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert_eq!(scanner.matches("fn drive_collector_expansion(").count(), 1);
     assert!(expansion.contains("PendingCollectorExpansion"));
     assert!(expansion.contains("error.is_resource_suspension()"));
-    assert!(expansion.contains("self.expand_into(destination, None, true)"));
+    assert!(expansion.contains("self.expand_into(destination, true)"));
     assert!(expansion.contains("command: destination.take()"));
     assert!(expansion.contains("self.append_direct_the_toks(collector, expansion_operand)"));
     assert!(
