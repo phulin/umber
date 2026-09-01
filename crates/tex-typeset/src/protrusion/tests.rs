@@ -113,7 +113,7 @@ fn zero_width_stretch_glue_blocks_edge_discovery() {
     assert_eq!(protrusion.right, sp(0));
 }
 
-/// pdftex.web §§24540--24615 retain a blocking node found while descending
+/// pdftex.web §1003 retains a blocking node found while descending
 /// through a nonempty hlist. The parent box's dimensions do not turn that
 /// blocker into transparent material.
 #[test]
@@ -158,7 +158,7 @@ fn nested_hlist_only_skips_when_its_contents_are_transparent() {
         },
         Node::Glue {
             spec: GlueSpec::ZERO,
-            kind: GlueKind::Normal,
+            kind: GlueKind::NonScript,
             leader: None,
         },
     ]);
@@ -423,9 +423,10 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
             amount: sp(0),
             kind: KernKind::Explicit,
         },
+        // `\nonscript` directly retains pdfTeX's shared `zero_glue` pointer.
         Node::Glue {
             spec: zero_glue,
-            kind: GlueKind::Normal,
+            kind: GlueKind::NonScript,
             leader: None,
         },
         Node::Disc {
@@ -453,6 +454,13 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
         Node::Kern {
             amount: sp(1),
             kind: KernKind::Explicit,
+        },
+        // A scanned explicit `\hskip0pt` has an equal value but a fresh glue
+        // specification, so pdftex.web §1003 requires it to block.
+        Node::Glue {
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::Normal,
+            leader: None,
         },
         Node::Glue {
             spec: wide_glue,

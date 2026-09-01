@@ -378,6 +378,41 @@ enum Search {
     Block,
 }
 
+/// Whether a zero-valued glue node retains TeX's shared `zero_glue` pointer.
+///
+/// Parameter glue is canonicalized by TeX82 §1237 before these named nodes
+/// are made, and `\nonscript` directly uses `zero_glue`. Scanned glue instead
+/// owns a fresh specification even when its value is zero; leader and
+/// explicit math-skip nodes retain that scanned identity in their kinds.
+const fn shares_zero_glue(kind: GlueKind) -> bool {
+    match kind {
+        GlueKind::Normal
+        | GlueKind::Leaders
+        | GlueKind::Cleaders
+        | GlueKind::Xleaders
+        | GlueKind::MuSkip => false,
+        GlueKind::SpaceSkip
+        | GlueKind::XSpaceSkip
+        | GlueKind::TabSkip
+        | GlueKind::BaselineSkip
+        | GlueKind::LineSkip
+        | GlueKind::TopSkip
+        | GlueKind::SplitTopSkip
+        | GlueKind::LeftSkip
+        | GlueKind::RightSkip
+        | GlueKind::ParSkip
+        | GlueKind::ParFillSkip
+        | GlueKind::AboveDisplaySkip
+        | GlueKind::BelowDisplaySkip
+        | GlueKind::AboveDisplayShortSkip
+        | GlueKind::BelowDisplayShortSkip
+        | GlueKind::ThinMuSkip
+        | GlueKind::MedMuSkip
+        | GlueKind::ThickMuSkip
+        | GlueKind::NonScript => true,
+    }
+}
+
 fn edge_glyph_cursor(
     state: &impl TypesetState,
     nodes: NodeCursor<'_>,
@@ -457,10 +492,10 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                     Search::Block
                 }
             } else {
-                // pdftex.web §§24540--24615 descends into every nonempty
-                // hlist. A blocking child must remain blocking when the
-                // search returns to the parent; only exhausting a list is
-                // equivalent to skipping it.
+                // pdftex.web §1003 descends into every nonempty hlist. A
+                // blocking child must remain blocking when the search returns
+                // to the parent; only exhausting a list is equivalent to
+                // skipping it.
                 edge_search_cursor(state, children, 0, children.len(), edge)
             }
         }
@@ -481,10 +516,16 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         {
             Search::Skip
         }
-        // pdftex.web's `cp_skipable` recognizes only `zero_glue`. A glue
-        // node whose natural width is zero but whose stretch or shrink is
-        // nonzero (notably terminal `\parfillskip`) blocks edge discovery.
-        Node::Glue { spec, .. } if *spec == tex_state::glue::GlueSpec::ZERO => Search::Skip,
+        // pdftex.web §1003 recognizes pointer identity with the shared
+        // `zero_glue`, not merely an equal-valued specification. Parameter
+        // and `\nonscript` kinds retain that identity when their value is
+        // zero; scanned explicit glue and leader/muskip specifications are
+        // fresh nodes and remain blocking even when all dimensions are zero.
+        Node::Glue { spec, kind, .. }
+            if *spec == tex_state::glue::GlueSpec::ZERO && shares_zero_glue(*kind) =>
+        {
+            Search::Skip
+        }
         Node::Penalty(_)
         | Node::MarginKern { .. }
         | Node::Mark { .. }
