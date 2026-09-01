@@ -1007,7 +1007,13 @@ pub(crate) fn clean_box(
                 // same finalized dimensions after the trivial italic-kern
                 // simplification, but its construction alone does not cross
                 // §651's observable hpack return seam.
-                let boxed = char_box(ctx, fetched, ch.origin);
+                let mut boxed = char_box(ctx, fetched, ch.origin);
+                // TeX82 §§651 and 653 initialize hpack's height and depth at
+                // zero and only replace them with larger character metrics.
+                // Unlike §706's direct `char_box`, §720's two hpack passes
+                // therefore clamp a negative character height or depth.
+                boxed.height = boxed.height.max(Scaled::from_raw(0));
+                boxed.depth = boxed.depth.max(Scaled::from_raw(0));
                 // The shortcut stands in for two distinct TeX82 package
                 // calls: the temporary one-noad mlist's §724 dimensions
                 // check, followed by §720's common clean-box hpack.

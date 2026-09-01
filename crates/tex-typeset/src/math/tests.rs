@@ -1110,6 +1110,44 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
 }
 
 #[test]
+fn clean_math_character_clamps_negative_metrics_like_hpack() {
+    // TeX82 §§651, 653, and 720: TFM character dimensions may be negative,
+    // but both hpack passes begin at zero and only retain larger dimensions.
+    // The direct §706 char_box path remains distinct and may stay negative.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let mut ctx = Context {
+        state: &universe,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(0),
+        layout: NativeNodeTransaction::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
+        recovered: Default::default(),
+        scratch: Default::default(),
+    };
+    let fetched = fetch(&ctx, math_char('*'), Style::TEXT).expect("test font has an asterisk");
+    assert_eq!(fetched.metrics.depth, sc(-3));
+
+    let boxed = clean_box(&mut ctx, &MathField::MathChar(math_char('*')), Style::TEXT);
+    assert_eq!(boxed.height, sc(5));
+    assert_eq!(boxed.depth, sc(0));
+    let expected = MathPackObservation {
+        axis: BoxAxis::Horizontal,
+        width: boxed.width,
+        height: boxed.height,
+        depth: boxed.depth,
+    };
+    let layout = ctx.layout.finish(boxed.list);
+    assert_eq!(layout.pack_observations(), &[expected, expected]);
+}
+
+#[test]
 fn clean_missing_math_character_observes_both_zero_completions() {
     // TeX82 §§720 and 724: fetch empties the temporary noad's missing
     // character, but both its dimensions pack and clean_box's pack still run.
@@ -2468,6 +2506,13 @@ fn test_font(name: &str, scale: i32) -> LoadedFont {
         width: sc(9),
         height: sc(3),
         depth: sc(0),
+        italic_correction: sc(0),
+        tag: CharTag::None,
+    });
+    chars['*' as usize] = Some(CharMetrics {
+        width: sc(6),
+        height: sc(5),
+        depth: sc(-3),
         italic_correction: sc(0),
         tag: CharTag::None,
     });
