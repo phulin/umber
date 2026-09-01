@@ -468,8 +468,10 @@ collector (see `src/conditionals.rs`).
   specialized macro-body row. That row is the local-region lease and carries
   an optional `ArgumentSet`; parameterless macros create no argument state.
   Body and argument replay use specialized span cursors, packed `TokenWord`
-  blocks, and provenance-change runs. Tail-child argument spans never rebase
-  or copy.
+  blocks, and provenance-change runs. Literal-prefix-only zero-argument macros
+  also bypass match scratch. Argument cursors advance one provenance-run index
+  sequentially, and the input owner maintains active parameter use on direct
+  push/pop/restore transitions. Tail-child argument spans never rebase or copy.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

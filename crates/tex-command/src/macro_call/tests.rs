@@ -278,6 +278,10 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 .expect("live macro body");
             assert_eq!(body.arguments.is_some(), has_arguments);
             assert_eq!(
+                processor.command.input.levels.active_macro_parameters(),
+                usize::from(has_arguments)
+            );
+            assert_eq!(
                 processor.command.scratch.frame_len(),
                 usize::from(has_arguments)
             );
@@ -302,6 +306,71 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 DeliveryStatus::Command
             );
             let _ = destination.take();
+        }
+    });
+}
+
+#[test]
+fn literal_prefix_only_macros_use_no_argument_scratch() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(other('!'))],
+                &[TokenWord::pack(letter('p'))],
+            )
+            .expect("literal-prefix definition");
+        let symbol = universe.intern("literalprefix").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let macro_token = Token::Cs(symbol.symbol());
+
+        for (actual, expected) in [
+            (other('!'), MacroCallOutcome::Activated),
+            (other('?'), MacroCallOutcome::PrefixMismatchRecovered),
+        ] {
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, [macro_token, actual]);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let mut call = processor
+                .get_next()
+                .expect("macro delivery")
+                .expect("macro command");
+
+            let activates = expected == MacroCallOutcome::Activated;
+            assert_eq!(processor.command.scratch.retained_slot_len(), 0);
+            assert_eq!(processor.macro_call(&mut call), Ok(expected));
+            assert_eq!(processor.command.scratch.retained_slot_len(), 0);
+            assert_eq!(processor.command.scratch.argument_word_len(), 0);
+            assert_eq!(processor.command.scratch.frame_len(), 0);
+            assert_eq!(processor.command.input.levels.active_macro_parameters(), 0);
+            if activates {
+                let body = processor
+                    .command
+                    .input
+                    .levels
+                    .last()
+                    .and_then(|level| match level {
+                        crate::input::InputLevel::MacroBody(body) => Some(body),
+                        _ => None,
+                    })
+                    .expect("literal-prefix macro body");
+                assert!(body.arguments.is_none());
+            }
         }
     });
 }

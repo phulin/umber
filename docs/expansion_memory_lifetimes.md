@@ -406,6 +406,10 @@ recovery moves the retained record into the writer without classifying its word
 or provenance again. The matcher reads the writer's depth directly, and sealing
 projects its aggregate without scanning stored words. No command, input frame,
 token buffer, or second argument representation crosses this transition.
+Definitions carry their validated marker offsets in the immutable header, so
+invocation does not reconstruct that pattern. A compulsory literal prefix with
+no numbered parameters is matched directly and never creates a `MacroMatch`,
+collector, argument block, or `ArgumentSet`.
 
 An admitted control-sequence spelling probes and borrows its dense meaning row
 once. The packed-token resolver accepts the actual caller-owned

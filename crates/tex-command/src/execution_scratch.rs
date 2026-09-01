@@ -570,6 +570,43 @@ impl MacroWordLane {
         Some(TracedTokenWord::from_parts(word, run.origin))
     }
 
+    fn origin_run_at(&self, index: u32) -> Option<u32> {
+        (index < self.len)
+            .then(|| self.origins.partition_point(|run| run.start <= index))?
+            .checked_sub(1)
+            .and_then(|run| u32::try_from(run).ok())
+    }
+
+    /// Reads the next sequential word while advancing only across provenance
+    /// boundaries. Admission finds the opening run once; ordinary replay then
+    /// performs one direct word lookup and at most one adjacent-run check.
+    fn get_sequential(&self, index: u32, run: &mut u32) -> Option<TracedTokenWord> {
+        if index >= self.len {
+            return None;
+        }
+        let mut run_index = *run as usize;
+        let current = self.origins.get(run_index)?;
+        if current.start > index {
+            return None;
+        }
+        if self
+            .origins
+            .get(run_index + 1)
+            .is_some_and(|next| next.start <= index)
+        {
+            run_index += 1;
+            *run = u32::try_from(run_index).ok()?;
+        }
+        let origin = self.origins.get(run_index)?.origin;
+        let index = index as usize;
+        let word = *self
+            .active
+            .get(index / MACRO_WORD_RESERVE)?
+            .words
+            .get(index % MACRO_WORD_RESERVE)?;
+        Some(TracedTokenWord::from_parts(word, origin))
+    }
+
     fn truncate(&mut self, mark: u32) -> Result<(), ScratchError> {
         if mark > self.len {
             return Err(ScratchError::InvalidCoordinate);
@@ -1595,6 +1632,48 @@ impl<G> ExecutionScratch<G> {
         self.macro_words
             .get(absolute)
             .ok_or(ScratchError::InvalidCoordinate)
+    }
+
+    pub(crate) fn admitted_argument_origin_run(
+        &self,
+        range: MacroArgumentRange<G>,
+    ) -> Result<u32, ScratchError> {
+        self.validate_admitted_argument_range(range)?;
+        if range.start == range.end {
+            return Ok(0);
+        }
+        self.macro_words
+            .origin_run_at(range.start)
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+
+    pub(crate) fn admitted_argument_word_sequential(
+        &self,
+        range: MacroArgumentRange<G>,
+        index: usize,
+        origin_run: &mut u32,
+    ) -> Result<TracedTokenWord, ScratchError> {
+        let absolute = range
+            .start
+            .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        if absolute >= range.end {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.macro_words
+            .get_sequential(absolute, origin_run)
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+
+    fn validate_admitted_argument_range(
+        &self,
+        range: MacroArgumentRange<G>,
+    ) -> Result<(), ScratchError> {
+        if range.start <= range.end && range.end <= self.macro_words.len() {
+            Ok(())
+        } else {
+            Err(ScratchError::InvalidCoordinate)
+        }
     }
 
     pub(crate) fn argument_word_len(&self) -> usize {

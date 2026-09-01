@@ -326,6 +326,9 @@ pub(crate) struct TokenCursor<G> {
 pub(crate) struct MacroArgumentCursor<G> {
     pub(crate) range: crate::execution_scratch::MacroArgumentRange<G>,
     pub(crate) slot: u8,
+    /// Index of the provenance run containing the current absolute word.
+    /// It advances only when sequential replay crosses a run boundary.
+    pub(crate) origin_run: u32,
     pub(crate) frame: ResidentSpanCursor,
 }
 
@@ -367,7 +370,11 @@ impl<G> MacroArgumentCursor<G> {
         let position = self.frame.position() as u32;
         let identity = self.frame.identity().0;
         let active_source = self.frame.source_context();
-        let Ok(word) = scratch.admitted_argument_word(self.range, position as usize) else {
+        let Ok(word) = scratch.admitted_argument_word_sequential(
+            self.range,
+            position as usize,
+            &mut self.origin_run,
+        ) else {
             return Ok(MacroArgumentAdvance::Exhausted(self.identity()));
         };
         let resolution = destination.write_resolved_delivery(
@@ -616,8 +623,12 @@ pub(crate) enum InputLevelInlineState {
         frame: PackedInputFrame,
         retirement: RetirementBehavior,
     },
-    MacroSpan {
+    MacroBody {
         position: u32,
+    },
+    MacroArgument {
+        position: u32,
+        origin_run: u32,
     },
 }
 
@@ -627,8 +638,15 @@ impl InputLevelInlineState {
     }
 
     pub(crate) const fn macro_span(position: usize) -> Self {
-        Self::MacroSpan {
+        Self::MacroBody {
             position: position as u32,
+        }
+    }
+
+    pub(crate) const fn macro_argument(position: usize, origin_run: u32) -> Self {
+        Self::MacroArgument {
+            position: position as u32,
+            origin_run,
         }
     }
 }
@@ -818,16 +836,21 @@ impl<G> InputLevel<G> {
                 std::mem::swap(&mut tokens.retirement, retirement);
             }
             Self::MacroBody(body) => {
-                let InputLevelInlineState::MacroSpan { position } = state else {
+                let InputLevelInlineState::MacroBody { position } = state else {
                     unreachable!("macro body inverse kind changed")
                 };
                 body.frame.swap_position(position);
             }
             Self::MacroArgument(argument) => {
-                let InputLevelInlineState::MacroSpan { position } = state else {
+                let InputLevelInlineState::MacroArgument {
+                    position,
+                    origin_run,
+                } = state
+                else {
                     unreachable!("macro argument inverse kind changed")
                 };
                 argument.frame.swap_position(position);
+                std::mem::swap(&mut argument.origin_run, origin_run);
             }
             Self::Source(_) => unreachable!("a source frame uses the source lexer lane"),
         }

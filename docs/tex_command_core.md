@@ -1988,6 +1988,7 @@ struct MacroBodyCursor {
 struct MacroArgumentCursor {
     range: MacroArgumentRange,
     slot: u8,
+    origin_run: u32,
     frame: ResidentSpanCursor,
 }
 
@@ -2017,6 +2018,13 @@ only invocation-side lease for a local definition region. Format and
 revision-global definitions admit a no-op lease. Only parameterized macros
 store an `ArgumentSet`; parameterless macros allocate and push only the body
 row.
+
+The argument cursor locates its opening provenance run once at admission and
+then advances that run index only when sequential replay crosses a provenance
+boundary. It does not binary-search the run table for every token. The input
+stack also maintains the live macro-parameter total on body push, body pop, and
+checkpoint restore; macro activation reads that scalar instead of walking all
+active input rows.
 
 Every ordinary token-list source is adapted once at level creation into a
 `PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
@@ -2743,7 +2751,9 @@ unreusable leading token literally with its command-owned
 depth, and cancels the raw brace accounting for a matched `#{` delimiter. The
 prefix carries the original delivered-token facts, while the resident writer's
 single lane settlement decides whether the ordinary paragraph check applies;
-it never reclassifies a committed prefix. A
+when the parameter text contains only compulsory literals and no numbered
+parameter, the same `Matching` semantics run without admitting argument
+scratch or an `ArgumentSet`; it never reclassifies a committed prefix. A
 successful call freezes every range once, creates one invocation origin, and
 installs exactly one activation/body pair over the canonical replacement list;
 replay resolves its compact `OutParameter` tokens through that activation.

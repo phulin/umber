@@ -177,12 +177,17 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
             .argument_range(argument_set, 1)
             .expect("live macro frame")
             .expect("first argument");
+        let origin_run = state
+            .scratch
+            .admitted_argument_origin_run(range)
+            .expect("argument provenance run");
         state
             .input
             .levels
             .push(InputLevel::MacroArgument(MacroArgumentCursor {
                 range,
                 slot: 1,
+                origin_run,
                 frame: super::super::ResidentSpanCursor::new(InputLevelId(2), 2),
             }));
         let mut fuel = crate::CommandFuelLedger::default();
@@ -364,12 +369,17 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                         .argument_range(argument_set, 1)
                         .expect("live macro frame")
                         .expect("macro argument");
+                    let origin_run = state
+                        .scratch
+                        .admitted_argument_origin_run(range)
+                        .expect("argument provenance run");
                     state
                         .input
                         .levels
                         .push(InputLevel::MacroArgument(MacroArgumentCursor {
                             range,
                             slot: 1,
+                            origin_run,
                             frame: super::super::ResidentSpanCursor::new(
                                 InputLevelId(1),
                                 operations,

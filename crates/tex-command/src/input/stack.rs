@@ -435,6 +435,11 @@ impl<G> CommandState<G> {
         } = retired
         {
             if let Some(arguments) = arguments {
+                let parameter_count = self
+                    .scratch
+                    .argument_count(arguments.frame())
+                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+                self.input.levels.retire_macro_parameters(parameter_count);
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
@@ -547,30 +552,23 @@ impl<G> CommandState<G> {
         let parameter_ptr = self
             .input
             .levels
-            .iter()
-            .filter_map(|level| match level {
-                InputLevel::MacroBody(body) => body.arguments,
-                _ => None,
-            })
-            .map(|arguments| {
-                self.scratch
-                    .argument_count(arguments.frame())
-                    .expect("live macro argument set")
-            })
-            .sum::<usize>()
+            .active_macro_parameters()
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
         let identity = self.allocate_input_level_identity();
         let mut frame = super::ResidentSpanCursor::new(identity, replacement_len);
         frame.set_source_context(self.input.levels.current_source_context());
-        self.push_input_level(InputLevel::MacroBody(super::MacroBodyCursor {
-            definition,
-            definition_region,
-            arguments,
-            name,
-            invocation,
-            frame,
-        }));
+        self.input.levels.push_macro_body(
+            InputLevel::MacroBody(super::MacroBodyCursor {
+                definition,
+                definition_region,
+                arguments,
+                name,
+                invocation,
+                frame,
+            }),
+            parameter_count,
+        );
         identity
     }
 
@@ -689,6 +687,11 @@ impl<G> CommandState<G> {
                 unreachable!("macro-body retirement is specialized retirement");
             };
             if let Some(arguments) = arguments {
+                let parameter_count = self
+                    .scratch
+                    .argument_count(arguments.frame())
+                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
+                self.input.levels.retire_macro_parameters(parameter_count);
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
@@ -828,6 +831,11 @@ impl<G> CommandState<G> {
         } = level
         {
             if let Some(arguments) = arguments {
+                let parameter_count = self
+                    .scratch
+                    .argument_count(arguments.frame())
+                    .expect("final cleanup owns the live argument set");
+                self.input.levels.retire_macro_parameters(parameter_count);
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .expect("final cleanup retires the live argument set");

@@ -156,7 +156,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         // matcher even when there are no numbered parameters.
         let needs_matching =
             pattern.leading_end(parameter_len) != 0 || pattern.parameter_count() != 0;
-        let matching = needs_matching
+        // Only numbered parameters need the reusable argument lane. A macro
+        // whose parameter text is solely a compulsory literal prefix matches
+        // directly from its immutable definition metadata and creates no
+        // MacroMatch, ArgumentSet, collector, or captured-word block.
+        let matching = (pattern.parameter_count() != 0)
             .then(|| self.command.scratch.begin_macro_match())
             .transpose()
             .map_err(|_| CommandError::input_invariant())?;
@@ -178,9 +182,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments = if let Some(matching) = matching.as_ref() {
+        let scanned_arguments = if needs_matching {
             self.macro_call_scalar(
-                matching,
+                matching.as_ref(),
                 macro_name,
                 &definition,
                 flags,
@@ -298,7 +302,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn macro_call_scalar(
         &mut self,
-        matching: &MacroMatch<G>,
+        matching: Option<&MacroMatch<G>>,
         macro_name: tex_state::interner::Symbol,
         definition: &DefinitionId<G>,
         flags: MeaningFlags,
@@ -341,6 +345,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         for parameter in 0..pattern.parameter_count() {
+            let matching = matching.ok_or_else(CommandError::input_invariant)?;
             let (start, end) = pattern.delimiter_bounds(parameter, parameter_len);
             let delimiter = MacroDelimiter {
                 definition,

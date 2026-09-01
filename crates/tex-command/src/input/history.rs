@@ -293,7 +293,10 @@ impl<G> ResidentMacroArgumentTop<'_, G> {
             cursor,
             mut recorder,
         } = self;
-        recorder.record(InputLevelInlineState::macro_span(cursor.position()));
+        recorder.record(InputLevelInlineState::macro_argument(
+            cursor.position(),
+            cursor.origin_run,
+        ));
         cursor.deliver_into(scratch, destination, state)
     }
 }
@@ -396,6 +399,7 @@ pub(crate) struct InputStackMark {
     pub(crate) top: u32,
     pub(crate) undo: PackedJournalMark,
     pub(crate) occupied_source_buffer_slots: usize,
+    pub(crate) active_macro_parameters: usize,
 }
 
 /// Allocation-free identity of the one mutable input row that can affect a
@@ -495,6 +499,7 @@ impl DiagnosticSourceCursor {
 struct InputStackFork {
     accepted_top: usize,
     accepted_occupied_source_buffer_slots: usize,
+    accepted_active_macro_parameters: usize,
 }
 
 /// One generation-tied input stack whose live rows are authoritative.
@@ -511,6 +516,7 @@ pub(crate) struct InputStack<G> {
     source_owner_states: PayloadSlab<SourceLevelExecutionState<G>>,
     source_slots: PayloadSlab<SourceSlot<G>>,
     occupied_source_buffer_slots: usize,
+    active_macro_parameters: usize,
     fork: Option<InputStackFork>,
     recording: bool,
     interval: u64,
@@ -535,6 +541,7 @@ impl<G> Default for InputStack<G> {
             source_owner_states: PayloadSlab::default(),
             source_slots: PayloadSlab::default(),
             occupied_source_buffer_slots: 0,
+            active_macro_parameters: 0,
             fork: None,
             recording: false,
             interval: 1,
@@ -573,6 +580,7 @@ impl<G: PartialEq> PartialEq for InputStack<G> {
                             && self.source_level_slot(left) == other.source_level_slot(right)
                     }
                     (InputLevel::Tokens(left), InputLevel::Tokens(right)) => left == right,
+                    (InputLevel::MacroBody(left), InputLevel::MacroBody(right)) => left == right,
                     (InputLevel::MacroArgument(left), InputLevel::MacroArgument(right)) => {
                         left == right
                     }
@@ -624,6 +632,26 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
+    pub(crate) const fn active_macro_parameters(&self) -> usize {
+        self.active_macro_parameters
+    }
+
+    pub(crate) fn push_macro_body(&mut self, value: InputLevel<G>, parameter_count: usize) {
+        assert!(matches!(value, InputLevel::MacroBody(_)));
+        self.active_macro_parameters = self
+            .active_macro_parameters
+            .checked_add(parameter_count)
+            .expect("macro parameter stack fits usize");
+        self.push_row(value);
+    }
+
+    pub(crate) fn retire_macro_parameters(&mut self, parameter_count: usize) {
+        self.active_macro_parameters = self
+            .active_macro_parameters
+            .checked_sub(parameter_count)
+            .expect("input parameter count matches live macro rows");
+    }
+
     pub(crate) fn diagnostic_context_coordinate(&self) -> InputStackContextCoordinate {
         let top = match self.rows.get(self.top.saturating_sub(1)) {
             None => DiagnosticInputTop::Empty,
@@ -1247,6 +1275,10 @@ impl<G> crate::CommandState<G> {
         self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
         let mut frame = super::ResidentSpanCursor::new(identity, range.len() as usize);
         frame.set_source_context(active_source);
+        let origin_run = self
+            .scratch
+            .admitted_argument_origin_run(range)
+            .map_err(|_| ())?;
         self.stack_usage.input_stack = self
             .stack_usage
             .input_stack
@@ -1257,6 +1289,7 @@ impl<G> crate::CommandState<G> {
             .push(InputLevel::MacroArgument(super::MacroArgumentCursor {
                 range,
                 slot,
+                origin_run,
                 frame,
             }));
         Ok(super::ResidentCommandTransition::ParameterPushed(identity))
@@ -1667,6 +1700,7 @@ impl<G> InputStack<G> {
             top: u32::try_from(self.top).ok()?,
             undo: self.undo.mark(),
             occupied_source_buffer_slots: self.occupied_source_buffer_slots,
+            active_macro_parameters: self.active_macro_parameters,
         };
         self.next_interval();
         Some(mark)
@@ -1698,6 +1732,7 @@ impl<G> InputStack<G> {
         if restored {
             self.top = mark.top as usize;
             self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
+            self.active_macro_parameters = mark.active_macro_parameters;
             self.next_interval();
         }
         restored
@@ -1729,6 +1764,7 @@ impl<G> InputStack<G> {
         );
         let accepted_top = self.top;
         let accepted_occupied_source_buffer_slots = self.occupied_source_buffer_slots;
+        let accepted_active_macro_parameters = self.active_macro_parameters;
         let (rows, displaced, source_lex, source_owners, source_slots) = (
             &mut self.rows,
             &mut self.displaced_rows,
@@ -1741,9 +1777,11 @@ impl<G> InputStack<G> {
         });
         self.top = mark.top as usize;
         self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
+        self.active_macro_parameters = mark.active_macro_parameters;
         self.fork = Some(InputStackFork {
             accepted_top,
             accepted_occupied_source_buffer_slots,
+            accepted_active_macro_parameters,
         });
         self.next_interval();
     }
@@ -1769,6 +1807,7 @@ impl<G> InputStack<G> {
         );
         self.top = fork.accepted_top;
         self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
+        self.active_macro_parameters = fork.accepted_active_macro_parameters;
         self.next_interval();
     }
 
