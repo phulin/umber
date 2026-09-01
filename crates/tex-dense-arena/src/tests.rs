@@ -303,3 +303,50 @@ fn arena_recovers_after_initializer_panic_without_an_interior_hole() {
         .expect("recover");
     assert_eq!(arena.get(0).map(String::as_str), Some("first"));
 }
+
+struct PanicDrop {
+    id: usize,
+    panic: bool,
+    drops: Arc<Mutex<Vec<usize>>>,
+}
+
+impl Drop for PanicDrop {
+    fn drop(&mut self) {
+        self.drops.lock().expect("drops").push(self.id);
+        assert!(!self.panic, "requested arena destructor panic");
+    }
+}
+
+#[test]
+fn truncation_publishes_the_shorter_arena_prefix_before_drop_panic() {
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let mut arena = DenseArena::<PanicDrop>::new();
+    arena
+        .push_with(|slot| {
+            slot.insert(PanicDrop {
+                id: 0,
+                panic: false,
+                drops: Arc::clone(&drops),
+            })
+        })
+        .expect("retained");
+    let keep = arena.cursor();
+    for (id, panic) in [(1, true), (2, false)] {
+        arena
+            .push_with(|slot| {
+                slot.insert(PanicDrop {
+                    id,
+                    panic,
+                    drops: Arc::clone(&drops),
+                })
+            })
+            .expect("removed");
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| arena.truncate(keep)));
+    assert!(result.is_err());
+    assert_eq!(arena.len(), 1);
+    assert!(arena.get(1).is_none());
+    assert_eq!(*drops.lock().expect("drops"), [2, 1]);
+    drop(arena);
+    assert_eq!(*drops.lock().expect("drops"), [2, 1, 0]);
+}

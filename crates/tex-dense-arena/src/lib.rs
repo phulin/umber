@@ -41,6 +41,11 @@ impl ArenaCursor {
     pub const fn len(self) -> u64 {
         self.len
     }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -218,8 +223,12 @@ impl<T> BlockStore<T> {
             return Err(ArenaError::StaleBlock);
         }
         let removed = entry.block.len();
-        entry.block.truncate(0);
+        // Retire the id before running destructors. If one panics, the
+        // superblock drain guard still empties the block, but the slot is not
+        // reusable until a future owner-level recovery policy explicitly
+        // decides so.
         entry.live = false;
+        entry.block.truncate(0);
         self.free.push(id.slot);
         metrics.superblocks_released += 1;
         metrics.values_truncated += removed as u64;
@@ -292,7 +301,7 @@ impl<T> DenseArena<T> {
 
     fn tail_for_push(&mut self) -> Result<BlockId, ArenaError> {
         let capacity = Self::items_per_block();
-        if self.len % capacity != 0 {
+        if !self.len.is_multiple_of(capacity) {
             return self.blocks.last().copied().ok_or(ArenaError::StaleBlock);
         }
         if let Some(id) = self.blocks.last().copied()
@@ -391,6 +400,9 @@ impl<T> DenseArena<T> {
 
     pub fn truncate(&mut self, cursor: ArenaCursor) -> Result<(), ArenaError> {
         let new_len = self.validate_cursor(cursor)?;
+        // Publish the shorter logical prefix before any removed destructor can
+        // run, matching the low-level initialized-prefix unwind contract.
+        self.len = new_len;
         let capacity = Self::items_per_block();
         let required_blocks = new_len.div_ceil(capacity);
         while self.blocks.len() > required_blocks {
@@ -406,7 +418,6 @@ impl<T> DenseArena<T> {
                 self.metrics.blocks_truncated += 1;
             }
         }
-        self.len = new_len;
         Ok(())
     }
 
@@ -551,7 +562,7 @@ impl<T: Copy> GenerationFork<T> {
 
     fn push_copy(&mut self, value: T, fork_tail: bool) -> Result<usize, ArenaError> {
         let capacity = Superblock::<T>::capacity();
-        if self.candidate_len % capacity == 0 {
+        if self.candidate_len.is_multiple_of(capacity) {
             let id = self.store.allocate(&mut self.metrics)?;
             self.candidate_blocks.push(id);
         }
@@ -684,6 +695,11 @@ impl<T> CompletedScratch<T> {
     pub const fn len(&self) -> usize {
         self.0.len()
     }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// Save/checkpoint journal storage. Capturing a mark only records a cursor.
@@ -738,5 +754,10 @@ impl<T> CommittedOutput<T> {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.0.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
