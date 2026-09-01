@@ -113,11 +113,11 @@ fn local_region_retires_only_after_its_last_live_command_lease_drains() {
         arena.end_group();
         assert_eq!(arena.get(local).replacement_text().len(), 1);
         drop(lease);
-        arena.begin_group().expect("sweep boundary");
         assert!(
             arena.locals[(local.region() - 3) as usize]
-                .headers
-                .is_empty()
+                .data
+                .borrow()
+                .is_none()
         );
     });
 }
@@ -137,11 +137,11 @@ fn local_region_retires_only_after_its_checkpoint_lease_drains() {
         arena.end_group();
         assert_eq!(arena.get(local).replacement_text().len(), 1);
         drop(checkpoint);
-        arena.begin_group().expect("sweep boundary");
         assert!(
             arena.locals[(local.region() - 3) as usize]
-                .headers
-                .is_empty()
+                .data
+                .borrow()
+                .is_none()
         );
     });
 }
@@ -162,6 +162,170 @@ fn local_to_global_promotion_copies_once_and_reuses_the_global_key() {
         assert_eq!(first, second);
         assert_eq!(first.region(), super::GLOBAL_REGION);
         assert_eq!(arena.global.headers.len(), 1);
+        let before = arena.retirement_counters();
+        arena.end_group();
+        let after = arena.retirement_counters();
+        assert_eq!(after.promotions_reclaimed - before.promotions_reclaimed, 1);
+        assert_eq!(arena.get(first).replacement_text().len(), 1);
+    });
+}
+
+#[test]
+fn group_region_work_is_constant_for_sequential_and_nested_depths() {
+    for groups in [1_u64, 64, 4_096] {
+        with_generation(|mut generation| {
+            let arena = generation.definitions_mut();
+            let before = arena.retirement_counters();
+            for _ in 0..groups {
+                arena.begin_group().expect("sequential definition group");
+                arena.end_group();
+            }
+            let after_sequential = arena.retirement_counters();
+            assert_eq!(
+                after_sequential.group_region_inspections - before.group_region_inspections,
+                groups
+            );
+            assert_eq!(
+                after_sequential.regions_reclaimed - before.regions_reclaimed,
+                groups
+            );
+
+            let before_history_probe = arena.retirement_counters();
+            arena.begin_group().expect("group after retired history");
+            arena.end_group();
+            let after_history_probe = arena.retirement_counters();
+            assert_eq!(
+                after_history_probe.group_region_inspections
+                    - before_history_probe.group_region_inspections,
+                1,
+                "one group inspects only its own region after {groups} retired regions"
+            );
+            assert_eq!(
+                after_history_probe.regions_reclaimed - before_history_probe.regions_reclaimed,
+                1
+            );
+        });
+
+        with_generation(|mut generation| {
+            let arena = generation.definitions_mut();
+            let before = arena.retirement_counters();
+            for _ in 0..groups {
+                arena.begin_group().expect("nested definition group");
+            }
+            for _ in 0..groups {
+                arena.end_group();
+            }
+            let after = arena.retirement_counters();
+            assert_eq!(
+                after.group_region_inspections - before.group_region_inspections,
+                groups
+            );
+            assert_eq!(after.regions_reclaimed - before.regions_reclaimed, groups);
+        });
+    }
+}
+
+#[test]
+fn final_lease_release_reclaims_only_its_exact_retired_region() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let mut leases = Vec::new();
+        let mut definitions = Vec::new();
+        for _ in 0..4_096 {
+            arena.begin_group().expect("leased definition group");
+            let definition = direct_definition(
+                arena,
+                super::DefinitionDestination::Local,
+                &[],
+                &[TokenWord::pack(Token::frozen_relax())],
+            );
+            definitions.push(definition);
+            leases.push(arena.lease(definition));
+            arena.end_group();
+        }
+
+        let selected = 2_048;
+        let selected_definition = definitions[selected];
+        let neighbor = definitions[selected - 1];
+        let before = arena.retirement_counters();
+        drop(leases.swap_remove(selected));
+        let after = arena.retirement_counters();
+        assert_eq!(
+            after.lease_release_region_inspections - before.lease_release_region_inspections,
+            1
+        );
+        assert_eq!(after.regions_reclaimed - before.regions_reclaimed, 1);
+        assert_eq!(after.rows_reclaimed - before.rows_reclaimed, 1);
+        assert!(
+            arena.locals[(selected_definition.region() - 3) as usize]
+                .data
+                .borrow()
+                .is_none()
+        );
+        assert_eq!(arena.get(neighbor).replacement_text().len(), 1);
+    });
+}
+
+#[test]
+fn retired_region_release_work_tracks_only_its_own_rows() {
+    for rows in [1_u64, 64, 4_096] {
+        with_generation(|mut generation| {
+            let arena = generation.definitions_mut();
+            arena.begin_group().expect("row-scaled definition group");
+            let first = direct_definition(
+                arena,
+                super::DefinitionDestination::Local,
+                &[],
+                &[TokenWord::pack(Token::frozen_relax())],
+            );
+            for _ in 1..rows {
+                direct_definition(
+                    arena,
+                    super::DefinitionDestination::Local,
+                    &[],
+                    &[TokenWord::pack(Token::frozen_relax())],
+                );
+            }
+            let lease = arena.lease(first);
+            arena.end_group();
+            let before = arena.retirement_counters();
+            drop(lease);
+            let after = arena.retirement_counters();
+            assert_eq!(
+                after.lease_release_region_inspections - before.lease_release_region_inspections,
+                1
+            );
+            assert_eq!(after.regions_reclaimed - before.regions_reclaimed, 1);
+            assert_eq!(after.rows_reclaimed - before.rows_reclaimed, rows);
+        });
+    }
+}
+
+#[test]
+fn checkpoint_leases_inspect_only_the_explicit_active_region_stack() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        for _ in 0..4_096 {
+            arena.begin_group().expect("retired history group");
+            arena.end_group();
+        }
+        for _ in 0..64 {
+            arena.begin_group().expect("active checkpoint group");
+        }
+        let before = arena.retirement_counters();
+        let checkpoint = arena.checkpoint_lease();
+        let after_capture = arena.retirement_counters();
+        assert_eq!(
+            after_capture.checkpoint_region_inspections - before.checkpoint_region_inspections,
+            64
+        );
+        drop(checkpoint);
+        let after_release = arena.retirement_counters();
+        assert_eq!(
+            after_release.lease_release_region_inspections
+                - after_capture.lease_release_region_inspections,
+            64
+        );
     });
 }
 
@@ -189,6 +353,55 @@ fn checkpoint_rejection_restores_detached_global_and_local_definition_suffixes()
         arena.reject_checkpoint_candidate(checkpoint, tail);
         assert_eq!(arena.get(root).replacement_text().len(), 1);
         assert_eq!(arena.get(accepted).replacement_text().len(), 1);
+    });
+}
+
+#[test]
+fn checkpoint_rejection_discards_only_candidate_promotion_mappings() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("outer local group");
+        let source = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.begin_group().expect("checkpoint child group");
+        let checkpoint = arena.cursor();
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        let rejected = arena.promote_global(source).expect("candidate promotion");
+        assert_eq!(arena.get(rejected).replacement_text().len(), 1);
+        arena.reject_checkpoint_candidate(checkpoint, tail);
+
+        let replacement = arena.promote_global(source).expect("replacement promotion");
+        assert_eq!(replacement.format_index(), 0);
+        assert_eq!(arena.get(replacement).replacement_text().len(), 1);
+    });
+}
+
+#[test]
+fn checkpoint_acceptance_discards_only_detached_prior_promotion_mappings() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("outer local group");
+        let source = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.begin_group().expect("checkpoint child group");
+        let checkpoint = arena.cursor();
+        let prior = arena.promote_global(source).expect("prior promotion");
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        let candidate = arena.promote_global(source).expect("candidate promotion");
+        assert_eq!(candidate.format_index(), prior.format_index());
+        arena.accept_checkpoint_candidate(tail);
+        assert_eq!(
+            arena.promote_global(source).expect("reused candidate"),
+            candidate
+        );
     });
 }
 

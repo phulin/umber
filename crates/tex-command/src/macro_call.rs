@@ -296,6 +296,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let pattern = definition_view.parameter_pattern();
         let parameter_len = definition_view.parameter_text().len();
         let replacement_len = definition_view.replacement_text().len();
+        drop(definition_view);
         self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
@@ -594,6 +595,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             false,
             &mut text,
         );
+        drop(definition);
         self.print_macro_trace(text, true);
     }
 

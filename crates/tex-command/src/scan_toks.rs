@@ -213,6 +213,8 @@ enum ScannedToksStorage<G> {
 enum ScannedWords<'a, G> {
     Traced(crate::attempt::AttemptTokenListView<'a>),
     Semantic(&'a [TokenWord]),
+    DefinitionParameter(tex_state::DefinitionView<'a, G>),
+    DefinitionReplacement(tex_state::DefinitionView<'a, G>),
     ReplayBuilder {
         lane: &'a crate::input::ReplayLane<G>,
         builder: crate::input::ReplayInputBuilderId<G>,
@@ -225,6 +227,8 @@ impl<G> ScannedWords<'_, G> {
         match self {
             Self::Traced(words) => words.len(),
             Self::Semantic(words) => words.len(),
+            Self::DefinitionParameter(definition) => definition.parameter_text().len(),
+            Self::DefinitionReplacement(definition) => definition.replacement_text().len(),
             Self::ReplayBuilder { len, .. } => *len as usize,
         }
     }
@@ -233,6 +237,14 @@ impl<G> ScannedWords<'_, G> {
         match self {
             Self::Traced(words) => words.get(index).map(|word| word.semantic_token()),
             Self::Semantic(words) => words.get(index).map(|word| word.semantic_token()),
+            Self::DefinitionParameter(definition) => definition
+                .parameter_text()
+                .get(index)
+                .map(|word| word.semantic_token()),
+            Self::DefinitionReplacement(definition) => definition
+                .replacement_text()
+                .get(index)
+                .map(|word| word.semantic_token()),
             Self::ReplayBuilder { lane, builder, .. } => lane
                 .input_builder_get(*builder, index)
                 .map(|word| word.semantic_token()),
@@ -1001,8 +1013,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_words(parameter)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::Semantic(
-                self.state.definition(definition).parameter_text(),
+            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionParameter(
+                self.state.definition(definition),
             )),
             ScannedToksStorage::AttemptDefinition(definition) => arena
                 .definition_parameter_words(definition)
@@ -1023,8 +1035,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_words(replacement)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::Semantic(
-                self.state.definition(definition).replacement_text(),
+            ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionReplacement(
+                self.state.definition(definition),
             )),
             ScannedToksStorage::AttemptDefinition(definition) => arena
                 .definition_replacement_words(definition)
@@ -1381,8 +1393,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let replacement_text = self.scanned_replacement_words(result)?;
         let mut partial = String::new();
         let mut match_marker = '#';
-        if let Some(parameter_text) = parameter_text {
-            append_runaway_words(self.state, &parameter_text, &mut match_marker, &mut partial);
+        if let Some(parameter_text) = &parameter_text {
+            append_runaway_words(self.state, parameter_text, &mut match_marker, &mut partial);
             append_runaway_character(self.state, '-', &mut partial);
             append_runaway_character(self.state, '>', &mut partial);
         }
@@ -1392,6 +1404,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             &mut match_marker,
             &mut partial,
         );
+        drop(parameter_text);
+        drop(replacement_text);
 
         let Some(crate::CommandSemanticDiagnostic::Recoverable {
             runaway: Some(runaway),

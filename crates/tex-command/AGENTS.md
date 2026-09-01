@@ -469,7 +469,10 @@ collector (see `src/conditionals.rs`).
   the scanner word/builder lanes. Ordinary `\def`/`\gdef` select their local or
   revision-global definition region before scanning and write semantic words
   directly into one transactional arena mark; failure truncates it and sealing
-  appends only the compact header. Raw definition scanning has no continuation.
+  appends only the compact header. Recovery rendering carries the borrowed
+  `DefinitionView` itself until its final word visit instead of returning a
+  naked slice from a temporary local-region borrow. Raw definition scanning has
+  no continuation.
   `\edef`/`\xdef` retain only the build key, scalar progress, and existing
   expansion continuation when a resource is genuinely unavailable. `read_toks`
   keeps its independent cold/import staging lifetime. Read setup and

@@ -299,10 +299,13 @@ view interface:
 - the immutable format region, populated only by atomic format materialization;
 - the revision-global region, whose row/word marks participate in candidate
   checkpoint detachment, acceptance, and rejection; and
-- nested forked local-group regions. Entering a TeX group creates a child
-  region. Leaving restores meanings first, then retires every segment of that
-  group as a unit. An active macro input row may retain one coarse lease to the
-  retired region; the final such row release permits whole-region truncation.
+- nested forked local-group regions. Entering a TeX group pushes exactly one
+  child region. A nested child does not split its parent: leaving restores
+  meanings first, pops that exact child, and resumes the same parent region.
+  The child is dropped immediately when it has no lease. Otherwise the child
+  is marked retired, and the final active-input or checkpoint lease release
+  directly drops that region's payload. Neither group transition searches the
+  local-region history.
 
 `DefinitionId<G>` is only a stable key. Its region and row locate one immutable
 header plus the contiguous `[parameter][replacement]` word span; its identity
@@ -310,7 +313,10 @@ field supports cold semantic observation. The header stores span boundaries,
 origin, and identity, not an eager parameter plan. `DefinitionView<'a, G>`
 borrows that header and span for one synchronous use. Equal definitions retain
 distinct keys unless a global `let` repeats the exceptional promotion of the
-same local key, in which case the cached global key is reused.
+same local key, in which case the cached global key is reused. That mapping is
+stored in the source local region, so group retirement and checkpoint
+settlement discard only mappings owned by the exact affected regions; there is
+no generation-wide promotion sweep.
 
 Ordinary `def` and `gdef` know their destination before scanning. The scanner
 opens a transactional word mark in that final local or global region, validates
@@ -334,7 +340,8 @@ pub struct DefinitionId<G> {
 pub struct DefinitionArena<G> {
     format: DefinitionRegion,
     global: DefinitionRegion,
-    locals: Vec<DefinitionRegion>,
+    locals: Vec<Rc<LocalDefinitionRegion>>,
+    active_locals: Vec<u32>,
 }
 
 impl<G> DefinitionArena<G> {
@@ -353,6 +360,9 @@ prevents callers from forging keys, constructing views, or changing region
 coordinates. A view cannot cross the store borrow that admits it. Eqtb, save,
 and operation lanes copy the key without changing ownership; local-region
 liveness resides only in the structural group/checkpoint/input owners.
+Checkpoint capture and candidate settlement walk the checkpoint's explicit
+active-region list and its explicit prior/candidate region suffixes. They do
+not infer ownership by traversing accumulated local history.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final

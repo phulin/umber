@@ -290,6 +290,17 @@ generation owners govern global suffixes. Accounting follows suffix truncation
 and whole-region retirement. No definition owner, root registry, root search,
 or tracing collector participates.
 
+Each TeX group owns exactly one directly keyed local region. `begin_group`
+pushes it in constant work; nesting leaves the parent region intact, and
+`end_group` pops and retires only the child before reusing that same parent.
+An unleased child drops immediately. A leased child retains its payload until
+the final coarse input/checkpoint lease drops, and that release reclaims the
+exact retired region without visiting any peer or accumulated history.
+Promotion mappings live inside their source local region and leave with it.
+Checkpoint transitions address only their explicit active-region and
+prior/candidate suffix lists; there is no global retired-region or promotion
+sweep.
+
 Ordinary `\def` and `\gdef` select their local-group or revision-global arena
 before scanning. The collector opens one transactional word mark there,
 validates parameter structure while writing each semantic word once, and seals
@@ -308,7 +319,7 @@ suffix marks. Normal `endgroup` restores meanings before retiring the complete
 local region; a macro input row which still consumes a local body retains one
 coarse region lease until that row drains. A global `\let` of a local source is
 the exceptional one-time span copy into revision-global storage and reuses the
-recorded promotion key.
+source-region-owned promotion key.
 
 Raw and expanded command delivery is destination-directed. Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized

@@ -46,11 +46,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
   revision-global region, and nested forked local-group regions. Ordinary
   definitions scan transactionally into their final region and seal a header
   without a publication copy or per-definition allocation. Group exit restores
-  meanings before retiring the whole local region; active macro input rows may
-  hold one coarse local-region lease. Candidate rollback truncates exact
-  global/local marks, while exceptional local-to-global `let` promotion copies
-  one span once and reuses the mapped global key. Detached builders remain only
-  for cold format/memo/import batches.
+  meanings before directly popping its one local region; a parent region is
+  reactivated without a continuation segment or history traversal. Active
+  macro input and checkpoint rows may hold coarse local-region leases whose
+  final release directly reclaims that exact retired payload. Candidate
+  settlement visits only its explicit region lists. Exceptional local-to-global
+  `let` promotion copies one span once and caches the mapped global key in its
+  source region, so no global promotion sweep exists. Detached builders remain
+  only for cold format/memo/import batches.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and
