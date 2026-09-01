@@ -34,4 +34,12 @@ test -f "$work/backup/main.aux"
 python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["extra_paths"] == ["main.aux"]; assert value["missing_paths"] == []; assert value["changed_paths"] == []' "$work/replacement.json"
 
 identity=$(python3 "$root/scripts/arxiv_corpus.py" identity "$work/source.src" main.tex)
-python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value["member_count"] == 2; assert value["entrypoint"] == "main.tex"; assert len(value["archive_sha256"]) == len(value["member_manifest_sha256"]) == 64' "$identity"
+python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value["member_count"] == 2; assert value["entrypoint"] == "main.tex"; assert value["source_jobname"] == "main"; assert len(value["archive_sha256"]) == len(value["member_manifest_sha256"]) == 64' "$identity"
+no_entrypoint=$(python3 "$root/scripts/arxiv_corpus.py" identity "$work/source.src" '')
+python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value["entrypoint"] == ""; assert value["source_jobname"] is None' "$no_entrypoint"
+
+test "$(python3 "$root/scripts/arxiv_corpus.py" jobname papers/IntersectionProblems.tex)" = IntersectionProblems
+if python3 "$root/scripts/arxiv_corpus.py" jobname ../renamed-reference.tex >/dev/null 2>&1; then
+  echo 'unsafe corpus entrypoint produced a job name' >&2
+  exit 1
+fi

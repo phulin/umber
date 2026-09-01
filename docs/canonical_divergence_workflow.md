@@ -237,6 +237,13 @@ normalization is the preamble comment, and diagnose the first meaningful
 semantic or DVI divergence. Do not search source prefixes or recompile one
 page at a time.
 
+Preserve the source-derived TeX jobname in every qualification, reference, and
+Umber run. It is the entrypoint basename without `.tex`, as emitted by
+`python3 scripts/arxiv_corpus.py jobname ENTRYPOINT`; record it in the row
+identity. Never pass `--jobname` merely to give an oracle artifact a stable
+label: TeX and LaTeX use `\jobname` to find archive-provided `.bbl`, `.aux`,
+and other side files. Rename or copy the DVI only after the engine exits.
+
 When one document's complete DVI is canonically exact, advance directly to the
 next eligible source in the locked corpus and repeat the full-source DVI run.
 Do not run, inspect, render, or use Umber PDF output for diagnosis until the

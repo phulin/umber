@@ -151,6 +151,10 @@ match after normalizing only the preamble comment payload, and its receipt recor
 both the macro-marker and normalized-DVI fingerprints. Reference document
 generation uses this clean format with the same dev-first runtime lookup; it
 never asks Umber's TeX semantics to emulate a release-format macro body.
+Corpus reference runs also retain the entrypoint's source-derived jobname. A
+different output label must be applied after compilation, because passing
+`--jobname` changes LaTeX's lookup of archive-provided bibliography and other
+jobname-derived side files.
 
 Every Umber subprocess started by the builder, including format-cache restore
 and publication, runs through `scripts/run-umber-guarded.py`. The shared guard

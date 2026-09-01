@@ -36,6 +36,14 @@ def _safe_name(raw: str) -> str:
     return normalized
 
 
+def source_jobname(entrypoint: str) -> str:
+    """Return TeX's source-derived job name for a corpus entrypoint."""
+    normalized = PurePosixPath(_safe_name(entrypoint))
+    if normalized.suffix.lower() != ".tex" or not normalized.stem:
+        fail(f"corpus entrypoint is not a named TeX source: {entrypoint!r}")
+    return normalized.stem
+
+
 def archive_members(archive: Path) -> list[dict[str, str | int]]:
     """Return the normalized regular-file inventory and reject ambiguous archives."""
     members: list[dict[str, str | int]] = []
@@ -78,13 +86,16 @@ def member_manifest_bytes(members: list[dict[str, str | int]]) -> bytes:
     return (json.dumps(members, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
-def source_identity(archive: Path, entrypoint: str) -> dict[str, str | int]:
+def source_identity(
+    archive: Path, entrypoint: str
+) -> dict[str, str | int | None]:
     members = archive_members(archive)
     return {
         "archive_sha256": sha256_file(archive),
         "member_manifest_sha256": hashlib.sha256(member_manifest_bytes(members)).hexdigest(),
         "member_count": len(members),
         "entrypoint": entrypoint,
+        "source_jobname": source_jobname(entrypoint) if entrypoint else None,
     }
 
 
@@ -251,6 +262,10 @@ def main() -> None:
     identity = subparsers.add_parser("identity")
     identity.add_argument("archive", type=Path)
     identity.add_argument("entrypoint")
+    jobname = subparsers.add_parser(
+        "jobname", help="print the required source-derived TeX job name"
+    )
+    jobname.add_argument("entrypoint")
     replace = subparsers.add_parser("replace")
     replace.add_argument("archive", type=Path)
     replace.add_argument("view", type=Path)
@@ -266,8 +281,10 @@ def main() -> None:
             print(member_manifest_bytes(members).decode(), end="")
         elif arguments.action == "replace":
             replace_view(arguments.archive, arguments.view, arguments.backup, arguments.manifest)
-        else:
+        elif arguments.action == "identity":
             print(json.dumps(source_identity(arguments.archive, arguments.entrypoint), sort_keys=True))
+        else:
+            print(source_jobname(arguments.entrypoint))
     except ValueError as error:
         raise SystemExit(str(error)) from error
 

@@ -82,7 +82,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   tests under the shared 6 GiB process-group guard concurrently with
   `check.sh`.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
-  and materialization.
+  materialization, and source-derived TeX jobname contract.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `test-check-node-width-budget.sh`: hermetic host/toolchain qualification,
