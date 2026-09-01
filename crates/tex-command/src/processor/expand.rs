@@ -776,6 +776,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
+    )]
     pub(super) fn expanded_delivery_entry(
         &mut self,
         fetch: ExpandedFetch,
@@ -810,6 +814,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
+    )]
     fn expanded_delivery_loop(
         &mut self,
         fetch: ExpandedFetch,
@@ -1083,6 +1091,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// destination-directed state machine. Cold transitions re-enter only
     /// after the command typestate borrow has ended.
     #[inline(always)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
+    )]
     fn expanded_destination_loop(
         &mut self,
         replay_completion: ReplayCompletionPolicy,
