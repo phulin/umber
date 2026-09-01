@@ -359,20 +359,51 @@ pub(crate) struct MacroArgumentCursor<G> {
     /// Index of the provenance run containing the current absolute word.
     /// It advances only when sequential replay crosses a run boundary.
     pub(crate) origin_run: u32,
-    pub(crate) frame: ResidentSpanCursor,
+    absolute: u32,
+    identity: u64,
+    source: Option<tex_state::packed_input::SourceContext>,
 }
 
 impl<G> MacroArgumentCursor<G> {
+    pub(crate) fn new(
+        identity: InputLevelId,
+        range: crate::execution_scratch::MacroArgumentRange<G>,
+        slot: u8,
+        origin_run: u32,
+        source: Option<tex_state::packed_input::SourceContext>,
+    ) -> Self {
+        Self {
+            range,
+            slot,
+            origin_run,
+            absolute: range.start(),
+            identity: identity.0,
+            source,
+        }
+    }
+
     pub(crate) fn identity(&self) -> InputLevelId {
-        self.frame.identity()
+        InputLevelId(self.identity)
     }
 
     pub(crate) fn position(&self) -> usize {
-        self.frame.position()
+        debug_assert!(self.absolute >= self.range.start());
+        (self.absolute - self.range.start()) as usize
+    }
+
+    pub(crate) const fn absolute_position(&self) -> u32 {
+        self.absolute
     }
 
     pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
-        self.frame.source_context()
+        self.source
+    }
+
+    pub(crate) fn set_active_source(
+        &mut self,
+        source: Option<tex_state::packed_input::SourceContext>,
+    ) {
+        self.source = source;
     }
 
     pub(crate) fn argument_set(&self) -> crate::execution_scratch::ArgumentSetId<G> {
@@ -391,7 +422,7 @@ impl<G> MacroArgumentCursor<G> {
 
     /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
     pub(crate) fn is_exhausted(&self) -> bool {
-        self.position() >= self.range.len() as usize
+        self.absolute >= self.range.end()
     }
 
     #[inline(always)]
@@ -399,18 +430,20 @@ impl<G> MacroArgumentCursor<G> {
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> Result<Option<TracedTokenWord>, ()> {
-        let position = self.frame.position() as u32;
-        let Ok(word) = scratch.admitted_argument_word_sequential(
+        let absolute = self.absolute;
+        let Ok(word) = scratch.admitted_argument_word_at_sequential(
             self.range,
-            position as usize,
+            absolute,
             &mut self.origin_run,
         ) else {
             return Ok(None);
         };
-        if self.frame.advance() != Some(position) {
-            return Err(());
-        }
+        self.absolute = self.absolute.checked_add(1).ok_or(())?;
         Ok(Some(word))
+    }
+
+    fn swap_absolute(&mut self, position: &mut u32) {
+        core::mem::swap(&mut self.absolute, position);
     }
 }
 
@@ -654,7 +687,7 @@ pub(crate) enum InputLevelInlineState {
         position: u32,
     },
     MacroArgument {
-        position: u32,
+        absolute_position: u32,
         origin_run: u32,
     },
 }
@@ -680,9 +713,9 @@ impl InputLevelInlineState {
         }
     }
 
-    pub(crate) const fn macro_argument(position: usize, origin_run: u32) -> Self {
+    pub(crate) const fn macro_argument(absolute_position: u32, origin_run: u32) -> Self {
         Self::MacroArgument {
-            position: position as u32,
+            absolute_position,
             origin_run,
         }
     }
@@ -849,7 +882,7 @@ impl<G> InputLevel<G> {
             Self::DurableTokens(tokens) => tokens.common.frame.source_context(),
             Self::AttemptTokens(tokens) => tokens.common.frame.source_context(),
             Self::MacroBody(body) => body.frame.source_context(),
-            Self::MacroArgument(argument) => argument.frame.source_context(),
+            Self::MacroArgument(argument) => argument.active_source(),
         }
     }
 
@@ -863,7 +896,7 @@ impl<G> InputLevel<G> {
             Self::DurableTokens(tokens) => tokens.frame.set_source_context(source),
             Self::AttemptTokens(tokens) => tokens.frame.set_source_context(source),
             Self::MacroBody(body) => body.frame.set_source_context(source),
-            Self::MacroArgument(argument) => argument.frame.set_source_context(source),
+            Self::MacroArgument(argument) => argument.set_active_source(source),
         }
     }
 
@@ -931,13 +964,13 @@ impl<G> InputLevel<G> {
             }
             Self::MacroArgument(argument) => {
                 let InputLevelInlineState::MacroArgument {
-                    position,
+                    absolute_position,
                     origin_run,
                 } = state
                 else {
                     unreachable!("macro argument inverse kind changed")
                 };
-                argument.frame.swap_position(position);
+                argument.swap_absolute(absolute_position);
                 std::mem::swap(&mut argument.origin_run, origin_run);
             }
             Self::Source(_) => unreachable!("a source frame uses the source lexer lane"),
@@ -2313,7 +2346,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
 #[cfg(any(test, feature = "profiling"))]
 pub struct LongMacroArgumentCursorBenchmark<G> {
     range: crate::execution_scratch::MacroArgumentRange<G>,
-    position: u32,
+    absolute: u32,
     scratch: crate::execution_scratch::ExecutionScratch<G>,
 }
 
@@ -2375,32 +2408,32 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
         Self {
             range,
             // A nonzero opening proves exact scalar restoration.
-            position: 1,
+            absolute: range.start() + 1,
             scratch,
         }
     }
 
-    /// Performs `calls` bounded indexed reads and restores the opening scalar.
+    /// Performs `calls` bounded absolute reads and restores the opening scalar.
     pub fn run(&mut self, calls: u32) -> LongMacroArgumentCursorReceipt {
-        let opening = self.position;
+        let opening = self.absolute;
         let mut checksum = 0_u64;
         let mut retirements = 0_u64;
         for _ in 0..calls {
             let word = self
                 .scratch
-                .admitted_argument_word(self.range, self.position as usize)
+                .admitted_argument_word_at(self.range, self.absolute)
                 .expect("long macro-argument cursor remains within its span");
             checksum = checksum.wrapping_add(u64::from(word.token_word().raw()));
-            self.position += 1;
-            if self.position == self.range.len() {
-                self.position = 0;
+            self.absolute += 1;
+            if self.absolute == self.range.end() {
+                self.absolute = self.range.start();
                 retirements += 1;
             }
         }
-        self.position = opening;
+        self.absolute = opening;
         let _ = self
             .scratch
-            .admitted_argument_word(self.range, self.position as usize)
+            .admitted_argument_word_at(self.range, self.absolute)
             .expect("rollback restores the exact long-argument cursor");
         LongMacroArgumentCursorReceipt {
             calls: u64::from(calls),

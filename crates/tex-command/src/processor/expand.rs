@@ -1027,10 +1027,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 })
                             }
                             InputLevel::MacroArgument(cursor) if cursor.identity() == identity => {
-                                Some((
-                                    cursor.frame.position() as u32,
-                                    cursor.frame.source_context(),
-                                ))
+                                Some((cursor.position() as u32, cursor.active_source()))
                             }
                             _ => None,
                         })

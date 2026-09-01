@@ -2008,7 +2008,9 @@ struct MacroArgumentCursor {
     range: MacroArgumentRange,
     slot: u8,
     origin_run: u32,
-    frame: ResidentSpanCursor,
+    absolute: u32,
+    identity: u64,
+    source: Option<SourceContext>,
 }
 
 enum TokenBehavior {
@@ -2029,10 +2031,18 @@ enum RetirementBehavior {
 ```
 
 The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
-for generic token lists. `MacroBodyCursor` and `MacroArgumentCursor` do not
-wrap it: each stores a 24-byte `ResidentSpanCursor` with only identity, bounds,
-position, and optional source coordinates. On the supported 64-bit host the
-body row is the macro call. Eqtb stores the eight-byte non-owning
+for generic token lists. `MacroBodyCursor` does not wrap it: it stores a
+24-byte `ResidentSpanCursor` with only identity, bounds, position, and optional
+source coordinates. `MacroArgumentCursor` is specialized further. Its admitted
+range already contains absolute scratch-lane bounds, so the row owns one
+absolute coordinate plus identity and optional source context directly. Warm
+delivery checks that coordinate against the range, performs the fixed-chunk
+lookup, and advances it once. It derives the relative semantic position only
+when command stamping or diagnostic projection requires one; rollback journals
+and swaps the exact absolute coordinate. This avoids maintaining a second
+relative cursor and rebuilding an absolute scratch coordinate for every word.
+On the supported 64-bit host the body row is the macro call. Eqtb stores the
+eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
 owns the exact format, revision-global, or local-group semantic region plus an
 opaque replacement span and scalar position. Only parameterized macros store
@@ -2040,7 +2050,9 @@ an `ArgumentSetId`; parameterless macros allocate and push only the body row.
 
 The argument cursor locates its opening provenance run once at admission and
 then advances that run index only when sequential replay crosses a provenance
-boundary. It does not binary-search the run table for every token. The input
+boundary. It does not binary-search the run table for every token. Its absolute
+coordinate does not change the provenance, source, or relative delivery stamp
+visible outside the resident row. The input
 stack also maintains the live macro-parameter total on body push, body pop, and
 checkpoint restore; macro activation reads that scalar instead of walking all
 active input rows.

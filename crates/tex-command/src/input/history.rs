@@ -692,7 +692,7 @@ impl<G> InputStack<G> {
                     Some(InputLevelInlineState::macro_span(cursor.position()))
                 }
                 InputLevel::MacroArgument(cursor) => Some(InputLevelInlineState::macro_argument(
-                    cursor.position(),
+                    cursor.absolute_position(),
                     cursor.origin_run,
                 )),
                 InputLevel::Source(_) => None,
@@ -1497,8 +1497,6 @@ impl<G> crate::CommandState<G> {
         self.timeline
             .record_next_input_level_identity(self.roots.input.next_level_identity);
         self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
-        let mut frame = super::ResidentSpanCursor::new(identity, range.len() as usize);
-        frame.set_source_context(active_source);
         let origin_run = self
             .scratch
             .admitted_argument_origin_run(range)
@@ -1510,12 +1508,13 @@ impl<G> crate::CommandState<G> {
         self.roots
             .input
             .levels
-            .push(InputLevel::MacroArgument(super::MacroArgumentCursor {
+            .push(InputLevel::MacroArgument(super::MacroArgumentCursor::new(
+                identity,
                 range,
                 slot,
                 origin_run,
-                frame,
-            }));
+                active_source,
+            )));
         if let Some(sink) = observer.as_deref_mut() {
             sink.committed(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Push,

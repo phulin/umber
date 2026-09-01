@@ -427,12 +427,13 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         state
             .input
             .levels
-            .push(InputLevel::MacroArgument(MacroArgumentCursor {
+            .push(InputLevel::MacroArgument(MacroArgumentCursor::new(
+                InputLevelId(2),
                 range,
-                slot: 1,
+                1,
                 origin_run,
-                frame: super::super::ResidentSpanCursor::new(InputLevelId(2), 2),
-            }));
+                None,
+            )));
         let mut fuel = crate::CommandFuelLedger::default();
 
         assert_exact_direct_transition(&mut state, (0, 0, 2), |state| {
@@ -621,15 +622,13 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     state
                         .input
                         .levels
-                        .push(InputLevel::MacroArgument(MacroArgumentCursor {
+                        .push(InputLevel::MacroArgument(MacroArgumentCursor::new(
+                            InputLevelId(1),
                             range,
-                            slot: 1,
+                            1,
                             origin_run,
-                            frame: super::super::ResidentSpanCursor::new(
-                                InputLevelId(1),
-                                operations,
-                            ),
-                        }));
+                            None,
+                        )));
                 }
             }
 

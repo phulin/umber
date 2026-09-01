@@ -378,6 +378,14 @@ impl<G> MacroArgumentRange<G> {
     pub(crate) const fn len(self) -> u32 {
         self.end - self.start
     }
+
+    pub(crate) const fn start(self) -> u32 {
+        self.start
+    }
+
+    pub(crate) const fn end(self) -> u32 {
+        self.end
+    }
 }
 
 impl<G> Copy for MacroArgumentRange<G> {}
@@ -1763,6 +1771,20 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn admitted_argument_word_at(
+        &self,
+        range: MacroArgumentRange<G>,
+        absolute: u32,
+    ) -> Result<TracedTokenWord, ScratchError> {
+        if absolute < range.start || absolute >= range.end {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.macro_words
+            .get(absolute)
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+
     pub(crate) fn admitted_argument_origin_run(
         &self,
         range: MacroArgumentRange<G>,
@@ -1776,17 +1798,13 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    pub(crate) fn admitted_argument_word_sequential(
+    pub(crate) fn admitted_argument_word_at_sequential(
         &self,
         range: MacroArgumentRange<G>,
-        index: usize,
+        absolute: u32,
         origin_run: &mut u32,
     ) -> Result<TracedTokenWord, ScratchError> {
-        let absolute = range
-            .start
-            .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
-            .ok_or(ScratchError::CapacityOverflow)?;
-        if absolute >= range.end {
+        if absolute < range.start || absolute >= range.end {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.macro_words

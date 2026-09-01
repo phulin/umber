@@ -265,7 +265,12 @@ collector (see `src/conditionals.rs`).
   or second delivery slot. The macro-body row keeps only its existing scalar
   rollback position beside the store-minted resident body; that position
   derives a flat region-local chunk slot in constant time and changes chunks
-  only at a 4,096-word boundary. A
+  only at a 4,096-word boundary. The macro-argument row likewise owns the
+  admitted range's absolute scratch-lane coordinate directly. Warm delivery
+  checks that coordinate against the range and advances it once; the row
+  derives a relative semantic position only when command or diagnostic
+  projection requires one, and rollback journals the exact absolute
+  coordinate. A
   source row contains only its common frame and one eight-byte ABA-checked key
   into the `InputStack`'s fixed reusable source-slot pages. The slot solely
   owns backing, replacement, `everyeof`, ancestry, source classification, and

@@ -1284,18 +1284,18 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .expect("live macro frame")
                 .expect("macro argument");
             let identity = command.allocate_input_level_identity();
-            let mut frame = crate::input::ResidentSpanCursor::new(identity, operations);
-            frame.set_source_context(command.input.levels.current_source_context());
+            let active_source = command.input.levels.current_source_context();
             let origin_run = command
                 .scratch
                 .admitted_argument_origin_run(range)
                 .expect("argument provenance run");
-            command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor {
+            command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor::new(
+                identity,
                 range,
-                slot: 1,
+                1,
                 origin_run,
-                frame,
-            }));
+                active_source,
+            )));
 
             let mut capabilities = CommandHostCapabilities::default();
             let mut fuel = crate::CommandFuelLedger::default();

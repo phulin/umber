@@ -55,7 +55,7 @@ control-sequence deliveries; 65,536 genuinely new creating and unknown
 non-creating source names; one million name-based and packed immutable
 primitive resolutions; 16,384 warmed failed-keyword scans; five million
 uniform stored-cursor calls split evenly across replay, macro replacement,
-macro argument, attempt, and durable owners; and five million indexed reads
+macro argument, attempt, and durable owners; and five million absolute reads
 across one sealed 16,385-word macro argument. These rows separate source decode,
 lookup/probe, TeX-visible creation, packed meaning delivery, backed-up raw
 delivery, mixed packed-cursor traversal, and long segmented argument access.
