@@ -57,10 +57,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`, and the
   three `check-latex-*.sh` entry points: explicit opt-in checks built on
   `optional-check-runner.sh`. `check-tools.sh profiling-cli` builds and tests
-  the feature-gated Umber CLI under the real optimized profiling profile. Run
-  one with no arguments for the whole check, or name steps to run exactly
-  those. The LaTeX entry points delegate to `run-latex-*.sh` so their
-  established implementation options remain available.
+  the feature-gated Umber CLI under the real optimized profiling profile;
+  `check-tools.sh copy-attribution` compiles the profiling-only public-copy
+  interposer and gates scalar, `Vec`, bounded external-ancestor, reconciliation,
+  and exact-binary symbolization behavior. Run one with no arguments for the
+  whole check, or name steps to run exactly those. The LaTeX entry points
+  delegate to `run-latex-*.sh` so their established implementation options
+  remain available.
 - `hooks/`: versioned git hooks installed by `install-hooks.sh` through
   `core.hooksPath`; `pre-commit` runs `check.sh`.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.

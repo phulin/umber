@@ -22,7 +22,8 @@ source "$repo_root/scripts/optional-check-runner.sh"
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-tools.sh \
   arxiv-corpus arxiv-census oracle-regeneration \
   parity-harness fixturegen texlive-wasm-publish \
-  profiling-cli clippy-reference-tools clippy-profiling-runner clippy-dvi-tools
+  profiling-cli copy-attribution clippy-reference-tools \
+  clippy-profiling-runner clippy-dvi-tools
 
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
   scripts/test-arxiv-corpus.sh
@@ -53,6 +54,8 @@ optional_check_step texlive-wasm-publish \
 optional_check_step profiling-cli \
   cargo test -q --profile profiling -p umber --test it --features profiling \
   profiling_stats_flag_reports_feature_only_census
+optional_check_step_requiring "cc rustc addr2line python3" copy-attribution \
+  scripts/test-copy-attribution.sh
 
 # The opt-in feature resolutions `scripts/check-lint-passes.py` records as
 # covered here rather than by the routine clippy gate.
