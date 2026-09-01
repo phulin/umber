@@ -300,17 +300,23 @@ view interface:
 - the revision-global region, whose row/word marks participate in candidate
   checkpoint detachment, acceptance, and rejection; and
 - nested forked local-group regions. Entering a TeX group pushes exactly one
-  child region. A nested child does not split its parent: leaving restores
-  meanings first, pops that exact child, and resumes the same parent region.
+  child region. The arena stores only one current-region scalar; each stable
+  region slot stores its exact parent key. A nested child does not split its
+  parent: leaving restores meanings first, follows that parent key, and retires
+  only the exact child. There is no relocatable active-prefix vector.
   The child is dropped immediately when it has no lease. Otherwise the child
   is marked retired, and the final active-input or checkpoint lease release
   directly drops that region's payload. Local regions occupy stable 64-slot
   chunks behind one coarse generation-owned slot store. Entry pops one exact
-  free address or grows by one chunk; it never allocates an individual region
-  shell or relocates an accumulated prefix. Reuse increments the address's
+  address from an intrusive free-slot chain or grows by one chunk; it never
+  allocates an individual region shell or relocates an accumulated prefix.
+  Reuse increments the address's
   incarnation inside the existing region coordinate, so stale keys cannot
   alias the new occupant. Neither group transition searches local-region
-  history.
+  history. A child structurally pins its parent until the child itself is
+  reclaimed. Consequently one lease of the current region pins the complete
+  checkpoint ancestry in constant work; final child reclamation releases that
+  one exact parent pin.
 
 `DefinitionId<G>` is only a stable key. Its region and row locate one immutable
 header plus the contiguous `[parameter][replacement]` word span; its identity
@@ -346,7 +352,8 @@ pub struct DefinitionArena<G> {
     format: DefinitionRegion,
     global: DefinitionRegion,
     local_slots: Rc<LocalDefinitionSlots>,
-    active_locals: Vec<u32>,
+    active_local: u32,
+    mutations: Vec<DefinitionRegionMutation>,
 }
 
 impl<G> DefinitionArena<G> {
@@ -365,12 +372,25 @@ prevents callers from forging keys, constructing views, or changing region
 coordinates. A view cannot cross the store borrow that admits it. Eqtb, save,
 and operation lanes copy the key without changing ownership; local-region
 liveness resides only in the structural group/checkpoint/input owners.
-Checkpoint capture and candidate settlement walk the checkpoint's explicit
-active-region list and its explicit prior/candidate region suffixes. They do
-not infer ownership by traversing accumulated local history. Candidate
-selection resolves both the saved and current active keys before changing the
-active stack; acceptance retires only the explicit current suffix, while
-rejection retires only the explicit saved suffix and restores the current one.
+Checkpoint capture retains the one current-region key and a scalar mutation
+journal mark. On the first definition or lifecycle write to a region in the
+new checkpoint epoch, the generation journal records that exact region's
+pre-write header, word, promotion, and retirement marks. Candidate selection,
+acceptance, rejection, and direct cursor restore traverse only this journal
+suffix. This includes an ancestor first written after its checkpoint child was
+ended; no active-chain or historical-region scan is needed. Detached accepted
+suffixes remain source-region-owned until rejection reattaches them or
+acceptance releases them.
+
+The four-byte region coordinate reserves all of its bits for addressing:
+values 1 and 2 name the fixed format and global regions, while local values
+encode a 16-bit slot address plus a nonzero 16-bit incarnation. It contains no
+macro-carrier or locality flag. A later eight-byte non-owning `DefinitionId`
+can therefore pair this explicit coordinate with its four-byte row without
+reinterpreting a flag bit. Reuse stops permanently when one slot reaches
+incarnation 65,535; allocation then consumes another address, and exhaustion
+returns `CapacityOverflow`. Incarnations never wrap, so an ABA-stale key cannot
+silently become valid.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final

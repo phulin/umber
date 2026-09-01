@@ -277,10 +277,27 @@ impl DefinitionBuilder {
 
 /// Compact coordinate of one immutable macro definition.
 pub struct DefinitionId<G> {
-    region: NonZeroU32,
+    region: DefinitionRegionCoordinate,
     row: NonZeroU32,
     identity: u64,
     _brand: PhantomData<fn(&G) -> &G>,
+}
+
+/// Non-owning four-byte region coordinate reserved in full for region
+/// addressing. No bit is borrowed for a carrier tag, so a later compact
+/// definition key can pair this coordinate with its four-byte row unchanged.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[repr(transparent)]
+struct DefinitionRegionCoordinate(NonZeroU32);
+
+impl DefinitionRegionCoordinate {
+    fn new(raw: u32) -> Self {
+        Self(NonZeroU32::new(raw).expect("definition region is nonzero"))
+    }
+
+    const fn get(self) -> u32 {
+        self.0.get()
+    }
 }
 
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -382,6 +399,7 @@ struct DefinitionRegion {
     words: Vec<TokenWord>,
     parent: u32,
     promotions: Vec<DefinitionPromotion>,
+    changed_epoch: u64,
 }
 
 impl DefinitionRegion {
@@ -391,6 +409,7 @@ impl DefinitionRegion {
             words: Vec::new(),
             parent,
             promotions: Vec::new(),
+            changed_epoch: 0,
         }
     }
 
@@ -470,12 +489,13 @@ impl LocalDefinitionRegion {
 struct LocalDefinitionSlot {
     incarnation: u16,
     region: Option<LocalDefinitionRegion>,
+    next_free: Option<u16>,
 }
 
 #[derive(Default)]
 struct LocalDefinitionSlotStore {
     chunks: Vec<Box<[LocalDefinitionSlot]>>,
-    free: Vec<u16>,
+    free_head: Option<u16>,
 }
 
 impl LocalDefinitionSlotStore {
@@ -522,29 +542,39 @@ impl LocalDefinitionSlotStore {
         self.chunks
             .try_reserve(1)
             .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.free
-            .try_reserve(len)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
         let mut slots = Vec::new();
         slots
             .try_reserve_exact(len)
             .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
         slots.resize_with(len, LocalDefinitionSlot::default);
         self.chunks.push(slots.into_boxed_slice());
-        for address in (base + 1..base + len).rev() {
-            self.free.push(address as u16);
+        for address in (base..base + len).rev() {
+            let free_head = self.free_head;
+            let slot = self
+                .slot_mut(address)
+                .expect("new definition free slot exists");
+            slot.next_free = free_head;
+            self.free_head = Some(address as u16);
         }
         Ok(base)
     }
 
     fn allocate(&mut self, parent: u32) -> Result<u32, DefinitionAllocationError> {
+        if self.free_head.is_none() {
+            self.allocate_chunk()?;
+        }
         let address = self
-            .free
-            .pop()
-            .map_or_else(|| self.allocate_chunk(), |address| Ok(address as usize))?;
+            .free_head
+            .expect("allocated chunk supplies a free slot") as usize;
+        let next_free = self
+            .slot(address)
+            .expect("new or reusable definition slot exists")
+            .next_free;
+        self.free_head = next_free;
         let slot = self
             .slot_mut(address)
             .expect("new or reusable definition slot exists");
+        slot.next_free = None;
         let incarnation = slot
             .incarnation
             .checked_add(1)
@@ -552,6 +582,15 @@ impl LocalDefinitionSlotStore {
         slot.incarnation = incarnation;
         slot.region = Some(LocalDefinitionRegion::new(parent));
         Ok(local_region_key(address, incarnation))
+    }
+
+    fn recycle(&mut self, address: usize) {
+        let free_head = self.free_head;
+        let slot = self
+            .slot_mut(address)
+            .expect("recycled definition slot exists");
+        slot.next_free = free_head;
+        self.free_head = Some(address as u16);
     }
 }
 
@@ -592,6 +631,12 @@ impl LocalDefinitionSlots {
                     .saturating_add(1),
             );
         }
+        if parent != 0 {
+            assert!(
+                self.acquire(parent),
+                "nested definition region pins its exact parent"
+            );
+        }
         Ok(key)
     }
 
@@ -616,6 +661,10 @@ impl LocalDefinitionSlots {
             .map(|region| region.data.parent)
     }
 
+    fn lease_count(&self, key: u32) -> Option<u32> {
+        self.store.borrow().region(key).map(|region| region.leases)
+    }
+
     fn acquire(&self, key: u32) -> bool {
         let mut store = self.store.borrow_mut();
         let Some(region) = store.region_mut(key) else {
@@ -629,6 +678,10 @@ impl LocalDefinitionSlots {
     }
 
     fn release(&self, key: u32) {
+        self.release_inner(key, true);
+    }
+
+    fn release_inner(&self, key: u32, _count_inspection: bool) {
         let reclaim = {
             let mut store = self.store.borrow_mut();
             let region = store
@@ -641,12 +694,14 @@ impl LocalDefinitionSlots {
             region.leases == 0 && region.retired
         };
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
-        self.counters.lease_release_region_inspections.set(
-            self.counters
-                .lease_release_region_inspections
-                .get()
-                .saturating_add(1),
-        );
+        if _count_inspection {
+            self.counters.lease_release_region_inspections.set(
+                self.counters
+                    .lease_release_region_inspections
+                    .get()
+                    .saturating_add(1),
+            );
+        }
         if reclaim {
             self.reclaim(key);
         }
@@ -664,14 +719,6 @@ impl LocalDefinitionSlots {
         if reclaim {
             self.reclaim(key);
         }
-    }
-
-    fn reactivate(&self, key: u32) {
-        let mut store = self.store.borrow_mut();
-        let region = store
-            .region_mut(key)
-            .expect("reactivated definition region remains leased");
-        region.retired = false;
     }
 
     fn add_rows(&self, rows: usize) {
@@ -703,6 +750,7 @@ impl LocalDefinitionSlots {
         let Some(mut region) = slot.region.take() else {
             return;
         };
+        let parent = region.data.parent;
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         let rows = region.data.headers.len() as u64;
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -710,8 +758,9 @@ impl LocalDefinitionSlots {
         self.remove_rows(region.data.headers.len());
         region.data.truncate_to(0, &self.accounting);
         if incarnation != u16::MAX {
-            store.free.push(address as u16);
+            store.recycle(address);
         }
+        drop(store);
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         {
             self.counters
@@ -726,6 +775,9 @@ impl LocalDefinitionSlots {
                     .get()
                     .saturating_add(promotions),
             );
+        }
+        if parent != 0 {
+            self.release_inner(parent, false);
         }
     }
 
@@ -797,6 +849,7 @@ pub(crate) struct DefinitionArenaCursor {
     global_rows: u32,
     active_local: u32,
     active_local_rows: u32,
+    mutation_mark: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -930,15 +983,36 @@ struct DefinitionRegionSuffix {
     promotions: Vec<DefinitionPromotion>,
 }
 
+#[derive(Clone, Copy)]
+struct DefinitionRegionMark {
+    headers: u32,
+    words: u32,
+    promotions: u32,
+    retired: bool,
+}
+
+#[derive(Clone, Copy)]
+enum DefinitionRegionMutation {
+    Existing {
+        region: u32,
+        mark: DefinitionRegionMark,
+    },
+    Created {
+        region: u32,
+    },
+}
+
+struct AcceptedRegionMutation {
+    mutation: DefinitionRegionMutation,
+    suffix: Option<DefinitionRegionSuffix>,
+    head_retired: bool,
+}
+
 pub(crate) struct AcceptedDefinitionTail<G> {
     head: DefinitionArenaCursor,
-    format: DefinitionRegionSuffix,
-    global: DefinitionRegionSuffix,
-    active_local: Option<DefinitionRegionSuffix>,
-    head_active_locals: Vec<u32>,
-    retire_on_accept: Vec<u32>,
-    retire_on_reject: Vec<u32>,
-    active_promotions: Vec<(u32, Vec<DefinitionPromotion>)>,
+    mutations: Vec<DefinitionRegionMutation>,
+    accepted: Vec<AcceptedRegionMutation>,
+    _head_lease: DefinitionRegionLease<G>,
     next_build_serial: u32,
     _brand: PhantomData<fn(&G) -> &G>,
 }
@@ -956,7 +1030,9 @@ pub(crate) struct DefinitionArena<G> {
     format: DefinitionRegion,
     global: DefinitionRegion,
     local_slots: Rc<LocalDefinitionSlots>,
-    active_locals: Vec<u32>,
+    active_local: u32,
+    mutation_epoch: Cell<u64>,
+    mutations: Vec<DefinitionRegionMutation>,
     next_build_serial: u32,
     active_build: Option<ActiveDefinitionBuild>,
     accounting: MemoryAccounting,
@@ -969,28 +1045,15 @@ pub(crate) struct DefinitionArena<G> {
 impl<G> DefinitionArena<G> {
     fn split_region_suffix(
         region: &mut DefinitionRegion,
-        cursor: u32,
-        global_cursor: u32,
+        mark: DefinitionRegionMark,
     ) -> DefinitionRegionSuffix {
-        let word = if cursor == 0 {
-            0
-        } else {
-            region.headers[cursor as usize - 1].end as usize
-        };
-        let mut promotions = Vec::new();
-        let mut retained = Vec::with_capacity(region.promotions.len());
-        for promotion in region.promotions.drain(..) {
-            if promotion.source_row >= cursor || promotion.destination_row.get() > global_cursor {
-                promotions.push(promotion);
-            } else {
-                retained.push(promotion);
-            }
-        }
-        region.promotions = retained;
+        assert!(mark.headers as usize <= region.headers.len());
+        assert!(mark.words as usize <= region.words.len());
+        assert!(mark.promotions as usize <= region.promotions.len());
         DefinitionRegionSuffix {
-            headers: region.headers.split_off(cursor as usize),
-            words: region.words.split_off(word),
-            promotions,
+            headers: region.headers.split_off(mark.headers as usize),
+            words: region.words.split_off(mark.words as usize),
+            promotions: region.promotions.split_off(mark.promotions as usize),
         }
     }
 
@@ -1009,6 +1072,171 @@ impl<G> DefinitionArena<G> {
         }
     }
 
+    fn advance_mutation_epoch(&self) {
+        self.mutation_epoch.set(
+            self.mutation_epoch
+                .get()
+                .checked_add(1)
+                .expect("definition mutation epoch exhausted"),
+        );
+    }
+
+    fn record_region_change(&mut self, region_id: u32) {
+        let epoch = self.mutation_epoch.get();
+        let mutation = match region_id {
+            FORMAT_REGION => {
+                if self.format.changed_epoch == epoch {
+                    return;
+                }
+                self.format.changed_epoch = epoch;
+                DefinitionRegionMutation::Existing {
+                    region: region_id,
+                    mark: DefinitionRegionMark {
+                        headers: self.format.headers.len() as u32,
+                        words: self.format.words.len() as u32,
+                        promotions: self.format.promotions.len() as u32,
+                        retired: false,
+                    },
+                }
+            }
+            GLOBAL_REGION => {
+                if self.global.changed_epoch == epoch {
+                    return;
+                }
+                self.global.changed_epoch = epoch;
+                DefinitionRegionMutation::Existing {
+                    region: region_id,
+                    mark: DefinitionRegionMark {
+                        headers: self.global.headers.len() as u32,
+                        words: self.global.words.len() as u32,
+                        promotions: self.global.promotions.len() as u32,
+                        retired: false,
+                    },
+                }
+            }
+            _ => {
+                let mut region = self.local_slots.store.borrow_mut();
+                let region = region
+                    .region_mut(region_id)
+                    .expect("changed local definition region exists");
+                if region.data.changed_epoch == epoch {
+                    return;
+                }
+                region.data.changed_epoch = epoch;
+                DefinitionRegionMutation::Existing {
+                    region: region_id,
+                    mark: DefinitionRegionMark {
+                        headers: region.data.headers.len() as u32,
+                        words: region.data.words.len() as u32,
+                        promotions: region.data.promotions.len() as u32,
+                        retired: region.retired,
+                    },
+                }
+            }
+        };
+        self.mutations.push(mutation);
+    }
+
+    fn record_created_region(&mut self, region: u32) {
+        self.local_slots
+            .region_mut(region)
+            .expect("created local definition region exists")
+            .changed_epoch = self.mutation_epoch.get();
+        self.mutations
+            .push(DefinitionRegionMutation::Created { region });
+    }
+
+    fn local_retired(&self, key: u32) -> Option<bool> {
+        self.local_slots
+            .store
+            .borrow()
+            .region(key)
+            .map(|region| region.retired)
+    }
+
+    fn set_local_retired(&self, key: u32, retired: bool) {
+        if let Some(region) = self.local_slots.store.borrow_mut().region_mut(key) {
+            region.retired = retired;
+        }
+    }
+
+    fn lease_active_region(&self, key: u32) -> DefinitionRegionLease<G> {
+        if key == 0 {
+            return DefinitionRegionLease {
+                region: None,
+                _brand: PhantomData,
+            };
+        }
+        assert!(self.local_slots.acquire(key));
+        DefinitionRegionLease {
+            region: Some(LocalDefinitionRegionLease {
+                slots: Rc::clone(&self.local_slots),
+                key,
+            }),
+            _brand: PhantomData,
+        }
+    }
+
+    fn undo_mutation(&mut self, mutation: DefinitionRegionMutation) -> AcceptedRegionMutation {
+        match mutation {
+            DefinitionRegionMutation::Existing { region, mark } => {
+                let head_retired = self.local_retired(region).unwrap_or(false);
+                let suffix = {
+                    let mut data = self
+                        .region_mut(region)
+                        .expect("changed definition region remains addressable");
+                    Self::split_region_suffix(&mut data, mark)
+                };
+                if region >= 3 {
+                    self.local_slots.remove_rows(suffix.headers.len());
+                    self.set_local_retired(region, mark.retired);
+                }
+                AcceptedRegionMutation {
+                    mutation,
+                    suffix: Some(suffix),
+                    head_retired,
+                }
+            }
+            DefinitionRegionMutation::Created { region } => {
+                let head_retired = self.local_retired(region).unwrap_or(true);
+                if self.local_retired(region).is_some() {
+                    self.local_slots.retire(region);
+                }
+                AcceptedRegionMutation {
+                    mutation,
+                    suffix: None,
+                    head_retired,
+                }
+            }
+        }
+    }
+
+    fn replay_mutation(&mut self, accepted: &mut AcceptedRegionMutation) {
+        match accepted.mutation {
+            DefinitionRegionMutation::Existing { region, .. } => {
+                let suffix = accepted
+                    .suffix
+                    .take()
+                    .expect("existing region mutation owns its detached suffix");
+                if region >= 3 {
+                    self.local_slots.add_rows(suffix.headers.len());
+                }
+                Self::append_region_suffix(
+                    &mut self
+                        .region_mut(region)
+                        .expect("accepted definition region remains addressable"),
+                    suffix,
+                );
+                if region >= 3 {
+                    self.set_local_retired(region, accepted.head_retired);
+                }
+            }
+            DefinitionRegionMutation::Created { region } => {
+                self.set_local_retired(region, accepted.head_retired);
+            }
+        }
+    }
+
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         cursor: DefinitionArenaCursor,
@@ -1016,57 +1244,11 @@ impl<G> DefinitionArena<G> {
         assert!(self.validates_cursor(cursor));
         assert!(self.active_build.is_none());
         let head = self.cursor();
-        let cursor_active_locals = self
-            .local_chain(cursor.active_local)
-            .expect("validated checkpoint local chain");
-        let head_active_locals = core::mem::take(&mut self.active_locals);
-        let common_depth = head_active_locals
-            .iter()
-            .zip(&cursor_active_locals)
-            .take_while(|(head, cursor)| head == cursor)
-            .count();
-        let retire_on_accept = head_active_locals[common_depth..].to_vec();
-        let retire_on_reject = cursor_active_locals[common_depth..].to_vec();
-        let format =
-            Self::split_region_suffix(&mut self.format, cursor.format_rows, cursor.global_rows);
-        let global =
-            Self::split_region_suffix(&mut self.global, cursor.global_rows, cursor.global_rows);
-        let active_local = if cursor.active_local == 0 {
-            None
-        } else {
-            let mut local = self
-                .local_slots
-                .region_mut(cursor.active_local)
-                .expect("validated active local region");
-            let suffix =
-                Self::split_region_suffix(&mut local, cursor.active_local_rows, cursor.global_rows);
-            self.local_slots.remove_rows(suffix.headers.len());
-            Some(suffix)
-        };
-        let mut active_promotions = Vec::new();
-        for &id in head_active_locals
-            .iter()
-            .chain(&cursor_active_locals[common_depth..])
-        {
-            if id == cursor.active_local {
-                continue;
-            }
-            let mut data = self
-                .local_slots
-                .region_mut(id)
-                .expect("checkpoint active definition region exists");
-            let mut detached = Vec::new();
-            data.promotions.retain(|promotion| {
-                if promotion.destination_row.get() > cursor.global_rows {
-                    detached.push(*promotion);
-                    false
-                } else {
-                    true
-                }
-            });
-            if !detached.is_empty() {
-                active_promotions.push((id, detached));
-            }
+        let head_lease = self.lease_active_region(head.active_local);
+        let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
+        let mut accepted = Vec::with_capacity(mutations.len());
+        for &mutation in mutations.iter().rev() {
+            accepted.push(self.undo_mutation(mutation));
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             self.retirement_counters.checkpoint_region_inspections.set(
                 self.retirement_counters
@@ -1075,19 +1257,12 @@ impl<G> DefinitionArena<G> {
                     .saturating_add(1),
             );
         }
-        for &id in &cursor_active_locals {
-            self.local_slots.reactivate(id);
-        }
-        self.active_locals = cursor_active_locals;
+        self.active_local = cursor.active_local;
         AcceptedDefinitionTail {
             head,
-            format,
-            global,
-            active_local,
-            head_active_locals,
-            retire_on_accept,
-            retire_on_reject,
-            active_promotions,
+            mutations,
+            accepted,
+            _head_lease: head_lease,
             next_build_serial: self.next_build_serial,
             _brand: PhantomData,
         }
@@ -1098,66 +1273,29 @@ impl<G> DefinitionArena<G> {
         cursor: DefinitionArenaCursor,
         tail: AcceptedDefinitionTail<G>,
     ) {
+        let mut tail = tail;
         self.restore_cursor(cursor);
-        Self::append_region_suffix(&mut self.format, tail.format);
-        Self::append_region_suffix(&mut self.global, tail.global);
-        if let Some(suffix) = tail.active_local {
-            self.local_slots.add_rows(suffix.headers.len());
-            let mut local = self
-                .local_slots
-                .region_mut(cursor.active_local)
-                .expect("checkpoint active local region");
-            Self::append_region_suffix(&mut local, suffix);
+        for accepted in tail.accepted.iter_mut().rev() {
+            self.replay_mutation(accepted);
         }
-        for (id, mut promotions) in tail.active_promotions {
-            self.local_slots
-                .region_mut(id)
-                .expect("checkpoint promotion region exists")
-                .promotions
-                .append(&mut promotions);
-        }
-        for id in tail.retire_on_reject {
-            self.local_slots.retire(id);
-        }
-        for &id in &tail.head_active_locals {
-            self.local_slots.reactivate(id);
-        }
-        self.active_locals = tail.head_active_locals;
+        self.active_local = tail.head.active_local;
+        self.mutations.extend(tail.mutations);
         self.next_build_serial = tail.next_build_serial;
+        self.advance_mutation_epoch();
         debug_assert_eq!(self.cursor(), tail.head);
     }
 
     pub(crate) fn accept_checkpoint_candidate(&self, tail: AcceptedDefinitionTail<G>) {
-        self.release_region_suffix(&tail.format);
-        self.release_region_suffix(&tail.global);
-        if let Some(suffix) = &tail.active_local {
-            self.release_region_suffix(suffix);
+        for accepted in &tail.accepted {
+            if let Some(suffix) = &accepted.suffix {
+                self.release_region_suffix(suffix);
+            }
         }
-        for region in tail.retire_on_accept {
-            #[cfg(any(test, feature = "profiling", feature = "testing"))]
-            self.retirement_counters.checkpoint_region_inspections.set(
-                self.retirement_counters
-                    .checkpoint_region_inspections
-                    .get()
-                    .saturating_add(1),
-            );
-            self.local_slots.retire(region);
-        }
-    }
-
-    fn local_chain(&self, active_local: u32) -> Option<Vec<u32>> {
-        let mut chain = Vec::new();
-        let mut region = active_local;
-        while region != 0 {
-            chain.push(region);
-            region = self.local_slots.parent(region)?;
-        }
-        chain.reverse();
-        Some(chain)
     }
 
     pub(crate) fn cursor(&self) -> DefinitionArenaCursor {
-        let active_local = self.active_locals.last().copied().unwrap_or(0);
+        self.advance_mutation_epoch();
+        let active_local = self.active_local;
         let active_local_rows = self
             .local_slots
             .region(active_local)
@@ -1167,12 +1305,15 @@ impl<G> DefinitionArena<G> {
             global_rows: self.global.headers.len() as u32,
             active_local,
             active_local_rows,
+            mutation_mark: u32::try_from(self.mutations.len())
+                .expect("definition mutation journal capacity exhausted"),
         }
     }
 
     pub(crate) fn validates_cursor(&self, cursor: DefinitionArenaCursor) -> bool {
         cursor.format_rows as usize <= self.format.headers.len()
             && cursor.global_rows as usize <= self.global.headers.len()
+            && cursor.mutation_mark as usize <= self.mutations.len()
             && (cursor.active_local == 0
                 || self
                     .local_slots
@@ -1185,34 +1326,13 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn restore_cursor(&mut self, cursor: DefinitionArenaCursor) {
         assert!(self.validates_cursor(cursor));
         self.abort_active_build();
-        self.format
-            .truncate_to(cursor.format_rows, &self.accounting);
-        self.global
-            .truncate_to(cursor.global_rows, &self.accounting);
-        if cursor.active_local != 0 {
-            let mut local = self
-                .local_slots
-                .region_mut(cursor.active_local)
-                .expect("active local region payload");
-            let released = local.headers.len() - cursor.active_local_rows as usize;
-            local.truncate_to(cursor.active_local_rows, &self.accounting);
-            self.local_slots.remove_rows(released);
-        }
-        let cursor_active_locals = self
-            .local_chain(cursor.active_local)
-            .expect("validated cursor local chain");
-        let current_active_locals = core::mem::take(&mut self.active_locals);
-        let common_depth = current_active_locals
-            .iter()
-            .zip(&cursor_active_locals)
-            .take_while(|(current, cursor)| current == cursor)
-            .count();
-        for &id in &cursor_active_locals {
-            self.local_slots
-                .region_mut(id)
-                .expect("checkpoint active region payload")
-                .promotions
-                .retain(|promotion| promotion.destination_row.get() <= cursor.global_rows);
+        let current_lease = self.lease_active_region(self.active_local);
+        let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
+        for mutation in mutations.into_iter().rev() {
+            let accepted = self.undo_mutation(mutation);
+            if let Some(suffix) = &accepted.suffix {
+                self.release_region_suffix(suffix);
+            }
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             self.retirement_counters.checkpoint_region_inspections.set(
                 self.retirement_counters
@@ -1221,20 +1341,9 @@ impl<G> DefinitionArena<G> {
                     .saturating_add(1),
             );
         }
-        for &region in &current_active_locals[common_depth..] {
-            #[cfg(any(test, feature = "profiling", feature = "testing"))]
-            self.retirement_counters.checkpoint_region_inspections.set(
-                self.retirement_counters
-                    .checkpoint_region_inspections
-                    .get()
-                    .saturating_add(1),
-            );
-            self.local_slots.retire(region);
-        }
-        for &region in &cursor_active_locals[common_depth..] {
-            self.local_slots.reactivate(region);
-        }
-        self.active_locals = cursor_active_locals;
+        self.active_local = cursor.active_local;
+        drop(current_lease);
+        self.advance_mutation_epoch();
     }
 
     pub(super) fn new(
@@ -1252,7 +1361,9 @@ impl<G> DefinitionArena<G> {
             format: DefinitionRegion::new(0),
             global: DefinitionRegion::new(0),
             local_slots,
-            active_locals: Vec::new(),
+            active_local: 0,
+            mutation_epoch: Cell::new(1),
+            mutations: Vec::new(),
             next_build_serial: 1,
             active_build: None,
             accounting,
@@ -1323,6 +1434,7 @@ impl<G> DefinitionArena<G> {
         builder: &mut DefinitionBuilder,
         region_id: u32,
     ) -> DefinitionId<G> {
+        self.record_region_change(region_id);
         let accounting = self.accounting.clone();
         let mut region = self
             .region_mut(region_id)
@@ -1346,7 +1458,7 @@ impl<G> DefinitionArena<G> {
         accounting.allocate_shared_dynamic(definition_memory_words(builder.words().len()));
         builder.data.phase = DefinitionBuildPhase::Published;
         DefinitionId {
-            region: NonZeroU32::new(region_id).expect("fixed region is nonzero"),
+            region: DefinitionRegionCoordinate::new(region_id),
             row,
             identity: builder.data.sealed_identity,
             _brand: PhantomData,
@@ -1468,10 +1580,7 @@ impl<G> DefinitionArena<G> {
         if self.active_build.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
-        self.active_locals
-            .try_reserve(1)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        let parent = self.active_locals.last().copied().unwrap_or(0);
+        let parent = self.active_local;
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         self.retirement_counters.group_entry_slot_inspections.set(
             self.retirement_counters
@@ -1480,7 +1589,8 @@ impl<G> DefinitionArena<G> {
                 .saturating_add(1),
         );
         let region = self.local_slots.allocate(parent)?;
-        self.active_locals.push(region);
+        self.record_created_region(region);
+        self.active_local = region;
         Ok(())
     }
 
@@ -1489,10 +1599,14 @@ impl<G> DefinitionArena<G> {
             self.active_build.is_none(),
             "definition scan crosses group exit"
         );
-        let child = self
-            .active_locals
-            .pop()
-            .expect("definition group stack matches TeX groups");
+        let child = self.active_local;
+        assert_ne!(child, 0, "definition group stack matches TeX groups");
+        let parent = self
+            .local_slots
+            .parent(child)
+            .expect("active definition region stores its exact parent");
+        self.record_region_change(child);
+        self.active_local = parent;
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         self.retirement_counters.group_region_inspections.set(
             self.retirement_counters
@@ -1500,6 +1614,14 @@ impl<G> DefinitionArena<G> {
                 .get()
                 .saturating_add(1),
         );
+        if self.local_slots.lease_count(child) == Some(0)
+            && matches!(
+                self.mutations.last(),
+                Some(DefinitionRegionMutation::Created { region }) if *region == child
+            )
+        {
+            self.mutations.pop();
+        }
         self.local_slots.retire(child);
     }
 
@@ -1522,7 +1644,7 @@ impl<G> DefinitionArena<G> {
 
     pub(crate) fn checkpoint_lease(&self) -> DefinitionCheckpointLease<G> {
         let mut regions = smallvec::SmallVec::new();
-        for &id in &self.active_locals {
+        if self.active_local != 0 {
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             self.retirement_counters.checkpoint_region_inspections.set(
                 self.retirement_counters
@@ -1531,13 +1653,13 @@ impl<G> DefinitionArena<G> {
                     .saturating_add(1),
             );
             assert!(
-                self.local_slots.acquire(id),
+                self.local_slots.acquire(self.active_local),
                 "active checkpoint definition region exists"
             );
             regions.push(DefinitionRegionLease {
                 region: Some(LocalDefinitionRegionLease {
                     slots: Rc::clone(&self.local_slots),
-                    key: id,
+                    key: self.active_local,
                 }),
                 _brand: PhantomData,
             });
@@ -1556,12 +1678,14 @@ impl<G> DefinitionArena<G> {
         let region = match destination {
             DefinitionDestination::Format => FORMAT_REGION,
             DefinitionDestination::Global => GLOBAL_REGION,
-            DefinitionDestination::Local => self
-                .active_locals
-                .last()
-                .copied()
-                .ok_or(DefinitionAllocationError::InvalidDefinition)?,
+            DefinitionDestination::Local => {
+                if self.active_local == 0 {
+                    return Err(DefinitionAllocationError::InvalidDefinition);
+                }
+                self.active_local
+            }
         };
+        self.record_region_change(region);
         let word_start = u32::try_from(
             self.region_word_len(region)
                 .expect("selected definition region exists"),
@@ -1748,7 +1872,7 @@ impl<G> DefinitionArena<G> {
         }
         accounting.allocate_shared_dynamic(definition_memory_words((end - start) as usize));
         Ok(DefinitionId {
-            region: NonZeroU32::new(region_id).expect("definition region is nonzero"),
+            region: DefinitionRegionCoordinate::new(region_id),
             row,
             identity: semantic_identity,
             _brand: PhantomData,
@@ -1781,6 +1905,8 @@ impl<G> DefinitionArena<G> {
         if id.region() == GLOBAL_REGION || id.region() == FORMAT_REGION {
             return Ok(id);
         }
+        self.record_region_change(id.region());
+        self.record_region_change(GLOBAL_REGION);
         let source_slots = Rc::clone(&self.local_slots);
         let mut source_region = source_slots
             .region_mut(id.region())
@@ -1791,7 +1917,7 @@ impl<G> DefinitionArena<G> {
             .find(|promotion| promotion.source_row == id.format_index())
         {
             return Ok(DefinitionId {
-                region: NonZeroU32::new(GLOBAL_REGION).expect("global region is nonzero"),
+                region: DefinitionRegionCoordinate::new(GLOBAL_REGION),
                 row: promotion.destination_row,
                 identity: promotion.destination_identity,
                 _brand: PhantomData,
@@ -1836,7 +1962,7 @@ impl<G> DefinitionArena<G> {
         self.accounting
             .allocate_shared_dynamic(definition_memory_words(source_words.len()));
         let promoted = DefinitionId {
-            region: NonZeroU32::new(GLOBAL_REGION).expect("global region is nonzero"),
+            region: DefinitionRegionCoordinate::new(GLOBAL_REGION),
             row,
             identity: id.identity,
             _brand: PhantomData,
@@ -1854,6 +1980,7 @@ impl<G> DefinitionArena<G> {
         id: DefinitionId<G>,
         origin: crate::token::OriginId,
     ) -> Result<(), DefinitionAllocationError> {
+        self.record_region_change(id.region());
         let mut region = self
             .region_mut(id.region())
             .ok_or(DefinitionAllocationError::InvalidDefinition)?;

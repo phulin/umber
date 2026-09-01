@@ -291,22 +291,37 @@ and whole-region retirement. No definition owner, root registry, root search,
 or tracing collector participates.
 
 Each TeX group owns exactly one directly keyed local region. `begin_group`
-claims one direct slot from stable 64-slot chunks and pushes it in amortized
-constant work; it never relocates or copies an accumulated region prefix.
-Reclaimed addresses are reused through an exact free stack, while the key's
-incarnation rejects an ABA-stale definition coordinate. Nesting leaves the
-parent region intact, and `end_group` pops and retires only the child before
-reusing that same parent. An unleased child drops immediately. A leased child
-retains its payload until the final coarse input/checkpoint lease drops, and
-that release clears and re-enqueues the exact retired slot without visiting any
-peer or accumulated history. Slot chunks are coarse generation high-water
-capacity; entering a group does not allocate an individual region shell.
-Promotion mappings live inside their source local region and leave with it.
-Checkpoint transitions address only their explicit active-region and
-prior/candidate suffix lists. Selection resolves the checkpoint and head active
-keys before changing the active stack, so a leased region in either depth's
-suffix remains directly addressable through acceptance or rejection. There is
-no global retired-region or promotion sweep.
+claims one direct slot from stable 64-slot chunks and replaces one current-key
+scalar; it never relocates or copies an accumulated region prefix. Every region
+stores its exact parent key. Reclaimed addresses are reused through an
+intrusive exact free-slot chain, while the key's incarnation rejects an
+ABA-stale definition coordinate. Nesting leaves the parent region intact, and
+`end_group` follows the child's parent key and retires only that child. Each
+child structurally pins its parent until exact child reclamation, so a single
+current-region checkpoint lease pins the whole ancestry without walking it.
+An otherwise unleased child drops immediately. A leased child retains its
+payload until the final coarse input/checkpoint lease drops, and that release
+clears and re-enqueues the exact retired slot without visiting any peer or
+accumulated history. Slot chunks are coarse generation high-water capacity;
+entering a group does not allocate an individual region shell. Promotion
+mappings live inside their source local region and leave with it.
+
+Checkpoint capture stores the current key and one mutation-journal mark. The
+first post-checkpoint definition or lifecycle write to a region records its
+exact pre-write row, word, promotion, accounting, and retirement boundary.
+Settlement visits only those journal entries. In particular, if checkpoint
+child B ends and its parent A is then written before B is restored, both B's
+lifecycle transition and A's suffix are settled exactly on acceptance or
+rejection. Nested and leased suffixes use the same source-owned records; no
+active-chain, historical-region, retired-region, or promotion sweep exists.
+
+The non-owning definition key has an explicit four-byte region-coordinate
+seam. Fixed coordinates 1 and 2 name format and global storage; every other
+coordinate uses a 16-bit local slot address and a nonzero 16-bit incarnation.
+No bit is a macro-input or locality flag, so the verified macro branch can
+combine the coordinate and four-byte row into an eight-byte carrier without a
+collision. A slot at incarnation 65,535 is never reused; capacity exhaustion
+is explicit rather than wrapping into an ABA alias.
 
 Ordinary `\def` and `\gdef` select their local-group or revision-global arena
 before scanning. The collector opens one transactional word mark there,

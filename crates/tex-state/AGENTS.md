@@ -47,13 +47,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
   definitions scan transactionally into their final region and seal a header
   without a publication copy or per-definition allocation. Group exit restores
   meanings before directly popping its one local region; a parent region is
-  reactivated without a continuation segment or history traversal. Active
-  macro input and checkpoint rows may hold coarse local-region leases whose
+  reactivated through the child's exact parent key without an active-prefix
+  stack, continuation segment, or history traversal. One current-region
+  checkpoint lease transitively pins the structural parent chain. Active macro
+  input rows may hold coarse local-region leases whose
   final release directly reclaims that exact retired payload. Stable 64-slot
   chunks supply direct reusable group slots without a per-group shell
   allocation; address incarnations reject stale keys after exact reuse.
-  Candidate settlement resolves and visits only its explicit saved/current
-  region lists, including unequal group depths. Exceptional local-to-global
+  Candidate settlement resolves and visits only the exact first-write region
+  journal since the checkpoint, including ancestor writes after a child exit
+  and unequal group depths. Exceptional local-to-global
   `let` promotion copies one span once and caches the mapped global key in its
   source region, so no global promotion sweep exists. Detached builders remain
   only for cold format/memo/import batches.

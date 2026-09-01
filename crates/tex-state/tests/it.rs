@@ -101,3 +101,37 @@ fn repeated_shipout_marks_allocate_and_copy_no_string_pool_storage() {
     })
     .expect("universe allocation");
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_definition_group_nesting_and_retired_history_make_no_allocator_calls() {
+    use tex_state::measurement::{
+        HotCoreAllocationOwner, hot_core_allocation_scope, hot_core_thread_allocation_measurement,
+    };
+
+    for depth in [1_usize, 64, 4_096] {
+        let budget = tex_state::interner::InternerBudget::new(32, 32, 1024).expect("budget");
+        tex_state::with_universe(budget, |universe| {
+            universe
+                .profile_definition_region_group_cycle(depth, 4_096)
+                .expect("warm definition region slots");
+
+            let owner = HotCoreAllocationOwner::ArenaGrowth;
+            let before = hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = hot_core_allocation_scope(owner);
+                universe
+                    .profile_definition_region_group_cycle(depth, 4_096)
+                    .expect("measured definition region slots");
+            }
+            let after = hot_core_thread_allocation_measurement(owner);
+            assert_eq!(after.calls - before.calls, 0, "warmed depth {depth}");
+            assert_eq!(
+                after.requested_bytes - before.requested_bytes,
+                0,
+                "warmed depth {depth}"
+            );
+        })
+        .expect("universe allocation");
+    }
+}

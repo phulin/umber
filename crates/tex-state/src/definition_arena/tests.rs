@@ -46,6 +46,7 @@ fn checked_builder(
 #[test]
 fn definition_key_fits_the_coordinated_compact_boundary() {
     assert!(std::mem::size_of::<super::DefinitionId<()>>() <= 16);
+    assert_eq!(std::mem::size_of::<super::DefinitionRegionCoordinate>(), 4);
 }
 
 #[test]
@@ -270,6 +271,91 @@ fn reused_local_slot_incarnation_rejects_a_stale_definition_key() {
 }
 
 #[test]
+fn exhausted_local_slot_incarnation_never_wraps_into_an_aba_alias() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("initial local group");
+        let address = super::local_region_address(arena.active_local)
+            .expect("local key")
+            .0;
+        arena.end_group();
+        arena
+            .local_slots
+            .store
+            .borrow_mut()
+            .slot_mut(address)
+            .expect("reusable slot")
+            .incarnation = u16::MAX - 1;
+
+        arena.begin_group().expect("last safe incarnation");
+        let exhausted = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        assert_eq!(
+            super::local_region_address(exhausted.region()),
+            Some((address, u16::MAX))
+        );
+        arena.end_group();
+
+        arena.begin_group().expect("different reusable address");
+        let replacement = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        assert_ne!(
+            super::local_region_address(replacement.region())
+                .expect("replacement local key")
+                .0,
+            address
+        );
+        assert!(arena.region(exhausted.region()).is_none());
+        arena.end_group();
+    });
+}
+
+#[test]
+fn one_checkpoint_child_lease_transitively_pins_and_releases_its_parent_chain() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("parent group");
+        let parent = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.begin_group().expect("child group");
+        let child = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        let checkpoint = arena.checkpoint_lease();
+        arena.end_group();
+        arena.end_group();
+        assert!(arena.region(child.region()).is_some());
+        assert!(arena.region(parent.region()).is_some());
+
+        let before = arena.retirement_counters();
+        drop(checkpoint);
+        let after = arena.retirement_counters();
+        assert_eq!(
+            after.lease_release_region_inspections - before.lease_release_region_inspections,
+            1
+        );
+        assert_eq!(after.regions_reclaimed - before.regions_reclaimed, 2);
+        assert!(arena.region(child.region()).is_none());
+        assert!(arena.region(parent.region()).is_none());
+    });
+}
+
+#[test]
 fn final_lease_release_reclaims_only_its_exact_retired_region() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
@@ -341,7 +427,7 @@ fn retired_region_release_work_tracks_only_its_own_rows() {
 }
 
 #[test]
-fn checkpoint_leases_inspect_only_the_explicit_active_region_stack() {
+fn checkpoint_lease_pins_the_parent_chain_through_one_active_region() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
         for _ in 0..4_096 {
@@ -356,14 +442,14 @@ fn checkpoint_leases_inspect_only_the_explicit_active_region_stack() {
         let after_capture = arena.retirement_counters();
         assert_eq!(
             after_capture.checkpoint_region_inspections - before.checkpoint_region_inspections,
-            64
+            1
         );
         drop(checkpoint);
         let after_release = arena.retirement_counters();
         assert_eq!(
             after_release.lease_release_region_inspections
                 - after_capture.lease_release_region_inspections,
-            64
+            1
         );
     });
 }
@@ -471,6 +557,137 @@ fn checkpoint_acceptance_reactivates_leased_region_below_the_head_depth() {
         arena.end_group();
         arena.end_group();
     });
+}
+
+#[test]
+fn checkpoint_rejection_restores_parent_written_after_ending_checkpoint_child() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("parent A");
+        let parent_root = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.begin_group().expect("checkpoint child B");
+        let child_root = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        let checkpoint = arena.cursor();
+        let checkpoint_lease = arena.checkpoint_lease();
+
+        arena.end_group();
+        let accepted_parent = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        let rejected_child =
+            direct_definition(arena, super::DefinitionDestination::Local, &[], &[]);
+        arena.reject_checkpoint_candidate(checkpoint, tail);
+
+        assert_eq!(arena.active_local, parent_root.region());
+        assert_eq!(arena.get(parent_root).replacement_text().len(), 1);
+        assert_eq!(arena.get(accepted_parent).replacement_text().len(), 1);
+        assert_eq!(arena.get(child_root).replacement_text().len(), 1);
+        assert!(
+            arena.region(rejected_child.region()).is_some_and(
+                |region| rejected_child.format_index() as usize >= region.headers.len()
+            )
+        );
+        drop(checkpoint_lease);
+        arena.end_group();
+    });
+}
+
+#[test]
+fn checkpoint_acceptance_keeps_restored_child_and_discards_later_parent_write() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("parent A");
+        let parent_root = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.begin_group().expect("checkpoint child B");
+        let checkpoint = arena.cursor();
+        let checkpoint_lease = arena.checkpoint_lease();
+
+        arena.end_group();
+        let discarded_parent = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        let accepted_child = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[TokenWord::pack(Token::frozen_relax())],
+        );
+        arena.accept_checkpoint_candidate(tail);
+
+        assert_eq!(arena.active_local, accepted_child.region());
+        assert_eq!(arena.get(accepted_child).replacement_text().len(), 1);
+        assert_eq!(
+            arena
+                .region(parent_root.region())
+                .expect("parent remains structurally pinned")
+                .headers
+                .len(),
+            1,
+            "the parent row written after the checkpoint is not part of the candidate"
+        );
+        assert_eq!(discarded_parent.format_index(), 1);
+        drop(checkpoint_lease);
+        arena.end_group();
+        arena.end_group();
+    });
+}
+
+#[test]
+fn checkpoint_settlement_visits_only_post_checkpoint_region_mutations() {
+    for depth in [2_u64, 64, 4_096] {
+        with_generation(|mut generation| {
+            let arena = generation.definitions_mut();
+            for _ in 0..depth {
+                arena.begin_group().expect("nested group");
+            }
+            let checkpoint = arena.cursor();
+            let checkpoint_lease = arena.checkpoint_lease();
+            arena.end_group();
+            direct_definition(
+                arena,
+                super::DefinitionDestination::Local,
+                &[],
+                &[TokenWord::pack(Token::frozen_relax())],
+            );
+
+            let before = arena.retirement_counters();
+            let tail = arena.begin_checkpoint_candidate(checkpoint);
+            let after = arena.retirement_counters();
+            assert_eq!(
+                after.checkpoint_region_inspections - before.checkpoint_region_inspections,
+                2,
+                "one ended child and one written parent are independent of depth {depth}"
+            );
+            arena.reject_checkpoint_candidate(checkpoint, tail);
+            drop(checkpoint_lease);
+            for _ in 1..depth {
+                arena.end_group();
+            }
+        });
+    }
 }
 
 #[test]

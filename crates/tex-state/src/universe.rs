@@ -975,6 +975,35 @@ impl<G> Universe<G> {
         self.pdf.payload_bytes()
     }
 
+    /// Exercises only the definition-region group substrate for allocator
+    /// scaling gates; the independently owned TeX save and durable-box stacks
+    /// are intentionally outside this measurement boundary.
+    #[doc(hidden)]
+    #[cfg(feature = "profiling")]
+    pub fn profile_definition_region_group_cycle(
+        &mut self,
+        depth: usize,
+        sequential_history: usize,
+    ) -> Result<(), UniverseError> {
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        let mut admitted = core.admit_mut()?;
+        for _ in 0..depth {
+            admitted
+                .begin_definition_group()
+                .map_err(|_| StateError::GroupDepthExhausted)?;
+        }
+        for _ in 0..depth {
+            admitted.end_definition_group();
+        }
+        for _ in 0..sequential_history {
+            admitted
+                .begin_definition_group()
+                .map_err(|_| StateError::GroupDepthExhausted)?;
+            admitted.end_definition_group();
+        }
+        Ok(())
+    }
+
     /// Creates a destination-local runtime from one retained checkpoint.
     /// Validation is complete before the returned fork becomes visible.
     #[doc(hidden)]
