@@ -104,12 +104,21 @@ pub fn insert_margin_kerns(
     nodes: &mut Vec<Node>,
     material_start: usize,
 ) {
-    let right = edge_glyph_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), Edge::Right);
+    // pdftex.web §1061 discovers the right marginal character before it
+    // inserts `\rightskip`. The finalized-list adapters already carry that
+    // boundary (and terminal `\parfillskip`), so neither may block the scan.
+    let right_boundary = right_margin_position(nodes);
+    let right = edge_glyph_cursor(
+        state,
+        NodeCursor::owned(nodes),
+        0,
+        right_boundary,
+        Edge::Right,
+    );
     if let Some(glyph) = right.filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Right);
-        let at = right_margin_position(nodes);
         nodes.insert(
-            at,
+            right_boundary,
             Node::MarginKern {
                 amount: amount
                     .checked_neg()
@@ -162,13 +171,17 @@ pub fn plan_margin_kerns(
     nodes: NodeCursor<'_>,
     material_start: usize,
 ) -> MarginKernPlan {
-    let right = edge_glyph_cursor(state, nodes, 0, nodes.len(), Edge::Right);
+    // pdftex.web §1061 performs right-edge discovery before adding
+    // `\rightskip`. Use the exact finalized suffix boundary for the same
+    // transition; terminal `\parfillskip` is outside the searched material.
+    let right_boundary = right_margin_position_cursor(nodes);
+    let right = edge_glyph_cursor(state, nodes, 0, right_boundary, Edge::Right);
     let right = right
         .filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0)
         .map(|glyph| {
             let amount = glyph_width(state, glyph, Edge::Right);
             (
-                right_margin_position_cursor(nodes),
+                right_boundary,
                 Node::MarginKern {
                     amount: amount
                         .checked_neg()

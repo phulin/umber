@@ -293,7 +293,7 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
 /// the finalized line boundary. A nonzero centering skip must therefore remain
 /// outside production's coordinate-only left-edge search.
 #[test]
-fn finalized_nonzero_leftskip_does_not_block_margin_kern_planning() {
+fn finalized_centering_boundaries_do_not_block_margin_kern_planning() {
     let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
@@ -339,6 +339,18 @@ fn finalized_nonzero_leftskip_does_not_block_margin_kern_planning() {
                 ch: b'A',
             }
         )) if amount == sp(-5 * 65_536) && source_font == font
+    ));
+    assert!(matches!(
+        plan.right,
+        Some((
+            5,
+            Node::MarginKern {
+                amount,
+                side: MarginKernSide::Right,
+                font: source_font,
+                ch: b'.',
+            }
+        )) if amount == sp(-7 * 65_536) && source_font == font
     ));
 }
 
