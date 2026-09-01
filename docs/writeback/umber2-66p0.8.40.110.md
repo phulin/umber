@@ -109,6 +109,26 @@ required focused one/4,096 release gate plus exact before/after public-copy
 census. The issue specifically forbids adding per-node allocation, duplicate
 storage, unsafe engine code, or merely shifting the bytes to `memmove`.
 
+## Verification
+
+`scripts/check-tools.sh copy-attribution` passes the focused scalar, `Vec`,
+external-ancestor, external-only, exact-reconciliation, and zero-overflow gate.
+`scripts/check.sh` passes all four routine dprint, Biome, rustfmt, and complete
+two-resolution clippy gates; all 30 workspace members are clean.
+
+The complete `cargo test -q --tests` routine suite ran. Every selected suite
+except the already-filed unchanged-base failure `umber2-emmj` passed. The one
+failure is
+`pdf_parity::committed_embedded_font_fixtures_match_bytes_structure_and_attestations`
+at `crates/umber/tests/it/pdf_parity.rs:540`. Its exact focused rerun fails on
+base `ddbf161c7` without this issue's profiling scripts or documentation: the
+generated 37,917-byte PDF SHA-256
+`4d75187282c57707d806346fd5685c8f465c1d09759e9b7e68f4020b8c384d1f`
+uses decimal Type1 widths, while the committed 37,744-byte fixture SHA-256
+`a52afa3a34a8d2fce7169037077236d351fe14bfb87976ac685589123960fdd3`
+uses rounded widths. That existing PDF fixture defect remains isolated in
+`umber2-emmj`; no unrelated fixture or engine fix is folded into this branch.
+
 ## Evidence
 
 Ignored issue-local evidence lives under
