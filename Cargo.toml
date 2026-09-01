@@ -24,6 +24,8 @@ default-members = [
   "crates/tex-arith",
   "crates/tex-command",
   "crates/tex-content",
+  "crates/tex-dense-arena",
+  "crates/tex-dense-prefix",
   "crates/tex-exec",
   "crates/tex-fonts",
   "crates/tex-incr",

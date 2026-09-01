@@ -1,0 +1,13 @@
+[package]
+name = "tex-dense-prefix"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"

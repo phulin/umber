@@ -1284,6 +1284,18 @@ name = "tex-content"
 version = "0.1.0"
 
 [[package]]
+name = "tex-dense-arena"
+version = "0.1.0"
+dependencies = [
+ "tex-dense-prefix",
+ "umber-hot-core-allocator",
+]
+
+[[package]]
+name = "tex-dense-prefix"
+version = "0.1.0"
+
+[[package]]
 name = "tex-exec"
 version = "0.1.0"
 dependencies = [

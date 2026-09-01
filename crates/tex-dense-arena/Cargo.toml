@@ -1,0 +1,14 @@
+[package]
+name = "tex-dense-arena"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+tex-dense-prefix = { path = "../tex-dense-prefix" }
+
+[dev-dependencies]
+umber-hot-core-allocator = { path = "../tex-state/profiling-allocator" }
+
+[lints]
+workspace = true
