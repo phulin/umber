@@ -869,9 +869,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(())
             }
-            TokenCollectorDestination::MacroArgument { .. } => {
-                return Err(CommandError::input_invariant());
-            }
         };
         result?;
         #[cfg(test)]
@@ -2320,8 +2317,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::TokenBuffers { writer, .. } => Some(*writer),
             TokenCollectorDestination::Definition { .. }
             | TokenCollectorDestination::AttemptDefinition { .. } => None,
-            TokenCollectorDestination::MacroArgument { .. }
-            | TokenCollectorDestination::ReplayInput { .. } => {
+            TokenCollectorDestination::ReplayInput { .. } => {
                 return Err(CommandError::input_invariant());
             }
         };

@@ -161,6 +161,22 @@ pub struct CommandState<G> {
     /// counters are operational test/profiling evidence, never semantic state.
     #[cfg(test)]
     pub(crate) token_collector_path_counters: TokenCollectorPathCounters,
+    /// Operational proof for the singular resident macro-delivery kernel.
+    /// Shipping builds contain neither the counters nor their updates.
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) macro_kernel_counters: MacroKernelCounters,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MacroKernelCounters {
+    pub(crate) body_words: u64,
+    pub(crate) body_cursor_advances: u64,
+    pub(crate) body_parameter_pushes: u64,
+    pub(crate) body_command_writes: u64,
+    pub(crate) argument_words: u64,
+    pub(crate) argument_cursor_advances: u64,
+    pub(crate) argument_command_writes: u64,
 }
 
 #[cfg(test)]
@@ -382,6 +398,8 @@ impl<G> Default for CommandState<G> {
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
             #[cfg(test)]
             token_collector_path_counters: TokenCollectorPathCounters::default(),
+            #[cfg(any(test, feature = "profiling"))]
+            macro_kernel_counters: MacroKernelCounters::default(),
         }
     }
 }
@@ -1220,6 +1238,31 @@ impl<G> CommandState<G> {
             counters.stored_direct,
             counters.macro_argument_direct,
             counters.out_parameter_interceptions,
+        )
+    }
+
+    /// Resets the resident macro word/advance/write evidence.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_reset_macro_kernel_counters(&mut self) {
+        self.macro_kernel_counters = MacroKernelCounters::default();
+    }
+
+    /// Returns body `(words, advances, parameter pushes, command writes)` and
+    /// argument `(words, advances, command writes)` for the singular kernel.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_macro_kernel_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+        let counters = self.macro_kernel_counters;
+        (
+            counters.body_words,
+            counters.body_cursor_advances,
+            counters.body_parameter_pushes,
+            counters.body_command_writes,
+            counters.argument_words,
+            counters.argument_cursor_advances,
+            counters.argument_command_writes,
         )
     }
 

@@ -177,7 +177,10 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(input_history.contains("enum ResidentInputTop<'a, G>"));
     assert!(input_history.contains("ResidentInputTop::Source(ResidentSourceTop"));
     assert!(input_history.contains("ResidentInputTop::StoredToken(ResidentStoredTokenTop"));
-    assert!(input_history.contains("ResidentInputTop::MacroArgument(ResidentMacroArgumentTop"));
+    assert!(input_history.contains("ResidentInputTop::MacroBody(cursor)"));
+    assert!(input_history.contains("ResidentInputTop::MacroArgument(cursor)"));
+    assert!(!input_history.contains("ResidentMacroBodyTop"));
+    assert!(!input_history.contains("ResidentMacroArgumentTop"));
     assert!(input_history.contains("#[inline(always)]\n    fn settle_resident_delivery("));
     assert_eq!(
         command.matches("fn write_resolved_delivery(").count(),
@@ -583,9 +586,8 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         expansion_dispatch.contains("match dispatch"),
         "the borrowed classification must drive exact expansion dispatch"
     );
-    assert!(expansion.contains("match self.macro_call(command)?"));
-    assert!(expansion.contains("MacroCallOutcome::Activated"));
-    assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
+    assert!(expansion.contains("let _activated = self.macro_call(command)?;"));
+    assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
     assert!(expansion.contains("let mut fetch = destination.is_none();"));
@@ -729,7 +731,8 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(scanner.contains("collector: &mut TokenCollector<G>"));
     assert!(!scanner.contains("struct ScanToksCollector"));
     assert!(token_collector.contains("pub(crate) struct TokenCollector<G>"));
-    assert!(token_collector.contains("TokenCollectorDestination::MacroArgument"));
+    assert!(!token_collector.contains("TokenCollectorDestination::MacroArgument"));
+    assert!(!token_collector.contains("MacroArgumentFacts"));
     assert!(token_collector.contains("TokenCollectorDestination::TokenBuffers"));
     assert!(token_collector.contains("TokenCollectorDestination::Definition"));
     assert!(token_collector.contains("TokenCollectorDestination::ReplayInput"));

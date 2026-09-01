@@ -1,13 +1,11 @@
 //! Canonical in-progress token collection.
 //!
-//! Macro arguments and `scan_toks` have different final lifetimes: an
-//! argument remains in execution scratch for its live activation, while a
-//! scanned list or definition remains attempt-owned until durable
-//! publication. They nevertheless share one in-progress owner and one raw
-//! command classification. This module holds that owner; the two backing
-//! lanes remain with the semantic lifetime which can reclaim them exactly.
-
-use core::marker::PhantomData;
+//! `scan_toks` lists and definitions remain attempt-owned until durable
+//! publication, so they share this one phase-tagged in-progress owner. Macro
+//! arguments instead use the purpose-built `ExecutionScratch` writer: their
+//! brace, delimiter, range, and first-scan state never enters this generic
+//! destination dispatch. Both paths reuse `ClassifiedToken` without decoding
+//! a delivered command's spelling twice.
 
 use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
@@ -105,50 +103,6 @@ impl ClassifiedToken {
     }
 }
 
-/// Exact TeX82 §394 facts established while one argument is collected.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct MacroArgumentFacts {
-    rejects_non_long_paragraph: bool,
-    removable_outer_group: bool,
-}
-
-impl MacroArgumentFacts {
-    #[cfg(test)]
-    pub(crate) const fn rejects_non_long_paragraph(self) -> bool {
-        self.rejects_non_long_paragraph
-    }
-
-    pub(crate) const fn removable_outer_group(self) -> bool {
-        self.removable_outer_group
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PendingArgumentFacts {
-    rejects_non_long_paragraph: bool,
-    word_count: u32,
-    outer_group_candidate: bool,
-}
-
-impl PendingArgumentFacts {
-    fn settle(&mut self, token: ClassifiedToken, paragraph_checked: bool, brace_depth_before: u32) {
-        self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
-        if self.word_count == 0 {
-            self.outer_group_candidate = token.spelling_is_begin_group();
-        } else if brace_depth_before == 0 {
-            self.outer_group_candidate = false;
-        }
-        self.word_count = self.word_count.saturating_add(1);
-    }
-
-    pub(crate) const fn seal(self, brace_depth: u32) -> MacroArgumentFacts {
-        MacroArgumentFacts {
-            rejects_non_long_paragraph: self.rejects_non_long_paragraph,
-            removable_outer_group: self.outer_group_candidate && brace_depth == 0,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PendingParameter {
     pub(crate) hash: TracedTokenWord,
@@ -159,16 +113,6 @@ pub(crate) struct PendingParameter {
 /// One authoritative in-progress collection destination.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum TokenCollectorDestination<G> {
-    MacroArgument {
-        slot: u8,
-        start: u32,
-        end: u32,
-        facts: PendingArgumentFacts,
-        end_trim: u8,
-        delimiter_start: usize,
-        delimiter_head: usize,
-        _generation: PhantomData<fn(&G) -> &G>,
-    },
     TokenBuffers {
         writer: AttemptTokenBufferId,
         replacement: AttemptTokenBufferId,
@@ -210,24 +154,6 @@ pub(crate) struct TokenCollector<G> {
 }
 
 impl<G> TokenCollector<G> {
-    pub(crate) fn macro_argument(slot: u8, start: u32, delimiter_start: usize) -> Self {
-        Self {
-            destination: TokenCollectorDestination::MacroArgument {
-                slot,
-                start,
-                end: start,
-                facts: PendingArgumentFacts::default(),
-                end_trim: 0,
-                delimiter_start,
-                delimiter_head: delimiter_start,
-                _generation: PhantomData,
-            },
-            phase: TokenCollectorPhase::Replacement,
-            brace_depth: 0,
-            pending_parameter: None,
-        }
-    }
-
     pub(crate) fn token_buffers(
         parameter: AttemptTokenBufferId,
         replacement: AttemptTokenBufferId,
@@ -322,28 +248,10 @@ impl<G> TokenCollector<G> {
             TokenCollectorDestination::ReplayInput {
                 observed_source, ..
             } => observed_source.take(),
-            TokenCollectorDestination::MacroArgument { .. }
-            | TokenCollectorDestination::TokenBuffers { .. }
+            TokenCollectorDestination::TokenBuffers { .. }
             | TokenCollectorDestination::Definition { .. }
             | TokenCollectorDestination::AttemptDefinition { .. } => None,
         }
-    }
-
-    pub(crate) const fn brace_depth(&self) -> u32 {
-        self.brace_depth
-    }
-
-    pub(crate) fn settle_argument_facts(
-        &mut self,
-        token: ClassifiedToken,
-        paragraph_checked: bool,
-    ) -> Result<u32, ()> {
-        let TokenCollectorDestination::MacroArgument { facts, .. } = &mut self.destination else {
-            return Err(());
-        };
-        facts.settle(token, paragraph_checked, self.brace_depth);
-        self.advance_brace_depth(token);
-        Ok(self.brace_depth)
     }
 
     /// Applies TeX82 §477's balanced-body brace state. The closing token which
@@ -360,14 +268,6 @@ impl<G> TokenCollector<G> {
         Ok(token.spelling_is_end_group() && self.brace_depth == 0)
     }
 
-    fn advance_brace_depth(&mut self, token: ClassifiedToken) {
-        if token.spelling_is_begin_group() {
-            self.brace_depth = self.brace_depth.saturating_add(1);
-        } else if token.spelling_is_end_group() && self.brace_depth != 0 {
-            self.brace_depth -= 1;
-        }
-    }
-
     pub(crate) fn set_pending_parameter(&mut self, pending: PendingParameter) -> Result<(), ()> {
         if self.pending_parameter.replace(pending).is_some() {
             return Err(());
@@ -377,34 +277,5 @@ impl<G> TokenCollector<G> {
 
     pub(crate) fn take_pending_parameter(&mut self) -> Option<PendingParameter> {
         self.pending_parameter.take()
-    }
-
-    pub(crate) fn argument_facts(&self) -> Result<MacroArgumentFacts, ()> {
-        let TokenCollectorDestination::MacroArgument { facts, .. } = self.destination else {
-            return Err(());
-        };
-        Ok(facts.seal(self.brace_depth))
-    }
-
-    pub(crate) fn strip_argument_outer_group(&mut self) -> Result<(), ()> {
-        let TokenCollectorDestination::MacroArgument {
-            start,
-            end,
-            end_trim,
-            ..
-        } = &mut self.destination
-        else {
-            return Err(());
-        };
-        let collected = end
-            .checked_sub(*start)
-            .and_then(|len| len.checked_sub(u32::from(*end_trim)))
-            .ok_or(())?;
-        if collected < 2 {
-            return Err(());
-        }
-        *start = start.checked_add(1).ok_or(())?;
-        *end_trim = end_trim.checked_add(1).ok_or(())?;
-        Ok(())
     }
 }

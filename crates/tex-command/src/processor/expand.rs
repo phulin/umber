@@ -4,11 +4,11 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMea
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::DeliveryStamp;
+use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
     InputLevel, InputLevelId, ResidentCommandInterception, ResidentCommandTransition,
     SourceNameClass,
 };
-use crate::macro_call::ArgumentSet;
 use crate::profile::CommandProfile;
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -860,20 +860,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             break DeliveryStatus::End;
                         }
                         ResidentCommandTransition::Delivered { interception } => interception,
-                        ResidentCommandTransition::ParameterPushed(parameter_level) => {
-                            observe!(
-                                self,
-                                CommandObservation::Input(InputRecord {
-                                    transition: InputTransition::Push,
-                                    reason: InputReason::Parameter,
-                                    source_name: None,
-                                    source: None,
-                                    level: parameter_level.0,
-                                    position: 0,
-                                }),
-                            );
-                            continue;
-                        }
                         ResidentCommandTransition::InvalidCharacter => {
                             self.report_recoverable(
                                 INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
@@ -1426,10 +1412,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = (|| {
             match dispatch {
                 ExpansionDispatch::Macro => {
-                    match self.macro_call(command)? {
-                        crate::macro_call::MacroCallOutcome::Activated => {}
-                        crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
-                    }
+                    let _activated = self.macro_call(command)?;
                     Ok(())
                 }
                 ExpansionDispatch::Undefined => {
@@ -1806,7 +1789,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: tex_state::DefinitionId<G>,
         definition_region: tex_state::DefinitionRegionLease<G>,
         call_site: OriginId,
-        arguments: Option<ArgumentSet<G>>,
+        arguments: Option<ArgumentSetId<G>>,
         replacement_len: usize,
     ) -> InputLevelId {
         let invocation = call_site;

@@ -458,21 +458,23 @@ collector (see `src/conditionals.rs`).
   ordinary/semi-simple `group_warning` close path. `\scantokens` pseudo-files
   record the same opening depths as ordinary inputs. Remaining specialized
   group-close sites are tracked by `umber2-aqx9`.
-- `src/token_collector.rs`: shared scanner-owned in-progress collector for
-  macro arguments, token-list scans, and definition scans. It owns the one raw
-  packed-spelling classification without reconstructing a second semantic
-  token, brace/delimiter/parameter state, destination phase, and publication
-  cursor while preserving activation-scratch versus attempt/durable
-  destination lifetimes.
+- `src/token_collector.rs`: scanner-owned in-progress collector for token-list
+  and definition scans. It owns their one raw packed-spelling classification,
+  destination phase, and publication cursor. Macro argument matching reuses
+  only `ClassifiedToken`; its purpose-built writer and generation-owned words
+  live in `execution_scratch.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
   macro invocation borrows the definition synchronously and admits one
-  specialized macro-body row. That row is the local-region lease and carries
-  an optional `ArgumentSet`; parameterless macros create no argument state.
-  Body and argument replay use specialized span cursors, packed `TokenWord`
-  blocks, and provenance-change runs. Literal-prefix-only zero-argument macros
-  also bypass match scratch. Argument cursors advance one provenance-run index
-  sequentially, and the input owner maintains active parameter use on direct
-  push/pop/restore transitions. Tail-child argument spans never rebase or copy.
+  specialized macro-body row. That row retains the existing exact local-region
+  lease and carries an optional `ArgumentSetId`; parameterless macros create no
+  matcher or argument state. Resident selection returns the bare body or
+  argument cursor, constructs checkpoint state only on a real first touch, and
+  advances one packed word before testing `Param` and writing the final command
+  slot. Argument cursors advance one provenance-run index only at run
+  boundaries. The body word read remains the narrow opaque seam where stable
+  coarse definition storage replaces the current key lookup; it must not expose
+  definition coordinates or add independent ownership. Tail-child argument
+  spans never rebase or copy.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

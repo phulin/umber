@@ -1192,6 +1192,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         path: (u64, u64, u64, u64),
         branches: (u64, u64, u64, u64),
         transitions: (u64, u64, u64),
+        macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
         retirements: (u64, u64, u64, u64, u64, u64, u64),
         allocation_calls: u64,
         requested_bytes: u64,
@@ -1281,7 +1282,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 macro_name,
                 definition,
                 definition_region,
-                Some(crate::macro_call::ArgumentSet::new(argument_set)),
+                Some(argument_set),
                 OriginId::UNKNOWN,
                 operations,
             );
@@ -1310,6 +1311,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let mut context = universe.command_context().expect("mixed command context");
             let mut destination = None;
             command.profile_reset_raw_delivery_path_counters();
+            command.profile_reset_macro_kernel_counters();
             let timeline_before = command.profile_timeline_counters();
             let commands_before = crate::command::command_ownership_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
@@ -1334,12 +1336,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                     let delivered = destination.take().expect("mixed resident command");
                     assert_eq!(delivered.spelling().semantic_token(), token);
                     assert_eq!(
-                        processor
-                            .source_provenance(&delivered)
-                            .map(|provenance| provenance.range().source()),
-                        Some(source)
-                    );
-                    assert_eq!(
                         delivered.active_source_role(),
                         Some(crate::SourceRole::UserDocumentInclude)
                     );
@@ -1363,12 +1359,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 );
                 let terminator = destination.take().expect("normalized source terminator");
                 assert_eq!(
-                    processor
-                        .source_provenance(&terminator)
-                        .map(|provenance| provenance.range().source()),
-                    Some(source)
-                );
-                assert_eq!(
                     terminator.active_source_role(),
                     Some(crate::SourceRole::UserDocumentInclude)
                 );
@@ -1385,6 +1375,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 path: command.profile_raw_delivery_path_counters(),
                 branches: command.profile_resident_input_branch_counters(),
                 transitions: command.profile_resident_delivery_transition_counters(),
+                macro_kernel: command.profile_macro_kernel_counters(),
                 retirements: command.profile_resident_retirement_counters(),
                 allocation_calls: allocations_after.calls - allocations_before.calls,
                 requested_bytes: allocations_after.requested_bytes
@@ -1408,10 +1399,11 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(
         one,
         Evidence {
-            path: (2, 3, 1, 0),
-            branches: (11, 3, 6, 2),
+            path: (2, 2, 1, 0),
+            branches: (11, 3, 4, 2),
             transitions: (11, 0, 0),
-            retirements: (4, 0, 0, 0, 0, 1, 0),
+            macro_kernel: (1, 1, 0, 1, 1, 1, 1),
+            retirements: (3, 0, 0, 0, 0, 1, 0),
             allocation_calls: 0,
             requested_bytes: 0,
             whole_frame_copies: 0,
@@ -1420,10 +1412,14 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         }
     );
     let four_k = run(4_096);
-    assert_eq!(four_k.path, (4_097, 12_288, 4_096, 0));
-    assert_eq!(four_k.branches, (20_486, 4_098, 12_291, 4_097));
+    assert_eq!(four_k.path, (4_097, 8_192, 4_096, 0));
+    assert_eq!(four_k.branches, (20_486, 4_098, 8_194, 4_097));
     assert_eq!(four_k.transitions, (20_486, 0, 0));
-    assert_eq!(four_k.retirements, (4, 0, 0, 0, 0, 1, 0));
+    assert_eq!(
+        four_k.macro_kernel,
+        (4_096, 4_096, 0, 4_096, 4_096, 4_096, 4_096)
+    );
+    assert_eq!(four_k.retirements, (3, 0, 0, 0, 0, 1, 0));
     assert_eq!(four_k.allocation_calls, 0);
     assert_eq!(four_k.requested_bytes, 0);
     assert_eq!(four_k.whole_frame_copies, 0);

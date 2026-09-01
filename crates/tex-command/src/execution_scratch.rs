@@ -13,9 +13,7 @@ use core::num::NonZeroU64;
 
 use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
 
-use crate::token_collector::{
-    ClassifiedToken, MacroArgumentFacts, TokenCollector, TokenCollectorDestination,
-};
+use crate::token_collector::ClassifiedToken;
 
 const MACRO_WORD_RESERVE: usize = 4_096;
 const NO_MACRO_SLOT: u32 = u32::MAX;
@@ -402,9 +400,107 @@ impl<G> Hash for MacroArgumentRange<G> {
     }
 }
 
+/// Exact coordinate of the one synchronous, unpublished argument set.
+///
+/// Unlike the retired zero-sized `MacroMatch` marker, this capability rejects
+/// a stale or foreign writer before it can touch the shared word lane. It is
+/// consumed exactly once by commit or discard and never enters input state.
 #[derive(Debug)]
-pub(crate) struct MacroMatch<G> {
-    _generation: PhantomData<fn(&G) -> &G>,
+pub(crate) struct PendingArgumentSet<G> {
+    frame: ArgumentSetId<G>,
+}
+
+/// Exact TeX82 §394 facts established while one argument is collected.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MacroArgumentFacts {
+    rejects_non_long_paragraph: bool,
+    removable_outer_group: bool,
+}
+
+impl MacroArgumentFacts {
+    #[cfg(test)]
+    pub(crate) const fn rejects_non_long_paragraph(self) -> bool {
+        self.rejects_non_long_paragraph
+    }
+
+    pub(crate) const fn removable_outer_group(self) -> bool {
+        self.removable_outer_group
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PendingArgumentFacts {
+    rejects_non_long_paragraph: bool,
+    word_count: u32,
+    outer_group_candidate: bool,
+}
+
+impl PendingArgumentFacts {
+    fn settle(&mut self, token: ClassifiedToken, paragraph_checked: bool, brace_depth_before: u32) {
+        self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
+        if self.word_count == 0 {
+            self.outer_group_candidate = token.spelling_is_begin_group();
+        } else if brace_depth_before == 0 {
+            self.outer_group_candidate = false;
+        }
+        self.word_count = self.word_count.saturating_add(1);
+    }
+
+    const fn seal(self, brace_depth: u32) -> MacroArgumentFacts {
+        MacroArgumentFacts {
+            rejects_non_long_paragraph: self.rejects_non_long_paragraph,
+            removable_outer_group: self.outer_group_candidate && brace_depth == 0,
+        }
+    }
+}
+
+/// Purpose-built stack-local writer for one pending macro argument.
+///
+/// Range, brace, first-scan, trimming, and delimiter-prefix state live here
+/// exactly once. The generic `TokenCollector` is reserved for scan_toks and
+/// definition construction, whose phase and destination semantics differ.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct MacroArgumentWriter<G> {
+    owner: ArgumentSetId<G>,
+    slot: u8,
+    start: u32,
+    end: u32,
+    facts: PendingArgumentFacts,
+    end_trim: u8,
+    delimiter_start: usize,
+    delimiter_head: usize,
+    brace_depth: u32,
+}
+
+impl<G> MacroArgumentWriter<G> {
+    pub(crate) const fn brace_depth(&self) -> u32 {
+        self.brace_depth
+    }
+
+    pub(crate) fn strip_outer_group(&mut self) -> Result<(), ScratchError> {
+        let collected = self
+            .end
+            .checked_sub(self.start)
+            .and_then(|len| len.checked_sub(u32::from(self.end_trim)))
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        if collected < 2 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.start = self
+            .start
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        self.end_trim = self
+            .end_trim
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn set_end_trim(&mut self, trim: u8) {
+        self.end_trim = trim;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1166,7 +1262,7 @@ impl<G> ExecutionScratch<G> {
         self.take_structured_scanner_frame(key).map(drop)
     }
 
-    pub(crate) fn begin_macro_match(&mut self) -> Result<MacroMatch<G>, ScratchError> {
+    pub(crate) fn begin_macro_match(&mut self) -> Result<PendingArgumentSet<G>, ScratchError> {
         if !self.delimiter_words.is_empty() || self.pending_slot().is_ok() {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -1222,15 +1318,19 @@ impl<G> ExecutionScratch<G> {
         slot.transient_free_parent = reused_free_parent.unwrap_or(NO_MACRO_SLOT);
         self.pending_macro_slot =
             u32::try_from(slot_index).expect("macro slot representability was preflighted");
-        Ok(MacroMatch {
-            _generation: PhantomData,
+        Ok(PendingArgumentSet {
+            frame: ArgumentSetId::new(
+                u32::try_from(slot_index).expect("macro slot was preflighted"),
+                serial,
+            )?,
         })
     }
 
     pub(crate) fn begin_argument_collector(
         &mut self,
-        _matching: &MacroMatch<G>,
-    ) -> Result<TokenCollector<G>, ScratchError> {
+        matching: &PendingArgumentSet<G>,
+    ) -> Result<MacroArgumentWriter<G>, ScratchError> {
+        self.pending_slot_for(matching.frame)?;
         let start = self.macro_words.len();
         let delimiter_start = self.delimiter_words.len();
         let slot = self.pending_slot_mut()?;
@@ -1243,11 +1343,17 @@ impl<G> ExecutionScratch<G> {
         {
             self.match_writer_admissions = self.match_writer_admissions.saturating_add(1);
         }
-        Ok(TokenCollector::macro_argument(
-            argument_slot,
+        Ok(MacroArgumentWriter {
+            owner: matching.frame,
+            slot: argument_slot,
             start,
+            end: start,
+            facts: PendingArgumentFacts::default(),
+            end_trim: 0,
             delimiter_start,
-        ))
+            delimiter_head: delimiter_start,
+            brace_depth: 0,
+        })
     }
 
     /// Settles one classified token through a writer checked once at admission.
@@ -1259,99 +1365,82 @@ impl<G> ExecutionScratch<G> {
     #[inline]
     pub(crate) fn settle_argument_token(
         &mut self,
-        collector: &mut TokenCollector<G>,
+        collector: &mut MacroArgumentWriter<G>,
         token: ClassifiedToken,
         paragraph_checked: bool,
     ) -> Result<u32, ScratchError> {
+        self.pending_slot_for(collector.owner)?;
         let end = self.macro_words.push(token.word())?;
-        let TokenCollectorDestination::MacroArgument {
-            end: collector_end, ..
-        } = collector.destination_mut()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        *collector_end = end;
+        collector.end = end;
         collector
-            .settle_argument_facts(token, paragraph_checked)
-            .map_err(|()| ScratchError::InvalidCoordinate)
+            .facts
+            .settle(token, paragraph_checked, collector.brace_depth);
+        if token.spelling_is_begin_group() {
+            collector.brace_depth = collector.brace_depth.saturating_add(1);
+        } else if token.spelling_is_end_group() && collector.brace_depth != 0 {
+            collector.brace_depth -= 1;
+        }
+        Ok(collector.brace_depth)
     }
 
     pub(crate) fn match_words(
         &self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
     ) -> Result<MacroWords<'_, G>, ScratchError> {
-        let TokenCollectorDestination::MacroArgument {
-            start,
-            end,
-            end_trim,
-            ..
-        } = collector.destination()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        let visible_end = end
-            .checked_sub(u32::from(*end_trim))
+        self.pending_slot_for(collector.owner)?;
+        let visible_end = collector
+            .end
+            .checked_sub(u32::from(collector.end_trim))
             .ok_or(ScratchError::InvalidCoordinate)?;
-        if visible_end < *start || *end > self.macro_words.len() {
+        if visible_end < collector.start || collector.end > self.macro_words.len() {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(MacroWords {
             lane: &self.macro_words,
-            position: *start,
+            position: collector.start,
             end: visible_end,
             _generation: PhantomData,
         })
     }
 
-    pub(crate) const fn argument_collector_depth(collector: &TokenCollector<G>) -> u32 {
+    pub(crate) const fn argument_collector_depth(collector: &MacroArgumentWriter<G>) -> u32 {
         collector.brace_depth()
     }
 
     pub(crate) fn argument_collector_facts(
         &self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
     ) -> Result<MacroArgumentFacts, ScratchError> {
-        collector
-            .argument_facts()
-            .map_err(|()| ScratchError::InvalidCoordinate)
+        self.pending_slot_for(collector.owner)?;
+        Ok(collector.facts.seal(collector.brace_depth))
     }
 
     pub(crate) fn finish_argument_collector(
         &mut self,
-        mut collector: TokenCollector<G>,
+        mut collector: MacroArgumentWriter<G>,
     ) -> Result<(), ScratchError> {
         self.clear_delimiter_prefix(&mut collector)?;
-        let TokenCollectorDestination::MacroArgument {
-            slot: argument_slot,
-            start,
-            end,
-            end_trim,
-            ..
-        } = collector.destination()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        if *end != self.macro_words.len() {
+        if collector.end != self.macro_words.len() {
             return Err(ScratchError::InvalidCoordinate);
         }
+        self.pending_slot_for(collector.owner)?;
         let slot = self.pending_slot_mut()?;
-        if slot.current_argument != Some(*argument_slot) || slot.argument_count != *argument_slot {
+        if slot.current_argument != Some(collector.slot) || slot.argument_count != collector.slot {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let range_len = end
-            .checked_sub(*start)
-            .and_then(|len| len.checked_sub(u32::from(*end_trim)))
+        let range_len = collector
+            .end
+            .checked_sub(collector.start)
+            .and_then(|len| len.checked_sub(u32::from(collector.end_trim)))
             .ok_or(ScratchError::InvalidCoordinate)?;
-        let settled_facts = collector
-            .argument_facts()
-            .map_err(|()| ScratchError::InvalidCoordinate)?;
-        slot.arguments[usize::from(*argument_slot)] = PackedArgument {
+        let settled_facts = collector.facts.seal(collector.brace_depth);
+        slot.arguments[usize::from(collector.slot)] = PackedArgument {
             range: PackedRange {
-                start: *start,
+                start: collector.start,
                 len: range_len,
             },
             facts: settled_facts,
-            end_trim: *end_trim,
+            end_trim: collector.end_trim,
         };
         slot.current_argument = None;
         slot.argument_count += 1;
@@ -1364,56 +1453,45 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn clear_delimiter_prefix(
         &mut self,
-        collector: &mut TokenCollector<G>,
+        collector: &mut MacroArgumentWriter<G>,
     ) -> Result<(), ScratchError> {
-        let TokenCollectorDestination::MacroArgument {
-            delimiter_start,
-            delimiter_head,
-            ..
-        } = collector.destination_mut()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        if *delimiter_start > self.delimiter_words.len() {
+        self.pending_slot_for(collector.owner)?;
+        if collector.delimiter_start > self.delimiter_words.len() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.delimiter_words.truncate(*delimiter_start);
-        *delimiter_head = *delimiter_start;
+        self.delimiter_words.truncate(collector.delimiter_start);
+        collector.delimiter_head = collector.delimiter_start;
         Ok(())
     }
 
     pub(crate) fn delimiter_prefix_len(
         &self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
     ) -> Result<usize, ScratchError> {
-        let TokenCollectorDestination::MacroArgument { delimiter_head, .. } =
-            collector.destination()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        Ok(self.delimiter_words.len().saturating_sub(*delimiter_head))
+        self.pending_slot_for(collector.owner)?;
+        Ok(self
+            .delimiter_words
+            .len()
+            .saturating_sub(collector.delimiter_head))
     }
 
     pub(crate) fn delimiter_prefix_is_empty(
         &self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
     ) -> Result<bool, ScratchError> {
         Ok(self.delimiter_prefix_len(collector)? == 0)
     }
 
     pub(crate) fn delimiter_prefix_word(
         &self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
         index: usize,
     ) -> Result<ClassifiedToken, ScratchError> {
-        let TokenCollectorDestination::MacroArgument { delimiter_head, .. } =
-            collector.destination()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
+        self.pending_slot_for(collector.owner)?;
         self.delimiter_words
             .get(
-                delimiter_head
+                collector
+                    .delimiter_head
                     .checked_add(index)
                     .ok_or(ScratchError::CapacityOverflow)?,
             )
@@ -1423,7 +1501,7 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn delimiter_prefix_words<'a>(
         &'a self,
-        collector: &'a TokenCollector<G>,
+        collector: &'a MacroArgumentWriter<G>,
     ) -> Result<impl Iterator<Item = TracedTokenWord> + 'a, ScratchError> {
         let len = self.delimiter_prefix_len(collector)?;
         Ok((0..len).map(|index| {
@@ -1435,16 +1513,11 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn push_delimiter_prefix(
         &mut self,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
         token: ClassifiedToken,
     ) -> Result<(), ScratchError> {
-        let TokenCollectorDestination::MacroArgument {
-            delimiter_start, ..
-        } = collector.destination()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        if *delimiter_start > self.delimiter_words.len() {
+        self.pending_slot_for(collector.owner)?;
+        if collector.delimiter_start > self.delimiter_words.len() {
             return Err(ScratchError::InvalidCoordinate);
         }
         if self.delimiter_words.len() == self.delimiter_words.capacity() {
@@ -1458,44 +1531,40 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn pop_delimiter_prefix_word(
         &mut self,
-        collector: &mut TokenCollector<G>,
+        collector: &mut MacroArgumentWriter<G>,
     ) -> Result<ClassifiedToken, ScratchError> {
-        let TokenCollectorDestination::MacroArgument {
-            delimiter_start,
-            delimiter_head,
-            ..
-        } = collector.destination_mut()
-        else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
+        self.pending_slot_for(collector.owner)?;
         let token = self
             .delimiter_words
-            .get(*delimiter_head)
+            .get(collector.delimiter_head)
             .copied()
             .ok_or(ScratchError::InvalidCoordinate)?;
-        *delimiter_head = delimiter_head
+        collector.delimiter_head = collector
+            .delimiter_head
             .checked_add(1)
             .ok_or(ScratchError::CapacityOverflow)?;
-        if *delimiter_head == self.delimiter_words.len() {
-            self.delimiter_words.truncate(*delimiter_start);
-            *delimiter_head = *delimiter_start;
+        if collector.delimiter_head == self.delimiter_words.len() {
+            self.delimiter_words.truncate(collector.delimiter_start);
+            collector.delimiter_head = collector.delimiter_start;
         }
         Ok(token)
     }
 
     pub(crate) fn commit_macro_match(
         &mut self,
-        _matching: MacroMatch<G>,
+        matching: PendingArgumentSet<G>,
     ) -> Result<ArgumentSetId<G>, ScratchError> {
         if !self.delimiter_words.is_empty() {
             return Err(ScratchError::InvalidCoordinate);
         }
         let slot_index = self.pending_slot_index()? as u32;
-        let slot = self.pending_slot()?;
+        if matching.frame.slot() != slot_index {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let slot = self.pending_slot_for(matching.frame)?;
         if slot.current_argument.is_some() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let serial = slot.serial;
         let next_depth = self
             .macro_depth
             .checked_add(1)
@@ -1503,7 +1572,7 @@ impl<G> ExecutionScratch<G> {
         // Construct the externally visible coordinate before changing the
         // pending frame's role or the live-depth scalars. Even deliberately
         // corrupted/capacity-exhausted state therefore fails atomically.
-        let frame = ArgumentSetId::new(slot_index, serial)?;
+        let frame = matching.frame;
         let slot = &mut self.macro_slots[slot_index as usize];
         slot.parent_slot = self.active_macro_slot;
         slot.sealed = true;
@@ -1515,8 +1584,9 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn discard_macro_match(
         &mut self,
-        _matching: MacroMatch<G>,
+        matching: PendingArgumentSet<G>,
     ) -> Result<(), ScratchError> {
+        self.pending_slot_for(matching.frame)?;
         let slot_index = self.pending_slot_index()?;
         let reclaim_mark = self.macro_slots[slot_index].reclaim_mark;
         self.pending_macro_slot = NO_MACRO_SLOT;
@@ -1850,6 +1920,17 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
+    fn pending_slot_for(&self, frame: ArgumentSetId<G>) -> Result<&MacroSlot, ScratchError> {
+        let index = self.pending_slot_index()?;
+        let slot = &self.macro_slots[index];
+        (frame.slot() as usize == index
+            && slot.live
+            && !slot.sealed
+            && slot.serial == frame.serial())
+        .then_some(slot)
+        .ok_or(ScratchError::InvalidCoordinate)
+    }
+
     fn pending_slot_mut(&mut self) -> Result<&mut MacroSlot, ScratchError> {
         let index = self.pending_slot_index()?;
         self.macro_slots
@@ -2029,7 +2110,7 @@ mod tests {
         );
         assert!(matches!(
             scratch.commit_macro_match(matching),
-            Err(ScratchError::CapacityOverflow)
+            Err(ScratchError::InvalidCoordinate)
         ));
         assert_eq!(
             (
@@ -2236,7 +2317,7 @@ mod tests {
         assert_eq!(scratch.match_word_reads(), 0);
 
         buffer
-            .strip_argument_outer_group()
+            .strip_outer_group()
             .expect("outer group strips by metadata");
         scratch
             .finish_argument_collector(buffer)
@@ -2327,14 +2408,8 @@ mod tests {
         // The last word models unrelated live lane material beyond the
         // argument. Trimming excludes the outer pair, so neither boundary is
         // allowed to leak through the exact-size observation iterator.
-        let TokenCollectorDestination::MacroArgument { end_trim, .. } = buffer.destination_mut()
-        else {
-            unreachable!()
-        };
-        *end_trim = 1;
-        buffer
-            .strip_argument_outer_group()
-            .expect("outer group trim");
+        buffer.set_end_trim(1);
+        buffer.strip_outer_group().expect("outer group trim");
         let mut words = scratch.match_words(&buffer).expect("trimmed words");
         assert_eq!(words.len(), 1);
         assert_eq!(words.next(), Some(word('x')));

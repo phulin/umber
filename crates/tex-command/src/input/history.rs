@@ -84,8 +84,8 @@ impl<G> InlineCursorRecorder<'_, G> {
 enum ResidentInputTop<'a, G> {
     Source(ResidentSourceTop<'a, G>),
     StoredToken(ResidentStoredTokenTop<'a, G>),
-    MacroBody(ResidentMacroBodyTop<'a, G>),
-    MacroArgument(ResidentMacroArgumentTop<'a, G>),
+    MacroBody(&'a mut super::MacroBodyCursor<G>),
+    MacroArgument(&'a mut super::MacroArgumentCursor<G>),
 }
 
 struct ResidentSourceTop<'a, G> {
@@ -252,52 +252,6 @@ impl<G> ResidentStoredTokenTop<'_, G> {
         } = self;
         recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
         cursor.deliver_into(sources, destination, state)
-    }
-}
-
-struct ResidentMacroArgumentTop<'a, G> {
-    cursor: &'a mut super::MacroArgumentCursor<G>,
-    recorder: InlineCursorRecorder<'a, G>,
-}
-
-struct ResidentMacroBodyTop<'a, G> {
-    cursor: &'a mut super::MacroBodyCursor<G>,
-    recorder: InlineCursorRecorder<'a, G>,
-}
-
-impl<G> ResidentMacroBodyTop<'_, G> {
-    #[inline(never)]
-    fn advance_into(
-        self,
-        destination: crate::command::EmptyCommand<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::levels::StoredTokenAdvance<G>, ()> {
-        let Self {
-            cursor,
-            mut recorder,
-        } = self;
-        recorder.record(InputLevelInlineState::macro_span(cursor.position()));
-        cursor.deliver_into(destination, state)
-    }
-}
-
-impl<G> ResidentMacroArgumentTop<'_, G> {
-    #[inline(never)]
-    fn advance_into(
-        self,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        destination: crate::command::EmptyCommand<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::levels::MacroArgumentAdvance, ()> {
-        let Self {
-            cursor,
-            mut recorder,
-        } = self;
-        recorder.record(InputLevelInlineState::macro_argument(
-            cursor.position(),
-            cursor.origin_run,
-        ));
-        cursor.deliver_into(scratch, destination, state)
     }
 }
 
@@ -719,6 +673,28 @@ impl<G> InputStack<G> {
             self.cursor_mutations.typed_top_accesses =
                 self.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
+        if self.recording && self.touched[index] != self.interval {
+            let macro_state = match &self.rows[index] {
+                InputLevel::MacroBody(cursor) => {
+                    Some(InputLevelInlineState::macro_span(cursor.position()))
+                }
+                InputLevel::MacroArgument(cursor) => Some(InputLevelInlineState::macro_argument(
+                    cursor.position(),
+                    cursor.origin_run,
+                )),
+                InputLevel::Source(_) | InputLevel::Tokens(_) => None,
+            };
+            if let Some(state) = macro_state {
+                self.record_inline(index, state);
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.first_touch_transitions = self
+                        .cursor_mutations
+                        .first_touch_transitions
+                        .saturating_add(1);
+                }
+            }
+        }
         let recording = self.recording;
         let interval = self.interval;
         match &mut self.rows[index] {
@@ -774,22 +750,7 @@ impl<G> InputStack<G> {
                     }),
                 ))
             }
-            InputLevel::MacroBody(cursor) => Some((
-                index,
-                ResidentInputTop::MacroBody(ResidentMacroBodyTop {
-                    cursor,
-                    recorder: InlineCursorRecorder {
-                        recording,
-                        interval,
-                        index,
-                        touched: &mut self.touched[index],
-                        partially_captured: &mut self.partially_captured[index],
-                        undo: &mut self.undo,
-                        #[cfg(any(test, feature = "profiling"))]
-                        counters: &mut self.cursor_mutations,
-                    },
-                }),
-            )),
+            InputLevel::MacroBody(cursor) => Some((index, ResidentInputTop::MacroBody(cursor))),
             InputLevel::MacroArgument(cursor) => {
                 #[cfg(any(test, feature = "profiling"))]
                 {
@@ -798,22 +759,7 @@ impl<G> InputStack<G> {
                         .macro_argument_branch_entries
                         .saturating_add(1);
                 }
-                Some((
-                    index,
-                    ResidentInputTop::MacroArgument(ResidentMacroArgumentTop {
-                        cursor,
-                        recorder: InlineCursorRecorder {
-                            recording,
-                            interval,
-                            index,
-                            touched: &mut self.touched[index],
-                            partially_captured: &mut self.partially_captured[index],
-                            undo: &mut self.undo,
-                            #[cfg(any(test, feature = "profiling"))]
-                            counters: &mut self.cursor_mutations,
-                        },
-                    }),
-                ))
+                Some((index, ResidentInputTop::MacroArgument(cursor)))
             }
         }
     }
@@ -1135,7 +1081,13 @@ impl<G> crate::CommandState<G> {
                                     .out_parameter_interceptions
                                     .saturating_add(1);
                             }
-                            self.push_resident_parameter_level(slot, arguments, active_source)?
+                            self.push_resident_parameter_cursor(
+                                slot,
+                                arguments,
+                                active_source,
+                                observer,
+                            )?;
+                            continue;
                         }
                         super::levels::StoredTokenAdvance::Exhausted(identity) => {
                             super::ResidentCommandTransition::TokenExhausted {
@@ -1146,62 +1098,131 @@ impl<G> crate::CommandState<G> {
                     }
                 }
                 ResidentInputTop::MacroBody(top) => {
-                    match top.advance_into(destination.reborrow(), state)? {
-                        super::levels::StoredTokenAdvance::Delivered(resolution) => self
-                            .settle_resident_delivery(
-                                fuel,
-                                destination.reborrow(),
-                                resolution,
-                                #[cfg(feature = "profiling")]
-                                crate::fuel::RawDeliveryKind::StoredToken,
-                            ),
-                        super::levels::StoredTokenAdvance::OutParameter {
+                    let exhausted_identity = top.identity();
+                    let Some((word, position, identity, active_source, arguments)) =
+                        top.advance_word(state)?
+                    else {
+                        if let Some(transition) = self.finish_resident_exhaustion(
+                            resident_index,
+                            exhausted_identity,
+                            observer,
+                            immediate_write_retirement,
+                        )? {
+                            return Ok(transition);
+                        }
+                        continue;
+                    };
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.macro_kernel_counters.body_words =
+                            self.macro_kernel_counters.body_words.saturating_add(1);
+                        self.macro_kernel_counters.body_cursor_advances = self
+                            .macro_kernel_counters
+                            .body_cursor_advances
+                            .saturating_add(1);
+                    }
+                    if let Some(slot) = word.out_parameter_slot() {
+                        #[cfg(any(test, feature = "profiling"))]
+                        {
+                            self.macro_kernel_counters.body_parameter_pushes = self
+                                .macro_kernel_counters
+                                .body_parameter_pushes
+                                .saturating_add(1);
+                        }
+                        #[cfg(test)]
+                        {
+                            self.raw_delivery_path_counters.out_parameter_interceptions = self
+                                .raw_delivery_path_counters
+                                .out_parameter_interceptions
+                                .saturating_add(1);
+                        }
+                        self.push_resident_parameter_cursor(
                             slot,
                             arguments,
                             active_source,
-                        } => {
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.out_parameter_interceptions = self
-                                    .raw_delivery_path_counters
-                                    .out_parameter_interceptions
-                                    .saturating_add(1);
-                            }
-                            self.push_resident_parameter_level(slot, arguments, active_source)?
-                        }
-                        super::levels::StoredTokenAdvance::Exhausted(identity) => {
-                            super::ResidentCommandTransition::TokenExhausted {
-                                identity,
-                                resident_index,
-                            }
-                        }
+                            observer,
+                        )?;
+                        continue;
                     }
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.macro_kernel_counters.body_command_writes = self
+                            .macro_kernel_counters
+                            .body_command_writes
+                            .saturating_add(1);
+                    }
+                    let resolution = destination.reborrow().write_resolved_delivery(
+                        word,
+                        tex_state::token::OriginId::UNKNOWN,
+                        identity,
+                        u64::from(position),
+                        active_source,
+                        false,
+                        None,
+                        false,
+                        state,
+                    );
+                    self.settle_resident_delivery(
+                        fuel,
+                        destination.reborrow(),
+                        resolution,
+                        #[cfg(feature = "profiling")]
+                        crate::fuel::RawDeliveryKind::StoredToken,
+                    )
                 }
                 ResidentInputTop::MacroArgument(top) => {
-                    match top.advance_into(&self.scratch, destination.reborrow(), state)? {
-                        super::levels::MacroArgumentAdvance::Delivered(resolution) => {
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.macro_argument_direct = self
-                                    .raw_delivery_path_counters
-                                    .macro_argument_direct
-                                    .saturating_add(1);
-                            }
-                            self.settle_resident_delivery(
-                                fuel,
-                                destination.reborrow(),
-                                resolution,
-                                #[cfg(feature = "profiling")]
-                                crate::fuel::RawDeliveryKind::MacroArgument,
-                            )
+                    let exhausted_identity = top.identity();
+                    let Some((word, position, identity, active_source)) =
+                        top.advance_word(&self.scratch)?
+                    else {
+                        if let Some(transition) = self.finish_resident_exhaustion(
+                            resident_index,
+                            exhausted_identity,
+                            observer,
+                            immediate_write_retirement,
+                        )? {
+                            return Ok(transition);
                         }
-                        super::levels::MacroArgumentAdvance::Exhausted(identity) => {
-                            super::ResidentCommandTransition::TokenExhausted {
-                                identity,
-                                resident_index,
-                            }
-                        }
+                        continue;
+                    };
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.macro_kernel_counters.argument_words =
+                            self.macro_kernel_counters.argument_words.saturating_add(1);
+                        self.macro_kernel_counters.argument_cursor_advances = self
+                            .macro_kernel_counters
+                            .argument_cursor_advances
+                            .saturating_add(1);
+                        self.macro_kernel_counters.argument_command_writes = self
+                            .macro_kernel_counters
+                            .argument_command_writes
+                            .saturating_add(1);
                     }
+                    #[cfg(test)]
+                    {
+                        self.raw_delivery_path_counters.macro_argument_direct = self
+                            .raw_delivery_path_counters
+                            .macro_argument_direct
+                            .saturating_add(1);
+                    }
+                    let resolution = destination.reborrow().write_resolved_delivery(
+                        word.token_word(),
+                        word.origin(),
+                        identity,
+                        u64::from(position),
+                        active_source,
+                        false,
+                        None,
+                        false,
+                        state,
+                    );
+                    self.settle_resident_delivery(
+                        fuel,
+                        destination.reborrow(),
+                        resolution,
+                        #[cfg(feature = "profiling")]
+                        crate::fuel::RawDeliveryKind::MacroArgument,
+                    )
                 }
             };
             let super::ResidentCommandTransition::TokenExhausted {
@@ -1269,17 +1290,18 @@ impl<G> crate::CommandState<G> {
         super::ResidentCommandTransition::Delivered { interception }
     }
 
-    #[inline(never)]
-    fn push_resident_parameter_level(
+    #[cold]
+    fn push_resident_parameter_cursor(
         &mut self,
         slot: u8,
-        arguments: Option<crate::macro_call::ArgumentSet<G>>,
+        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
-    ) -> Result<super::ResidentCommandTransition, ()> {
+        observer: &mut Option<&mut dyn CommandObserver>,
+    ) -> Result<(), ()> {
         if !(1..=9).contains(&slot) {
             return Err(());
         }
-        let owner = arguments.ok_or(())?.frame();
+        let owner = arguments.ok_or(())?;
         let range = self
             .scratch
             .argument_range(owner, slot)
@@ -1308,7 +1330,39 @@ impl<G> crate::CommandState<G> {
                 origin_run,
                 frame,
             }));
-        Ok(super::ResidentCommandTransition::ParameterPushed(identity))
+        if let Some(sink) = observer.as_deref_mut() {
+            sink.committed(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Push,
+                reason: InputReason::Parameter,
+                source_name: None,
+                source: None,
+                level: identity.0,
+                position: 0,
+            }));
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn finish_resident_exhaustion(
+        &mut self,
+        resident_index: usize,
+        identity: super::InputLevelId,
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
+    ) -> Result<Option<super::ResidentCommandTransition>, ()> {
+        let Some(retirement) = self
+            .retire_resident_ordinary_input(resident_index)
+            .map_err(|_| ())?
+        else {
+            return Ok(Some(super::ResidentCommandTransition::TokenExhausted {
+                identity,
+                resident_index,
+            }));
+        };
+        Ok(self
+            .settle_resident_ordinary_retirement(retirement, observer, immediate_write_retirement)
+            .map(super::ResidentCommandTransition::ReplayCompleted))
     }
 
     #[inline(always)]

@@ -972,7 +972,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             name,
             definition,
             definition_region,
-            Some(crate::macro_call::ArgumentSet::new(frame)),
+            Some(frame),
             OriginId::UNKNOWN,
             0,
         );

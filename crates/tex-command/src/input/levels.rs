@@ -155,7 +155,7 @@ impl ResidentSpanCursor {
 pub(crate) struct MacroBodyCursor<G> {
     pub(crate) definition: tex_state::DefinitionId<G>,
     pub(crate) definition_region: tex_state::DefinitionRegionLease<G>,
-    pub(crate) arguments: Option<crate::macro_call::ArgumentSet<G>>,
+    pub(crate) arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
     pub(crate) name: tex_state::interner::Symbol,
     pub(crate) invocation: OriginId,
     pub(crate) frame: ResidentSpanCursor,
@@ -180,39 +180,40 @@ impl<G> MacroBodyCursor<G> {
             .map(|word| (word, OriginId::UNKNOWN))
     }
 
+    /// Advances the opaque resident replacement cursor by one packed word.
+    ///
+    /// The current definition access is the narrow integration seam for
+    /// opaque stable definition spans. Delivery owns no view, decoded
+    /// coordinate, or result wrapper; the caller handles Param before lending
+    /// the returned word to its final command destination.
     #[inline(always)]
-    pub(super) fn deliver_into(
+    pub(super) fn advance_word(
         &mut self,
-        destination: crate::command::EmptyCommand<'_, G>,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<StoredTokenAdvance<G>, ()> {
+    ) -> Result<
+        Option<(
+            TokenWord,
+            u32,
+            u64,
+            Option<tex_state::packed_input::SourceContext>,
+            Option<crate::execution_scratch::ArgumentSetId<G>>,
+        )>,
+        (),
+    > {
         let position = self.frame.position as usize;
         let Some(word) = state.definition(self.definition).replacement_word(position) else {
-            return Ok(StoredTokenAdvance::Exhausted(self.identity()));
-        };
-        let delivery = if let Some(slot) = word.out_parameter_slot() {
-            StoredTokenAdvance::OutParameter {
-                slot,
-                arguments: self.arguments,
-                active_source: self.frame.source_context(),
-            }
-        } else {
-            StoredTokenAdvance::Delivered(destination.write_resolved_delivery(
-                word,
-                OriginId::UNKNOWN,
-                self.frame.identity,
-                position as u64,
-                self.frame.source_context(),
-                false,
-                None,
-                false,
-                state,
-            ))
+            return Ok(None);
         };
         if self.frame.advance() != Some(position as u32) {
             return Err(());
         }
-        Ok(delivery)
+        Ok(Some((
+            word,
+            position as u32,
+            self.frame.identity,
+            self.frame.source_context(),
+            self.arguments,
+        )))
     }
 }
 
@@ -361,12 +362,18 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(super) fn deliver_into(
+    pub(super) fn advance_word(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        destination: crate::command::EmptyCommand<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<MacroArgumentAdvance, ()> {
+    ) -> Result<
+        Option<(
+            TracedTokenWord,
+            u32,
+            u64,
+            Option<tex_state::packed_input::SourceContext>,
+        )>,
+        (),
+    > {
         let position = self.frame.position() as u32;
         let identity = self.frame.identity().0;
         let active_source = self.frame.source_context();
@@ -375,29 +382,13 @@ impl<G> MacroArgumentCursor<G> {
             position as usize,
             &mut self.origin_run,
         ) else {
-            return Ok(MacroArgumentAdvance::Exhausted(self.identity()));
+            return Ok(None);
         };
-        let resolution = destination.write_resolved_delivery(
-            word.token_word(),
-            word.origin(),
-            identity,
-            u64::from(position),
-            active_source,
-            false,
-            None,
-            false,
-            state,
-        );
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(MacroArgumentAdvance::Delivered(resolution))
+        Ok(Some((word, position, identity, active_source)))
     }
-}
-
-pub(super) enum MacroArgumentAdvance {
-    Delivered(tex_state::token::PackedMeaningResolution),
-    Exhausted(InputLevelId),
 }
 
 impl<G> TokenCursor<G> {
@@ -481,7 +472,7 @@ pub(super) enum StoredTokenAdvance<G> {
     Delivered(tex_state::token::PackedMeaningResolution),
     OutParameter {
         slot: u8,
-        arguments: Option<crate::macro_call::ArgumentSet<G>>,
+        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
     Exhausted(InputLevelId),

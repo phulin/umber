@@ -3,7 +3,6 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TokenWord};
 
-use super::{MacroCallOutcome, MacroParameterEscape};
 use crate::{
     CommandHostCapabilities, CommandObservation, CommandObserver, CommandState, DeliveryStatus,
     ObservedToken,
@@ -17,21 +16,6 @@ impl CommandObserver for RecordingObserver {
         self.0.push(observation);
     }
 }
-#[test]
-fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
-    assert_eq!(
-        MacroParameterEscape::classify(Token::Param(4)),
-        Some(MacroParameterEscape::OutParameter(4))
-    );
-    assert_eq!(
-        MacroParameterEscape::classify(Token::Char {
-            ch: '#',
-            cat: Catcode::Parameter,
-        }),
-        Some(MacroParameterEscape::EscapedParameter)
-    );
-}
-
 fn other(ch: char) -> Token {
     Token::Char {
         ch,
@@ -132,7 +116,7 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
         .expect("macro argument set");
     let range = processor
         .scratch
-        .argument_range(arguments.frame(), 1)
+        .argument_range(arguments, 1)
         .expect("live frame")
         .expect("first argument");
     (0..processor.scratch.argument_len(range).expect("live range"))
@@ -186,10 +170,7 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
             .expect("macro delivery")
             .expect("macro command");
 
-        assert_eq!(
-            processor.macro_call(&mut call),
-            Ok(MacroCallOutcome::Activated)
-        );
+        assert_eq!(processor.macro_call(&mut call), Ok(true));
         assert_eq!(
             active_argument_tokens(processor.command),
             [Token::Cs(opening.symbol())]
@@ -257,10 +238,7 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 _ => panic!("macro meaning"),
             };
             let retains_before = tex_state::definition_retain_count();
-            assert_eq!(
-                processor.macro_call(&mut call),
-                Ok(MacroCallOutcome::Activated)
-            );
+            assert_eq!(processor.macro_call(&mut call), Ok(true));
             assert_eq!(
                 tex_state::definition_retain_count(),
                 retains_before,
@@ -329,10 +307,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
             .expect("macro meaning");
         let macro_token = Token::Cs(symbol.symbol());
 
-        for (actual, expected) in [
-            (other('!'), MacroCallOutcome::Activated),
-            (other('?'), MacroCallOutcome::PrefixMismatchRecovered),
-        ] {
+        for (actual, expected) in [(other('!'), true), (other('?'), false)] {
             let mut command = CommandState::default();
             crate::test_harness::push(&mut command, [macro_token, actual]);
             let mut capabilities = CommandHostCapabilities::default();
@@ -351,7 +326,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
                 .expect("macro delivery")
                 .expect("macro command");
 
-            let activates = expected == MacroCallOutcome::Activated;
+            let activates = expected;
             assert_eq!(processor.command.scratch.retained_slot_len(), 0);
             assert_eq!(processor.macro_call(&mut call), Ok(expected));
             assert_eq!(processor.command.scratch.retained_slot_len(), 0);
@@ -403,10 +378,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
             _ => panic!("macro meaning"),
         };
 
-        assert_eq!(
-            processor.macro_call(&mut call),
-            Ok(MacroCallOutcome::PrefixMismatchRecovered)
-        );
+        assert_eq!(processor.macro_call(&mut call), Ok(false));
         match call.meaning_ref() {
             tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
                 assert_eq!(definition.semantic_owner_count(), owners_before);
@@ -525,6 +497,139 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         );
         assert!(processor.command.scratch.is_quiescent());
     });
+}
+
+#[test]
+#[cfg(feature = "profiling")]
+fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
+    #[derive(Debug, Eq, PartialEq)]
+    struct Evidence {
+        macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
+        allocations: u64,
+        allocated_bytes: u64,
+        command_clones: u64,
+    }
+
+    fn run(argument_count: u8) -> Evidence {
+        crate::test_harness::with_universe(|universe| {
+            let parameters = (1..=argument_count)
+                .map(Token::Param)
+                .map(TokenWord::pack)
+                .collect::<Vec<_>>();
+            let definition = universe
+                .allocate_definition(&parameters, &parameters)
+                .expect("parameterized definition");
+            let symbol = universe.intern("kernelargs").expect("macro name");
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    AssignmentScope::Global,
+                )
+                .expect("macro meaning");
+            let macro_token = Token::Cs(symbol.symbol());
+            let arguments = (0..argument_count)
+                .map(|offset| letter(char::from(b'a' + offset)))
+                .collect::<Vec<_>>();
+            let marker = other('!');
+            let input = [macro_token]
+                .into_iter()
+                .chain(arguments.iter().copied())
+                .chain([marker, macro_token])
+                .chain(arguments.iter().copied())
+                .chain([marker]);
+
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, input);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut destination = None;
+
+            {
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                for expected in arguments.iter().copied().chain([marker]) {
+                    assert_eq!(
+                        processor
+                            .get_x_token_into(&mut destination)
+                            .expect("warm macro delivery"),
+                        DeliveryStatus::Command
+                    );
+                    assert_eq!(
+                        destination
+                            .take()
+                            .expect("warm command")
+                            .spelling()
+                            .semantic_token(),
+                        expected
+                    );
+                }
+            }
+
+            command.profile_reset_macro_kernel_counters();
+            let ownership_before = crate::command::command_ownership_counters();
+            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
+            let allocations_before =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            {
+                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                for expected in arguments.iter().copied().chain([marker]) {
+                    assert_eq!(
+                        processor
+                            .get_x_token_into(&mut destination)
+                            .expect("measured macro delivery"),
+                        DeliveryStatus::Command
+                    );
+                    assert_eq!(
+                        destination
+                            .take()
+                            .expect("measured command")
+                            .spelling()
+                            .semantic_token(),
+                        expected
+                    );
+                }
+            }
+            let allocations_after =
+                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let ownership_after = crate::command::command_ownership_counters();
+            Evidence {
+                macro_kernel: command.profile_macro_kernel_counters(),
+                allocations: allocations_after.calls - allocations_before.calls,
+                allocated_bytes: allocations_after.requested_bytes
+                    - allocations_before.requested_bytes,
+                command_clones: ownership_after.clones - ownership_before.clones,
+            }
+        })
+    }
+
+    for arguments in [1_u64, 9] {
+        assert_eq!(
+            run(arguments as u8),
+            Evidence {
+                macro_kernel: (
+                    arguments, arguments, arguments, 0, arguments, arguments, arguments
+                ),
+                allocations: 0,
+                allocated_bytes: 0,
+                command_clones: 0,
+            }
+        );
+    }
 }
 
 #[test]
@@ -747,10 +852,7 @@ fn outer_group_trim_bounds_macro_trace_and_observation_at_both_ends() {
                 DeliveryStatus::Command
             );
             let mut call = destination.take().expect("macro command");
-            assert_eq!(
-                processor.macro_call(&mut call),
-                Ok(MacroCallOutcome::Activated)
-            );
+            assert_eq!(processor.macro_call(&mut call), Ok(true));
         }
         universe
             .world_mut()
@@ -828,10 +930,7 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(
-            processor.macro_call(&mut call).expect("macro call"),
-            MacroCallOutcome::Activated
-        );
+        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
         assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
         assert_eq!(
             processor
@@ -909,10 +1008,7 @@ fn delimited_argument_preserves_a_failed_overlapping_prefix() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(
-            processor.macro_call(&mut call).expect("macro call"),
-            MacroCallOutcome::Activated
-        );
+        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
         assert_eq!(active_argument_tokens(processor.command), expected);
         for expected_token in expected {
             assert_eq!(
@@ -993,10 +1089,7 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(
-            processor.macro_call(&mut call).expect("macro call"),
-            MacroCallOutcome::Activated
-        );
+        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
         assert_eq!(
             active_argument_tokens(processor.command),
             [
@@ -1055,10 +1148,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             DeliveryStatus::Command
         );
         let mut long_call = destination.take().expect("long macro command");
-        assert_eq!(
-            processor.macro_call(&mut long_call),
-            Ok(MacroCallOutcome::Activated)
-        );
+        assert_eq!(processor.macro_call(&mut long_call), Ok(true));
         let arguments = processor
             .command
             .input
@@ -1072,7 +1162,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
         let range = processor
             .command
             .scratch
-            .argument_range(arguments.frame(), 1)
+            .argument_range(arguments, 1)
             .expect("live long-macro frame")
             .expect("long macro first argument");
         let facts = processor
@@ -1147,10 +1237,7 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
         );
         let mut call = destination.take().expect("delimited macro command");
 
-        assert_eq!(
-            processor.macro_call(&mut call),
-            Ok(MacroCallOutcome::Activated)
-        );
+        assert_eq!(processor.macro_call(&mut call), Ok(true));
         assert_eq!(
             active_argument_tokens(processor.command),
             [paragraph, letter('x')]
@@ -1168,7 +1255,7 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
         let range = processor
             .command
             .scratch
-            .argument_range(arguments.frame(), 1)
+            .argument_range(arguments, 1)
             .expect("live delimited-macro frame")
             .expect("delimited macro first argument");
         assert!(
@@ -1236,10 +1323,7 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             DeliveryStatus::Command
         );
         let mut alias_call = destination.take().expect("alias argument macro command");
-        assert_eq!(
-            processor.macro_call(&mut alias_call),
-            Ok(MacroCallOutcome::Activated)
-        );
+        assert_eq!(processor.macro_call(&mut alias_call), Ok(true));
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -1357,10 +1441,7 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
                     .get_next()
                     .expect("warm macro delivery")
                     .expect("warm macro command");
-                assert_eq!(
-                    processor.macro_call(&mut call),
-                    Ok(MacroCallOutcome::Activated)
-                );
+                assert_eq!(processor.macro_call(&mut call), Ok(true));
                 assert!(
                     processor
                         .get_x_token()
@@ -1402,10 +1483,7 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             let allocations = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             {
                 let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                assert_eq!(
-                    processor.macro_call(&mut call),
-                    Ok(MacroCallOutcome::Activated)
-                );
+                assert_eq!(processor.macro_call(&mut call), Ok(true));
             }
             let after_allocations =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);

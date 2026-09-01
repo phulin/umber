@@ -6,11 +6,13 @@ use tex_state::macro_definition::MacroParameterPattern;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::execution_scratch::{ArgumentSetId, MacroMatch, MacroWords};
+use crate::execution_scratch::{
+    ArgumentSetId, MacroArgumentWriter, MacroWords, PendingArgumentSet,
+};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
 };
-use crate::token_collector::{ClassifiedToken, TokenCollector};
+use crate::token_collector::ClassifiedToken;
 use crate::{CommandError, CommandProcessor};
 
 use crate::observation::{
@@ -20,80 +22,11 @@ use crate::observation::{
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
 pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
-/// Private descriptor for one sealed at-most-nine-argument scratch slot.
-#[derive(Debug)]
-pub(crate) struct ArgumentSet<G> {
-    frame: ArgumentSetId<G>,
-}
-
-impl<G> Copy for ArgumentSet<G> {}
-
-impl<G> Clone for ArgumentSet<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> PartialEq for ArgumentSet<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.frame == other.frame
-    }
-}
-
-impl<G> Eq for ArgumentSet<G> {}
-
-impl<G> core::hash::Hash for ArgumentSet<G> {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.frame.hash(state);
-    }
-}
-
-/// Exhaustive result of TeX82's `macro_call`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MacroCallOutcome {
-    Activated,
-    PrefixMismatchRecovered,
-}
-
-/// Compact interpretation of a parameter-related replacement token.
-///
-/// `Token::Param` is the canonical compact out-parameter representation.
-/// A literal parameter character reaches a replacement list only through
-/// TeX's `##` escape, and remains an ordinary character during replay.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MacroParameterEscape {
-    OutParameter(u8),
-    EscapedParameter,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct MacroDelimiter<'definition, G> {
     definition: &'definition DefinitionId<G>,
     start: usize,
     len: usize,
-}
-
-impl MacroParameterEscape {
-    pub(crate) const fn classify(token: Token) -> Option<Self> {
-        match token {
-            Token::Param(slot) => Some(Self::OutParameter(slot)),
-            Token::Char {
-                ch: '#',
-                cat: Catcode::Parameter,
-            } => Some(Self::EscapedParameter),
-            _ => None,
-        }
-    }
-}
-
-impl<G> ArgumentSet<G> {
-    pub(crate) const fn new(frame: ArgumentSetId<G>) -> Self {
-        Self { frame }
-    }
-
-    pub(crate) const fn frame(self) -> ArgumentSetId<G> {
-        self.frame
-    }
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -133,7 +66,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn macro_call(
         &mut self,
         call: &mut crate::CurrentCommand<G>,
-    ) -> Result<MacroCallOutcome, CommandError> {
+    ) -> Result<bool, CommandError> {
         let ResolvedMeaning::Macro { flags, definition } = call.meaning_ref() else {
             return Err(CommandError::input_invariant());
         };
@@ -221,7 +154,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .discard_macro_match(matching)
                         .map_err(|_| CommandError::input_invariant())?;
                 }
-                return Ok(MacroCallOutcome::PrefixMismatchRecovered);
+                return Ok(false);
             }
             Err(error) => {
                 if let Some(episode) = episode {
@@ -262,7 +195,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .commit_macro_match(matching.ok_or_else(CommandError::input_invariant)?)
                 .map_err(|_| CommandError::input_invariant())?;
-            Some(ArgumentSet::new(frame))
+            Some(frame)
         };
         let definition_region = self.state.definition_region_lease(definition);
         let _level = self.push_macro_activation(
@@ -297,12 +230,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(episode) = episode {
             self.finish_scanner_episode(episode);
         }
-        Ok(MacroCallOutcome::Activated)
+        Ok(true)
     }
 
     fn macro_call_scalar(
         &mut self,
-        matching: Option<&MacroMatch<G>>,
+        matching: Option<&PendingArgumentSet<G>>,
         macro_name: tex_state::interner::Symbol,
         definition: &DefinitionId<G>,
         flags: MeaningFlags,
@@ -479,10 +412,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
     fn trace_macro_argument(
         &mut self,
-        matching: &MacroMatch<G>,
+        matching: &PendingArgumentSet<G>,
         marker: char,
         parameter: usize,
-        argument: &TokenCollector<G>,
+        argument: &MacroArgumentWriter<G>,
     ) -> Result<(), CommandError> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return Ok(());
@@ -608,7 +541,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn recover_extra_right_brace_argument(
         &mut self,
         command: crate::CurrentCommand<G>,
-    ) -> Result<TokenCollector<G>, CommandError> {
+    ) -> Result<MacroArgumentWriter<G>, CommandError> {
         self.back_input(command)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
@@ -630,10 +563,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_undelimited_argument(
         &mut self,
-        matching: &MacroMatch<G>,
+        matching: &PendingArgumentSet<G>,
         flags: MeaningFlags,
         paragraph_token: Option<TokenWord>,
-    ) -> Result<TokenCollector<G>, CommandError> {
+    ) -> Result<MacroArgumentWriter<G>, CommandError> {
         let mut delivered = None;
         let (first, first_token) = loop {
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
@@ -708,11 +641,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// token catcodes, brace depth, and the recovery splice are semantic here.
     fn scan_delimited_argument(
         &mut self,
-        matching: &MacroMatch<G>,
+        matching: &PendingArgumentSet<G>,
         flags: MeaningFlags,
         delimiter: &MacroDelimiter<'_, G>,
         paragraph_token: Option<TokenWord>,
-    ) -> Result<TokenCollector<G>, CommandError> {
+    ) -> Result<MacroArgumentWriter<G>, CommandError> {
         debug_assert_ne!(delimiter.len, 0);
         let mut tokens = self.allocate_argument_buffer(matching)?;
         self.command
@@ -862,7 +795,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn overlapping_delimiter_prefix(
         &self,
         current: &ClassifiedToken,
-        collector: &TokenCollector<G>,
+        collector: &MacroArgumentWriter<G>,
         delimiter: &MacroDelimiter<'_, G>,
     ) -> Result<usize, CommandError> {
         let prefix_len = self
@@ -901,7 +834,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &crate::CurrentCommand<G>,
         flags: MeaningFlags,
         facts: &ClassifiedToken,
-        partial: Option<(&MacroMatch<G>, &TokenCollector<G>)>,
+        partial: Option<(&PendingArgumentSet<G>, &MacroArgumentWriter<G>)>,
     ) -> Result<(), CommandError> {
         if self.eof_recovered_while_matching && is_paragraph_command(command) {
             // TeX82 §23 calls `check_outer_validity` after source EOF and
@@ -942,8 +875,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn allocate_argument_buffer(
         &mut self,
-        matching: &MacroMatch<G>,
-    ) -> Result<TokenCollector<G>, CommandError> {
+        matching: &PendingArgumentSet<G>,
+    ) -> Result<MacroArgumentWriter<G>, CommandError> {
         let collector = self
             .command
             .scratch
@@ -960,8 +893,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn argument_buffer(
         &self,
-        _matching: &MacroMatch<G>,
-        buffer: &TokenCollector<G>,
+        _matching: &PendingArgumentSet<G>,
+        buffer: &MacroArgumentWriter<G>,
     ) -> Result<MacroWords<'_, G>, CommandError> {
         self.command
             .scratch
@@ -972,7 +905,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline]
     fn settle_argument_token(
         &mut self,
-        buffer: &mut TokenCollector<G>,
+        buffer: &mut MacroArgumentWriter<G>,
         token: ClassifiedToken,
         paragraph_checked: bool,
     ) -> Result<u32, CommandError> {
@@ -990,15 +923,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline]
-    fn match_argument_depth(&self, buffer: &TokenCollector<G>) -> u32 {
+    fn match_argument_depth(&self, buffer: &MacroArgumentWriter<G>) -> u32 {
         crate::execution_scratch::ExecutionScratch::argument_collector_depth(buffer)
     }
 
     fn strip_argument_outer_group(
         &mut self,
-        _matching: &MacroMatch<G>,
-        mut buffer: TokenCollector<G>,
-    ) -> Result<TokenCollector<G>, CommandError> {
+        _matching: &PendingArgumentSet<G>,
+        mut buffer: MacroArgumentWriter<G>,
+    ) -> Result<MacroArgumentWriter<G>, CommandError> {
         if self
             .command
             .scratch
@@ -1007,18 +940,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             .removable_outer_group()
         {
             buffer
-                .strip_argument_outer_group()
+                .strip_outer_group()
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(buffer)
     }
 
-    fn argument_token_count(&self, arguments: ArgumentSet<G>) -> usize {
+    fn argument_token_count(&self, arguments: ArgumentSetId<G>) -> usize {
         (1..=9)
             .filter_map(|slot| {
                 self.command
                     .scratch
-                    .argument_range(arguments.frame(), slot)
+                    .argument_range(arguments, slot)
                     .ok()
                     .flatten()
             })

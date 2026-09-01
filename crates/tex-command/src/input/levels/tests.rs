@@ -243,3 +243,14 @@ fn long_macro_argument_default_matches_new() {
     let mut defaulted = super::LongMacroArgumentCursorBenchmark::<()>::default();
     assert_eq!(defaulted.run(16_390), constructed.run(16_390));
 }
+
+#[test]
+fn resident_macro_cursor_layout_stays_compact_and_wrapper_free() {
+    let resident = std::mem::size_of::<super::ResidentSpanCursor>();
+    let body = std::mem::size_of::<super::MacroBodyCursor<()>>();
+    let argument = std::mem::size_of::<super::MacroArgumentCursor<()>>();
+    eprintln!("resident={resident} body={body} argument={argument}");
+    assert_eq!(resident, 24);
+    assert!(body <= 72, "macro body cursor is {body} bytes");
+    assert!(argument <= 48, "macro argument cursor is {argument} bytes");
+}

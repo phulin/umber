@@ -5,7 +5,7 @@ use crate::CommandState;
 use tex_state::DefinitionId;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
-use crate::macro_call::ArgumentSet;
+use crate::execution_scratch::ArgumentSetId;
 
 use super::{
     CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
@@ -23,7 +23,6 @@ pub(crate) enum ResidentCommandTransition {
     Delivered {
         interception: ResidentCommandInterception,
     },
-    ParameterPushed(InputLevelId),
     InvalidCharacter,
     NeedLine(InputLevelId),
     SourceExhausted(InputLevelId),
@@ -153,7 +152,7 @@ pub(super) enum RetiredInputLevel<G> {
     },
     MacroBody {
         identity: InputLevelId,
-        arguments: Option<ArgumentSet<G>>,
+        arguments: Option<ArgumentSetId<G>>,
     },
 }
 
@@ -436,13 +435,13 @@ impl<G> CommandState<G> {
         {
             let parameter_count = arguments.map_or(0, |arguments| {
                 self.scratch
-                    .argument_count(arguments.frame())
+                    .argument_count(arguments)
                     .expect("live macro argument set")
             });
             self.input.levels.retire_macro_body(parameter_count);
             if let Some(arguments) = arguments {
                 self.scratch
-                    .release_argument_set(arguments.frame())
+                    .release_argument_set(arguments)
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
             }
             return Ok(Some(InputRetirement {
@@ -541,13 +540,13 @@ impl<G> CommandState<G> {
         name: tex_state::interner::Symbol,
         definition: DefinitionId<G>,
         definition_region: tex_state::DefinitionRegionLease<G>,
-        arguments: Option<ArgumentSet<G>>,
+        arguments: Option<ArgumentSetId<G>>,
         invocation: OriginId,
         replacement_len: usize,
     ) -> InputLevelId {
         let parameter_count = arguments.map_or(0, |arguments| {
             self.scratch
-                .argument_count(arguments.frame())
+                .argument_count(arguments)
                 .expect("live macro argument set")
         });
         let parameter_ptr = self
@@ -689,13 +688,13 @@ impl<G> CommandState<G> {
             };
             let parameter_count = arguments.map_or(0, |arguments| {
                 self.scratch
-                    .argument_count(arguments.frame())
+                    .argument_count(arguments)
                     .expect("live macro argument set")
             });
             self.input.levels.retire_macro_body(parameter_count);
             if let Some(arguments) = arguments {
                 self.scratch
-                    .release_argument_set(arguments.frame())
+                    .release_argument_set(arguments)
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
             }
             return Ok(InputRetirement {
@@ -834,13 +833,13 @@ impl<G> CommandState<G> {
         {
             let parameter_count = arguments.map_or(0, |arguments| {
                 self.scratch
-                    .argument_count(arguments.frame())
+                    .argument_count(arguments)
                     .expect("final cleanup owns the live argument set")
             });
             self.input.levels.retire_macro_body(parameter_count);
             if let Some(arguments) = arguments {
                 self.scratch
-                    .release_argument_set(arguments.frame())
+                    .release_argument_set(arguments)
                     .expect("final cleanup retires the live argument set");
             }
             return Some(InputRetirement {
