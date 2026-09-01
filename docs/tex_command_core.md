@@ -1979,7 +1979,7 @@ enum PackedTokenSpanHandle {
 struct MacroBodyCursor {
     definition: DefinitionId,
     definition_region: DefinitionRegionLease,
-    arguments: Option<ArgumentSet>,
+    arguments: Option<ArgumentSetId>,
     name: Symbol,
     invocation: OriginId,
     frame: ResidentSpanCursor,
@@ -2012,11 +2012,12 @@ enum RetirementBehavior {
 The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
 for generic token lists. `MacroBodyCursor` and `MacroArgumentCursor` do not
 wrap it: each stores a 24-byte `ResidentSpanCursor` with only identity, bounds,
-position, and optional source coordinates. The body row is the macro call. It
-stores the eight-byte non-owning definition coordinate, and it is also the
-only invocation-side lease for a local definition region. Format and
+position, and optional source coordinates. On the supported 64-bit host the
+complete body cursor is 64 bytes and the argument cursor is 48 bytes. The body
+row is the macro call. It stores the eight-byte non-owning definition
+coordinate, and it is also the only invocation-side lease for a local definition region. Format and
 revision-global definitions admit a no-op lease. Only parameterized macros
-store an `ArgumentSet`; parameterless macros allocate and push only the body
+store an `ArgumentSetId`; parameterless macros allocate and push only the body
 row.
 
 The argument cursor locates its opening provenance run once at admission and
@@ -2029,13 +2030,19 @@ active input rows.
 Every ordinary token-list source is adapted once at level creation into a
 `PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
 instead borrows a `DefinitionView` synchronously, records its compact
-`DefinitionId`, and pushes the specialized body row. Body delivery borrows the
-same immutable replacement span directly. It intercepts `Token::Param` before
-materializing a `CurrentCommand` and pushes a specialized argument row over
-the sealed fixed-block range. Neither path clones a definition/token-list
-owner or copies token words. The semantic lane stores four-byte `TokenWord`
-values; exact provenance occupies coordinate-change runs alongside the lane,
-not a twelve-byte value for every captured token.
+`DefinitionId`, existing coarse region lease, and opaque replacement cursor,
+then pushes the specialized body row. Resident selection yields that bare
+cursor, creates checkpoint state only on a real first touch, reads one packed
+word, and increments one scalar position. It tests `Token::Param` before the
+final `CurrentCommand` write; a parameter pushes its already-admitted argument
+cursor and continues in the same loop. Otherwise the sole packed resolver
+writes the reusable destination with at most one dense control-sequence
+lookup. The current key-to-word read is the narrow stable coarse-storage seam:
+it must become an opaque cursor operation without exposing coordinates or
+adding definition ownership. Neither path clones an owner or copies token
+words. The semantic lane stores four-byte `TokenWord` values; exact provenance
+occupies coordinate-change runs alongside the lane, not a twelve-byte value
+for every captured token.
 
 `CommandState::push_input_level` is the single live source/token frame
 transition. It updates TeX82's `max_in_stack` scalar on the singular live
@@ -2106,7 +2113,7 @@ coordinates.
 
 The implemented ownership model has no macro activation chain. A specialized
 `MacroBody` input row is the complete live-call record: an 8-byte non-owning
-definition coordinate, optional local-region lease, optional `ArgumentSet`,
+definition coordinate, optional local-region lease, optional `ArgumentSetId`,
 name, invocation origin, and compact replacement cursor. Parameterless macros
 publish only this row. `InputLevelId` is typed separately from source identity
 and is present on source, stored-token, macro-body, and argument rows.
@@ -2190,7 +2197,7 @@ classification but does not acquire the ordinary paragraph-check fact. The
 scalar matcher keeps each completed raw delivery's canonical packed spelling
 resident and projects its literal category directly; it never reconstructs a
 second semantic token or consults resolved meaning for this grammar. Its admitted
-`MacroMatchWriter` then performs the sole accepted-token transition: it appends
+`MacroArgumentWriter` then performs the sole accepted-token transition: it appends
 the exact traced word, accepts the lane's returned cursor, and updates paragraph,
 brace-depth, and removable-outer-group aggregates under the same scratch
 borrow. Delimiter-prefix storage retains that classification beside the word,
