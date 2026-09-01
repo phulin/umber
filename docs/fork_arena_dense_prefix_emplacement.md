@@ -3,44 +3,55 @@
 Status: proposed low-level storage design; production unsafe code is not
 approved.
 
-Issue: `umber2-66p0.8.40.113`.
+Parent issue: `umber2-66p0.8.40.113`. Superblock revision:
+`umber2-66p0.8.40.113.3`.
 
 ## Decision requested
 
-Approve or reject one isolated unsafe storage crate below the safe engine
-crates. The proposed crate owns typed physical pages as dense initialized
-prefixes and exposes only safe emplacement, lookup, truncation, and retirement
-operations. `tex-state`, `tex-exec`, and `tex-incr` remain safe Rust.
+Approve or reject a measured implementation branch for one repository-owned
+low-level crate named `tex-dense-prefix`. That crate would be the only runtime
+crate allowed to use unsafe code. It would own typed, generation-local
+superblocks, perform one coarse combined header-and-payload allocation per
+eight dense pages, and expose only safe pool, emplacement, lookup, truncation,
+release, and retirement operations. `tex-state`, `tex-exec`, `tex-incr`, and
+every other engine crate remain safe Rust and cannot receive a raw pointer,
+`MaybeUninit<T>`, unchecked page coordinate, or deallocation capability.
 
-Approval authorizes a measured implementation branch, not an automatic merge.
-Production adoption still requires focused lifetime gates, Miri and sanitizer
-checks, the complete routine suite, and one exact whole-run `memcpy`/`memmove`
-and allocation census. Rejection leaves the current `Option<T>` storage in
-place; the safe `Vec<T>` and compact-node alternatives do not meet the present
-no-shift criterion.
+This is a narrow requested exception to the current prohibition on unsafe code
+in [Runtime storage lifetimes](runtime_storage_lifetimes.md). Approval
+authorizes an isolated implementation and measurement branch only. It does not
+approve production adoption or amend that normative contract by itself.
+Production adoption still requires a second explicit approval after code
+review, Miri and sanitizer gates, semantic and panic/drop gates, the routine
+suite, and one authenticated whole-run allocation and public-copy census.
+
+The precise requested response is either **approve the measured
+`tex-dense-prefix` superblock branch** or **reject the unsafe superblock
+substrate**. Rejection retains the current `Option<T>` page storage. It does
+not authorize the per-page `Box`, ordinary `Vec<T>`, or compact-node
+alternatives described below.
 
 ## Semantic ownership and physical storage are separate
 
-`ForkArena<T, Lane>` is the semantic owner. It defines arena identity, stable
-chunk keys, slot generations, at most two lineages, list predecessor links,
-sealed boundaries, checkpoint marks, dependency floors, optional semantic
-summaries, and accepted-versus-candidate settlement. None of those rules
-depends on how initialized values are represented inside a physical page.
+`ForkArena<T, Lane>` remains the semantic owner. It defines arena and region
+identity, stable chunk keys, slot generations, at most two lineages, list
+predecessor links, sealed boundaries, checkpoint marks, dependency floors,
+semantic summaries, and accepted-versus-candidate settlement.
 
-`ChunkStorage<T>` is the physical owner. It maps a validated chunk key and
-offset to a resident `T`, allocates coarse pages, and returns released chunk
-slots to a free list. The current implementation stores every physical slot as
-`Option<T>`. That is unnecessary occupancy metadata: every live logical chunk
-already has a dense initialized prefix `0..used`, and no operation creates an
-interior hole.
+`GenerationChunkStorage<T>` is the physical owner below that facade. It maps a
+validated chunk key and offset to a resident `T`, grows coarse typed storage,
+and returns released chunk slots to reuse. The current implementation stores
+every physical slot as `Option<T>`. That duplicates vacancy state: every live
+logical chunk already has exactly one dense initialized prefix `0..used`, and
+no operation creates an interior hole.
 
-The proposed change replaces only this physical representation. Fork-arena
-coordinates, list topology, lineage rules, node-region ownership, and
-checkpoint ordering do not change. A `Vec<T>` prototype likewise replaced the
-slot array inside `ChunkStorage`; it did not replace `ForkArena` or its
-ownership model.
+The proposed change replaces only that physical representation. Fork-arena
+coordinates, list topology, node-region ownership, lineage rules, rollback,
+page succession, checkpoint ordering, and output identity do not change. A
+sealed prefix is shared by lineage metadata in `ForkArena`, not by sharing an
+allocation owner.
 
-## Concrete production uses
+## Current payloads and allocation frequency
 
 There are four production payload instantiations:
 
@@ -51,19 +62,38 @@ There are four production payload instantiations:
 | `CheckpointDelta<GenerationBrand>` |             64 bytes | Dense state checkpoint journal          | Append first-write alternates; settle or retire a suffix          |
 | `PreparedDviPage`                  |            296 bytes | Accepted/candidate output ledger        | Append per shipout; accept, reject, or retire a suffix            |
 
-All four use the same `ChunkStorage<T>`, the same per-slot `Option<T>`, and the
-same `release_lineage` assignment to `None`. None has an interior-removal API.
-The empty legacy descriptor lane is `ChunkStorage<()>`; it stores no topology,
-never allocates a page, and remains a zero-work instantiation until its
-always-zero checkpoint coordinates are deleted.
+All four use `ChunkStorage<T>`, the same per-slot `Option<T>`, and the same
+last-lineage assignment to `None`. None has an interior-removal API. The empty
+legacy descriptor lane is `ChunkStorage<()>`; it stores no topology, never
+requests a chunk, and therefore never grows physical storage.
 
-The node instantiation dominates the known cost. The exact named release site
+The current source has a 512-byte logical chunk budget and sixteen chunks per
+boxed page. `add_page` performs one `Box<[Option<T>]>` payload allocation each
+time the free-chunk stack is empty. The page directory, `ChunkMeta` vector, and
+free stack also reallocate geometrically when their capacities are exhausted.
+For the measured layouts, the exact static payload-allocation frequency is:
+
+| Payload           | Slots/chunk | Slots/page | Current payload/page | One current payload allocation per |
+| ----------------- | ----------: | ---------: | -------------------: | ---------------------------------: |
+| `Node`            |           3 |         48 |          8,064 bytes |                48 fresh values max |
+| `PageInverse`     |           2 |         32 |          5,888 bytes |                32 fresh values max |
+| `CheckpointDelta` |           8 |        128 |          8,192 bytes |               128 fresh values max |
+| `PreparedDviPage` |           1 |         16 |          4,736 bytes |                16 fresh values max |
+
+Reuse can make the interval longer: all sixteen released chunks are consumed
+before `add_page` runs again. No authenticated whole-run artifact recorded the
+dynamic `add_page` or allocator-call count, so this design does not invent one
+from the 3,143,705 release calls. The implementation census must publish
+current page allocations, high-water pages, directory reallocations, and
+requested bytes before comparing the replacement.
+
+The node instantiation dominates the known release cost. The exact named site
 performed 3,143,705 168-byte `memcpy` calls, or 528,142,440 bytes. A comparable
 recording attributed all `ChunkStorage::release_lineage` instantiations and
 call sites together at 3,267,259 calls and 548,913,464 bytes. The saved report
 does not split the remaining 123,554 calls and 20,771,024 bytes by generic
-instantiation, so this design does not assign them to a payload without a new
-symbol census.
+instantiation, so this design assigns them to no payload without a new symbol
+census.
 
 ## Why `Node` is 168 bytes
 
@@ -72,11 +102,10 @@ symbol census.
 enum discriminant and padding make every `Node` slot 168 bytes, even for a
 small `Penalty` or `Char`.
 
-`MathChoice` contains four 40-byte `PageListId` fields: `display`, `text`,
-`script`, and `script_script`. `MathNoad` contains a 12-byte `NoadKind` plus
-three 48-byte `MathField<PageListId>` values named `nucleus`, `subscript`, and
-`superscript`. A math field can be empty, a math character, a text math
-character, a sub-box handle, or a sub-mlist handle.
+`MathChoice` contains four 40-byte `PageListId` fields. `MathNoad` contains a
+12-byte `NoadKind` plus three 48-byte `MathField<PageListId>` values. A math
+field can be empty, a math character, a text math character, a sub-box handle,
+or a sub-mlist handle.
 
 `PageListId` contains a 32-byte `ArenaListId<PageMaterialLane>` and an 8-byte
 optional nonzero semantic identity. The arena id contains `arena: u32`, head
@@ -88,221 +117,352 @@ Other measured payload sizes are 128 bytes for `LeaderPayload`, 120 for
 48 for both `MathListNode` and `AdjustNode`. These sizes explain why moving a
 complete node is expensive; they do not justify a second node representation.
 
-## Generation-owned typed superblocks
+## Selected superblock geometry
 
-The existing physical page is the proposed typed superblock. It contains
-sixteen fixed logical chunks. A generation owns a directory of these
-superblocks plus its chunk metadata and free-chunk stack:
+One dense page retains the existing sixteen logical chunks. One typed
+superblock contains exactly eight dense pages, or 128 logical chunks. Eight is
+a fixed power-of-two mapping, increases capacity per payload allocator call by
+exactly 8x, and puts the two widest common pools near 64 KiB without making
+allocator or WebAssembly page size semantic. If the current high-water mark is
+`P` dense pages, the proposed payload-call count is exactly `ceil(P / 8)`
+rather than `P`; the realized reduction approaches 8x and is smaller for a
+partially used final block.
 
-```rust
-struct GenerationChunkStorage<T> {
-    pages: Vec<DensePrefixPage<T>>,
-    chunks: Vec<ChunkMeta>,
-    free: Vec<u32>,
-}
-```
-
-The directory may move its small page headers when it grows; resident `T`
-values remain in the page's stable boxed allocation. No node or other payload
-moves when the directory grows.
-
-For a configured logical `chunk_bytes`, the geometry is:
+For a configured `chunk_bytes`, the geometry is:
 
 ```text
-slots_per_chunk = max(1, chunk_bytes / max(1, size_of::<T>()))
-slots_per_page  = 16 * slots_per_chunk
-payload_bytes   = slots_per_page * size_of::<T>()
-alignment       = align_of::<T>()
+slots_per_chunk      = max(1, chunk_bytes / max(1, size_of::<T>()))
+slots_per_dense_page = 16 * slots_per_chunk
+slots_per_superblock = 8 * slots_per_dense_page
+page_payload_bytes   = slots_per_dense_page * size_of::<T>()
+block_payload_bytes  = slots_per_superblock * size_of::<T>()
+allocation_alignment = max(align_of::<SuperblockHeader>(), align_of::<T>())
+payload_offset       = align_up(size_of::<SuperblockHeader>(), align_of::<T>())
+allocation_bytes     = payload_offset + block_payload_bytes
 ```
 
-The default node pool uses a 512-byte logical chunk. A 168-byte node therefore
-gives three nodes per logical chunk, 48 nodes per physical page, and 8,064
-payload bytes per page at 8-byte alignment. The current `ChunkMeta` is 96
-bytes, so its sixteen rows occupy 1,536 bytes per page. Prefix lengths move out
-of those rows into one 64-byte page array; `used` is deleted from `ChunkMeta`
-rather than duplicated. The exact post-layout metadata size is a compile-time
-budget gate, not an assumed saving.
+The fixed header contains 128 `u32` initialized-prefix lengths and eight `u8`
+live-chunk counts, exactly 520 bytes at four-byte alignment. `Layout::extend`
+or an equivalent checked composition determines any padding before `T`; no
+hand-written alignment formula is trusted by the implementation. The four
+measured payloads are eight-byte aligned, giving this x86-64 geometry:
 
-At the same 512-byte setting, the expected dense payload geometry is two
-184-byte page inverses per logical chunk and 5,888 bytes per page; eight
-64-byte checkpoint deltas and 8,192 bytes per page; and one 296-byte prepared
-page and 4,736 bytes per page. The zero-sized descriptor lane allocates no
-page. These are payload bytes; allocator-private headers are not observable.
+| Payload           | Page payload | Superblock payload | Header | Combined coarse allocation | Values/superblock |
+| ----------------- | -----------: | -----------------: | -----: | -------------------------: | ----------------: |
+| `Node`            |  8,064 bytes |       64,512 bytes |    520 |               65,032 bytes |               384 |
+| `PageInverse`     |  5,888 bytes |       47,104 bytes |    520 |               47,624 bytes |               256 |
+| `CheckpointDelta` |  8,192 bytes |       65,536 bytes |    520 |               66,056 bytes |             1,024 |
+| `PreparedDviPage` |  4,736 bytes |       37,888 bytes |    520 |               38,408 bytes |               128 |
 
-Each new physical page performs exactly one boxed payload allocation. The
-page directory and chunk/free metadata vectors retain their existing amortized
-growth allocations. The engine performs no direct operating-system allocation
-or `mmap`; whether the global allocator obtains a fresh OS mapping is outside
-the storage contract. Within one page, allocating or reusing any of its sixteen
-logical chunks performs no heap or OS allocation.
+Thus one node superblock adds capacity for 384 values instead of the 48 added
+by one current page; the corresponding capacity quanta are 256 instead of 32,
+1,024 instead of 128, and 128 instead of 16 for the other three payloads.
+Released chunks are still reused first.
 
-Released logical chunks return to the generation's free stack. Their physical
-page remains at the generation's high-water mark and is reused before another
-page is allocated. A page allocation is returned only when the complete typed
-generation owner drops. This preserves current allocation behavior and avoids
-turning lineage retirement into allocator traffic.
+The stable combined allocation contains prefix metadata and payload. Semantic
+`ChunkMeta` rows remain in the generation directory because arena, lineage,
+predecessor, summary, and dependency facts are not physical page facts. The
+current measured row is 96 bytes. `used` moves exclusively into the prefix
+header; no duplicate length remains. Because deleting that field may be
+absorbed by layout padding, the migration requires `size_of::<ChunkMeta>() <=
+96`, not an assumed saving. At that budget each dense page has at most 1,536
+bytes of semantic chunk metadata; one superblock has at most 12,288 bytes.
+The free stack reserves 128 `u32` entries, or 512 bytes, per published
+superblock. The movable directory owner is limited by a compile-time 32-byte
+budget and contains only the allocation pointer and checked layout facts.
 
-A larger multi-page slab is not part of this proposal. It could reduce page
-allocation calls but would increase minimum retention, complicate exact page
-drop, and change the allocation census independently of the vacancy problem.
+## Growth, fragmentation, and retained RSS
 
-## `DensePrefixPage<T>`
+Superblock growth is a transaction. It first checks all `usize` and `u32`
+geometry, reserves directory, 128 chunk rows, and 128 free-stack entries, then
+performs the one combined superblock allocation. Only after the header is
+initialized does it publish the directory entry, chunk rows, and free keys.
+Any fallible reserve or layout error leaves the pool unchanged; the unpublished
+owner deallocates its uninitialized block on unwind.
 
-The low-level crate owns this representation:
+The retained coarse heap operations are named explicitly:
+
+- one combined `SuperblockHeader + [MaybeUninit<T>]` allocation for each eight
+  new dense pages at a typed pool's high-water mark;
+- amortized geometric reallocation of the superblock-owner directory;
+- amortized geometric reallocation of semantic `ChunkMeta` rows; and
+- amortized geometric reallocation of the pre-reserved free-key stack.
+
+There is no per-node, per-chunk, or per-page allocator call. Directory growth
+moves pointer-sized owners and semantic metadata but never a payload, header,
+or page. Whether the global allocator obtains or returns an operating-system
+mapping is outside the storage contract.
+
+Internal fragmentation has three separately measured sources:
+
+1. A live partial logical chunk wastes at most
+   `slots_per_chunk - 1` value slots. The default node bound is two slots or
+   336 bytes per partial chunk. Sealed tail slack continues to be reported by
+   `unused_sealed_bytes`.
+2. Eight-page growth can reserve up to seven wholly unused dense pages at the
+   tail. The exact one-superblock bounds are 56,448 node bytes, 41,216
+   `PageInverse` bytes, 57,344 delta bytes, and 33,152 prepared-page bytes.
+3. A pool that shrinks after a peak may retain any completely free pages below
+   its high-water mark. The free stack makes all of them reusable before the
+   next grow; they are capacity, not live payload.
+
+Exactly two live revision generations bound item 2 to less than two
+superblock payloads across corresponding typed pools, at most one tail in each
+slot. A checkpoint fork is tighter: it lends the accepted physical pool into
+the candidate under the aggregate transaction, so those two semantic lineages
+share one pool and one tail quantum. The bound does not cover legitimate
+accepted-history payload or a workload's earlier high-water capacity. On
+checkpoint rejection the lent pool returns to the accepted slot before the
+candidate shell drops. An independently materialized candidate drops its own
+pool on rejection. Acceptance drops the superseded prior slot after aggregate
+settlement and retains the current pool under its new accepted role.
+Whole-generation drop returns every still-owned superblock to the global
+allocator.
+
+On native targets, allocator retention can keep freed virtual or resident
+pages in its cache, so semantic deallocation does not promise an immediate RSS
+decrease. On `wasm32`, linear memory normally cannot shrink; dropped blocks
+return to the Rust allocator for reuse but the host-visible memory high-water
+may remain. The gate therefore records logical live bytes, reusable capacity,
+requested allocation bytes, allocator calls, and process/linear-memory
+high-water separately.
+
+The design uses `std::alloc::Layout` and the target global allocator. It uses
+no `mmap`, native page-size query, virtual-memory reservation, pointer-width
+cast, or assumption that a 64 KiB payload causes exactly one WebAssembly
+`memory.grow`. Every size and offset is checked in target `usize` and every
+published page/chunk coordinate is checked against the `u32` handle domain.
+Zero-sized and over-aligned test payloads have explicit gates. The unused
+`ChunkStorage<()>` lane still performs no allocation because it never requests
+a chunk.
+
+## Stable pages and safe engine handles
+
+The superblock is the combined allocation, not its small directory owner.
+Once allocated, its address and layout never change. A directory `Vec` may
+move its 32-byte owners, but each owner still points to the same allocation.
+Dense page `p` is the immutable slot interval
+`p * slots_per_dense_page..(p + 1) * slots_per_dense_page` inside that
+allocation. A superblock never reallocates to grow; growth always appends a
+new allocation.
+
+Existing `RawChunkKey { slot, generation }` remains the engine coordinate. Its
+checked physical mapping is:
+
+```text
+dense_page       = slot / 16
+chunk_in_page    = slot % 16
+superblock       = dense_page / 8
+page_in_block    = dense_page % 8
+slot_in_block    = ((page_in_block * 16 + chunk_in_page) * slots_per_chunk)
+                   + offset
+```
+
+No raw address is stored in a handle. Directory relocation therefore cannot
+invalidate a coordinate, and superblock growth cannot move a resident value.
+Every lookup first validates pool owner, arena owner, chunk-slot generation,
+lineage admission, live state, and offset. Slot-generation increment on final
+release prevents ABA reuse. Generation exhaustion retires that physical chunk
+permanently rather than wrapping and aliasing a stale key.
+
+All returned references are ordinary borrows tied to the safe pool facade.
+The low-level pool requires an offset below the private initialized prefix for
+`&T` or `&mut T`; its exclusive mutable borrow proves Rust aliasing. The safe
+`ChunkStorage` facade additionally validates the sole live lineage and an
+exclusive unsealed tail before requesting mutation or emplacement. It exposes
+no mutation operation for a shared sealed chunk. A mutable pool borrow needed
+for growth, truncation, or release excludes every outstanding resident
+reference, so directory movement and destruction cannot race a borrow.
+
+## Exactly two generations and bounded lineage sharing
+
+The runtime permits one accepted/prior revision generation and one
+candidate/current revision generation. It never creates a second candidate or
+a history-owned third generation. At rest the accepted aggregate exclusively
+owns its typed pools. Beginning a checkpoint fork consumes the accepted
+region/history authority and lends the same move-only pool into the candidate
+slot under one aggregate transaction; the prior slot keeps no independently
+usable pool owner. While the two semantic lineage views exist, the candidate
+holds the sole physical owner and the transaction controls its disposition.
+Rejection returns that owner before the candidate shell retires; acceptance
+keeps it in the candidate that becomes accepted. Consequently no superblock,
+page, or chunk needs `Rc`, `Arc`, a weak reference, or an independent drop
+callback.
+
+Inside a forked arena, one sealed physical chunk may have at most two lineage
+entries. The accepted and current lineages name the same `RawChunkKey` and
+initialized prefix. Neither may append to that shared chunk. Candidate values
+go only to private current tail chunks. Dropping one lineage changes only the
+two-entry `ChunkMeta::lineages`; it neither changes a prefix length nor drops a
+value. Dropping the last lineage releases the chunk.
+
+Retained checkpoint marks name sealed whole-chunk boundaries. Operation marks
+may additionally name the initialized length of the one exclusive partial
+tail. Rollback validates all roots and marks before mutation, restores semantic
+owners, truncates the private tail, releases private whole chunks, and
+reattaches the detached accepted suffix. Acceptance removes roots for the
+superseded suffix, releases its last lineages, and promotes current metadata.
+The page pool performs only the requested physical truncations and releases.
+
+Page succession follows the same ownership rule. A self-contained sealed
+successor suffix takes the second lineage slot without relocating values. An
+interleaved prefix still uses the existing explicit structural-copy fallback.
+Superblocks do not carry semantic lineage counts: the pool owner keeps the
+allocation alive, and the per-chunk bounded lineage rows determine whether a
+prefix is initialized.
+
+## Released-page reuse
+
+Final lineage release is one guarded transition:
+
+1. Preflight validates the arena, lineage, roots, chunk generation, and complete
+   prefix without mutation.
+2. The semantic owner removes the last root, marks the chunk non-live, clears
+   both lineage slots, and advances or permanently exhausts its generation.
+3. The page header sets the chunk's initialized length to zero before running
+   a destructor and decrements that page's live-chunk count.
+4. A range guard drops each former prefix value exactly once. It advances
+   before each destructor, so unwind never retries the panicking value and
+   continues through the rest.
+5. After complete destruction, or from the guard during unwind, the chunk key
+   is pushed onto the already-reserved free stack if its generation remains
+   reusable.
+
+Because growth reserves one free entry for every published chunk, the final
+push does not allocate. A page whose live-chunk count reaches zero is a
+released dense page. Its sixteen keys are already on the free stack and are
+admitted before growth; the allocation and page index remain unchanged. Reuse
+checks zero prefixes, mints only the already-advanced chunk generation, and
+never exposes bytes from the former incarnation.
+
+A superblock is never individually compacted, moved, or partially deallocated.
+It remains at the typed generation's high-water mark until whole-generation
+drop. This makes release and reuse allocator-free and prevents a dangling page
+index even when every page in the block is temporarily free.
+
+## Isolated safe API and unsafe proof surface
+
+`DensePrefixPage<T>` changes from an owning boxed page into a borrowed checked
+view of one page inside `DensePrefixPool<T>`. Only the pool owns
+`DensePrefixSuperblock<T>` and its allocation:
 
 ```rust
-pub struct DensePrefixPage<T> {
-    slots: Box<[MaybeUninit<T>]>,
-    initialized: [u32; 16],
-    slots_per_chunk: NonZeroU32,
+pub struct DensePrefixPool<T> { /* private typed superblocks */ }
+pub struct DensePageKey { /* checked block and page indices */ }
+pub struct DensePrefixPageRef<'pool, T> { /* shared checked view */ }
+pub struct DensePrefixPageMut<'pool, T> { /* exclusive checked view */ }
+
+impl<T> DensePrefixPool<T> {
+    pub fn grow_superblock(&mut self) -> Result<(), DensePoolError>;
+    pub fn page(&self, key: DensePageKey) -> Option<DensePrefixPageRef<'_, T>>;
+    pub fn page_mut(
+        &mut self,
+        key: DensePageKey,
+    ) -> Option<DensePrefixPageMut<'_, T>>;
+}
+
+impl<T> DensePrefixPageRef<'_, T> {
+    pub fn capacity(&self) -> u32;
+    pub fn initialized(&self, chunk: PageChunk) -> u32;
+    pub fn get(&self, chunk: PageChunk, offset: u32) -> Option<&T>;
+}
+
+impl<T> DensePrefixPageMut<'_, T> {
+    pub fn capacity(&self) -> u32;
+    pub fn initialized(&self, chunk: PageChunk) -> u32;
+    pub fn get(&self, chunk: PageChunk, offset: u32) -> Option<&T>;
+    pub fn get_mut(&mut self, chunk: PageChunk, offset: u32) -> Option<&mut T>;
+    pub fn emplace_with(
+        &mut self,
+        chunk: PageChunk,
+        initialize: impl for<'slot> FnOnce(VacantEntry<'slot, T>)
+            -> InitializedEntry<'slot, T>,
+    ) -> &mut T;
+    pub fn truncate(&mut self, chunk: PageChunk, new_len: u32);
+    pub fn clear(&mut self, chunk: PageChunk);
 }
 ```
 
-The invariant is exact: for chunk `c`, only
-`c * slots_per_chunk .. c * slots_per_chunk + initialized[c]` contains valid
-`T` values. Every later slot in that chunk is uninitialized. Each length is at
-most `slots_per_chunk`. The sixteen ranges are disjoint. There is no per-value
-tag, bitmap, `Option<T>`, spare value, or interior vacancy.
+`DensePageKey` and `PageChunk` have private constructors and checked ranges.
+The page-view mutation methods are internal to the low-level crate's safe
+adapter; engine crates see only the higher `ChunkStorage` facade that performs
+arena, generation, and lineage validation.
+`VacantEntry` exposes no pointer or `MaybeUninit`. Its only consuming operation
+is `write(value: T) -> InitializedEntry<T>`. `emplace_with` increments the
+prefix only after the closure returns that initialized guard, then disarms it
+and returns the resident reference. Engine code remains safe and writes a
+producer result directly into its final slot.
 
-The safe facade is deliberately small:
+The low-level crate's reviewed unsafe operations are exactly:
 
-```rust
-pub fn capacity(&self) -> u32;
-pub fn initialized(&self, chunk: PageChunk) -> u32;
-pub fn get(&self, chunk: PageChunk, offset: u32) -> Option<&T>;
-pub fn get_mut(&mut self, chunk: PageChunk, offset: u32) -> Option<&mut T>;
-pub fn emplace_with(
-    &mut self,
-    chunk: PageChunk,
-    initialize: impl for<'slot> FnOnce(VacantEntry<'slot, T>)
-        -> InitializedEntry<'slot, T>,
-) -> &mut T;
-pub fn truncate(&mut self, chunk: PageChunk, new_len: u32);
-pub fn clear(&mut self, chunk: PageChunk);
-```
+1. allocate and deallocate the checked combined header/payload `Layout`;
+2. initialize and access the header at the allocation's aligned base;
+3. derive one slot pointer from checked block, page, chunk, and offset
+   arithmetic;
+4. create `&T` or `&mut T` only for a slot below the checked initialized
+   prefix;
+5. write one vacant `T` and commit its prefix through the type-state guard; and
+6. drop initialized values in place during truncate, final release, and
+   whole-superblock retirement.
 
-`PageChunk` is a checked value in `0..16`. `VacantEntry` exposes no pointer or
-`MaybeUninit`; its sole consuming method is
-`write(value: T) -> InitializedEntry<T>`. The initialized entry is an unwind
-guard. `emplace_with` increments the prefix only after the closure returns the
-guard, then disarms it and returns the resident reference. Engine code writes
-`entry.write(Node::Penalty(value))` or clones an admitted source directly at
-that boundary. No complete temporary is stored in the arena facade, and no
-whole-`T` vacancy representation is written.
-
-Stable Rust 1.93 has no fully safe equivalent. `Vec::spare_capacity_mut`
-permits a safe `MaybeUninit::write`, but committing the new length requires
-unsafe `Vec::set_len`. Both `Vec::push_mut` and `push_within_capacity` remain
-unstable on this toolchain. `Vec::push`, `extend`, and `resize_with` all moved
-whole nodes in the measured prototypes.
-
-## Smallest unsafe boundary
-
-The recommended boundary is a new workspace crate used below `tex-state`, not
-unsafe code inside an engine crate and not a general allocator framework. It
-contains no TeX, list, lineage, checkpoint, or generation semantics. Its crate
-root denies unsafe operations inside unsafe functions unless each operation is
-inside an explicit reviewed block.
-
-The required unsafe operations are:
-
-1. Convert a slot below the checked initialized prefix to `&T` or `&mut T`.
-2. Drop one initialized slot in place during truncation.
-3. Continue dropping the remainder of a shortened range from an unwind guard.
-4. Drop all initialized ranges when the page owner drops.
-
-Allocation itself remains safe through `Box::new_uninit_slice`; no raw
-allocator call, custom layout, pointer arithmetic allocation, or manual
-deallocation is required. `MaybeUninit::write` is safe. The unsafe code only
-asserts initialization already represented by the private prefix lengths and
-performs in-place access or destruction.
+The crate root denies unsafe operations inside unsafe functions unless each
+operation appears in an explicit documented block. It contains no TeX,
+ForkArena, region, lineage, checkpoint, generation-settlement, or output
+semantics.
 
 The proof obligations are:
 
-- the boxed slice has `T`'s size and alignment because `Box` created it;
-- all index arithmetic is checked before borrowing the slice;
-- only `emplace_with` can increase a prefix, and it does so by exactly one
-  after successful initialization;
-- only `truncate`, `clear`, and page drop decrease a prefix;
-- a mutable page borrow excludes every shared value borrow and every other
-  mutable operation;
-- no raw pointer, slot reference, vacant entry, or initialized guard escapes
-  its page borrow;
-- a value is dropped exactly once after its prefix length no longer includes
-  it; and
-- zero-sized and over-aligned `T` values obey the same index and lifetime
-  rules, with the descriptor lane retaining its no-allocation fast path.
+- layout composition proves header and every `T` slot size and alignment;
+- all multiplication, addition, pointer-offset, and coordinate conversions are
+  checked before allocation or access;
+- only `emplace_with` increases a prefix, by one and only after successful
+  initialization;
+- only `truncate`, final release, and owner drop decrease a prefix;
+- all page ranges, chunk ranges, and initialized prefixes are disjoint and
+  bounded;
+- a mutable page borrow excludes every shared resident borrow and other
+  mutation;
+- no raw pointer, slot reference, vacant entry, initialized guard, or page view
+  escapes its pool borrow;
+- a value is dropped exactly once after its prefix no longer includes it;
+- a superblock deallocates only after every nonzero prefix has been drained;
+  and
+- zero-sized and over-aligned `T` values preserve logical write/drop counts and
+  target alignment.
 
-Generation and stale-handle validation stay outside this crate. `ForkArena`
-must validate pool owner, arena owner, chunk slot generation, lineage, and
-offset before asking the page for a reference. The low-level crate cannot mint
-or accept an arena coordinate, so it cannot weaken stale-key rejection.
+Stable Rust 1.93 has no fully safe equivalent. `Vec::spare_capacity_mut`
+permits a safe `MaybeUninit::write`, but committing the new length requires
+unsafe `Vec::set_len`. `Vec::push_mut` and `push_within_capacity` remain
+unstable on this toolchain. `Vec::push`, `extend`, and `resize_with` moved whole
+nodes in the measured prototypes.
 
-### Panic and drop behavior
+## Panic and whole-generation drop
 
-If the initializer panics before `write`, nothing was initialized and the
-prefix is unchanged. If it panics after `write` but before returning, the
-`InitializedEntry` guard drops the value and the prefix remains unchanged.
+If an initializer panics before `write`, no value exists and the prefix is
+unchanged. If it panics after `write` but before returning, the
+`InitializedEntry` guard drops that value and the prefix remains unchanged.
+No partially initialized slot becomes visible.
 
 `truncate` records the shorter prefix before running any destructor. A range
 guard advances its cursor before each `drop_in_place`; if a destructor panics,
 the guard continues dropping every later value during unwind and never retries
-the panicking value.
+the panicking value. Last-lineage release uses the same guard and publishes the
+free key only after the complete range is logically absent.
 
-Page destruction first snapshots all sixteen lengths and sets every stored
-length to zero. One page-wide guard then drops every snapshotted range. This is
-important: a loop of independent chunk truncations would leak later chunks if
-one destructor panicked. As with `Vec`, a second destructor panic during an
-existing unwind aborts the process; no Rust container can recover from that
-language-wide terminal condition.
+Whole-generation drop first removes suspended execution, builders, roots,
+journals, durable regions, and page history under the aggregate ordering in
+[Node-region ownership](node_region_ownership.md). One pool-wide guard walks
+every superblock. Before visiting a block it snapshots all 128 lengths and sets
+them to zero; its cursor advances before every destructor and every block
+deallocation. If one destructor panics, the guard continues across later
+chunks, pages, and superblocks during unwind. A loop of independent page or
+block drops is insufficient because a panic could otherwise leak later
+allocations.
 
-### Validation of the unsafe crate
-
-The crate requires ordinary unit and property tests for empty/full prefixes,
-all sixteen chunks, repeated truncate/reuse, zero-sized values, 64-byte-aligned
-values, checked arithmetic overflow, and randomized legal operation sequences.
-Drop-tracked tests cover normal clear, page drop, initializer panic before and
-after write, a destructor panic in the first/middle/last position, and exact
-continuation across later chunks.
-
-An explicit Miri gate exercises the same matrix and checks stacked-borrow and
-initialization rules. AddressSanitizer and leak-sanitizer runs cover randomized
-operation sequences and panic paths. The engine integration gate separately
-proves stale key rejection after chunk-slot reuse because that property belongs
-to `ForkArena`, not the page substrate.
-
-## Exactly two generations and two lineages
-
-The aggregate runtime permits an accepted/prior revision generation and one
-candidate/current revision generation. It does not create a third candidate
-generation. Each generation owns its typed chunk pools and their page
-high-water storage.
-
-Inside a forked arena, one sealed physical chunk may have at most two lineage
-entries. A retained accepted prefix can be shared by the prior and current
-lineages without copying payload. Both lineages name the same initialized
-prefix, and neither may append to that sealed chunk. New candidate values go
-only to private current tail chunks.
-
-Retained checkpoint marks name sealed whole-chunk boundaries. Operation marks
-may additionally name the initialized length of the one exclusive partial tail.
-Rollback validates roots and marks first, restores semantic owners, truncates
-only the private tail prefix, releases private whole chunks, and reattaches the
-detached accepted suffix. Acceptance releases the superseded prior chunks and
-promotes the current suffix. These are the existing fork-arena operations; the
-page crate merely performs requested prefix destruction.
-
-Page succession follows the same rule. A self-contained sealed successor
-suffix can move or take the second lineage slot without relocating values. An
-interleaved prefix still uses the existing explicit structural-copy fallback.
-Dropping one of two lineages changes only `ChunkMeta`. Dropping the last lineage
-clears the chunk's dense prefix, increments the chunk-slot generation, and
-pushes the slot onto the free stack.
-
-Superblocks do not carry independent lineage or reference counts. They remain
-owned by their one typed generation until that generation drops. Thus lineage
-retirement reuses memory, generation retirement returns it, and no page can
-outlive or be shared across generation owners.
+As with `Vec`, a second destructor panic during an existing unwind aborts the
+process. That language-wide terminal condition is not presented as recovery.
+No semantic owner, initialized prefix, or free key remains published twice in
+any catchable panic path.
 
 ## Quantitative acceptance model
 
@@ -316,10 +476,9 @@ The authenticated baseline recorded:
 
 The release target is exactly 3,143,705 calls and 528,142,440 bytes at 168
 bytes. Production acceptance removes that caller and the whole 168-byte
-release size family attributable to it. The new combined total must fall by a
-material fraction of those 528,142,440 bytes. No comparable volume may appear
-under append, clone, `Vec` growth, allocation, `memmove`, `copy`, or another
-library copy API.
+release size family attributable to it. No comparable volume may appear under
+append, clone, directory growth, allocation, `memmove`, `copy`, or another
+library API.
 
 The straight dense `Vec<Node>` prototype removed the release bin but produced
 17,324,345 `memcpy` calls and 2,609,483,201 bytes plus 35,652 `memmove` calls
@@ -338,118 +497,119 @@ Across construction, reuse, release, and panic gates, the exact process-wide
 public-copy probe recorded only 21 `memcpy` calls and 328 bytes plus two
 zero-byte `memmove` calls. Every copy symbol resolved to standard-output
 writing, and both moves resolved to the standard library's environment-map
-cleanup. The storage prototype emitted no public copy or move call. Raw
-artifacts are under the gitignored
-`target/umber2-66p0.8.40.113/dense-prefix.*` namespace.
+cleanup. The storage prototype emitted no public copy or move call. That
+prototype proved initialized-prefix emplacement, not the selected superblock
+allocation or its retention bounds.
 
-The design retains exactly the same payload allocation count and high-water
-policy as current physical pages: one payload allocation per page, then zero
-allocation for its sixteen chunk admissions and reuses. The full-run allocator
-gate must confirm that page count, allocation calls, and requested bytes do not
-increase.
-
-Fragmentation is explicit. Each live partial logical chunk wastes at most
-`slots_per_chunk - 1` value slots; for default nodes that is at most two slots
-or 336 bytes. Sealing a small list can retain that tail slack, already reported
-by `unused_sealed_bytes`. Completely free pages remain bounded by the
-generation's observed high-water page count and disappear with the generation.
-This proposal adds no per-value fragmentation or separate payload arena.
+The implementation gate must add exact counters for current pages, proposed
+superblocks, pages published, completely free pages, live prefixes, header
+bytes, payload capacity, semantic metadata capacity, free-stack capacity,
+allocation calls, requested bytes, and generation-retirement deallocations.
+For an old high-water count of `P` pages, the selected pool must use exactly
+`ceil(P / 8)` superblock payload allocations, with no per-page call hidden in
+metadata construction.
 
 ## Alternatives
 
-### One boxed initialized page per physical page: selected
+| Alternative                      | Payload allocations | Stable resident addresses | Safe destination commit | Main cost or reason not selected                                   |
+| -------------------------------- | ------------------- | ------------------------- | ----------------------- | ------------------------------------------------------------------ |
+| Per-page `Box<[MaybeUninit<T>]>` | One per 16 chunks   | Yes                       | Needs isolated unsafe   | Retains current per-page allocator frequency                       |
+| Eight-page typed superblock      | One per 128 chunks  | Yes                       | Needs isolated unsafe   | Selected; bounded tail reserve and generation high-water retention |
+| Ordinary `Vec<T>` per chunk/page | Geometric           | No across growth          | Yes                     | Measured whole-node copies/moves exceed baseline                   |
+| Compact `Node` plus side arenas  | Layout-dependent    | Possible                  | Separate project        | Changes semantic layout and still does not itself remove moves     |
 
-`Box<[MaybeUninit<T>]>` preserves the current single stable payload allocation
-for sixteen logical chunks, exact alignment, page reuse, and coarse drop. The
-private length array replaces existing `used` fields and is not a second
-occupancy representation. This is the proposed substrate.
+### Per-page initialized `Box`: rejected
 
-### Ordinary `Vec<T>` per chunk or page: rejected
+One `Box<[MaybeUninit<T>]>` per dense page would preserve stable payloads,
+exact alignment, and the same prefix proof. It would still perform a payload
+allocator call for every 16 fresh chunks: every 48 nodes in the default pool.
+That is the draft this revision replaces. It is neither the selected
+superblock model nor an acceptable implementation shortcut.
+
+### Eight-page typed superblock: selected for measurement
+
+The selected substrate amortizes one combined allocation across 128 chunks,
+keeps fixed page offsets, makes header and payload immovable, and performs
+release and reuse without allocator traffic. Its costs are the explicit
+eight-page growth quantum, one raw-layout allocation/deallocation proof, and
+high-water capacity retained until the typed generation drops.
+
+### Ordinary `Vec<T>`: rejected
 
 `Vec` provides safe truncation and drop, which made it useful as a correctness
 prototype. Stable safe Rust does not provide destination construction plus
 length commit. The exact whole-run measurements show that `push` and `extend`
-move the 168-byte node and erase or relocate the release saving.
+move the 168-byte node and erase or relocate the release saving. A page-sized
+`Vec` can also relocate every resident value on growth, violating stable
+coordinates unless it is itself capped and boxed, which returns to the
+per-page alternative.
 
 ### Compact node plus arena-owned rare payloads: deferred
 
-The largest inline values are math payloads containing multiple 40-byte list
-handles. A compact tag and handles into generation-owned side tables could
-reduce resident width, but it would change clone, semantic identity,
-serialization, child dependency floors, traversal, destruction, and every
-variant projection. It would add a side lookup on affected traversal paths.
+A compact tag and generation-owned side tables could reduce resident width,
+but it would change variant projection, clone, semantic identity,
+serialization, child dependency floors, traversal, and destruction. No
+integrated variant-frequency or traversal-cost census supports that change.
+A smaller node also reduces rather than eliminates moves through ordinary
+`Vec` append. Compacting remains a possible independent layout project; it is
+not the vacancy fix and must not create a second production node format.
 
-No trustworthy integrated variant-frequency or traversal-cost census has been
-published, so this document makes no frequency or speed claim. More
-importantly, a smaller node still moves through safe `Vec` append and therefore
-reduces rather than eliminates shifted copy traffic. Compacting may be a later
-independent layout project; it is not the vacancy fix and must not introduce a
-second runtime node representation.
+Per-node boxes, duplicate node stores, caches, thresholds, third-party arenas,
+and per-page reference counts remain rejected because they add allocator
+traffic, pointer chasing, dual ownership, input-dependent behavior, or a wider
+audit surface.
 
-### Per-node `Box`, duplicate node storage, cache, or threshold: rejected
+## Staged migration and gates
 
-These add allocation, pointer chasing, dual ownership, or input-dependent
-behavior. They violate the issue constraints and the node-region ownership
-contract.
-
-### External arena or allocator crate: rejected for this boundary
-
-A general-purpose third-party slab, bump allocator, or arena has a much larger
-unsafe and dependency surface and does not expose this exact sixteen-chunk,
-two-lineage, truncatable-prefix contract. Depending on its safe facade would
-move the audit outside the repository without removing the need to prove
-in-place destruction and generation reuse. A repository-owned small crate is
-more reviewable.
-
-### Raw combined metadata-and-payload allocation: deferred
-
-One custom allocation could place prefix lengths and payload in the same block
-and keep page-directory headers smaller. It would require manual `Layout`
-composition, allocation failure handling, pointer arithmetic, and deallocation.
-The expected header-copy saving is small and unmeasured. The proposed boxed
-slice keeps allocation safe; the whole-run census will reveal whether moving
-the 64-byte page headers is material before expanding the unsafe surface.
-
-## Staged implementation and approval points
-
-1. **Unsafe-boundary approval.** The user approves a named low-level workspace
-   crate, its unsafe exception, and the four-operation proof surface above.
+1. **Superblock-boundary approval.** The user approves the named
+   `tex-dense-prefix` crate, its six-operation unsafe exception, the single
+   combined allocation per eight pages, and the first implementation branch.
    Without this approval, no production source changes.
-2. **Isolated crate.** Implement `DensePrefixPage<T>`, unit/property tests,
-   compile-time geometry budgets, Miri, and sanitizer gates. Engine crates do
-   not depend on it yet. Review every unsafe block and generated assembly for
-   168-byte emplacement and destruction.
-3. **Node-first integration branch.** Replace `ChunkStorage<Node>` behavior in
-   a branch through the generic storage boundary and run the exact 1/4,096
-   node release/reuse/lineage gate. This is a measurement stage, not a retained
-   Node-specific implementation.
-4. **Atomic generic cutover.** Once node evidence passes, switch generic
+2. **Isolated pool.** Implement the checked layout owner, borrowed page API,
+   emplacement guards, release guard, whole-block drop guard, counters, and
+   compile-time geometry budgets. Engine crates do not depend on it yet.
+3. **Low-level validation.** Unit and property tests cover empty/full prefixes,
+   every block/page/chunk boundary, repeated truncate/reuse, checked overflow,
+   zero-sized and 64-byte-aligned values, initializer panic before/after write,
+   destructor panic at first/middle/last positions, continuation across later
+   chunks/pages, and generation-exhausted non-reuse. Run the same matrix under
+   Miri, AddressSanitizer, and leak sanitizer.
+4. **Node-first integration branch.** Replace `ChunkStorage<Node>` through the
+   generic safe facade and run the exact one/4,096 node
+   release/reuse/two-lineage gate. This is measurement, not a retained
+   Node-specific representation.
+5. **Atomic generic cutover.** If node evidence passes, switch generic
    `ChunkStorage<T>` so `Node`, `PageInverse`, `CheckpointDelta`, and
-   `PreparedDviPage` use one representation. Delete the `Option<T>` path in the
-   same change; do not keep a feature flag, threshold, or second production
-   implementation. Keep the descriptor lane allocation-free.
-5. **Semantic gates.** Run fork-arena, node-region, page checkpoint, state
-   journal, output-ledger, succession, stale-key, candidate accept/reject,
-   cancellation, and panic/drop tests. The one/4,096 gate must prove exact
-   retained values, shared-lineage behavior, drop order/count, reclamation,
-   generation increment, and stale-key rejection.
-6. **Workspace gates.** Run `cargo test -q --tests`, then `scripts/check.sh`.
-   Run the explicit Miri/sanitizer storage gates and relevant optional tooling
-   checks. Any DVI/PDF, checkpoint identity, effect, or drop-order difference
-   rejects the implementation.
-7. **One whole-run decision census.** On the pinned authenticated 50-million
-   command workload, record exact `memcpy`, `memmove`, allocator calls/requested
-   bytes, page counts, retained bytes, and the canonical work vector. Reject a
-   release-only win, any new whole-node append/clone/allocator owner, any
-   significant page-header move family, allocation growth, or semantic-vector
-   drift.
-8. **Merge approval.** Present the code review, unsafe proof, Miri/sanitizer
-   receipts, semantic gates, and whole-run before/after table. Merging the new
-   crate and its unsafe exception requires a second explicit user approval.
+   `PreparedDviPage` use one representation. Delete the `Option<T>` and
+   per-page-box paths in the same change. Keep the descriptor lane
+   allocation-free.
+6. **Semantic lifecycle gates.** Run fork-arena, node-region, page checkpoint,
+   state journal, output ledger, succession, stale-key, generation exhaustion,
+   candidate accept/reject, cancellation, and panic/drop tests. Prove exact
+   roots, lineage count, retained values, addresses, drop order/count,
+   rollback, free-page reuse, generation increment, and stale-key rejection.
+7. **Portability and workspace gates.** Run `cargo test -q --tests`, then
+   `scripts/check.sh`, plus the explicit native Miri/sanitizer gates and the
+   `wasm32-unknown-unknown` build/tests. Any DVI/PDF, checkpoint identity,
+   effect, output, or drop-order difference rejects the implementation.
+8. **One whole-run decision census.** On the pinned authenticated 50-million
+   command workload, record exact `memcpy`, `memmove`, allocator calls and
+   requested bytes, old pages versus new blocks, live/reusable/retained bytes,
+   peak RSS or WASM linear-memory pages, and the canonical work vector. Reject
+   a release-only win, allocation growth outside the documented eight-page
+   quantum/vector amortization, a new whole-node owner, material directory
+   copies, or semantic-vector drift.
+9. **Merge approval.** Present the code review, every unsafe proof, Miri and
+   sanitizer receipts, semantic gates, native/WASM results, and whole-run
+   before/after table. Merging the crate and changing the normative unsafe
+   prohibition require a second explicit user approval.
 
 The principal rollback risks are double-drop or leak on unwind, publishing a
-length before initialization, resolving an offset after truncation, and
-changing last-lineage release order. The isolated type-state guard, page-wide
-drop guard, unchanged fork metadata, and stale-key gates address those risks.
-The parity risk is not considered low merely because the representation is
-internal; exact DVI/PDF and checkpoint identities remain mandatory.
+prefix before initialization, resolving an offset after truncation, aliasing a
+shared sealed chunk mutably, reusing a stale generation, moving a payload while
+its directory grows, and retaining excessive tail blocks on native or WASM.
+The type-state emplacement guard, range and block drop guards, immutable
+superblock allocation, bounded lineage metadata, checked generation reuse,
+exact counters, and two-stage approval address those risks. Exact semantic and
+output parity remains mandatory because physical representation is not a
+license to change behavior.
