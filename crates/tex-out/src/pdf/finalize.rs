@@ -2,16 +2,16 @@
 
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
-    PdfContentOperation, PdfContentRectangle, PdfContentTextRaster, PdfContentTextRun,
-    PdfDestinationAction, PdfDestinationActionKind, PdfDestinationNameTree,
-    PdfDestinationNameTreeChildren, PdfDestinationPage, PdfDestinationStructure,
-    PdfDestinationTarget, PdfDestinationView, PdfDictionary, PdfExplicitDestination,
-    PdfFinalizationInput, PdfFontInput, PdfFontProgramInput, PdfImageColorSpace, PdfImageFilter,
-    PdfImageGammaInput, PdfImageMetadataInput, PdfImageXObject, PdfIndirectObject, PdfModelError,
-    PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId, PdfOutlineItemObject,
-    PdfOutlineObject, PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput,
-    PdfSerializeError, PdfThreadObject, PdfTrailer, PdfValue, PdfVersion, UnvalidatedPdfDocument,
-    ordered_page_content, page_content,
+    PdfContentGlyphRaster, PdfContentOperation, PdfContentRectangle, PdfContentTextExactRaster,
+    PdfContentTextRaster, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
+    PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
+    PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
+    PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontProgramInput,
+    PdfImageColorSpace, PdfImageFilter, PdfImageGammaInput, PdfImageMetadataInput, PdfImageXObject,
+    PdfIndirectObject, PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId,
+    PdfOutlineItemObject, PdfOutlineObject, PdfPageRotationInput, PdfRasterColorSpaceInput,
+    PdfRasterFormatInput, PdfSerializeError, PdfThreadObject, PdfTrailer, PdfValue, PdfVersion,
+    UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use crate::positioned::{BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage};
 use crate::{ContentHash, PageArtifact, PageNode};
@@ -631,6 +631,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         horizontal_scale,
                     };
                     let mut segment = Vec::new();
+                    let mut segment_positions = Vec::new();
                     let mut segment_x = None;
                     let mut segment_end = None;
                     for ((unit, position), physical_code) in run
@@ -646,11 +647,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                         content_operations.push(mapped_text_segment(
                                             &text_context,
                                             &mut segment,
+                                            &mut segment_positions,
                                             &mut segment_x,
                                         )?);
                                     }
                                     segment_x.get_or_insert(*position);
                                     segment.push(*code);
+                                    segment_positions.push(*position);
                                     segment_end = Some(positioned_char_end(
                                         *position,
                                         width_resource.metrics.widths[usize::from(*code)],
@@ -663,6 +666,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                     content_operations.push(mapped_text_segment(
                                         &text_context,
                                         &mut segment,
+                                        &mut segment_positions,
                                         &mut segment_x,
                                     )?);
                                 }
@@ -706,6 +710,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         content_operations.push(mapped_text_segment(
                             &text_context,
                             &mut segment,
+                            &mut segment_positions,
                             &mut segment_x,
                         )?);
                     }
@@ -2906,6 +2911,7 @@ struct MappedTextContext<'a> {
 fn mapped_text_segment(
     context: &MappedTextContext<'_>,
     bytes: &mut Vec<u8>,
+    positions: &mut Vec<Scaled>,
     segment_x: &mut Option<Scaled>,
 ) -> Result<PdfContentOperation, PdfBuildError> {
     let anchor = segment_x
@@ -2920,12 +2926,23 @@ fn mapped_text_segment(
         context.positioning_font_size,
         context.horizontal_scale,
     );
+    let glyphs = scalable_glyph_rasters(
+        context.resource,
+        context.font,
+        bytes,
+        positions,
+        context.h_origin,
+        context.positioning_font_size,
+        context.horizontal_scale,
+    );
     Ok(PdfContentOperation::Text(PdfContentTextRun {
         x: scaled_to_bp_f32(anchor, context.decimal_digits),
         raster: Some(PdfContentTextRaster {
             serialized_x: scaled_to_bp_f64(anchor, context.decimal_digits),
             position_x: scaled_to_bp_unrounded_f64(anchor),
             font_size: context.positioning_font_size,
+            exact: exact_text_raster(anchor, context.font, context.decimal_digits),
+            glyphs: glyphs.unwrap_or_default(),
         }),
         baseline: context.baseline,
         font_name: context.font_name.to_vec(),
@@ -2936,27 +2953,99 @@ fn mapped_text_segment(
     }))
 }
 
+fn scalable_glyph_rasters(
+    input: &PdfFontInput,
+    font: &crate::FontResource,
+    bytes: &[u8],
+    positions: &mut Vec<Scaled>,
+    h_origin: Scaled,
+    font_size: f64,
+    horizontal_scale: f32,
+) -> Option<Vec<PdfContentGlyphRaster>> {
+    let positions = std::mem::take(positions);
+    input.map_entry.as_ref()?;
+    if positions.len() != bytes.len() {
+        return None;
+    }
+    positions
+        .into_iter()
+        .zip(bytes)
+        .map(|(position, &code)| {
+            let position = position.checked_add(h_origin)?;
+            let width_tenths = pdftex_scalable_width_tenths(
+                input.metrics.widths[usize::from(code)],
+                font.at_size,
+            )?;
+            Some(PdfContentGlyphRaster {
+                position_x: scaled_to_bp_unrounded_f64(position),
+                advance: width_tenths as f64 * font_size * f64::from(horizontal_scale) / 10_000.0,
+                position_raw: i64::from(position.raw()),
+                width_raw: positioned_char_width_raw(
+                    input.metrics.widths[usize::from(code)],
+                    &font.construction,
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn exact_text_raster(
+    anchor: Scaled,
+    font: &crate::FontResource,
+    decimal_digits: i32,
+) -> Option<PdfContentTextExactRaster> {
+    const ONE_HUNDRED_BP: i64 = 6_578_176;
+    let (_, serialized_h) = pdftex_divide_scaled_positive(
+        i64::from(anchor.raw()),
+        ONE_HUNDRED_BP,
+        u32::try_from(decimal_digits).ok()?.checked_add(2)?,
+    )?;
+    let (_, font_size) =
+        pdftex_divide_scaled_positive(i64::from(font.at_size.raw()), ONE_HUNDRED_BP, 6)?;
+    let expansion_ratio = match font.construction {
+        crate::FontResourceConstruction::Expanded { ratio, .. } => ratio,
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => 0,
+    };
+    Some(PdfContentTextExactRaster {
+        serialized_h,
+        font_size,
+        expansion_ratio,
+    })
+}
+
+fn positioned_char_width_raw(
+    width: Scaled,
+    construction: &crate::FontResourceConstruction,
+) -> Option<i64> {
+    match construction {
+        crate::FontResourceConstruction::Expanded { ratio, .. } => {
+            let numerator = i64::from(width.raw()).checked_mul(1000 + i64::from(*ratio))?;
+            Some(if numerator >= 0 {
+                (numerator + 500) / 1000
+            } else {
+                -((-numerator + 500) / 1000)
+            })
+        }
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => Some(i64::from(width.raw())),
+    }
+}
+
 pub(super) fn positioned_char_end(
     position: Scaled,
     width: Scaled,
     construction: &crate::FontResourceConstruction,
 ) -> Result<Scaled, PdfBuildError> {
-    let width = match construction {
-        crate::FontResourceConstruction::Expanded { ratio, .. } => {
-            let numerator = i64::from(width.raw()) * (1000 + i64::from(*ratio));
-            let rounded = if numerator >= 0 {
-                (numerator + 500) / 1000
-            } else {
-                -((-numerator + 500) / 1000)
-            };
-            Scaled::from_raw(
-                i32::try_from(rounded).map_err(|_| PdfBuildError::PageGeometryOverflow)?,
-            )
-        }
-        crate::FontResourceConstruction::Loaded
-        | crate::FontResourceConstruction::Copied { .. }
-        | crate::FontResourceConstruction::Letterspaced { .. } => width,
-    };
+    let width = Scaled::from_raw(
+        i32::try_from(
+            positioned_char_width_raw(width, construction)
+                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        )
+        .map_err(|_| PdfBuildError::PageGeometryOverflow)?,
+    );
     position
         .checked_add(width)
         .ok_or(PdfBuildError::PageGeometryOverflow)

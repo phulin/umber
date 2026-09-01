@@ -47,7 +47,7 @@ pub struct PdfContentRectangle {
 }
 
 /// One absolutely positioned byte-encoded PDF text run.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PdfContentTextRaster {
     /// Exact decimal value written for the run's initial `x`.
     pub serialized_x: f64,
@@ -55,6 +55,29 @@ pub struct PdfContentTextRaster {
     pub position_x: f64,
     /// Exact decimal value of the serialized four-place pdfTeX font size.
     pub font_size: f64,
+    /// Exact pdfTeX scaled-point raster used by `pdf_begin_string` and
+    /// `adv_char_width` before PDF numeric serialization.
+    pub exact: Option<PdfContentTextExactRaster>,
+    /// Per-byte TeX anchors and `/Widths` advances used to reproduce
+    /// pdfTeX's intra-string text-raster corrections.
+    pub glyphs: Vec<PdfContentGlyphRaster>,
+}
+
+/// One mapped glyph's exact TeX anchor and PDF width-raster advance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfContentGlyphRaster {
+    pub position_x: f64,
+    pub advance: f64,
+    pub position_raw: i64,
+    pub width_raw: i64,
+}
+
+/// Exact state selected when a mapped-font text matrix starts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfContentTextExactRaster {
+    pub serialized_h: i64,
+    pub font_size: i64,
+    pub expansion_ratio: i16,
 }
 
 /// One absolutely positioned byte-encoded PDF text run.

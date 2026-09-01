@@ -61,6 +61,13 @@ struct PdfTextCursor {
     x: f64,
     baseline: f32,
     horizontal_scale: f32,
+    exact: Option<PdfExactTextCursor>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfExactTextCursor {
+    tj_start_h: i64,
+    delta_h: i64,
 }
 
 impl PdfPainter {
@@ -146,10 +153,12 @@ impl PdfPainter {
         let (x, baseline) = self.relative_position(run.x, run.baseline);
         let serialized_x = run
             .raster
+            .as_ref()
             .map(|raster| raster.serialized_x - f64::from(self.origin.0))
             .unwrap_or_else(|| f64::from(x));
         let positioning_x = run
             .raster
+            .as_ref()
             .map(|raster| raster.position_x - f64::from(self.origin.0))
             .unwrap_or_else(|| f64::from(x));
         self.content.set_font(Name(&run.font_name), run.font_size);
@@ -163,39 +172,162 @@ impl PdfPainter {
             // font raster instead of resetting Tm for every positioned run.
             let text_unit = run
                 .raster
+                .as_ref()
                 .map(|raster| raster.font_size)
                 .unwrap_or_else(|| f64::from(run.font_size))
                 * f64::from(run.horizontal_scale)
                 / 1000.0;
             if text_unit > 0.0 {
-                let adjustment = (-(positioning_x - cursor.x) / text_unit).round();
+                let adjustment = exact_first_adjustment(run, cursor)
+                    .unwrap_or_else(|| (-(positioning_x - cursor.x) / text_unit).round());
                 if adjustment.abs() < 32_768.0 {
-                    if adjustment == 0.0 {
-                        self.content.show(Str(&run.bytes));
+                    let raster_cursor = if has_glyph_raster(run) {
+                        self.show_rastered_text(
+                            run,
+                            cursor.x,
+                            cursor.exact,
+                            adjustment,
+                            text_unit,
+                            f64::from(self.origin.0),
+                        )
                     } else {
-                        self.content
-                            .show_positioned()
-                            .items()
-                            .adjust(adjustment as f32)
-                            .show(Str(&run.bytes));
-                    }
+                        if adjustment == 0.0 {
+                            self.content.show(Str(&run.bytes));
+                        } else {
+                            self.content
+                                .show_positioned()
+                                .items()
+                                .adjust(adjustment as f32)
+                                .show(Str(&run.bytes));
+                        }
+                        None
+                    };
                     self.text_cursor = Some(PdfTextCursor {
-                        x: cursor.x - adjustment * text_unit + advance,
+                        x: raster_cursor
+                            .map(|cursor| cursor.x)
+                            .unwrap_or(cursor.x - adjustment * text_unit + advance),
                         baseline,
                         horizontal_scale: run.horizontal_scale,
+                        exact: raster_cursor.and_then(|cursor| cursor.exact),
                     });
                     return;
                 }
             }
         }
         self.content
-            .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline])
-            .show(Str(&run.bytes));
+            .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline]);
+        let text_unit = run
+            .raster
+            .as_ref()
+            .map(|raster| raster.font_size)
+            .unwrap_or_else(|| f64::from(run.font_size))
+            * f64::from(run.horizontal_scale)
+            / 1000.0;
+        let raster_cursor = if has_glyph_raster(run) {
+            self.show_rastered_text(
+                run,
+                serialized_x,
+                None,
+                0.0,
+                text_unit,
+                f64::from(self.origin.0),
+            )
+        } else {
+            self.content.show(Str(&run.bytes));
+            None
+        };
         self.text_cursor = run.advance.map(|advance| PdfTextCursor {
-            x: serialized_x + advance,
+            x: raster_cursor
+                .map(|cursor| cursor.x)
+                .unwrap_or(serialized_x + advance),
             baseline,
             horizontal_scale: run.horizontal_scale,
+            exact: raster_cursor.and_then(|cursor| cursor.exact),
         });
+    }
+
+    fn show_rastered_text(
+        &mut self,
+        run: &super::PdfContentTextRun,
+        cursor_x: f64,
+        exact_cursor: Option<PdfExactTextCursor>,
+        first_adjustment: f64,
+        text_unit: f64,
+        origin_x: f64,
+    ) -> Option<PdfRasteredTextCursor> {
+        let raster = run
+            .raster
+            .as_ref()
+            .expect("glyph raster was checked by the caller");
+        debug_assert_eq!(raster.glyphs.len(), run.bytes.len());
+        debug_assert!(text_unit > 0.0);
+
+        // pdftex.web §690 calls `pdf_begin_string` before every character.
+        // `/Widths` advances live on their rounded PDF raster, so even
+        // adjacent TeX character nodes can require an integer TJ correction.
+        let mut cursor_x = cursor_x;
+        let mut adjustments = Vec::with_capacity(run.bytes.len());
+        let mut exact_cursor = raster.exact.map(|exact| {
+            let mut cursor = exact_cursor.unwrap_or(PdfExactTextCursor {
+                tj_start_h: exact.serialized_h,
+                delta_h: 0,
+            });
+            for glyph in &raster.glyphs {
+                let (movement, movement_out) = pdftex_text_movement(
+                    glyph.position_raw - (cursor.tj_start_h + cursor.delta_h),
+                    exact.font_size,
+                    exact.expansion_ratio,
+                );
+                adjustments.push(-movement as f64);
+                cursor.delta_h += movement_out;
+                cursor.delta_h +=
+                    pdftex_glyph_advance(glyph.width_raw, exact.font_size, exact.expansion_ratio);
+            }
+            cursor
+        });
+        if exact_cursor.is_none() {
+            for (index, glyph) in raster.glyphs.iter().enumerate() {
+                let adjustment = if index == 0 {
+                    first_adjustment
+                } else {
+                    (-((glyph.position_x - origin_x) - cursor_x) / text_unit).round()
+                };
+                adjustments.push(adjustment);
+                cursor_x = cursor_x - adjustment * text_unit + glyph.advance;
+            }
+        } else {
+            for (adjustment, glyph) in adjustments.iter().zip(&raster.glyphs) {
+                cursor_x = cursor_x - adjustment * text_unit + glyph.advance;
+            }
+        }
+        if adjustments.iter().all(|adjustment| *adjustment == 0.0) {
+            self.content.show(Str(&run.bytes));
+            return Some(PdfRasteredTextCursor {
+                x: cursor_x,
+                exact: exact_cursor.take(),
+            });
+        }
+
+        let mut operation = self.content.show_positioned();
+        let mut items = operation.items();
+        let mut string_start = 0;
+        for (index, adjustment) in adjustments.iter().copied().enumerate() {
+            if adjustment == 0.0 {
+                continue;
+            }
+            if string_start < index {
+                items.show(Str(&run.bytes[string_start..index]));
+            }
+            items.adjust(adjustment as f32);
+            string_start = index;
+        }
+        if string_start < run.bytes.len() {
+            items.show(Str(&run.bytes[string_start..]));
+        }
+        Some(PdfRasteredTextCursor {
+            x: cursor_x,
+            exact: exact_cursor,
+        })
     }
 
     fn prepare_literal(&mut self, mode: crate::PdfLiteralMode, x: f32, y: f32) {
@@ -253,4 +385,91 @@ impl PdfPainter {
         self.end_text();
         self.content.finish().to_vec()
     }
+}
+
+fn has_glyph_raster(run: &super::PdfContentTextRun) -> bool {
+    run.raster
+        .as_ref()
+        .is_some_and(|raster| !run.bytes.is_empty() && raster.glyphs.len() == run.bytes.len())
+}
+
+fn exact_first_adjustment(run: &super::PdfContentTextRun, cursor: PdfTextCursor) -> Option<f64> {
+    let exact_cursor = cursor.exact?;
+    let raster = run.raster.as_ref()?;
+    let exact = raster.exact?;
+    let glyph = raster.glyphs.first()?;
+    Some(
+        -pdftex_text_movement(
+            glyph.position_raw - (exact_cursor.tj_start_h + exact_cursor.delta_h),
+            exact.font_size,
+            exact.expansion_ratio,
+        )
+        .0 as f64,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct PdfRasteredTextCursor {
+    x: f64,
+    exact: Option<PdfExactTextCursor>,
+}
+
+fn pdftex_text_movement(delta: i64, font_size: i64, expansion_ratio: i16) -> (i64, i64) {
+    let ratio = i64::from(expansion_ratio);
+    let delta = if ratio == 0 {
+        delta
+    } else {
+        pdftex_round_xn_over_d(delta, 1000, 1000 + ratio)
+    };
+    let (movement, unexpanded_out) = pdftex_divide_scaled(delta, font_size, 3);
+    if ratio == 0 {
+        return (movement, unexpanded_out);
+    }
+    let sign = movement.signum();
+    let movement_out = pdftex_round_xn_over_d(
+        pdftex_round_xn_over_d(font_size, movement.abs(), 1000),
+        1000 + ratio,
+        1000,
+    ) * sign;
+    (movement, movement_out)
+}
+
+fn pdftex_glyph_advance(width: i64, font_size: i64, expansion_ratio: i16) -> i64 {
+    let ratio = i64::from(expansion_ratio);
+    if ratio == 0 {
+        return pdftex_divide_scaled(width, font_size, 4).1;
+    }
+    let unexpanded_width = pdftex_round_xn_over_d(width, 1000, 1000 + ratio);
+    let width_coefficient = pdftex_divide_scaled(unexpanded_width, font_size, 4).0;
+    let sign = width_coefficient.signum();
+    pdftex_round_xn_over_d(
+        pdftex_round_xn_over_d(font_size, width_coefficient.abs(), 10_000),
+        1000 + ratio,
+        1000,
+    ) * sign
+}
+
+fn pdftex_divide_scaled(value: i64, divisor: i64, decimal_digits: u32) -> (i64, i64) {
+    debug_assert!(divisor > 0);
+    let sign = value.signum();
+    let value = i128::from(value.abs());
+    let divisor = i128::from(divisor);
+    let scale = 10_i128.pow(decimal_digits);
+    let quotient = (value * scale + divisor / 2) / divisor;
+    let remainder = value * scale - quotient * divisor;
+    let scaled_out = value - remainder / scale;
+    (
+        i64::try_from(quotient).expect("PDF text movement fits i64") * sign,
+        i64::try_from(scaled_out).expect("PDF raster movement fits i64") * sign,
+    )
+}
+
+fn pdftex_round_xn_over_d(value: i64, numerator: i64, denominator: i64) -> i64 {
+    debug_assert!(numerator >= 0);
+    debug_assert!(denominator > 0);
+    let sign = value.signum();
+    let product = i128::from(value.abs()) * i128::from(numerator);
+    i64::try_from((product + i128::from(denominator) / 2) / i128::from(denominator))
+        .expect("PDF raster multiplication fits i64")
+        * sign
 }

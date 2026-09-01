@@ -207,6 +207,8 @@ fn mapped_text_starts_its_raster_at_the_serialized_position() {
                 serialized_x,
                 position_x,
                 font_size,
+                exact: None,
+                glyphs: Vec::new(),
             }),
             baseline: 20.0,
             font_name: b"F1".to_vec(),
@@ -225,6 +227,58 @@ fn mapped_text_starts_its_raster_at_the_serialized_position() {
             .expect("ASCII content")
             .contains("[-772 (D)] TJ"),
         "the retained cursor must start at the rounded serialized position"
+    );
+}
+
+#[test]
+fn mapped_text_corrects_width_raster_inside_a_contiguous_string() {
+    // pdftex.web §690: `output_one_char` calls `pdf_begin_string` before every
+    // character. A rounded `/Widths` advance can therefore require a TJ
+    // correction even when adjacent character nodes have no intervening kern.
+    let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
+        x: 0.0,
+        raster: Some(PdfContentTextRaster {
+            serialized_x: 0.0,
+            position_x: 0.0,
+            font_size: 10.0,
+            exact: Some(PdfContentTextExactRaster {
+                serialized_h: 0,
+                font_size: 10_000,
+                expansion_ratio: 0,
+            }),
+            glyphs: vec![
+                PdfContentGlyphRaster {
+                    position_x: 0.0,
+                    advance: 5.0,
+                    position_raw: 0,
+                    width_raw: 5_000,
+                },
+                PdfContentGlyphRaster {
+                    position_x: 5.0,
+                    advance: 5.01,
+                    position_raw: 5_000,
+                    width_raw: 5_005,
+                },
+                PdfContentGlyphRaster {
+                    position_x: 10.0,
+                    advance: 5.0,
+                    position_raw: 10_000,
+                    width_raw: 5_000,
+                },
+            ],
+        }),
+        baseline: 20.0,
+        font_name: b"F1".to_vec(),
+        font_size: 10.0,
+        horizontal_scale: 1.0,
+        bytes: b"red".to_vec(),
+        advance: Some(15.01),
+    })]);
+    assert!(
+        String::from_utf8(bytes)
+            .expect("ASCII content")
+            .contains("[(re) 1 (d)] TJ"),
+        "the third character must return to its exact TeX anchor"
     );
 }
 
