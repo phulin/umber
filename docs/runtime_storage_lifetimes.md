@@ -321,16 +321,19 @@ view interface:
   ancestry iteratively, so maximum supported group depth does not become Rust
   call-stack depth.
 
-`DefinitionId<G>` is only a stable key. Its region and row locate one immutable
-header plus the contiguous `[parameter][replacement]` word span; its identity
-field supports cold semantic observation. The header stores span boundaries,
-origin, and identity, not an eager parameter plan. `DefinitionView<'a, G>`
-borrows that header and span for one synchronous use. Equal definitions retain
-distinct keys unless a global `let` repeats the exceptional promotion of the
-same local key, in which case the cached global key is reused. That mapping is
-stored in the source local region, so group retirement and checkpoint
-settlement discard only mappings owned by the exact affected regions; there is
-no generation-wide promotion sweep.
+`DefinitionId<G>` is only an eight-byte stable storage key. Its region and row
+locate one immutable header plus the contiguous `[parameter][replacement]`
+word span. The header stores span boundaries, origin, content identity, and
+the validated at-most-nine-marker parameter pattern. `DefinitionView<'a, G>`
+borrows that metadata and span for one synchronous use, so invocation never
+rescans the parameter text. Cold checkpoint identity resolves the key through
+arena metadata and records the result in a separate identity-only table; the
+hot key and `CurrentCommand` carry no content hash. Equal definitions retain
+distinct storage keys but have equal content identities regardless of
+allocation order. A global `let` repeats the exceptional promotion of the same
+local key by reusing its cached global key. That mapping remains owned by the
+source local region, so exact region retirement and checkpoint settlement
+discard it without a generation-wide promotion sweep.
 
 Ordinary `def` and `gdef` know their destination before scanning. The scanner
 opens a transactional word mark in that final local or global region, validates
@@ -345,9 +348,8 @@ live scanner.
 
 ```rust
 pub struct DefinitionId<G> {
-    region: NonZeroU32,
+    region: DefinitionRegionCoordinate,
     row: NonZeroU32,
-    identity: u64,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 

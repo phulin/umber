@@ -40,6 +40,7 @@ impl MacroParameterPattern {
         Ok(builder.finish())
     }
 
+    #[cfg(test)]
     pub(crate) fn from_words(words: &[TokenWord]) -> Result<Self, MacroParameterProgramError> {
         let mut builder = MacroParameterPatternBuilder::new();
         for word in words.iter().copied() {

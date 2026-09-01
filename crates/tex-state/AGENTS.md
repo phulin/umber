@@ -190,8 +190,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   first-alternate deduplication, cursor, and foreign-owner rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro
-  parameter validation and borrowed pattern facts derived from immutable
-  definition words; definition headers do not retain an eager parameter plan.
+  parameter validation and the compact at-most-nine-marker pattern stored in
+  each immutable definition header. Invocation borrows this prevalidated
+  metadata directly and never rescans parameter text to rebuild it.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
   macro definition keys and the canonical dense-row writer which decodes one

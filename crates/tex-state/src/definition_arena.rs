@@ -371,6 +371,7 @@ struct DefinitionHeader {
     end: u32,
     origin: crate::token::OriginId,
     semantic_identity: u64,
+    pattern: MacroParameterPattern,
 }
 
 const FORMAT_REGION: u32 = 1;
@@ -1504,6 +1505,7 @@ impl<G> DefinitionArena<G> {
             end,
             origin: crate::token::OriginId::UNKNOWN,
             semantic_identity: builder.data.sealed_identity,
+            pattern: builder.data.pattern.finish(),
         });
         drop(region);
         accounting.allocate_shared_dynamic(definition_memory_words(builder.words().len()));
@@ -1901,6 +1903,7 @@ impl<G> DefinitionArena<G> {
             end,
             origin,
             semantic_identity,
+            pattern: build.pattern.finish(),
         });
         drop(region);
         if region_id != FORMAT_REGION && region_id != GLOBAL_REGION {
@@ -1988,6 +1991,7 @@ impl<G> DefinitionArena<G> {
             end,
             origin: source_header.origin,
             semantic_identity: source_header.semantic_identity,
+            pattern: source_header.pattern,
         });
         self.accounting
             .allocate_shared_dynamic(definition_memory_words(source_words.len()));
@@ -2138,8 +2142,7 @@ impl<'a, G> DefinitionView<'a, G> {
 
     #[must_use]
     pub fn parameter_pattern(&self) -> MacroParameterPattern {
-        MacroParameterPattern::from_words(self.parameter_text())
-            .expect("published definitions have a validated parameter program")
+        self.header.pattern
     }
 
     #[must_use]
@@ -2157,7 +2160,6 @@ impl<'a, G> DefinitionView<'a, G> {
         self.replacement_text().get(index).copied()
     }
 
-    #[cfg(test)]
     pub(crate) fn semantic_identity(&self) -> Option<u64> {
         (self.header().semantic_identity != 0).then_some(self.header().semantic_identity)
     }

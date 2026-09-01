@@ -217,6 +217,58 @@ fn maintained_runtime_roots_change_at_each_owner_mutation_barrier() {
 }
 
 #[test]
+fn equivalent_macro_definitions_keep_the_same_core_identity() {
+    with_universe(budget(), |universe| {
+        assert!(universe.enable_reachable_state_identity());
+        let symbol = universe.intern("stablemacro").expect("macro symbol");
+        let body = [TokenWord::pack(Token::frozen_relax())];
+        let first = universe
+            .allocate_definition(&[], &body)
+            .expect("first definition");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, first),
+                AssignmentScope::Global,
+            )
+            .expect("first meaning");
+        let first_root = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("first checkpoint")
+            .reachable_state_identity_roots()
+            .core();
+
+        let _unrelated = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(Token::Char {
+                    ch: 'x',
+                    cat: crate::token::Catcode::Letter,
+                })],
+            )
+            .expect("unrelated definition");
+        let equivalent = universe
+            .allocate_definition(&[], &body)
+            .expect("equivalent definition");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, equivalent),
+                AssignmentScope::Global,
+            )
+            .expect("equivalent meaning");
+        let equivalent_root = universe
+            .runtime_checkpoint_with_page_roots_and_identity(false, true)
+            .expect("equivalent checkpoint")
+            .reachable_state_identity_roots()
+            .core();
+
+        assert_eq!(first_root, equivalent_root);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn rejected_checkpoint_loan_invalidates_candidate_coordinates_before_retry() {
     with_universe(budget(), |universe| {
         for index in 0..16 {

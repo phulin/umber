@@ -2362,7 +2362,10 @@ impl<G> Universe<G> {
         if value.font().is_some_and(|font| !self.fonts.contains(font)) {
             return Err(UniverseError::State(StateError::ForeignSession));
         }
-        self.live_state_mut()?
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .admit_mut()?
             .assign_meaning(symbol.symbol(), value, scope)?;
         Ok(())
     }

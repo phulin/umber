@@ -490,6 +490,46 @@ fn checkpoint_lease_pins_the_parent_chain_through_one_active_region() {
 }
 
 #[test]
+fn content_identity_survives_allocation_order_and_local_promotion() {
+    with_generation(|mut generation| {
+        assert!(generation.enable_semantic_identity());
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("local definition group");
+        let body = [TokenWord::pack(Token::frozen_relax())];
+        let local = direct_definition(arena, super::DefinitionDestination::Local, &[], &body);
+        let local_identity = arena
+            .get(local)
+            .semantic_identity()
+            .expect("semantic identity enabled");
+
+        let _unrelated = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[],
+            &[TokenWord::pack(Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            })],
+        );
+        let equivalent = direct_definition(arena, super::DefinitionDestination::Global, &[], &body);
+        let promoted = arena.promote_global(local).expect("local promotion");
+
+        assert_eq!(
+            arena.get(equivalent).semantic_identity(),
+            Some(local_identity)
+        );
+        assert_eq!(
+            arena.get(promoted).semantic_identity(),
+            Some(local_identity)
+        );
+        assert_ne!(
+            local, promoted,
+            "promotion still changes storage coordinate"
+        );
+    });
+}
+
+#[test]
 fn checkpoint_rejection_restores_detached_global_and_local_definition_suffixes() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();

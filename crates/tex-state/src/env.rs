@@ -483,6 +483,11 @@ pub(crate) struct DenseState<G> {
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
     reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
+    /// Cold semantic identities for definition coordinates currently or
+    /// historically reachable from eqtb. The hot meaning row remains the
+    /// compact non-owning coordinate; checkpoint hashing consults this side
+    /// table only when maintained semantic identity is enabled.
+    definition_identities: std::collections::HashMap<crate::DefinitionId<G>, u64>,
 }
 
 /// Accepted dense suffix retained while the current candidate mutates the
@@ -876,10 +881,14 @@ impl<G> DenseState<G> {
             groups: Vec::new(),
             next_group_lineage: 1,
             reachable_state_identity: None,
+            definition_identities: std::collections::HashMap::new(),
         })
     }
 
-    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+    pub(crate) fn enable_reachable_state_identity(
+        &mut self,
+        mut definition_identity: impl FnMut(crate::DefinitionId<G>) -> Option<u64>,
+    ) -> bool {
         if self.reachable_state_identity.is_some() {
             return true;
         }
@@ -887,16 +896,28 @@ impl<G> DenseState<G> {
         {
             return false;
         }
+        for meaning in self.meanings.values() {
+            if let MeaningWord::Macro { definition, .. } = meaning {
+                let Some(identity) = definition_identity(definition) else {
+                    return false;
+                };
+                self.definition_identities.insert(definition, identity);
+            }
+        }
         let mut root = crate::state_hash::SemanticMapIdentity::empty(0x636f_7265_5f65_6e76);
         let mut complete = true;
-        let mut include =
-            |cell, word: StateWord<G>| match state_word_semantic_contribution(cell, &word) {
-                Ok(Some(value)) => {
-                    root.replace(state_cell_semantic_key(cell), None, Some(value));
-                }
-                Ok(None) => {}
-                Err(()) => complete = false,
-            };
+        let definition_identities = &self.definition_identities;
+        let mut include = |cell, word: StateWord<G>| match state_word_semantic_contribution(
+            cell,
+            &word,
+            definition_identities,
+        ) {
+            Ok(Some(value)) => {
+                root.replace(state_cell_semantic_key(cell), None, Some(value));
+            }
+            Ok(None) => {}
+            Err(()) => complete = false,
+        };
         for (index, meaning) in self.meanings.values().enumerate() {
             include(
                 StateCell::Meaning(index as u32),
@@ -1117,6 +1138,23 @@ impl<G> DenseState<G> {
             StateWord::Meaning(value),
             scope,
         )
+    }
+
+    pub(crate) fn assign_meaning_with_identity(
+        &mut self,
+        symbol: Symbol,
+        value: MeaningWord<G>,
+        definition_identity: Option<u64>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        if let MeaningWord::Macro { definition, .. } = value {
+            if let Some(identity) = definition_identity {
+                self.definition_identities.insert(definition, identity);
+            } else if self.reachable_state_identity.is_some() {
+                self.reachable_state_identity = None;
+            }
+        }
+        self.assign_meaning(symbol, value, scope)
     }
 
     #[inline(always)]
@@ -2059,8 +2097,13 @@ impl<G> DenseState<G> {
             (identity_before, self.reachable_state_identity.as_mut())
         {
             let key = state_cell_semantic_key(cell);
-            let old = state_word_semantic_contribution(cell, &before.value);
-            let new = state_word_semantic_contribution(cell, &identity_after);
+            let old =
+                state_word_semantic_contribution(cell, &before.value, &self.definition_identities);
+            let new = state_word_semantic_contribution(
+                cell,
+                &identity_after,
+                &self.definition_identities,
+            );
             match (old, new) {
                 (Ok(old), Ok(new)) => root.replace(key, old, new),
                 (Err(()), _) | (_, Err(())) => self.reachable_state_identity = None,
@@ -2191,8 +2234,16 @@ impl<G> DenseState<G> {
         if let Some(before) = identity_before {
             let after = self.read_cell(delta.cell)?;
             let key = state_cell_semantic_key(delta.cell);
-            let old = state_word_semantic_contribution(delta.cell, &before.value);
-            let new = state_word_semantic_contribution(delta.cell, &after.value);
+            let old = state_word_semantic_contribution(
+                delta.cell,
+                &before.value,
+                &self.definition_identities,
+            );
+            let new = state_word_semantic_contribution(
+                delta.cell,
+                &after.value,
+                &self.definition_identities,
+            );
             match (old, new, self.reachable_state_identity.as_mut()) {
                 (Ok(old), Ok(new), Some(root)) => root.replace(key, old, new),
                 (Err(()), _, _) | (_, Err(()), _) => self.reachable_state_identity = None,
@@ -2411,6 +2462,7 @@ fn font_runtime_cell_semantic_key(cell: FontRuntimeCell) -> u64 {
 fn state_word_semantic_contribution<G>(
     cell: StateCell,
     word: &StateWord<G>,
+    definition_identities: &std::collections::HashMap<crate::DefinitionId<G>, u64>,
 ) -> Result<Option<u64>, ()> {
     let is_default = match (cell, word) {
         (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,
@@ -2449,7 +2501,15 @@ fn state_word_semantic_contribution<G>(
         return Ok(None);
     }
     let identity = match word {
-        StateWord::Meaning(value) => value.semantic_identity().ok_or(())?,
+        StateWord::Meaning(value) => {
+            let definition_identity = match value {
+                MeaningWord::Macro { definition, .. } => {
+                    definition_identities.get(definition).copied()
+                }
+                MeaningWord::Static(_) | MeaningWord::Font(_) => None,
+            };
+            value.semantic_identity(definition_identity).ok_or(())?
+        }
         StateWord::Integer(value) => {
             crate::state_hash::semantic_scalar_root(0x636f_7265_5f69_6e74, |hasher| {
                 hasher.i32(*value)

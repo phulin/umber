@@ -263,9 +263,9 @@ impl<G> MeaningWord<G> {
         }
     }
 
-    pub(crate) fn semantic_identity(&self) -> Option<u64> {
+    pub(crate) fn semantic_identity(&self, definition_identity: Option<u64>) -> Option<u64> {
         let definition_identity = match self {
-            Self::Macro { definition, .. } => Some(definition.semantic_identity()?),
+            Self::Macro { .. } => Some(definition_identity?),
             Self::Static(_) | Self::Font(_) => None,
         };
         Some(crate::state_hash::semantic_scalar_root(

@@ -766,7 +766,7 @@ impl<'a, G> CommandContext<'a, G> {
                 MeaningWord::macro_definition(flags, definition)
             }
         };
-        self.admitted.state().assign_meaning(symbol, word, scope)
+        self.admitted.assign_meaning(symbol, word, scope)
     }
 
     fn validate_font_root(&self, font: crate::ids::FontId) -> Result<(), StateError> {

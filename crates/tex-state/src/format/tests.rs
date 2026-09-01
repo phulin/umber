@@ -1057,7 +1057,11 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
         let definition = universe
             .allocate_definition(&parameter, &replacement)
             .expect("source definition");
-        let definition_identity = definition.semantic_identity();
+        let definition_identity = universe
+            .command_context()
+            .expect("source command context")
+            .definition(definition)
+            .semantic_identity();
         universe
             .assign_meaning(
                 command,
@@ -1093,7 +1097,12 @@ fn format_materialization_rebuilds_definition_and_state_identity() {
                 .expect("loaded identity checkpoint")
                 .reachable_state_identity_roots()
                 .core();
-            (definition.semantic_identity(), core_identity)
+            let definition_identity = universe
+                .command_context()
+                .expect("loaded command context")
+                .definition(definition)
+                .semantic_identity();
+            (definition_identity, core_identity)
         }
     }
 

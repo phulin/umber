@@ -74,11 +74,13 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
-        let generation = self.generation.generation_mut().enable_semantic_identity();
-        if !generation || !self.state.enable_reachable_state_identity() {
+        let mut generation = self.generation.generation_mut();
+        if !generation.enable_semantic_identity() {
             return false;
         }
-        true
+        self.state.enable_reachable_state_identity(|definition| {
+            generation.definitions().get(definition).semantic_identity()
+        })
     }
 
     pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
@@ -318,6 +320,24 @@ impl<'a, G> AdmittedStateMut<'a, G> {
 
     pub(crate) fn state(&mut self) -> &mut DenseState<G> {
         self.state
+    }
+
+    pub(crate) fn assign_meaning(
+        &mut self,
+        symbol: crate::interner::Symbol,
+        value: crate::MeaningWord<G>,
+        scope: crate::AssignmentScope,
+    ) -> Result<(), StateError> {
+        let identity = match value {
+            crate::MeaningWord::Macro { definition, .. } => self
+                .generation
+                .definitions()
+                .get(definition)
+                .semantic_identity(),
+            crate::MeaningWord::Static(_) | crate::MeaningWord::Font(_) => None,
+        };
+        self.state
+            .assign_meaning_with_identity(symbol, value, identity, scope)
     }
 
     #[inline(always)]
