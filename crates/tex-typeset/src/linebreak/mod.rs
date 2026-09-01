@@ -717,7 +717,10 @@ pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_
 
 #[cfg(test)]
 use widths::line_widths_nodes;
-use widths::{Widths, add_node_width_value, line_badness, line_widths_cursor, line_widths_view};
+use widths::{
+    DiscretionaryWidths, Widths, add_node_width_value, line_badness, line_widths_cursor,
+    line_widths_view,
+};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -785,7 +788,18 @@ pub fn plan_line_expansion_cursor<S: TypesetState>(
     nodes: NodeCursor<'_>,
     target: Scaled,
 ) -> i32 {
-    let widths = line_widths_cursor(state, nodes, 0, nodes.len(), true);
+    // pdftex.web §823: final `hpack(..., cal_expand_ratio)` ignores
+    // discretionary nodes. Post-line-break material already places the chosen
+    // replacement nodes in the physical line, so traversing `replace` again
+    // would double-count them in the final expansion ratio.
+    let widths = line_widths_cursor(
+        state,
+        nodes,
+        0,
+        nodes.len(),
+        true,
+        DiscretionaryWidths::Ignore,
+    );
     let shortfall = WideScaled::from_scaled(target)
         .checked_sub(widths.natural)
         .expect("line shortfall fits the wide scaled domain")
@@ -1882,6 +1896,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             previous,
             next,
             self.include_font_expansion,
+            DiscretionaryWidths::Replacement,
         );
         let definition = match node {
             Node::Glue { .. }

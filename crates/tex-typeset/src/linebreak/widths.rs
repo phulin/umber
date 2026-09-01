@@ -15,6 +15,12 @@ pub(super) struct Widths {
     pub(super) font_shrink: WideScaled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DiscretionaryWidths {
+    Replacement,
+    Ignore,
+}
+
 impl Widths {
     pub(super) fn zero() -> Self {
         Self {
@@ -124,6 +130,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
         start,
         end,
         include_font_expansion,
+        DiscretionaryWidths::Replacement,
     )
 }
 
@@ -133,6 +140,7 @@ pub(super) fn line_widths_cursor<S: TypesetState>(
     start: usize,
     end: usize,
     include_font_expansion: bool,
+    discretionary_widths: DiscretionaryWidths,
 ) -> Widths {
     let mut widths = Widths::zero();
     let limit = end.min(nodes.len());
@@ -158,7 +166,14 @@ pub(super) fn line_widths_cursor<S: TypesetState>(
             }
             index += run_len;
         } else {
-            add_node_width_source(&mut widths, state, nodes, index, include_font_expansion);
+            add_node_width_source(
+                &mut widths,
+                state,
+                nodes,
+                index,
+                include_font_expansion,
+                discretionary_widths,
+            );
             index += 1;
         }
     }
@@ -188,6 +203,7 @@ pub(super) fn add_node_width<S: TypesetState>(
         NodeCursor::owned(nodes),
         index,
         include_font_expansion,
+        DiscretionaryWidths::Replacement,
     );
 }
 
@@ -197,6 +213,7 @@ pub(super) fn add_node_width_source<S: TypesetState>(
     nodes: NodeCursor<'_>,
     index: usize,
     include_font_expansion: bool,
+    discretionary_widths: DiscretionaryWidths,
 ) {
     let Some(node) = nodes.owned_node(index) else {
         return;
@@ -210,6 +227,7 @@ pub(super) fn add_node_width_source<S: TypesetState>(
             .and_then(|index| nodes.owned_node(index)),
         nodes.owned_node(index + 1),
         include_font_expansion,
+        discretionary_widths,
     );
 }
 
@@ -220,6 +238,7 @@ pub(super) fn add_node_width_value<S: TypesetState>(
     previous: Option<&Node>,
     next: Option<&Node>,
     include_font_expansion: bool,
+    discretionary_widths: DiscretionaryWidths,
 ) {
     match NodeRef::from(node).packed() {
         PackedNode::Glyph { font, ch } => {
@@ -253,9 +272,16 @@ pub(super) fn add_node_width_value<S: TypesetState>(
         PackedNode::Unset(unset) => {
             widths.natural = add_scaled(widths.natural, unset.width);
         }
-        PackedNode::Disc(replace) => {
-            add_nested_list_widths(widths, state, &replace, include_font_expansion);
+        PackedNode::Disc(replace) if discretionary_widths == DiscretionaryWidths::Replacement => {
+            add_nested_list_widths(
+                widths,
+                state,
+                &replace,
+                include_font_expansion,
+                discretionary_widths,
+            );
         }
+        PackedNode::Disc(_) => {}
         PackedNode::Image { width, .. } => {
             widths.natural = add_scaled(widths.natural, width);
         }
@@ -271,6 +297,7 @@ fn add_nested_list_widths<S: TypesetState>(
     state: &S,
     owner: &PageListId,
     include_font_expansion: bool,
+    discretionary_widths: DiscretionaryWidths,
 ) {
     let mut stack = vec![(*owner, 0usize)];
     while let Some((owner, index)) = stack.last_mut() {
@@ -320,9 +347,12 @@ fn add_nested_list_widths<S: TypesetState>(
             PackedNode::Unset(unset) => {
                 widths.natural = add_scaled(widths.natural, unset.width);
             }
-            PackedNode::Disc(replace) => {
+            PackedNode::Disc(replace)
+                if discretionary_widths == DiscretionaryWidths::Replacement =>
+            {
                 stack.push((replace, 0));
             }
+            PackedNode::Disc(_) => {}
             PackedNode::Image { width, .. } => {
                 widths.natural = add_scaled(widths.natural, width);
             }

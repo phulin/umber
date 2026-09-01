@@ -738,6 +738,46 @@ fn pdftex_font_kern_expansion_capacity_retains_signed_differences() {
     assert_eq!(positive.font_shrink.raw(), 150);
 }
 
+/// pdftex.web §823 ignores a discretionary node while the final
+/// `hpack(..., cal_expand_ratio)` measures the replacement nodes that
+/// post-line-break processing has already placed in the physical line.
+#[test]
+fn final_line_expansion_does_not_count_discretionary_replacement_twice() {
+    let mut universe = TestState::new();
+    let font = universe.intern_font(microtype_font("final-disc", 1_000));
+    universe
+        .configure_font_expansion(
+            font,
+            FontExpansion {
+                stretch: 20,
+                shrink: 20,
+                step: 1,
+                auto_expand: true,
+            },
+        )
+        .expect("microtype font expansion configuration is valid");
+    universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, b'A', 1_000);
+
+    let empty = universe.publish_page_nodes(&[]);
+    let replacement = universe.publish_page_nodes(&[Node::Kern {
+        amount: sp(-100),
+        kind: KernKind::Font,
+    }]);
+    let mut line = vec![microtype_char(font, 'A'); 100];
+    line.insert(
+        50,
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 1,
+        },
+    );
+
+    assert_eq!(plan_line_expansion(&universe, &line, sp(101_900)), 950);
+}
+
 fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
     Node::Char {
         font,
