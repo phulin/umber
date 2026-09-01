@@ -1,4 +1,4 @@
-% Complete job probing the shared-counter amsthm program loaded by both formats.
+% Complete job probing shared-counter amsthm and exact byte input semantics.
 \documentclass{article}
 \usepackage{amsthm}
 \newtheorem{theorem}{Theorem}[section]
@@ -11,5 +11,6 @@
   \umber@format@pair@thm{#1}{#2}{#3}}
 \makeatother
 \begin{document}
+The byte-profile probe drops both UTF-8 en dashes: A–B and 1–2.
 \begin{proposition}Probe.\end{proposition}
 \end{document}

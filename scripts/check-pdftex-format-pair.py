@@ -83,7 +83,7 @@ def markers(path: Path) -> list[str]:
     )
     found = [
         line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
         if line.startswith(prefixes)
     ]
     expected = [
@@ -93,6 +93,28 @@ def markers(path: Path) -> list[str]:
     if found != expected:
         raise PairingError(f"unexpected format-pair markers in {path}: {found}")
     return found
+
+
+def normalized_dvi(path: Path) -> bytes:
+    pre = 247
+    comment_len_offset = 14
+    comment_offset = 15
+    normalized_comment = b"umber normalized dvi banner"
+
+    data = bytearray(path.read_bytes())
+    if not data or data[0] != pre or len(data) <= comment_len_offset:
+        raise PairingError(f"DVI is missing a valid preamble: {path}")
+    comment_end = comment_offset + data[comment_len_offset]
+    if comment_end > len(data):
+        raise PairingError(f"DVI preamble comment is truncated: {path}")
+    for index in range(comment_offset, comment_end):
+        normalized_index = index - comment_offset
+        data[index] = (
+            normalized_comment[normalized_index]
+            if normalized_index < len(normalized_comment)
+            else ord(" ")
+        )
+    return bytes(data)
 
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
@@ -255,7 +277,27 @@ def main(arguments: list[str] | None = None) -> int:
     umber_markers = markers(umber_run / "terminal.txt")
     if reference_markers != umber_markers:
         raise PairingError("clean pdfTeX and Umber macro markers differ")
+    reference_dvi = normalized_dvi(reference_run / "format-pairing.dvi")
+    umber_dvi = normalized_dvi(umber_run / "format-pairing.dvi")
+    if reference_dvi != umber_dvi:
+        common = min(len(reference_dvi), len(umber_dvi))
+        offset = next(
+            (
+                index
+                for index in range(common)
+                if reference_dvi[index] != umber_dvi[index]
+            ),
+            common,
+        )
+        reference_byte = reference_dvi[offset] if offset < len(reference_dvi) else None
+        umber_byte = umber_dvi[offset] if offset < len(umber_dvi) else None
+        raise PairingError(
+            "clean pdfTeX and Umber normalized DVI differ at byte "
+            f"{offset}: reference={reference_byte} Umber={umber_byte} "
+            f"(lengths {len(reference_dvi)} and {len(umber_dvi)})"
+        )
     marker_bytes = ("\n".join(reference_markers) + "\n").encode()
+    dvi_sha256 = hashlib.sha256(reference_dvi).hexdigest()
     result = {
         "schema": 1,
         "sourceLockSha256": sha256(lock),
@@ -271,13 +313,15 @@ def main(arguments: list[str] | None = None) -> int:
         },
         "macroMarkers": reference_markers,
         "macroFingerprintSha256": hashlib.sha256(marker_bytes).hexdigest(),
+        "normalizedDviSha256": dvi_sha256,
     }
     (output / "pairing.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(
         "pdfTeX/Umber format pairing: PASS "
-        f"macro-sha256={result['macroFingerprintSha256']} receipt={output / 'pairing.json'}"
+        f"macro-sha256={result['macroFingerprintSha256']} "
+        f"dvi-sha256={dvi_sha256} receipt={output / 'pairing.json'}"
     )
     return 0
 

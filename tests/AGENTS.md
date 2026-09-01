@@ -219,7 +219,10 @@ runtime. Both source-loaded and frozen-format equivalence fixtures assert that
 the aliases select the English slot and exercise Babel's `USenglish` option.
 `tests/latex/format-pairing.tex` is a complete DVI-mode live-reference probe.
 It loads amsthm, defines a shared-counter theorem pair, and exposes the selected
-LaTeX version and theorem destination key without becoming a Cargo fixture.
+LaTeX version and theorem destination key without becoming a Cargo fixture. Its
+two UTF-8 en dashes also prove that both formats made the same format-time encTeX
+byte-profile decision; the pairing gate compares the resulting DVI with only the
+preamble comment payload normalized.
 
 `tests/texlive-snapshot.lock` pins the complete publisher-visible runtime-tree
 digest for the 2026-03-01 snapshot plus compatibility-critical LaTeX kernel,

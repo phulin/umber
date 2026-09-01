@@ -144,10 +144,13 @@ python3 scripts/check-pdftex-format-pair.py \
   --distribution-ahash64 EXPECTED_ROOT_AHASH64
 ```
 
-Its committed amsthm shared-counter probe requires both engines to report
-LaTeX `2026-06-01` and theorem key `proposition`. Reference document generation
-uses this clean format with the same dev-first runtime lookup; it never asks
-Umber's TeX semantics to emulate a release-format macro body.
+Its committed probe requires both engines to report LaTeX `2026-06-01` and
+theorem key `proposition`. Two visible UTF-8 en dashes additionally expose the
+format-time encTeX byte-profile decision. The gate requires the complete DVI to
+match after normalizing only the preamble comment payload, and its receipt records
+both the macro-marker and normalized-DVI fingerprints. Reference document
+generation uses this clean format with the same dev-first runtime lookup; it
+never asks Umber's TeX semantics to emulate a release-format macro body.
 
 Every Umber subprocess started by the builder, including format-cache restore
 and publication, runs through `scripts/run-umber-guarded.py`. The shared guard
