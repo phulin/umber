@@ -241,6 +241,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned
   node crossing the arena boundary.
+- `src/node_record.rs`: Private exact 32-byte page-material record, typed
+  six-word annex keys, checked 64-KiB word blocks, publication serials, and
+  aggregate rollback substrate.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.

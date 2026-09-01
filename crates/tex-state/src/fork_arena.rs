@@ -1091,6 +1091,60 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    pub(crate) const fn words(self) -> [u32; 8] {
+        [
+            self.arena,
+            self.head.raw.slot,
+            self.head.raw.generation,
+            self.head.offset,
+            self.tail.raw.slot,
+            self.tail.raw.generation,
+            self.tail.offset,
+            self.len,
+        ]
+    }
+
+    pub(crate) const fn from_words(words: [u32; 8]) -> Option<Self> {
+        if words[7] == 0 {
+            return if words[0] == 0
+                && words[1] == 0
+                && words[2] == 0
+                && words[3] == 0
+                && words[4] == 0
+                && words[5] == 0
+                && words[6] == 0
+            {
+                Some(Self::empty())
+            } else {
+                None
+            };
+        }
+        if words[0] == 0 || words[2] == 0 || words[5] == 0 {
+            return None;
+        }
+        if words[1] == words[4] && words[2] == words[5] && words[3] >= words[6] {
+            return None;
+        }
+        Some(Self {
+            arena: words[0],
+            head: ChunkCursor::new(
+                RawChunkKey {
+                    slot: words[1],
+                    generation: words[2],
+                },
+                words[3],
+            ),
+            tail: ChunkCursor::new(
+                RawChunkKey {
+                    slot: words[4],
+                    generation: words[5],
+                },
+                words[6],
+            ),
+            len: words[7],
+        })
+    }
+
     #[must_use]
     pub(crate) const fn arena_identity(self) -> u32 {
         self.arena

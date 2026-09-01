@@ -88,6 +88,7 @@ mod memory_accounting;
 pub mod node;
 pub mod node_arena;
 mod node_destination;
+mod node_record;
 pub mod node_region;
 pub mod node_sequence;
 pub mod packed_input;

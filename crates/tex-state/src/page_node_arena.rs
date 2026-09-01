@@ -94,6 +94,41 @@ impl UniquePageList {
 }
 
 impl PageListId {
+    pub(crate) const fn words(self) -> [u32; 10] {
+        let coordinate = self.coordinate.words();
+        let identity = match self.semantic_identity {
+            Some(identity) => identity.get(),
+            None => 0,
+        };
+        [
+            coordinate[0],
+            coordinate[1],
+            coordinate[2],
+            coordinate[3],
+            coordinate[4],
+            coordinate[5],
+            coordinate[6],
+            coordinate[7],
+            identity as u32,
+            (identity >> 32) as u32,
+        ]
+    }
+
+    pub(crate) fn from_words(words: [u32; 10]) -> Option<Self> {
+        let coordinate = ArenaListId::from_words([
+            words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
+        ])?;
+        let raw_identity = (words[8] as u64) | ((words[9] as u64) << 32);
+        if coordinate.is_empty() {
+            return (raw_identity == 0).then_some(Self::empty());
+        }
+        let identity = (raw_identity != 0).then_some(SemanticSequenceIdentity::from_raw(
+            raw_identity,
+            coordinate.len(),
+        ));
+        Some(Self::from_parts(coordinate, identity))
+    }
+
     #[must_use]
     pub const fn empty() -> Self {
         Self {

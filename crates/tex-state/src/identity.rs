@@ -31,6 +31,31 @@ pub(crate) struct HandleIdentity {
 }
 
 impl HandleIdentity {
+    pub(crate) const fn words(self) -> [u32; 4] {
+        let namespace = self.namespace.get();
+        [
+            namespace as u32,
+            (namespace >> 32) as u32,
+            self.generation.get(),
+            self.slot,
+        ]
+    }
+
+    pub(crate) const fn from_words(words: [u32; 4]) -> Option<Self> {
+        let namespace = (words[0] as u64) | ((words[1] as u64) << 32);
+        let Some(namespace) = NonZeroU64::new(namespace) else {
+            return None;
+        };
+        let Some(generation) = NonZeroU32::new(words[2]) else {
+            return None;
+        };
+        Some(Self {
+            namespace,
+            generation,
+            slot: words[3],
+        })
+    }
+
     /// Returns the universal identity of an immutable canonical store entry.
     ///
     /// Only entries with identical semantics in every store (for example an

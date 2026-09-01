@@ -62,6 +62,17 @@ macro_rules! semantic_id {
                 self.0
             }
 
+            pub(crate) const fn from_words(words: [u32; 4]) -> Option<Self> {
+                match crate::identity::HandleIdentity::from_words(words) {
+                    Some(identity) => Some(Self(identity)),
+                    None => None,
+                }
+            }
+
+            pub(crate) const fn words(self) -> [u32; 4] {
+                self.0.words()
+            }
+
             /// Creates a placeholder id for tests that cover compact stored words.
             #[cfg(any(test, feature = "testing"))]
             #[must_use]
