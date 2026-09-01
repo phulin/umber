@@ -644,7 +644,8 @@ fn cursor_resume_rejects_delivery_until_retained_command_is_readmitted() {
         processor
             .back_input(delivered)
             .expect("retained current command is explicitly readmitted");
-        assert!(processor.immediate_delivery_stamp.is_none());
+        assert!(processor.explicit_delivery_stamp.is_none());
+        assert!(!processor.resident_delivery_available);
     });
 }
 
@@ -675,7 +676,8 @@ fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
         processor
             .retire_delivery_level(stopper.delivery_stamp())
             .expect("resident stamp retires its exact exhausted level");
-        assert!(processor.immediate_delivery_stamp.is_none());
+        assert!(processor.explicit_delivery_stamp.is_none());
+        assert!(!processor.resident_delivery_available);
         assert_eq!(
             processor.back_input(stale),
             Err(crate::CommandError::StaleDelivery)
@@ -685,10 +687,11 @@ fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_deliveries_have_one_compact_freshness_owner_and_zero_allocations() {
+fn one_and_4096_deliveries_derive_ordinary_freshness_without_a_coordinate_mirror() {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct Evidence {
-        freshness_coordinate_fields: usize,
+        ordinary_coordinate_mirror_fields: usize,
+        explicit_exception_coordinate_fields: usize,
         command_coordinate_writes: u64,
         resolved_command_writes: u64,
         work: crate::CommandWorkCounters,
@@ -744,11 +747,15 @@ fn one_and_4096_deliveries_have_one_compact_freshness_owner_and_zero_allocations
             let allocations_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             let commands_after = crate::command::command_ownership_counters();
-            let freshness_coordinate_fields = include_str!("mod.rs")
+            let ordinary_coordinate_mirror_fields = include_str!("mod.rs")
                 .matches("immediate_delivery_stamp: Option<crate::DeliveryStamp>")
                 .count();
+            let explicit_exception_coordinate_fields = include_str!("mod.rs")
+                .matches("explicit_delivery_stamp: Option<crate::DeliveryStamp>")
+                .count();
             Evidence {
-                freshness_coordinate_fields,
+                ordinary_coordinate_mirror_fields,
+                explicit_exception_coordinate_fields,
                 command_coordinate_writes: commands_after.delivery_stamp_writes
                     - commands_before.delivery_stamp_writes,
                 resolved_command_writes: commands_after.resolved_writes
@@ -766,7 +773,8 @@ fn one_and_4096_deliveries_have_one_compact_freshness_owner_and_zero_allocations
         assert_eq!(
             census(deliveries),
             Evidence {
-                freshness_coordinate_fields: 1,
+                ordinary_coordinate_mirror_fields: 0,
+                explicit_exception_coordinate_fields: 1,
                 command_coordinate_writes: count,
                 resolved_command_writes: count,
                 work: crate::CommandWorkCounters {
@@ -843,7 +851,8 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
             processor
                 .begin_scalar_alignment_v_template(&delimiter)
                 .expect("fresh scalar delimiter handoff");
-            assert!(processor.immediate_delivery_stamp.is_none());
+            assert!(processor.explicit_delivery_stamp.is_none());
+            assert!(!processor.resident_delivery_available);
             assert_eq!(
                 processor.begin_scalar_alignment_v_template(&delimiter),
                 Err(crate::CommandError::StaleDelivery)
@@ -895,7 +904,8 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
         processor
             .begin_alignment_v_template(surface_alignment, event)
             .expect("fresh surface delimiter handoff");
-        assert!(processor.immediate_delivery_stamp.is_none());
+        assert!(processor.explicit_delivery_stamp.is_none());
+        assert!(!processor.resident_delivery_available);
         assert_eq!(
             processor.begin_alignment_v_template(surface_alignment, stale_event),
             Err(crate::CommandError::StaleDelivery)
@@ -1070,7 +1080,8 @@ fn failed_raw_delivery_clears_its_partially_written_final_slot() {
             Err(crate::CommandError::InputInvariant(_))
         ));
         assert!(destination.is_none());
-        assert!(processor.immediate_delivery_stamp.is_none());
+        assert!(processor.explicit_delivery_stamp.is_none());
+        assert!(!processor.resident_delivery_available);
     });
 }
 

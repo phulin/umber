@@ -256,8 +256,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        let stamp = command.delivery_stamp();
-        if !self.delivery_is_fresh(stamp) {
+        if !self.delivery_is_fresh(&command) {
             return Err(CommandError::StaleDelivery);
         }
         self.back_input_unchecked(command, treatment)

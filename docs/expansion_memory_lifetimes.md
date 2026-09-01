@@ -393,12 +393,16 @@ observation payloads are resolved from immutable source/provenance owners only
 at backup, observation, tracing, diagnostic, or publication demand. The
 executor keeps the compact source role only because operand scanning may
 retire the originating input frame before application. `CommandProcessor`
-derives observation order from its next-delivery cursor and temporarily
-mirrors only the current command's compact coordinate to reject a stale
-move-only backup. Neither the ordinary nor profiling path updates a parallel
-freshness-publication census; focused fixtures derive their exact admitted
-delivery volume at the measurement boundary. A genuine typed retry readmits
-its command/cursor explicitly.
+derives observation order from its next-delivery cursor. For stored-token,
+macro-body, and macro-argument delivery, immediate freshness is derived on
+demand from the command's compact coordinate, the authoritative resident
+cursor, and one episode-local availability bit; the hot transition does not
+mirror the coordinate. Direct-source positions, synthetic `endv`, and a
+genuinely suspended settled command use one explicit exceptional coordinate
+because they have no derivable resident predecessor. Neither the ordinary nor
+profiling path updates a parallel freshness-publication census; focused
+fixtures derive their exact admitted delivery volume at the measurement
+boundary. A genuine typed retry readmits its command/cursor explicitly.
 Resolved-command and delivery-stamp writes obey the same rule: each successful
 raw delivery writes both fields exactly once, so production profiling derives
 their volume from the singular command-work ledger rather than updating a

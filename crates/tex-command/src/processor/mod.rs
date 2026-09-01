@@ -27,7 +27,7 @@ use tex_state::CommandContext;
 
 use crate::{CommandError, CommandFuel, CommandHostContext, CommandState};
 
-use crate::input::InputLevelId;
+use crate::input::{InputLevel, InputLevelId, input_level_identity};
 
 use crate::observation::CommandObserver;
 
@@ -158,10 +158,14 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
     pending_file_warning_context: Option<(InputLevelId, String)>,
-    /// Episode-local proof that one resident command is still the immediately
-    /// preceding raw delivery. Observation order is `next_delivery_sequence -
-    /// 1`; it has no second per-delivery storage.
-    immediate_delivery_stamp: Option<crate::DeliveryStamp>,
+    /// Explicit freshness proof for the three cases without a derivable
+    /// resident predecessor: direct-source physical positions, synthetic
+    /// `endv`, and a settled command readmitted after genuine suspension.
+    explicit_delivery_stamp: Option<crate::DeliveryStamp>,
+    /// Episode-local bit permitting the authoritative resident-coordinate
+    /// proof. A fresh processor cannot claim a command merely because its
+    /// input cursor still follows a delivery from an earlier episode.
+    resident_delivery_available: bool,
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
@@ -261,22 +265,69 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// later than the resumed stamp.
     pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
         let stamp = command.delivery_stamp();
-        self.immediate_delivery_stamp = Some(stamp);
+        self.resident_delivery_available = false;
+        self.explicit_delivery_stamp = Some(stamp);
     }
 
     #[inline(always)]
-    pub(super) fn delivery_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
-        self.immediate_delivery_stamp == Some(stamp)
+    pub(super) fn delivery_is_fresh(&self, command: &crate::CurrentCommand<G>) -> bool {
+        let stamp = command.delivery_stamp();
+        self.explicit_delivery_stamp == Some(stamp) || self.resident_delivery_is_fresh(command)
+    }
+
+    #[inline(always)]
+    pub(super) fn delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
+        self.explicit_delivery_stamp == Some(stamp) || self.resident_delivery_stamp_is_fresh(stamp)
+    }
+
+    #[inline(always)]
+    fn resident_delivery_is_fresh(&self, command: &crate::CurrentCommand<G>) -> bool {
+        self.resident_delivery_stamp_is_fresh(command.delivery_stamp())
+    }
+
+    #[inline(always)]
+    fn resident_delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
+        if !self.resident_delivery_available {
+            return false;
+        }
+        let Some(level) = self.command.input.levels.last() else {
+            return false;
+        };
+        if input_level_identity(level).0 != stamp.input_level() {
+            return false;
+        }
+        let position = match level {
+            InputLevel::Source(_) => return false,
+            InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_) => level.stored_position(),
+            InputLevel::MacroBody(body) => Some(body.position()),
+            InputLevel::MacroArgument(argument) => Some(argument.position()),
+        };
+        position
+            .and_then(|position| u64::try_from(position).ok())
+            .is_some_and(|position| stamp.position().checked_add(1) == Some(position))
     }
 
     #[inline(always)]
     pub(super) fn invalidate_delivery_freshness(&mut self) {
-        self.immediate_delivery_stamp = None;
+        if self.explicit_delivery_stamp.is_some() {
+            self.explicit_delivery_stamp = None;
+        }
+        if self.resident_delivery_available {
+            self.resident_delivery_available = false;
+        }
     }
 
     #[inline(always)]
-    pub(super) fn publish_delivery_freshness(&mut self, stamp: crate::DeliveryStamp) {
-        self.immediate_delivery_stamp = Some(stamp);
+    pub(super) fn readmit_delivery_stamp(&mut self, stamp: crate::DeliveryStamp) {
+        self.resident_delivery_available = false;
+        self.explicit_delivery_stamp = Some(stamp);
+    }
+
+    #[inline(always)]
+    pub(super) fn publish_resident_delivery(&mut self) {
+        self.resident_delivery_available = true;
     }
 
     #[inline(always)]
@@ -588,7 +639,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
-            immediate_delivery_stamp: None,
+            explicit_delivery_stamp: None,
+            resident_delivery_available: false,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             scanner_resume: None,

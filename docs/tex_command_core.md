@@ -216,6 +216,13 @@ attempt variant when the level is created; delivery dispatches directly from
 that top-row tag, borrows the already-known domain, writes
 the spelling, raw delivery coordinate, only-present provenance, and input
 flags directly into `CurrentCommand`, and advances the fixed frame in place.
+Stored-token, macro-body, and macro-argument delivery does not republish the
+command's compact coordinate into processor state. An uncommon backup or
+handoff proves freshness on demand from that coordinate, the authoritative
+resident cursor, and one episode-local availability bit. Direct-source
+positions, synthetic `endv`, and a settled command crossing a genuine typed
+suspension retain one explicit coordinate because no resident predecessor can
+derive it. Observation sequencing remains separate from this proof.
 Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
 whole packed frame before that advance. The warm loop neither matches a

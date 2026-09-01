@@ -168,13 +168,16 @@ collector (see `src/conditionals.rs`).
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics. The
-  processor's immediate-delivery freshness proof compares the resident
-  command's stable input-level/position coordinate, while its sequence scalar
-  remains observation-only. Neither ordinary nor profiling delivery updates a
-  parallel freshness-publication census; focused fixtures derive their known
-  delivery volume at the measurement boundary. `CurrentCommand` owns no
-  observation sequence; a genuine suspension retains the opaque cursor in its
-  typed frame.
+  processor's ordinary immediate-delivery freshness proof compares the
+  command's stable input-level/position coordinate with the authoritative
+  resident cursor and one episode-local availability bit; it does not mirror
+  the coordinate after each stored or macro delivery. Direct-source positions,
+  synthetic `endv`, and a genuinely suspended settled command use the one
+  explicit exceptional coordinate because they have no derivable resident
+  predecessor. Neither ordinary nor profiling delivery updates a parallel
+  freshness-publication census; focused fixtures derive their known delivery
+  volume at the measurement boundary. `CurrentCommand` owns no observation
+  sequence; a genuine suspension retains the opaque cursor in its typed frame.
   Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no

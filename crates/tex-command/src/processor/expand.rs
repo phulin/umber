@@ -750,7 +750,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_mut()
                 .expect("resident delivery initializes the command slot");
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            self.publish_delivery_freshness(command.delivery_stamp());
+            if command.is_direct_source_delivery() {
+                self.readmit_delivery_stamp(command.delivery_stamp());
+            } else {
+                self.publish_resident_delivery();
+            }
             if matches!(interception, ResidentCommandInterception::Outer)
                 && let Err(failure) = self.check_outer_validity_entry(command)
             {
@@ -1083,6 +1087,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             _resolution.meaning_lookup(),
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
+                        self.readmit_delivery_stamp(
+                            destination
+                                .as_ref()
+                                .expect("synthetic command occupies the destination")
+                                .delivery_stamp(),
+                        );
                         Ok(ResidentColdOutcome::SyntheticCommand(
                             ResidentCommandInterception::Ready,
                         ))
@@ -1177,7 +1187,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .as_mut()
                         .expect("resident delivery initializes the command slot");
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                    self.publish_delivery_freshness(command.delivery_stamp());
+                    if command.is_direct_source_delivery() {
+                        self.readmit_delivery_stamp(command.delivery_stamp());
+                    } else {
+                        self.publish_resident_delivery();
+                    }
                     if matches!(interception, ResidentCommandInterception::Outer)
                         && let Err(failure) = self.check_outer_validity_entry(command)
                     {
