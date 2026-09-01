@@ -318,6 +318,110 @@ def main() -> None:
         assert (staged / "fonts/tfm/public/cm/cmr10.tfm").read_bytes() == b"metric\n"
         assert (staged / "tex/language.dat").read_bytes() == language_configuration
 
+        first_aid = b"first aid\n"
+        pdftex_configuration = b"pdf config\n"
+        pdflatex_ini = b"pdflatex init\n"
+        texmf_configuration = b"texmf config\n"
+        tcx = b"tcx\n"
+        (texmf_dist / "tex/latex-dev/firstaid").mkdir(parents=True)
+        first_aid_path = (
+            texmf_dist
+            / "tex/latex-dev/firstaid/latex2e-first-aid-for-external-files.ltx"
+        )
+        first_aid_path.write_bytes(first_aid)
+        (texmf_dist / "tex/latex/tex-ini-files").mkdir(parents=True)
+        (texmf_dist / "tex/latex/tex-ini-files/pdflatex.ini").write_bytes(pdflatex_ini)
+        (texmf_dist / "web2c").mkdir()
+        (texmf_dist / "web2c/texmf.cnf").write_bytes(texmf_configuration)
+        (texmf_dist / "web2c/cp227.tcx").write_bytes(tcx)
+        (tests / "latex/pdftexconfig.tex").write_bytes(pdftex_configuration)
+        locked_rows = (
+            ("source", "tex/latex-dev/base/latex.ltx", b"dev kernel\n"),
+            (
+                "source",
+                "tex/latex-dev/firstaid/latex2e-first-aid-for-external-files.ltx",
+                first_aid,
+            ),
+            (
+                "pdflatex-source",
+                "tex/latex/tex-ini-files/pdflatex.ini",
+                pdflatex_ini,
+            ),
+            (
+                "pdflatex-local",
+                "tests/latex/pdftexconfig.tex",
+                pdftex_configuration,
+            ),
+            (
+                "pdftex-reference-source",
+                "web2c/texmf.cnf",
+                texmf_configuration,
+            ),
+            ("pdftex-reference-source", "web2c/cp227.tcx", tcx),
+        )
+        format_lock.write_text(
+            "distribution fixture-runtime\n"
+            "distribution_ahash64 0123456789abcdef\n"
+            "format_schema 12\n"
+            "source_date_epoch 1\n"
+            + "".join(
+                f"{kind} {path} {len(data)} {hashlib.sha256(data).hexdigest()}\n"
+                for kind, path, data in locked_rows
+            ),
+            encoding="utf-8",
+        )
+        scripts = root / "scripts"
+        scripts.mkdir(exist_ok=True)
+        (scripts / "run-umber-guarded.py").write_text(
+            "import subprocess, sys\n"
+            "separator = sys.argv.index('--')\n"
+            "raise SystemExit(subprocess.run(sys.argv[separator + 1:]).returncode)\n",
+            encoding="utf-8",
+        )
+        fake_pdftex = root / "fake-pdftex"
+        fake_pdftex.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib, sys\n"
+            "expected = ['-ini', '-etex', '-enc', '-progname=pdflatex-dev', "
+            "'-jobname=pdflatex', '-translate-file=cp227.tcx', '-recorder', "
+            "'pdflatex.ini']\n"
+            "assert sys.argv[1:] == expected, sys.argv\n"
+            "root = pathlib.Path(os.environ['TEXMFROOT']).resolve()\n"
+            "paths = [root / 'web2c/texmf.cnf', "
+            "root / 'tex/latex/tex-ini-files/pdflatex.ini', "
+            "root / 'tex/pdftexconfig.tex', "
+            "root / 'tex/latex-dev/base/latex.ltx', "
+            "root / 'tex/latex-dev/firstaid/"
+            "latex2e-first-aid-for-external-files.ltx']\n"
+            "pathlib.Path('pdflatex.fls').write_text("
+            "''.join(f'INPUT {path}\\n' for path in paths))\n"
+            "pathlib.Path('pdflatex.fmt').write_bytes(b'reference format\\n')\n"
+            "print('../texmf-dist/web2c/cp227.tcx')\n",
+            encoding="utf-8",
+        )
+        fake_pdftex.chmod(0o755)
+        reference_target = root / "reference-target"
+        receipt = provision.build_pdftex_reference_format(
+            root,
+            reference_target,
+            texmf_dist=texmf_dist,
+            pdftex=fake_pdftex,
+        )
+        assert receipt["format"] == {
+            "bytes": len(b"reference format\n"),
+            "sha256": hashlib.sha256(b"reference format\n").hexdigest(),
+        }
+        assert (
+            reference_target / "pdftex14029-reference-format/pdflatex.fmt"
+        ).read_bytes() == b"reference format\n"
+        published_receipt = json.loads(
+            (
+                reference_target
+                / "pdftex14029-reference-format/pdflatex-format.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert published_receipt == receipt
+
         seed = root / "snapshot-seed"
         seed_objects = seed / "objects"
         seed_texmf = seed / "texmf-dist"

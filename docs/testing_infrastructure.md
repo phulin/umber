@@ -1016,6 +1016,23 @@ separately pinned by path, length, and SHA-256 in
 receives the named format plus only these ten runtime keys. Generated formats
 and comparison artifacts remain under `target/` rather than becoming
 repository fixtures.
+Primary `python3 scripts/provision.py worktree .` additionally constructs the
+independent clean-pdfTeX `pdflatex.fmt` under
+`target/pdftex14029-reference-format/`. Construction stages the same locked
+pdfLaTeX source closure used by Umber, adds only the pinned Web2C configuration
+and TCX profile required by the reference executable, selects
+`-progname=pdflatex-dev`, and rejects recorder inputs outside the staged closure.
+Both the format and its deterministic JSON receipt are native assets, so linked
+worktrees receive the exact qualified bytes rather than rebuilding them.
+
+`python3 scripts/check-pdftex-format-pair.py --distribution PATH
+--distribution-ahash64 AHASH64` is the focused live gate for that pairing. It
+checks the reference receipt and the distribution's schema-12 pdfLaTeX record
+against `tests/latex-source.lock`, runs `tests/latex/format-pairing.tex` through
+clean pdfTeX and Umber in DVI mode, and requires identical `2026-06-01` and
+`proposition` macro markers. Its receipt records both binary and format SHA-256
+identities plus the macro-marker fingerprint. It does not run or inspect Umber
+PDF.
 The source lock also pins the schema-3 distribution digest. Both flags are
 required, the local root is authenticated before compilation, and all four
 engine runs use the same absolute path and pin with offline resolution.

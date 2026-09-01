@@ -138,8 +138,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
   That command downloads the pinned TeX Live 2026 source and runtime inputs,
   builds the instrumented pdfTeX 1.40.29 oracle, and generates the locked
-  fixtures. Linked worktrees symlink the primary source archive/tree and copy
-  only the locked native assets. An environment that genuinely
+  fixtures plus the clean pdfTeX format paired with Umber's locked pdfLaTeX
+  source closure. Linked worktrees symlink the primary source archive/tree and
+  copy only the locked native assets. An environment that genuinely
   cannot host the oracles opts out explicitly with
   `UMBER_CONFORMANCE_ORACLES=optional`, which downgrades the byte-exact gates
   to a loud notice rather than letting an absent oracle read as a pass.

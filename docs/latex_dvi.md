@@ -124,6 +124,31 @@ of generated-format cache identity. Materialize and recheck the required
 selection as described in [Sharded Distribution Manifest](distribution_manifest.md)
 before running the builder.
 
+### Paired clean pdfTeX format
+
+Byte-exact DVI reference work must not load the TeX Live release's pregenerated
+`pdflatex.fmt`: that image can embed a different LaTeX program from Umber's
+schema-12 format even when both are labeled TeX Live 2026. Primary provisioning
+therefore builds `target/pdftex14029-reference-format/pdflatex.fmt` with the
+pinned clean pdfTeX 1.40.29 oracle, `pdflatex-dev` lookup profile, fixed clock,
+and the exact pdfLaTeX records in `tests/latex-source.lock`. The recorder rejects
+every construction input outside that closure. The format and its deterministic
+identity receipt are copied to linked worktrees through
+`tests/native-test-assets.lock`.
+
+The explicit pairing gate checks both format identities and then runs only DVI:
+
+```sh
+python3 scripts/check-pdftex-format-pair.py \
+  --distribution target/texlive-snapshot \
+  --distribution-ahash64 EXPECTED_ROOT_AHASH64
+```
+
+Its committed amsthm shared-counter probe requires both engines to report
+LaTeX `2026-06-01` and theorem key `proposition`. Reference document generation
+uses this clean format with the same dev-first runtime lookup; it never asks
+Umber's TeX semantics to emulate a release-format macro body.
+
 Every Umber subprocess started by the builder, including format-cache restore
 and publication, runs through `scripts/run-umber-guarded.py`. The shared guard
 sets finite engine fuel, enforces aggregate process-group RSS and wall-time

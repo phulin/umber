@@ -1,0 +1,15 @@
+% Complete job probing the shared-counter amsthm program loaded by both formats.
+\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\makeatletter
+\let\umber@format@pair@thm\@thm
+\def\@thm#1#2#3{%
+  \typeout{UMBER-FORMAT-PAIR-LATEX=\fmtversion}%
+  \typeout{UMBER-FORMAT-PAIR-THEOREM-KEY=#2}%
+  \umber@format@pair@thm{#1}{#2}{#3}}
+\makeatother
+\begin{document}
+\begin{proposition}Probe.\end{proposition}
+\end{document}

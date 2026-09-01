@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -15,6 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import pdftex_reference_format
 import texlive
 import texlive_release
 
@@ -185,6 +185,7 @@ def _generate_primary_assets(repo_root: Path, target_dir: Path, offline: bool) -
     )
     _run([str(target_dir / "debug/fixturegen"), "--sync-corpus"], repo_root, environment)
     provision_oracles(repo_root, ("pdftex14029",), target_dir, offline)
+    build_pdftex_reference_format(repo_root, target_dir)
     pdftex = target_dir / "pdftex14029-oracle/bin/umber-pdftex14029-oracle-instrumented"
     if not pdftex.is_file():
         raise ProvisionError(f"missing built pdfTeX 1.40.29 oracle: {pdftex}")
@@ -284,6 +285,24 @@ def _stage_format_input_root(
     if not staged:
         raise ProvisionError(f"{lock}: no format inputs to stage")
     return len(staged)
+
+
+def build_pdftex_reference_format(
+    repo_root: Path,
+    target_dir: Path,
+    *,
+    texmf_dist: Path | None = None,
+    pdftex: Path | None = None,
+) -> dict[str, object]:
+    try:
+        return pdftex_reference_format.build(
+            repo_root,
+            target_dir,
+            texmf_dist=texmf_dist,
+            pdftex=pdftex,
+        )
+    except pdftex_reference_format.ReferenceFormatError as error:
+        raise ProvisionError(str(error)) from error
 
 
 def provision_oracles(
@@ -476,6 +495,14 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
         help="mirror directory containing a pinned release artifact; may be repeated",
     )
     runtime_source.add_argument("--offline", action="store_true")
+    reference_format = commands.add_parser(
+        "reference-format",
+        help="build the clean pdfTeX format paired with Umber's pdfLaTeX closure",
+    )
+    reference_format.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    reference_format.add_argument("--target-dir", type=Path)
+    reference_format.add_argument("--texmf-dist", type=Path)
+    reference_format.add_argument("--pdftex", type=Path)
     worktree = commands.add_parser("worktree", help="provision primary or linked-worktree tests")
     worktree.add_argument("path", type=Path)
     worktree.add_argument("--target-dir", type=Path)
@@ -516,6 +543,20 @@ def main(arguments: list[str] | None = None) -> int:
             repo_root, tuple(args.mirror), args.offline
         )
         print(f"provision: runtime source ready at {source_root}")
+    elif args.command == "reference-format":
+        target_dir = (args.target_dir or repo_root / "target").resolve()
+        receipt = build_pdftex_reference_format(
+            repo_root,
+            target_dir,
+            texmf_dist=args.texmf_dist,
+            pdftex=args.pdftex,
+        )
+        identity = receipt["format"]
+        assert isinstance(identity, dict)
+        print(
+            "provision: clean pdfTeX reference format ready "
+            f"sha256={identity['sha256']} bytes={identity['bytes']}"
+        )
     elif args.command == "worktree":
         copied = provision_worktree(args.path, args.target_dir, args.offline)
         print(f"provision: PASS: {copied} asset(s) provisioned into {repo_root}")

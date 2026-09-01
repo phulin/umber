@@ -202,6 +202,9 @@ mode-specific repository-local format configuration inputs, byte lengths, and
 SHA-256 identities opened while building the Umber-native `latex.fmt` and
 `pdflatex.fmt`. Common `source`/`local` records apply to both modes;
 `pdflatex-source`/`pdflatex-local` records extend only the PDF format closure.
+The two `pdftex-reference-source` records pin Web2C's configuration and TCX
+inputs used only while independently building the paired clean pdfTeX format;
+they do not enlarge either Umber format's published request-key closure.
 The explicit LaTeX format builder verifies the selected closure before every
 build. With `--publish-input-closure`, it also emits the canonical request-key
 closure and construction-input identities consumed by the schema-3 TeX Live
@@ -214,6 +217,9 @@ hyphenation minima deterministic without depending on generated TeX Live
 the complete upstream US English alias closure required by the paired Babel
 runtime. Both source-loaded and frozen-format equivalence fixtures assert that
 the aliases select the English slot and exercise Babel's `USenglish` option.
+`tests/latex/format-pairing.tex` is a complete DVI-mode live-reference probe.
+It loads amsthm, defines a shared-counter theorem pair, and exposes the selected
+LaTeX version and theorem destination key without becoming a Cargo fixture.
 
 `tests/texlive-snapshot.lock` pins the complete publisher-visible runtime-tree
 digest for the 2026-03-01 snapshot plus compatibility-critical LaTeX kernel,

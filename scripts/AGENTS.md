@@ -21,8 +21,17 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   bounded ISO-range package-database recovery, and atomic primary-tree replacement.
 - `provision.py`: the sole provisioning CLI for primary/linked worktrees,
   TeX Live program and release-runtime sources, reference oracles, execution mirrors, and publisher
-  snapshots; snapshot publication stages the complete locked
+  snapshots; primary provisioning also builds a recorder-audited clean pdfTeX
+  format from the exact locked Umber pdfLaTeX source closure, while snapshot publication stages the complete locked
   format-construction closure as the highest-precedence runtime root.
+- `pdftex_reference_format.py`: import-only reference-format builder used by
+  provisioning; it stages the locked closure, runs clean pdfTeX under the shared
+  guard, audits recorder provenance, and atomically publishes the format and
+  deterministic receipt.
+- `check-pdftex-format-pair.py`: explicit clean-pdfTeX/Umber format-pair gate;
+  it verifies both formats name `tests/latex-source.lock`, runs the committed
+  shared-counter amsthm probe in DVI mode only, and publishes the matching
+  LaTeX-version/theorem-key fingerprint under `target/`.
 - `test-provision.py`: hermetic program-source and release-runtime acquisition,
   replacement, ISO-range, offline, and ordered TRIP-locator coverage for the
   shared libraries and CLI.

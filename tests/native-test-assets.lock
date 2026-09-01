@@ -1,5 +1,7 @@
 # SHA-256 allowlist copied into linked worktrees by scripts/provision.py.
 # Paths are repository-relative. Update only through audited fixture regeneration.
+bcaa10b08e9300ef1bc32fc22b834a29aca41e835e9d1d7e2090125bab04f4f8 target/pdftex14029-reference-format/pdflatex-format.json
+d557a9b8d7de1ff9bc5a570830701417d32f09b300f0188f9a18a485aaf1ff8e target/pdftex14029-reference-format/pdflatex.fmt
 85cc5b607f1d355e0c2d20158646ce976384dbf823c91a2895b4134124b7d89c tests/corpus/e2e/story.expected.dvi
 04f86e97e8264f9b8ce35dc1e9df27f2b075ca85365af71acc5fe1478399866b tests/corpus/e2e/gentle.expected.dvi
 a48cec413b485403e11d35e24122aa747b3e3863a151c257fcec026580a78bf9 tests/corpus/e2e/trip.expected.dvi
