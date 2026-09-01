@@ -1903,11 +1903,11 @@ impl<G> MixedPackedCursorBenchmark<G> {
             .begin_macro_match()
             .expect("mixed-cursor macro frame");
         let mut buffer = scratch
-            .begin_argument_collector(&matching)
+            .begin_argument_writer(&matching)
             .expect("mixed-cursor argument buffer");
         for word in traced {
             scratch
-                .settle_argument_token(
+                .append_argument_token(
                     &mut buffer,
                     crate::token_collector::ClassifiedToken::from_word(word, None),
                     true,
@@ -1915,7 +1915,7 @@ impl<G> MixedPackedCursorBenchmark<G> {
                 .expect("mixed-cursor argument word");
         }
         scratch
-            .finish_argument_collector(buffer)
+            .publish_argument(buffer)
             .expect("mixed-cursor argument range");
         let frame = scratch
             .commit_macro_match(matching)
@@ -2051,7 +2051,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
             .begin_macro_match()
             .expect("long-argument macro frame");
         let mut buffer = scratch
-            .begin_argument_collector(&matching)
+            .begin_argument_writer(&matching)
             .expect("long-argument buffer");
         for index in 0..WORDS {
             let semantic = TokenWord::pack(Token::Char {
@@ -2059,7 +2059,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 cat: crate::Catcode::Letter,
             });
             scratch
-                .settle_argument_token(
+                .append_argument_token(
                     &mut buffer,
                     crate::token_collector::ClassifiedToken::from_word(
                         TracedTokenWord::from_parts(semantic, OriginId::UNKNOWN),
@@ -2070,7 +2070,7 @@ impl<G> LongMacroArgumentCursorBenchmark<G> {
                 .expect("long-argument word");
         }
         scratch
-            .finish_argument_collector(buffer)
+            .publish_argument(buffer)
             .expect("long-argument range");
         let frame = scratch
             .commit_macro_match(matching)

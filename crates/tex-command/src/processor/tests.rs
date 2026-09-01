@@ -1250,12 +1250,12 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let matching = command.scratch.begin_macro_match().expect("macro match");
             let mut writer = command
                 .scratch
-                .begin_argument_collector(&matching)
+                .begin_argument_writer(&matching)
                 .expect("macro writer");
             for spelling in &traced {
                 command
                     .scratch
-                    .settle_argument_token(
+                    .append_argument_token(
                         &mut writer,
                         crate::token_collector::ClassifiedToken::from_word(*spelling, None),
                         true,
@@ -1264,7 +1264,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             }
             command
                 .scratch
-                .finish_argument_collector(writer)
+                .publish_argument(writer)
                 .expect("macro argument range");
             let argument_set = command
                 .scratch

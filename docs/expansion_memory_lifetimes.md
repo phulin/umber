@@ -456,8 +456,12 @@ the replacement span directly through the key.
 The input stack itself is the logical macro stack; there is no parallel
 activation chain. Only parameterized calls publish a sealed `ArgumentSet`.
 During collection, a purpose-built stack-local `MacroArgumentWriter` holds the
-direct lane cursor, delimiter-prefix coordinates, brace depth, and first-scan
-facts exactly once. It publishes that argument once when it completes; an
+admission-minted fixed-block position and provenance-run boundary, delimiter-
+prefix and rollback coordinates, brace depth, and first-scan facts exactly
+once. Admission validates the pending frame and fixed argument slot once.
+Accepted words then advance the writer directly without repeating frame/range
+validation or crossing a processor forwarding helper. Completion validates the
+frame once and publishes the already-written span and facts into that slot; an
 unfinished call retains only its typed scanner continuation. The frame then
 contains fixed-capacity absolute argument ranges, the exact §394 facts
 established while each range was first collected, and its opening segment

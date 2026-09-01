@@ -2194,17 +2194,23 @@ prefix and later committed after a mismatch retains its first spelling/group
 classification but does not acquire the ordinary paragraph-check fact. The
 scalar matcher keeps each completed raw delivery's canonical packed spelling
 resident and projects its literal category directly; it never reconstructs a
-second semantic token or consults resolved meaning for this grammar. Its admitted
-`MacroArgumentWriter` then performs the sole accepted-token transition: it appends
-the exact traced word, accepts the lane's returned cursor, and updates paragraph,
-brace-depth, and removable-outer-group aggregates under the same scratch
-borrow. Delimiter-prefix storage retains that classification beside the word,
+second semantic token or consults resolved meaning for this grammar. Admission
+validates the pending frame and fixed argument slot once and gives
+`MacroArgumentWriter` the exact fixed-block append position, provenance-run
+boundary, delimiter rollback coordinates, brace depth, and first-scan facts.
+The writer then performs the sole accepted-token transition: it writes the exact
+packed word, advances its resident coordinates, and updates paragraph, brace-
+depth, and removable-outer-group aggregates under the same scratch borrow. No
+accepted word revalidates the frame/slot or crosses a processor forwarding
+helper. Delimiter-prefix storage retains that classification beside the word,
 so overlap recovery compares packed immutable spelling and neither decodes
 provenance/group facts again nor rebuilds
 an aggregate. The writer's brace depth is also the delimiter matcher's depth;
 there is no scanner-local duplicate. The matcher consumes the resident facts
 for the non-`\long` decision and outer-pair removal without rereading stored words.
-Sealing publishes the set without moving its physical words. Semantic storage
+Completion validates the fixed slot once and publishes its already-written span
+and facts without copying or rescanning. Sealing publishes the set without
+moving its physical words. Semantic storage
 uses packed 4-byte `TokenWord` values in generation-owned fixed blocks. Exact
 primary and invocation provenance is held in compact coordinate-change runs,
 so repeated coordinates add no side entry.

@@ -331,7 +331,12 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
 
             let activates = expected;
             assert_eq!(processor.command.scratch.retained_slot_len(), 0);
+            let writer_before = processor.command.scratch.match_writer_operations();
             assert_eq!(processor.macro_call(&mut call), Ok(expected));
+            assert_eq!(
+                processor.command.scratch.match_writer_operations(),
+                writer_before
+            );
             assert_eq!(processor.command.scratch.retained_slot_len(), 0);
             assert_eq!(processor.command.scratch.argument_word_len(), 0);
             assert_eq!(processor.command.scratch.frame_len(), 0);
@@ -508,6 +513,7 @@ fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
     #[derive(Debug, Eq, PartialEq)]
     struct Evidence {
         macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
+        argument_writer: (u64, u64, u64, u64, u64),
         allocations: u64,
         allocated_bytes: u64,
         command_clones: u64,
@@ -577,6 +583,7 @@ fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
             }
 
             command.profile_reset_macro_kernel_counters();
+            let writer_before = command.scratch.match_writer_operations();
             let ownership_before = crate::command::command_ownership_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let allocations_before =
@@ -610,8 +617,16 @@ fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
             let allocations_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             let ownership_after = crate::command::command_ownership_counters();
+            let writer_after = command.scratch.match_writer_operations();
             Evidence {
                 macro_kernel: command.profile_macro_kernel_counters(),
+                argument_writer: (
+                    writer_after.0 - writer_before.0,
+                    writer_after.1 - writer_before.1,
+                    writer_after.2 - writer_before.2,
+                    writer_after.3 - writer_before.3,
+                    writer_after.4 - writer_before.4,
+                ),
                 allocations: allocations_after.calls - allocations_before.calls,
                 allocated_bytes: allocations_after.requested_bytes
                     - allocations_before.requested_bytes,
@@ -627,6 +642,7 @@ fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
                 macro_kernel: (
                     arguments, arguments, arguments, 0, arguments, arguments, arguments
                 ),
+                argument_writer: (arguments, arguments, arguments, arguments, arguments * 2),
                 allocations: 0,
                 allocated_bytes: 0,
                 command_clones: 0,
@@ -1422,8 +1438,10 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
     struct Evidence {
         fact_classifications: u64,
         token_settlements: u64,
+        fact_updates: u64,
         writer_admissions: u64,
         writer_finalizations: u64,
+        slot_validations: u64,
         allocation_calls: u64,
         requested_bytes: u64,
         whole_token_copies: u64,
@@ -1533,8 +1551,7 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             processor
                 .command
                 .profile_reset_token_collector_path_counters();
-            let admissions = processor.command.scratch.match_writer_admissions();
-            let finalizations = processor.command.scratch.match_writer_finalizations();
+            let writer_before = processor.command.scratch.match_writer_operations();
             let token_copies = processor.command.scratch.physical_macro_word_copies();
             let aggregate_reads = processor.command.scratch.match_word_reads();
             let command_copies = crate::command::command_ownership_counters().clones;
@@ -1551,12 +1568,14 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             let after_commands = crate::command::command_ownership_counters();
             let after_timeline = processor.command.profile_timeline_counters();
             let collector_counters = processor.command.profile_token_collector_path_counters();
+            let writer_after = processor.command.scratch.match_writer_operations();
             Evidence {
                 fact_classifications: collector_counters.1,
-                token_settlements: collector_counters.2,
-                writer_admissions: processor.command.scratch.match_writer_admissions() - admissions,
-                writer_finalizations: processor.command.scratch.match_writer_finalizations()
-                    - finalizations,
+                token_settlements: writer_after.1 - writer_before.1,
+                fact_updates: writer_after.2 - writer_before.2,
+                writer_admissions: writer_after.0 - writer_before.0,
+                writer_finalizations: writer_after.3 - writer_before.3,
+                slot_validations: writer_after.4 - writer_before.4,
                 allocation_calls: after_allocations.calls - allocations.calls,
                 requested_bytes: after_allocations.requested_bytes - allocations.requested_bytes,
                 whole_token_copies: processor.command.scratch.physical_macro_word_copies()
@@ -1577,8 +1596,10 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
         Evidence {
             fact_classifications: 1,
             token_settlements: 1,
+            fact_updates: 1,
             writer_admissions: 1,
             writer_finalizations: 1,
+            slot_validations: 2,
             allocation_calls: 0,
             requested_bytes: 0,
             whole_token_copies: 0,
@@ -1592,8 +1613,10 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
         let measured = run(token_count);
         assert_eq!(measured.fact_classifications, token_count as u64);
         assert_eq!(measured.token_settlements, token_count as u64);
+        assert_eq!(measured.fact_updates, token_count as u64);
         assert_eq!(measured.writer_admissions, 1);
         assert_eq!(measured.writer_finalizations, 1);
+        assert_eq!(measured.slot_validations, 2);
         assert_eq!(measured.allocation_calls, 0);
         assert_eq!(measured.requested_bytes, 0);
         assert_eq!(measured.whole_token_copies, 0);

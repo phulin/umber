@@ -48,12 +48,15 @@ collector (see `src/conditionals.rs`).
   lifecycle edge. Only genuine suspension copies the coordinate into the
   pending package for owner-exact readmission.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
-  The admitted macro frame's fixed nine-slot metadata owns the current argument
-  cursor and first-scan facts while its resident writer settles each accepted
-  delivered token once into one logically contiguous fixed-chunk LIFO lane.
-  That same transition advances the cursor, brace depth, paragraph fact, and
-  removable-outer-group aggregate; delimiter-prefix holdback retains the first
-  classification until commit. Sealing changes only the frame role; retirement
+  Argument admission validates the pending macro frame and its next fixed slot
+  once, then mints the writer's exact fixed-block append position, provenance-
+  run boundary, delimiter rollback coordinates, brace depth, and first-scan
+  facts. Each accepted delivery writes its packed word at that resident
+  position and advances those scalars exactly once without another frame/slot
+  lookup or processor forwarding helper. Publication validates the frame once
+  and installs the already-written span and facts directly in the slot;
+  delimiter-prefix holdback retains the first classification until commit.
+  Sealing changes only the frame role; retirement
   truncates to its absolute mark and returns suffix chunks to a reusable high
   water. A pending child can inherit a retiring parent's earlier reclaim mark,
   and its unpublished suffix may rebase only after the last active ancestor

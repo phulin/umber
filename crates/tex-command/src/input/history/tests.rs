@@ -152,12 +152,12 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         let matching = state.scratch.begin_macro_match().expect("macro match");
         let mut buffer = state
             .scratch
-            .begin_argument_collector(&matching)
+            .begin_argument_writer(&matching)
             .expect("match writer");
         for spelling in [word('a'), word('b')] {
             state
                 .scratch
-                .settle_argument_token(
+                .append_argument_token(
                     &mut buffer,
                     crate::token_collector::ClassifiedToken::from_word(spelling, None),
                     true,
@@ -166,7 +166,7 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         }
         state
             .scratch
-            .finish_argument_collector(buffer)
+            .publish_argument(buffer)
             .expect("argument range");
         let argument_set = state
             .scratch
@@ -344,12 +344,12 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     let matching = state.scratch.begin_macro_match().expect("macro match");
                     let mut writer = state
                         .scratch
-                        .begin_argument_collector(&matching)
+                        .begin_argument_writer(&matching)
                         .expect("macro writer");
                     for _ in 0..operations {
                         state
                             .scratch
-                            .settle_argument_token(
+                            .append_argument_token(
                                 &mut writer,
                                 crate::token_collector::ClassifiedToken::from_word(word('x'), None),
                                 true,
@@ -358,7 +358,7 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     }
                     state
                         .scratch
-                        .finish_argument_collector(writer)
+                        .publish_argument(writer)
                         .expect("macro argument range");
                     let argument_set = state
                         .scratch
