@@ -142,6 +142,128 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
 }
 
 #[test]
+fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
+    #[derive(Clone, Copy)]
+    enum Storage {
+        Replay,
+        Attempt,
+        Durable,
+    }
+
+    crate::test_harness::with_universe(|universe| {
+        let name = universe
+            .intern("storedadvancevariant")
+            .expect("stored advance symbol");
+        universe
+            .assign_meaning(
+                name,
+                tex_state::meaning::MeaningWord::from_static(tex_state::meaning::Meaning::Relax),
+                tex_state::env::AssignmentScope::Global,
+            )
+            .expect("stored advance meaning");
+        let spelling = TracedTokenWord::from_parts(
+            TokenWord::pack(Token::Cs(name.symbol())),
+            OriginId::UNKNOWN,
+        );
+
+        for storage in [Storage::Replay, Storage::Attempt, Storage::Durable] {
+            let mut state = crate::CommandState::default();
+            match storage {
+                Storage::Replay => state.profile_push_replay_stored_tokens([spelling]),
+                Storage::Attempt => state.profile_push_attempt_stored_tokens([spelling], 1),
+                Storage::Durable => {
+                    let list = universe
+                        .allocate_token_list(&[spelling.token_word()])
+                        .expect("durable variant list");
+                    let context = universe.command_context().expect("durable context");
+                    state.push_token_level(
+                        PackedTokenSpanHandle::durable(context.token_list(list)),
+                        TokenBehavior::Ordinary,
+                        RetirementBehavior::Pop,
+                        ReplayTrace::Stored(crate::input::StoredReplayReason::EveryJob),
+                    );
+                }
+            }
+
+            state.profile_reset_stored_token_advance_counters();
+            let mut context = universe.command_context().expect("stored advance context");
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut command = crate::command::CurrentCommand::empty();
+            let transition = state
+                .advance_resident_command_into(
+                    &mut context,
+                    fuel.fuel_mut(),
+                    true,
+                    command.empty_for_raw_delivery(),
+                    (&mut None, &mut None),
+                )
+                .expect("stored variant delivery");
+            assert_eq!(transition, crate::input::ResidentCommandInterception::Ready);
+            assert_eq!(
+                command.spelling().semantic_token(),
+                Token::Cs(name.symbol())
+            );
+            assert_eq!(command.origin(), OriginId::UNKNOWN);
+            assert_eq!(
+                state.profile_stored_token_advance_counters(),
+                (1, 1, 1, 1, 1, 0, 0)
+            );
+        }
+    });
+}
+
+#[test]
+fn warm_position_and_later_cold_token_state_rollback_in_order() {
+    crate::test_harness::with_universe(|universe| {
+        let behavior = TokenBehavior::Ordinary;
+        let retirement = RetirementBehavior::Pop;
+        let trace = ReplayTrace::Inserted;
+        let mut state = crate::CommandState::default();
+        let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
+            .admit(&mut state.input.replay)
+            .expect("token span admits");
+        state.input.levels.push(InputLevel::Tokens(TokenCursor {
+            span,
+            frame: packed_token_frame(InputLevelId(7), 2, &behavior, retirement, &trace),
+            behavior,
+            retirement,
+            trace,
+        }));
+        let checkpoint = state.input.levels.mark().expect("input checkpoint");
+        let before = state.input.levels.counters();
+        let mut context = universe.command_context().expect("command context");
+        let mut fuel = crate::CommandFuelLedger::default();
+
+        let mut command = crate::command::CurrentCommand::empty();
+        state
+            .advance_resident_command_into(
+                &mut context,
+                fuel.fuel_mut(),
+                true,
+                command.empty_for_raw_delivery(),
+                (&mut None, &mut None),
+            )
+            .expect("warm token delivery");
+        assert!(state.input.levels.toggle_top_token_retirement());
+        let after = state.input.levels.counters();
+        assert_eq!(after.undo_records - before.undo_records, 2);
+
+        state.input.levels.begin_checkpoint_candidate(checkpoint);
+        let InputLevel::Tokens(cursor) = state.input.levels.last().expect("restored cursor") else {
+            panic!("restored row is a token cursor")
+        };
+        assert_eq!(cursor.position(), 0);
+        assert_eq!(cursor.retirement, RetirementBehavior::Pop);
+        state.input.levels.reject_checkpoint_candidate();
+        let InputLevel::Tokens(cursor) = state.input.levels.last().expect("redone cursor") else {
+            panic!("redone row is a token cursor")
+        };
+        assert_eq!(cursor.position(), 1);
+        assert_eq!(cursor.retirement, RetirementBehavior::StopAtEnd);
+    });
+}
+
+#[test]
 fn macro_argument_mutation_uses_the_same_direct_transition() {
     crate::test_harness::with_universe(|universe| {
         let mut context = universe.command_context().expect("command context");

@@ -386,77 +386,10 @@ impl<G> TokenCursor<G> {
     pub(crate) fn token_at(
         &self,
         sources: PackedTokenSources<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
+        _state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
-        sources.token_at(&self.span, self.behavior, self.position(), state)
+        sources.token_at(&self.span, self.position())
     }
-
-    /// Delivers the canonical word at the fixed frame's scalar position.
-    #[inline(always)]
-    pub(super) fn deliver_into(
-        &mut self,
-        sources: PackedTokenSources<'_, G>,
-        destination: crate::command::EmptyCommand<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<StoredTokenAdvance<G>, ()> {
-        let position = self.frame.position();
-        let index = position as usize;
-        let Some((word, origin)) = (match &self.span {
-            PackedTokenSpanHandle::Replay { replay, .. } => sources
-                .replay
-                .get(*replay, index)
-                .map(|word| (word.token_word(), word.origin())),
-            PackedTokenSpanHandle::AttemptList { list, .. } => sources
-                .attempt
-                .token_word(*list, index)
-                .ok()
-                .map(|word| (word.token_word(), word.origin())),
-            PackedTokenSpanHandle::DurableList { list, .. } => {
-                list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
-            }
-        }) else {
-            return Ok(StoredTokenAdvance::Exhausted(self.identity()));
-        };
-        let delivery = if !matches!(self.behavior, TokenBehavior::Parameter)
-            && let Some(slot) = word.out_parameter_slot()
-        {
-            StoredTokenAdvance::OutParameter {
-                slot,
-                arguments: None,
-                active_source: self.frame.source_context(),
-            }
-        } else {
-            StoredTokenAdvance::Delivered(
-                destination.write_resolved_delivery(
-                    word,
-                    origin,
-                    self.frame.identity(),
-                    u64::from(position),
-                    self.frame.source_context(),
-                    false,
-                    None,
-                    self.frame
-                        .flags()
-                        .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
-                    state,
-                ),
-            )
-        };
-        if self.frame.advance() != Some(position) {
-            return Err(());
-        }
-        Ok(delivery)
-    }
-}
-
-pub(super) enum StoredTokenAdvance<G> {
-    Delivered(tex_state::token::PackedMeaningResolution),
-    OutParameter {
-        slot: u8,
-        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-    },
-    Exhausted(InputLevelId),
 }
 
 /// Canonical packed word plus its storage-independent diagnostic coordinates.
@@ -560,9 +493,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
     pub(crate) fn token_at(
         &self,
         span: &PackedTokenSpanHandle<G>,
-        _behavior: TokenBehavior,
         index: usize,
-        _state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
         match span {
             PackedTokenSpanHandle::Replay { replay, .. } => self
@@ -591,6 +522,9 @@ impl<'a, G> PackedTokenSources<'a, G> {
 /// legal checkpoint interval.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InputLevelInlineState {
+    TokenPosition {
+        position: u32,
+    },
     Tokens {
         frame: PackedInputFrame,
         retirement: RetirementBehavior,
@@ -605,6 +539,10 @@ pub(crate) enum InputLevelInlineState {
 }
 
 impl InputLevelInlineState {
+    pub(crate) const fn token_position(position: u32) -> Self {
+        Self::TokenPosition { position }
+    }
+
     pub(crate) const fn new(frame: PackedInputFrame, retirement: RetirementBehavior) -> Self {
         Self::Tokens { frame, retirement }
     }
@@ -800,13 +738,19 @@ impl<G> InputLevel<G> {
 
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
-            Self::Tokens(tokens) => {
-                let InputLevelInlineState::Tokens { frame, retirement } = state else {
+            Self::Tokens(tokens) => match state {
+                InputLevelInlineState::TokenPosition { position } => {
+                    tokens.frame.swap_position(position);
+                }
+                InputLevelInlineState::Tokens { frame, retirement } => {
+                    std::mem::swap(&mut tokens.frame, frame);
+                    std::mem::swap(&mut tokens.retirement, retirement);
+                }
+                InputLevelInlineState::MacroBody { .. }
+                | InputLevelInlineState::MacroArgument { .. } => {
                     unreachable!("token row inverse kind changed")
-                };
-                std::mem::swap(&mut tokens.frame, frame);
-                std::mem::swap(&mut tokens.retirement, retirement);
-            }
+                }
+            },
             Self::MacroBody(body) => {
                 let InputLevelInlineState::MacroBody { position } = state else {
                     unreachable!("macro body inverse kind changed")

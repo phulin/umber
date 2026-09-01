@@ -169,13 +169,15 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(!levels.contains("let frame = self.frame;"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
     assert!(!command.contains("ResolvedCommand"));
-    assert!(levels.contains("crate::command::EmptyCommand<'_, G>"));
+    assert!(input_history.contains("crate::command::EmptyCommand<'_, G>"));
     assert!(!input_stack.contains("enum InputTopTransition {"));
     assert!(!input_history.contains("InputTopTransition"));
     assert_eq!(input_history.matches("fn select_resident_top(").count(), 1);
     assert!(input_history.contains("enum ResidentInputTop<'a, G>"));
     assert!(input_history.contains("ResidentInputTop::Source(ResidentSourceTop"));
-    assert!(input_history.contains("ResidentInputTop::StoredToken(ResidentStoredTokenTop"));
+    assert!(input_history.contains("ResidentInputTop::StoredToken(cursor)"));
+    assert!(!input_history.contains("ResidentStoredTokenTop"));
+    assert!(!format!("{input_history}\n{levels}").contains("StoredTokenAdvance"));
     assert!(input_history.contains("ResidentInputTop::MacroBody(cursor)"));
     assert!(input_history.contains("ResidentInputTop::MacroArgument(cursor)"));
     assert!(!input_history.contains("ResidentMacroBodyTop"));
@@ -187,7 +189,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "resident input words must resolve through one final-slot write"
     );
     assert!(input_history.contains(".write_resolved_delivery("));
-    assert!(levels.contains("destination.write_resolved_delivery("));
+    assert!(!levels.contains("destination.write_resolved_delivery("));
     for retired in [
         "RawDeliverySlot",
         "struct RawCommand<'slot, G>",
@@ -213,7 +215,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert_eq!(resident_front.matches(".select_resident_top()").count(), 1);
     for branch in [
         "ResidentInputTop::Source(top)",
-        "ResidentInputTop::StoredToken(top)",
+        "ResidentInputTop::StoredToken(cursor)",
         "ResidentInputTop::MacroArgument(top)",
     ] {
         assert_eq!(

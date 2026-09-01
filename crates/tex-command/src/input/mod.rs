@@ -1176,7 +1176,7 @@ impl<G> InputState<G> {
         }
 
         fn span_token<G>(
-            stores: &tex_state::CommandContext<'_, G>,
+            _stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
             replay_lane: &ReplayLane<G>,
             index: usize,
@@ -1184,7 +1184,7 @@ impl<G> InputState<G> {
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             PackedTokenSources::new(replay_lane, attempt)
-                .token_at(&tokens.span, tokens.behavior, index, stores)
+                .token_at(&tokens.span, index)
                 .map(|(word, _)| word.semantic_token())
         }
 

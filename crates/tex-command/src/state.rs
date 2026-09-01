@@ -169,6 +169,10 @@ pub struct CommandState<G> {
     /// materialization is confined to cold transitions.
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) delivery_loop_counters: DeliveryLoopCounters,
+    /// Exact operation census for the singular inline stored-token advance.
+    /// Shipping builds contain neither the counters nor their updates.
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) stored_token_advance_counters: StoredTokenAdvanceCounters,
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -189,6 +193,18 @@ pub(crate) struct DeliveryLoopCounters {
     pub(crate) warm_scalar_returns: u64,
     pub(crate) cold_status_materializations: u64,
     pub(crate) intermediate_status_relays: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct StoredTokenAdvanceCounters {
+    pub(crate) span_selections: u64,
+    pub(crate) packed_loads: u64,
+    pub(crate) cursor_advances: u64,
+    pub(crate) command_writes: u64,
+    pub(crate) meaning_lookups: u64,
+    pub(crate) parameter_interceptions: u64,
+    pub(crate) intermediate_relays: u64,
 }
 
 #[cfg(test)]
@@ -414,6 +430,8 @@ impl<G> Default for CommandState<G> {
             macro_kernel_counters: MacroKernelCounters::default(),
             #[cfg(any(test, feature = "profiling"))]
             delivery_loop_counters: DeliveryLoopCounters::default(),
+            #[cfg(any(test, feature = "profiling"))]
+            stored_token_advance_counters: StoredTokenAdvanceCounters::default(),
         }
     }
 }
@@ -1298,6 +1316,71 @@ impl<G> CommandState<G> {
             counters.warm_scalar_returns,
             counters.cold_status_materializations,
             counters.intermediate_status_relays,
+        )
+    }
+
+    /// Resets exact operation evidence for inline stored-token advancement.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_reset_stored_token_advance_counters(&mut self) {
+        self.stored_token_advance_counters = StoredTokenAdvanceCounters::default();
+    }
+
+    /// Admits one replay-lane stored span for the focused production-path
+    /// advance gate. This exists only in test/profiling resolutions.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_push_replay_stored_tokens(
+        &mut self,
+        words: impl IntoIterator<Item = tex_state::token::TracedTokenWord>,
+    ) {
+        self.push_token_level(
+            crate::input::PackedTokenSpanHandle::transient(words),
+            crate::input::TokenBehavior::Ordinary,
+            crate::input::RetirementBehavior::Pop,
+            crate::input::ReplayTrace::Inserted,
+        );
+    }
+
+    /// Admits one attempt-lane stored span for the focused production-path
+    /// advance gate. This exists only in test/profiling resolutions.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    pub fn profile_push_attempt_stored_tokens(
+        &mut self,
+        words: impl IntoIterator<Item = tex_state::token::TracedTokenWord>,
+        len: usize,
+    ) {
+        let list = self
+            .attempt
+            .profile_allocate_token_list(words)
+            .expect("profiling attempt span admits");
+        self.push_token_level(
+            crate::input::PackedTokenSpanHandle::AttemptList {
+                list,
+                len: u32::try_from(len).expect("profiling attempt span length fits u32"),
+            },
+            crate::input::TokenBehavior::Ordinary,
+            crate::input::RetirementBehavior::Pop,
+            crate::input::ReplayTrace::Inserted,
+        );
+    }
+
+    /// Returns `(span selections, packed loads, cursor advances, command
+    /// writes, meaning lookups, parameter interceptions, intermediate relays)`.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_stored_token_advance_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+        let counters = self.stored_token_advance_counters;
+        (
+            counters.span_selections,
+            counters.packed_loads,
+            counters.cursor_advances,
+            counters.command_writes,
+            counters.meaning_lookups,
+            counters.parameter_interceptions,
+            counters.intermediate_relays,
         )
     }
 

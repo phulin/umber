@@ -245,8 +245,10 @@ collector (see `src/conditionals.rs`).
   consequently carries the active source to main control with one top-row read
   and no ancestry or source-slot lookup. Resident source tokens and literal
   macro arguments return directly; stored-token access projects its optional
-  packed out-parameter slot while the word is resident, and only that branch
-  enters parameter replay. A parameter candidate overwrites the same
+  packed out-parameter slot while the word is resident. It selects the
+  admitted replay, attempt, or durable span once, loads one word, advances one
+  scalar, and otherwise writes the reused destination with at most one meaning
+  lookup; only the parameter branch enters replay. A parameter candidate overwrites the same
   unresolved value before meaning resolution; there is no raw command envelope
   or second delivery slot. The macro-body row keeps only its existing scalar
   rollback position beside the store-minted resident body; that position
@@ -283,7 +285,11 @@ collector (see `src/conditionals.rs`).
   Typed cold source operations and one `CommandState`-owned resident front
   are the only mutable access. That front selects the semantic top once into
   a source, stored-token, or macro-argument view; each view borrows only its
-  cursor and matching first-touch journal fields. The three branches share
+  cursor and matching first-touch journal fields. Stored rows lend their
+  cursor directly: no stored-top wrapper, advance result, or redispatch
+  survives selection. Their first warm checkpoint touch journals only the
+  scalar position; a later cold retirement, limit, or flag mutation records
+  the remaining token state separately in the same ordered history. The three branches share
   direct final-command writing and common post-borrow settlement, while
   preserving their distinct storage owners. Source, token-list, and macro-
   argument cursors therefore share a single top access, matching first-touch

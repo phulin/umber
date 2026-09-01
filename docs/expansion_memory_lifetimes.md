@@ -848,7 +848,12 @@ input representation or the generic logical-stack stored-state machinery.
 Each source slot caches its current line's contribution to TeX's `buffer`, and
 the input stack owns one scalar sum across live slots. Cold line/backing owner
 and row transitions update those values; byte/scalar cursor advancement does
-not inspect or recount the line. Each input checkpoint retains the exact total
+not inspect or recount the line. Stored-token advancement journals only its
+four-byte position on the first warm touch in a checkpoint interval. If the
+same row later takes a cold retirement, limit, or flag transition, a separately
+ordered cold-state inverse captures that state once; rollback and candidate
+redo preserve both transitions without constructing a complete token frame on
+every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
 The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
@@ -859,7 +864,10 @@ each writes the caller's final command and advances the compact position before
 that top borrow ends. The same transition settles fuel, suppression, alignment,
 or parameter replay and returns only its final status. No cursor/token carrier,
 intermediate delivery result, second top lookup, or diagnostic revision write
-crosses that boundary. Lazy diagnostic invalidation reads the advanced frame
+crosses that boundary. The stored branch has no wrapper or status of its own:
+it selects the replay, attempt, or durable owner once, performs one packed load
+and scalar advance, intercepts a parameter in place, or performs one final
+write with at most one dense meaning lookup. Lazy diagnostic invalidation reads the advanced frame
 or source lexer coordinate only if a cold publication coordinate is captured
 or validated; resident source, stored-token, and macro-argument delivery carry
 no diagnostic field.

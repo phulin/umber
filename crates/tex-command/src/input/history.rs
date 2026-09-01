@@ -47,43 +47,9 @@ pub(crate) struct InputCursorMutationCounters {
     pub(crate) closure_dispatches: u64,
 }
 
-struct InlineCursorRecorder<'a, G> {
-    recording: bool,
-    interval: u64,
-    index: usize,
-    touched: &'a mut u64,
-    partially_captured: &'a mut u64,
-    undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
-    #[cfg(any(test, feature = "profiling"))]
-    counters: &'a mut InputCursorMutationCounters,
-}
-
-impl<G> InlineCursorRecorder<'_, G> {
-    #[inline(always)]
-    fn record(&mut self, state: InputLevelInlineState) {
-        if !self.recording {
-            return;
-        }
-        if *self.touched == self.interval {
-            return;
-        }
-        *self.touched = self.interval;
-        *self.partially_captured = self.interval;
-        self.undo.append(InputUndo::Inline {
-            index: u32::try_from(self.index).expect("input row index fits u32"),
-            state,
-        });
-        #[cfg(any(test, feature = "profiling"))]
-        {
-            self.counters.first_touch_transitions =
-                self.counters.first_touch_transitions.saturating_add(1);
-        }
-    }
-}
-
 enum ResidentInputTop<'a, G> {
     Source(ResidentSourceTop<'a, G>),
-    StoredToken(ResidentStoredTokenTop<'a, G>),
+    StoredToken(&'a mut super::TokenCursor<G>),
     MacroBody(&'a mut super::MacroBodyCursor<G>),
     MacroArgument(&'a mut super::MacroArgumentCursor<G>),
 }
@@ -230,28 +196,6 @@ impl<G> ResidentSourceTop<'_, G> {
             }
             CompactSourceTokenizationStep::End => Ok(ResidentSourceAdvance::Exhausted(identity)),
         }
-    }
-}
-
-struct ResidentStoredTokenTop<'a, G> {
-    cursor: &'a mut super::TokenCursor<G>,
-    recorder: InlineCursorRecorder<'a, G>,
-}
-
-impl<G> ResidentStoredTokenTop<'_, G> {
-    #[inline(never)]
-    fn advance_into(
-        self,
-        sources: super::PackedTokenSources<'_, G>,
-        destination: crate::command::EmptyCommand<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::levels::StoredTokenAdvance<G>, ()> {
-        let Self {
-            cursor,
-            mut recorder,
-        } = self;
-        recorder.record(InputLevelInlineState::new(cursor.frame, cursor.retirement));
-        cursor.deliver_into(sources, destination, state)
     }
 }
 
@@ -479,7 +423,7 @@ pub(crate) struct InputStack<G> {
     interval: u64,
     touched: Vec<u64>,
     partially_captured: Vec<u64>,
-    source_owner_captured: Vec<u64>,
+    cold_state_captured: Vec<u64>,
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
@@ -505,7 +449,7 @@ impl<G> Default for InputStack<G> {
             interval: 1,
             touched: Vec::new(),
             partially_captured: Vec::new(),
-            source_owner_captured: Vec::new(),
+            cold_state_captured: Vec::new(),
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
@@ -674,7 +618,10 @@ impl<G> InputStack<G> {
                 self.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
         if self.recording && self.touched[index] != self.interval {
-            let macro_state = match &self.rows[index] {
+            let inline_state = match &self.rows[index] {
+                InputLevel::Tokens(cursor) => Some(InputLevelInlineState::token_position(
+                    cursor.frame.position(),
+                )),
                 InputLevel::MacroBody(cursor) => {
                     Some(InputLevelInlineState::macro_span(cursor.position()))
                 }
@@ -682,9 +629,9 @@ impl<G> InputStack<G> {
                     cursor.position(),
                     cursor.origin_run,
                 )),
-                InputLevel::Source(_) | InputLevel::Tokens(_) => None,
+                InputLevel::Source(_) => None,
             };
-            if let Some(state) = macro_state {
+            if let Some(state) = inline_state {
                 self.record_inline(index, state);
                 #[cfg(any(test, feature = "profiling"))]
                 {
@@ -733,22 +680,7 @@ impl<G> InputStack<G> {
                         .stored_token_branch_entries
                         .saturating_add(1);
                 }
-                Some((
-                    index,
-                    ResidentInputTop::StoredToken(ResidentStoredTokenTop {
-                        cursor,
-                        recorder: InlineCursorRecorder {
-                            recording,
-                            interval,
-                            index,
-                            touched: &mut self.touched[index],
-                            partially_captured: &mut self.partially_captured[index],
-                            undo: &mut self.undo,
-                            #[cfg(any(test, feature = "profiling"))]
-                            counters: &mut self.cursor_mutations,
-                        },
-                    }),
-                ))
+                Some((index, ResidentInputTop::StoredToken(cursor)))
             }
             InputLevel::MacroBody(cursor) => Some((index, ResidentInputTop::MacroBody(cursor))),
             InputLevel::MacroArgument(cursor) => {
@@ -1050,36 +982,53 @@ impl<G> crate::CommandState<G> {
                         ),
                     }
                 }
-                ResidentInputTop::StoredToken(top) => {
+                ResidentInputTop::StoredToken(cursor) => {
+                    #[cfg(any(test, feature = "profiling"))]
+                    {
+                        self.stored_token_advance_counters.span_selections = self
+                            .stored_token_advance_counters
+                            .span_selections
+                            .saturating_add(1);
+                    }
+                    let position = cursor.frame.position();
+                    let identity = super::InputLevelId(cursor.frame.identity());
+                    let active_source = cursor.frame.source_context();
+                    let suppress_expandable = cursor.frame.flags().contains(
+                        tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+                    );
                     let sources = super::PackedTokenSources::new(
                         &self.roots.input.replay,
                         self.attempt.arena(),
                     );
-                    match top
-                        .advance_into(sources, destination.reborrow(), state)
-                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                    if let Some((word, origin)) = sources.token_at(&cursor.span, position as usize)
                     {
-                        super::levels::StoredTokenAdvance::Delivered(resolution) => {
-                            #[cfg(test)]
+                        #[cfg(any(test, feature = "profiling"))]
+                        {
+                            self.stored_token_advance_counters.packed_loads = self
+                                .stored_token_advance_counters
+                                .packed_loads
+                                .saturating_add(1);
+                        }
+                        if cursor.frame.advance() != Some(position) {
+                            return Err(super::ResidentCommandColdTransition::Failure);
+                        }
+                        #[cfg(any(test, feature = "profiling"))]
+                        {
+                            self.stored_token_advance_counters.cursor_advances = self
+                                .stored_token_advance_counters
+                                .cursor_advances
+                                .saturating_add(1);
+                        }
+                        if !matches!(cursor.behavior, super::TokenBehavior::Parameter)
+                            && let Some(slot) = word.out_parameter_slot()
+                        {
+                            #[cfg(any(test, feature = "profiling"))]
                             {
-                                self.raw_delivery_path_counters.stored_direct = self
-                                    .raw_delivery_path_counters
-                                    .stored_direct
+                                self.stored_token_advance_counters.parameter_interceptions = self
+                                    .stored_token_advance_counters
+                                    .parameter_interceptions
                                     .saturating_add(1);
                             }
-                            self.settle_resident_delivery(
-                                fuel,
-                                destination.reborrow(),
-                                resolution,
-                                #[cfg(feature = "profiling")]
-                                crate::fuel::RawDeliveryKind::StoredToken,
-                            )
-                        }
-                        super::levels::StoredTokenAdvance::OutParameter {
-                            slot,
-                            arguments,
-                            active_source,
-                        } => {
                             #[cfg(test)]
                             {
                                 self.raw_delivery_path_counters.out_parameter_interceptions = self
@@ -1089,19 +1038,57 @@ impl<G> crate::CommandState<G> {
                             }
                             self.push_resident_parameter_cursor(
                                 slot,
-                                arguments,
+                                None,
                                 active_source,
                                 observer,
                             )
                             .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
                             continue;
                         }
-                        super::levels::StoredTokenAdvance::Exhausted(identity) => {
-                            Err(super::ResidentCommandColdTransition::TokenExhausted {
-                                identity,
-                                resident_index,
-                            })
+                        #[cfg(any(test, feature = "profiling"))]
+                        {
+                            self.stored_token_advance_counters.command_writes = self
+                                .stored_token_advance_counters
+                                .command_writes
+                                .saturating_add(1);
                         }
+                        let resolution = destination.reborrow().write_resolved_delivery(
+                            word,
+                            origin,
+                            identity.0,
+                            u64::from(position),
+                            active_source,
+                            false,
+                            None,
+                            suppress_expandable,
+                            state,
+                        );
+                        #[cfg(any(test, feature = "profiling"))]
+                        {
+                            self.stored_token_advance_counters.meaning_lookups = self
+                                .stored_token_advance_counters
+                                .meaning_lookups
+                                .saturating_add(u64::from(resolution.meaning_lookup()));
+                        }
+                        #[cfg(test)]
+                        {
+                            self.raw_delivery_path_counters.stored_direct = self
+                                .raw_delivery_path_counters
+                                .stored_direct
+                                .saturating_add(1);
+                        }
+                        self.settle_resident_delivery(
+                            fuel,
+                            destination.reborrow(),
+                            resolution,
+                            #[cfg(feature = "profiling")]
+                            crate::fuel::RawDeliveryKind::StoredToken,
+                        )
+                    } else {
+                        Err(super::ResidentCommandColdTransition::TokenExhausted {
+                            identity,
+                            resident_index,
+                        })
                     }
                 }
                 ResidentInputTop::MacroBody(top) => {
@@ -1531,11 +1518,10 @@ impl<G> InputStack<G> {
             Some(index) => index,
             None => return false,
         };
-        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+        let InputLevel::Tokens(_) = &self.rows[index] else {
             return false;
         };
-        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
-        self.record_inline(index, state);
+        self.record_token_state(index);
         let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
@@ -1548,11 +1534,10 @@ impl<G> InputStack<G> {
             Some(index) => index,
             None => return false,
         };
-        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+        let InputLevel::Tokens(_) = &self.rows[index] else {
             return false;
         };
-        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
-        self.record_inline(index, state);
+        self.record_token_state(index);
         let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
@@ -1565,11 +1550,10 @@ impl<G> InputStack<G> {
 
     pub(crate) fn extend_top_token_limit(&mut self, additional: u32) -> Option<bool> {
         let index = self.top.checked_sub(1)?;
-        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+        let InputLevel::Tokens(_) = &self.rows[index] else {
             return None;
         };
-        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
-        self.record_inline(index, state);
+        self.record_token_state(index);
         let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
@@ -1608,7 +1592,7 @@ impl<G> InputStack<G> {
             self.rows.push(value);
             self.touched.push(self.interval);
             self.partially_captured.push(0);
-            self.source_owner_captured.push(0);
+            self.cold_state_captured.push(0);
         } else if self.recording
             && (self.touched[self.top] != self.interval
                 || self.partially_captured[self.top] == self.interval)
@@ -1622,7 +1606,7 @@ impl<G> InputStack<G> {
             });
             self.touched[self.top] = self.interval;
             self.partially_captured[self.top] = 0;
-            self.source_owner_captured[self.top] = 0;
+            self.cold_state_captured[self.top] = 0;
         } else {
             let old = std::mem::replace(&mut self.rows[self.top], value);
             if let InputLevel::Source(source) = old {
@@ -1630,7 +1614,7 @@ impl<G> InputStack<G> {
             }
             self.touched[self.top] = self.interval;
             self.partially_captured[self.top] = 0;
-            self.source_owner_captured[self.top] = 0;
+            self.cold_state_captured[self.top] = 0;
         }
         if let InputLevel::Source(source) = &self.rows[self.top] {
             self.occupied_source_buffer_slots = self
@@ -1663,7 +1647,7 @@ impl<G> InputStack<G> {
             }
             self.touched.pop();
             self.partially_captured.pop();
-            self.source_owner_captured.pop();
+            self.cold_state_captured.pop();
         }
         Some(result)
     }
@@ -1686,7 +1670,7 @@ impl<G> InputStack<G> {
             self.rows.pop();
             self.touched.pop();
             self.partially_captured.pop();
-            self.source_owner_captured.pop();
+            self.cold_state_captured.pop();
         }
         result
     }
@@ -1749,7 +1733,7 @@ impl<G> InputStack<G> {
         }
         let row_needs_inverse = self.touched[index] != self.interval
             || (self.partially_captured[index] == self.interval
-                && self.source_owner_captured[index] != self.interval);
+                && self.cold_state_captured[index] != self.interval);
         if !row_needs_inverse {
             let (rows, slots) = (&mut self.rows, &mut self.source_slots);
             let InputLevel::Source(source) = &mut rows[index] else {
@@ -1780,7 +1764,7 @@ impl<G> InputStack<G> {
         });
         self.touched[index] = self.interval;
         self.partially_captured[index] = self.interval;
-        self.source_owner_captured[index] = self.interval;
+        self.cold_state_captured[index] = self.interval;
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         result
@@ -1968,7 +1952,7 @@ impl<G> InputStack<G> {
                     .saturating_mul(std::mem::size_of::<u64>()),
             )
             .saturating_add(
-                self.source_owner_captured
+                self.cold_state_captured
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u64>()),
             )
@@ -2020,12 +2004,33 @@ impl<G> InputStack<G> {
         });
     }
 
+    /// Captures the complete cold token execution state once per interval.
+    /// A preceding resident advance may already have retained only the scalar
+    /// position, so cold retirement/limit/flag mutation has its own capture
+    /// bit and ordered inverse.
+    fn record_token_state(&mut self, index: usize) {
+        if !self.recording || self.cold_state_captured[index] == self.interval {
+            return;
+        }
+        let InputLevel::Tokens(cursor) = &self.rows[index] else {
+            unreachable!("cold token capture names a token row")
+        };
+        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
+        self.touched[index] = self.interval;
+        self.partially_captured[index] = self.interval;
+        self.cold_state_captured[index] = self.interval;
+        self.undo.append(InputUndo::Inline {
+            index: u32::try_from(index).expect("input row index fits u32"),
+            state,
+        });
+    }
+
     fn next_interval(&mut self) {
         self.interval = self.interval.wrapping_add(1).max(1);
         if self.interval == 1 {
             self.touched.fill(0);
             self.partially_captured.fill(0);
-            self.source_owner_captured.fill(0);
+            self.cold_state_captured.fill(0);
         }
     }
 

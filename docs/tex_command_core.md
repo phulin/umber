@@ -1884,9 +1884,13 @@ repeated owner validation returns through the processor. Terminal token input
 and a v-template still waiting for `do_endv` remain explicit cold token
 boundaries; source EOF remains the cold file-warning/framing boundary. The source branch lends its row and checked slot
 together, tokenizes into the caller's final command slot, and advances the
-row's compact position before ending that borrow. Stored-token and macro-
-argument branches project their resident packed word and meaning into that same
-slot before the same top borrow ends. `advance_resident_command_into` neither looks the top up
+row's compact position before ending that borrow. The stored-token branch lends
+its cursor directly, selects its admitted replay, attempt, or durable span,
+loads one packed word, advances one scalar, intercepts `OutParameter` in place,
+and otherwise resolves into that same slot before the top borrow ends. It
+returns no stored-top wrapper or stored-advance result to redispatch. Macro-
+argument branches likewise project their resident packed word and meaning into
+the final slot. `advance_resident_command_into` neither looks the top up
 again nor receives a token/cursor carrier. Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the
@@ -2408,10 +2412,13 @@ tokens and resolve through their distinct active-character namespace before
 the same compact meaning lookup.
 
 The implemented destination-directed state machine owns source and
-token-cursor selection, resident ordinary retirement/restart, stored token/origin
+token-cursor selection, resident ordinary retirement/restart, inline stored token/origin
 reconstruction, `OutParameter` replay, one-delivery backed-up suppression,
 current-meaning resolution, and literal brace `align_state` accounting.
-`get_token` is routed through that same loop.
+`get_token` is routed through that same loop. A warm stored-token first touch
+retains only the scalar position needed for rollback. Cold token retirement,
+limit, or flag mutation materializes its separate complete execution inverse
+only when a checkpoint can observe that mutation.
 Scanner-status outer recovery and alignment-template interception have their
 sole entry points in this loop. `check_outer_validity` captures the live typed
 status and warning identity, records a forbidden-control-sequence diagnostic

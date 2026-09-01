@@ -68,9 +68,11 @@ whole-meaning or command copies, and zero warmed heap allocation.
 The destination-directed row warms and then measures 8,192 calls apiece to raw
 non-creating, raw creating, and expanded delivery, reusing one caller-owned
 command slot throughout. All three policies must remain allocation-free.
-The fused raw/expanded row then measures one million ordinary stored-character
-deliveries through each policy. It requires exactly two million resident-frame
-steps, one million expanded completions, no meaning lookup, and zero warmed
+The fused raw/expanded row then measures one million stored control-sequence
+deliveries through each policy across replay, attempt-local, and durable spans.
+It requires exactly two million packed loads, scalar advances, final writes,
+and meaning lookups, zero intermediate stored-advance relays, two million
+resident-frame steps, one million expanded completions, and zero warmed
 allocation; its separate raw and expanded timings are sized for direct
 `cycles:u`/`instructions:u` and public `memcpy`/`memmove` comparison.
 The destination-owned macro-expansion row drives one million empty macro calls

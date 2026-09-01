@@ -1739,6 +1739,14 @@ impl<G> Default for CommandAttempt<G> {
 }
 
 impl<G> CommandAttempt<G> {
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn profile_allocate_token_list(
+        &mut self,
+        words: impl IntoIterator<Item = TracedTokenWord>,
+    ) -> Result<AttemptTokenListId, AttemptError> {
+        self.arena.allocate_token_list(words)
+    }
+
     /// Runs one synchronous child allocation episode under a fresh invariant
     /// brand and closes it in exact LIFO order before returning.
     ///
