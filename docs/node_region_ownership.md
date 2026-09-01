@@ -20,6 +20,14 @@ settlement. Lists now use direct `ListRoot { head, tail, length }` coordinates
 over packed logical blocks carved from the same physical pool pages. There is
 no list-descriptor lane or owner-local range lookup.
 
+The pending physical cutover in [Arena-owned node lists](node_word_arena.md)
+and [Dense fork-arena superblocks](fork_arena_dense_prefix_emplacement.md)
+replaces the 168-byte owned node slots with 32-byte non-owning records and a
+typed word annex. Logical blocks become cursor/range boundaries inside exact
+64 KiB dense storage. That cutover does not alter any coarse owner, raw-root
+admission, TeX move/copy, settlement, succession, or reclamation rule in this
+document.
+
 The following are explicitly rejected:
 
 - `PageMaterialBatch` dependency graphs and transitive batch counts;

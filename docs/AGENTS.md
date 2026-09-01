@@ -196,9 +196,10 @@ retry, and private-revision ownership model which supersedes append-history
 retention without changing packed ids or rendered results.
 
 `node_word_arena.md` is the authoritative compact node-word arena document: it
-defines the adopted word encoding, generation-tagged identities, sidecar and
-survivor ownership, access boundary, hashing, and validation. Do not create a separate
-`node_word_layout.md` whose encoding or rollback rules could drift.
+defines the implementation-ready 32-byte non-owning record, typed word annex,
+generation-tagged identities, sidecar and survivor ownership, access boundary,
+hashing, and validation. Do not create a separate `node_word_layout.md` whose
+encoding or rollback rules could drift.
 
 `wasm_resource_acquisition.md` specifies the implemented typed, batched
 resource state machine and the remaining OpenType rollout, including

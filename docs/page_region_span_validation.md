@@ -98,6 +98,13 @@ Physical pages contain sixteen logical blocks, so many small lists share one
 bump allocation. The pool reports payload capacity and block metadata
 separately, while `unused_sealed_bytes` records exact tail slack.
 
+The pending compact-node cutover preserves this span API while replacing the
+physical payload with flat exact-64-KiB block tables. Head and tail coordinates
+remain logical and carry logical incarnations; the admitted accepted or
+candidate view selects the physical table. A bounded fork-tail copy therefore
+rewrites neither `PageListId` nor `PageListSpan`, and acceptance still moves
+table ownership with zero node payload copy.
+
 The parameterized direct-root gates exercise 1, 64, and 4,096 nodes. Unique
 suffix construction allocates exactly one logical block per deliberately
 single-node suffix and copies zero nodes at every size. The explicit shared

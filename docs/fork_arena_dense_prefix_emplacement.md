@@ -288,9 +288,12 @@ was published for the other three payloads, so their baseline is _unattributed_,
 not zero.
 
 This audit authorizes no production fork-copy payload. The isolated generation
-proof therefore uses a synthetic `Copy` record only. In particular, the
-current `Node` must not enter that path until a later representation or
-node-specific semantic-copy proposal is measured and approved.
+proof therefore uses a synthetic `Copy` record only. The implementation-ready
+32-byte non-owning replacement, its typed word annex, handle-validity proof,
+and migration gates are specified in [Arena-owned node lists](node_word_arena.md)
+under `umber2-66p0.8.40.113.5`. Until that design is approved and its atomic
+cutover is implemented, the current 168-byte owned `Node` must not enter the
+fork-copy path.
 
 ## `push_with` and placement limits
 
