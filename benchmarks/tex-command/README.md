@@ -102,6 +102,11 @@ The macro-matching row also asserts that its successful first-token expansion
 does not increase the matched-word read counter: paragraph and removable-
 outer-group decisions must consume first-scan metadata rather than reread the
 staging span.
+The macro-argument-append row warms and then scans one 1,000,002-token braced
+argument through the canonical matcher. It requires zero warmed allocation and
+reports the exact accepted-token and raw-delivery volumes for focused
+instruction and public-copy comparison of the execution-scratch append
+transition.
 The mixed row reports absolute
 calls, exact end-of-span retirements, one exact nonzero scalar rollback,
 elapsed time, and a semantic checksum. Stored replay loops assert zero

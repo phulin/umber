@@ -81,6 +81,7 @@ fn main() {
     );
     run_row(only, "direct_command_delivery", direct_command_delivery);
     run_row(only, "macro_argument_matching", macro_argument_matching);
+    run_row(only, "macro_argument_append", macro_argument_append);
     run_row(
         only,
         "warmed_keyword_mismatch",
@@ -136,6 +137,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "stored_control_sequence_delivery",
     "direct_command_delivery",
     "macro_argument_matching",
+    "macro_argument_append",
     "warmed_keyword_mismatch",
     "destination_directed_warm_delivery",
     "fused_raw_expanded_delivery",
@@ -1313,6 +1315,122 @@ fn macro_argument_matching() {
             processor.macro_argument_match_word_reads(),
             match_word_reads,
             "macro paragraph and outer-group decisions reread matched words"
+        );
+    });
+}
+
+fn macro_argument_append() {
+    const INTERIOR_WORDS: usize = 1_000_000;
+    with_universe(|universe| {
+        let parameter = TokenWord::pack(Token::param(1));
+        let marker = TokenWord::pack(Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        });
+        let definition = universe
+            .allocate_definition(&[parameter], &[marker])
+            .expect("argument-append macro definition");
+        let name = universe
+            .intern("argumentappend")
+            .expect("argument-append macro name");
+        universe
+            .assign_meaning(
+                name,
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                AssignmentScope::Global,
+            )
+            .expect("argument-append macro meaning");
+
+        let traced =
+            |word: TokenWord| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN);
+        let call = traced(TokenWord::pack(Token::Cs(name.symbol())));
+        let begin = traced(TokenWord::pack(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        }));
+        let word = traced(TokenWord::pack(Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        }));
+        let end = traced(TokenWord::pack(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }));
+        let separator = traced(TokenWord::pack(Token::Char {
+            ch: 's',
+            cat: Catcode::Letter,
+        }));
+        let invocation = || {
+            std::iter::once(call)
+                .chain(std::iter::once(begin))
+                .chain(std::iter::repeat_n(word, INTERIOR_WORDS))
+                .chain(std::iter::once(end))
+        };
+
+        let mut command = CommandState::default();
+        command.profile_push_replay_stored_tokens(
+            invocation()
+                .chain(std::iter::once(separator))
+                .chain(invocation()),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
+        let mut warm_processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert_char(
+            warm_processor
+                .get_x_token()
+                .expect("warm argument append")
+                .expect("warm replacement marker"),
+            'z',
+        );
+        assert_char(
+            warm_processor
+                .get_x_token()
+                .expect("warm argument retirement")
+                .expect("warm separator"),
+            's',
+        );
+        drop(warm_processor);
+        let work_before = fuel.work();
+        let mut processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut elapsed = Duration::ZERO;
+        measure_zero("macro_argument_append_1000002", || {
+            let start = Instant::now();
+            assert_char(
+                processor
+                    .get_x_token()
+                    .expect("measured argument append")
+                    .expect("measured replacement marker"),
+                'z',
+            );
+            elapsed = start.elapsed();
+        });
+        drop(processor);
+        let work_after = fuel.work();
+        assert_eq!(
+            work_after.token_frame_steps - work_before.token_frame_steps,
+            (INTERIOR_WORDS + 4) as u64
+        );
+        println!(
+            "macro_argument_append accepted={} raw={} elapsed_ns={} ns_per_accepted={:.2}",
+            INTERIOR_WORDS + 2,
+            work_after.token_frame_steps - work_before.token_frame_steps,
+            elapsed.as_nanos(),
+            elapsed.as_nanos() as f64 / (INTERIOR_WORDS + 2) as f64,
         );
     });
 }

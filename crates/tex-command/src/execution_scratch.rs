@@ -444,14 +444,21 @@ struct PendingArgumentFacts {
 }
 
 impl PendingArgumentFacts {
-    fn settle(&mut self, token: ClassifiedToken, paragraph_checked: bool, brace_depth_before: u32) {
+    fn settle(
+        &mut self,
+        token: ClassifiedToken,
+        paragraph_checked: bool,
+        brace_depth_before: u32,
+    ) -> bool {
         self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
+        let begins_group = token.spelling_is_begin_group();
         if self.word_count == 0 {
-            self.outer_group_candidate = token.spelling_is_begin_group();
+            self.outer_group_candidate = begins_group;
         } else if brace_depth_before == 0 {
             self.outer_group_candidate = false;
         }
         self.word_count = self.word_count.saturating_add(1);
+        begins_group
     }
 
     const fn seal(self, brace_depth: u32) -> MacroArgumentFacts {
@@ -1448,10 +1455,10 @@ impl<G> ExecutionScratch<G> {
     ) -> Result<u32, ScratchError> {
         self.macro_words
             .append_at(&mut writer.append, token.word())?;
-        writer
+        let begins_group = writer
             .facts
             .settle(token, paragraph_checked, writer.brace_depth);
-        if token.spelling_is_begin_group() {
+        if begins_group {
             writer.brace_depth = writer.brace_depth.saturating_add(1);
         } else if token.spelling_is_end_group() && writer.brace_depth != 0 {
             writer.brace_depth -= 1;
