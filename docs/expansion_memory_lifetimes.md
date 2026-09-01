@@ -291,15 +291,22 @@ and whole-region retirement. No definition owner, root registry, root search,
 or tracing collector participates.
 
 Each TeX group owns exactly one directly keyed local region. `begin_group`
-pushes it in constant work; nesting leaves the parent region intact, and
-`end_group` pops and retires only the child before reusing that same parent.
-An unleased child drops immediately. A leased child retains its payload until
-the final coarse input/checkpoint lease drops, and that release reclaims the
-exact retired region without visiting any peer or accumulated history.
+claims one direct slot from stable 64-slot chunks and pushes it in amortized
+constant work; it never relocates or copies an accumulated region prefix.
+Reclaimed addresses are reused through an exact free stack, while the key's
+incarnation rejects an ABA-stale definition coordinate. Nesting leaves the
+parent region intact, and `end_group` pops and retires only the child before
+reusing that same parent. An unleased child drops immediately. A leased child
+retains its payload until the final coarse input/checkpoint lease drops, and
+that release clears and re-enqueues the exact retired slot without visiting any
+peer or accumulated history. Slot chunks are coarse generation high-water
+capacity; entering a group does not allocate an individual region shell.
 Promotion mappings live inside their source local region and leave with it.
 Checkpoint transitions address only their explicit active-region and
-prior/candidate suffix lists; there is no global retired-region or promotion
-sweep.
+prior/candidate suffix lists. Selection resolves the checkpoint and head active
+keys before changing the active stack, so a leased region in either depth's
+suffix remains directly addressable through acceptance or rejection. There is
+no global retired-region or promotion sweep.
 
 Ordinary `\def` and `\gdef` select their local-group or revision-global arena
 before scanning. The collector opens one transactional word mark there,

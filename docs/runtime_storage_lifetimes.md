@@ -304,8 +304,13 @@ view interface:
   meanings first, pops that exact child, and resumes the same parent region.
   The child is dropped immediately when it has no lease. Otherwise the child
   is marked retired, and the final active-input or checkpoint lease release
-  directly drops that region's payload. Neither group transition searches the
-  local-region history.
+  directly drops that region's payload. Local regions occupy stable 64-slot
+  chunks behind one coarse generation-owned slot store. Entry pops one exact
+  free address or grows by one chunk; it never allocates an individual region
+  shell or relocates an accumulated prefix. Reuse increments the address's
+  incarnation inside the existing region coordinate, so stale keys cannot
+  alias the new occupant. Neither group transition searches local-region
+  history.
 
 `DefinitionId<G>` is only a stable key. Its region and row locate one immutable
 header plus the contiguous `[parameter][replacement]` word span; its identity
@@ -340,7 +345,7 @@ pub struct DefinitionId<G> {
 pub struct DefinitionArena<G> {
     format: DefinitionRegion,
     global: DefinitionRegion,
-    locals: Vec<Rc<LocalDefinitionRegion>>,
+    local_slots: Rc<LocalDefinitionSlots>,
     active_locals: Vec<u32>,
 }
 
@@ -362,7 +367,10 @@ and operation lanes copy the key without changing ownership; local-region
 liveness resides only in the structural group/checkpoint/input owners.
 Checkpoint capture and candidate settlement walk the checkpoint's explicit
 active-region list and its explicit prior/candidate region suffixes. They do
-not infer ownership by traversing accumulated local history.
+not infer ownership by traversing accumulated local history. Candidate
+selection resolves both the saved and current active keys before changing the
+active stack; acceptance retires only the explicit current suffix, while
+rejection retires only the explicit saved suffix and restores the current one.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final
