@@ -4,7 +4,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
-use crate::input::{InputLevel, PackedTokenSources, RetirementBehavior, TokenBehavior};
+use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
 use crate::{AlignmentDelivery, AlignmentDeliveryEvent};
 
@@ -160,16 +160,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | InputLevel::DurableTokens(_)
                 | InputLevel::AttemptTokens(_)) => {
                     let cursor = level.stored_common().expect("stored row");
-                    if level
-                        .stored_indexed_token_at_cold(
-                            PackedTokenSources::new(
-                                &self.command.input.replay,
-                                self.command.attempt.arena(),
-                            ),
-                            self.state,
-                        )
-                        .is_some()
-                    {
+                    if level.stored_is_exhausted() != Some(true) {
                         break;
                     }
                     if cursor.identity() == v_level
@@ -189,7 +180,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 }
                 InputLevel::MacroBody(cursor) => {
-                    if cursor.token_at(self.state).is_some() {
+                    if !cursor.is_exhausted() {
                         break;
                     }
                 }

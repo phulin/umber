@@ -365,6 +365,9 @@ collector (see `src/conditionals.rs`).
   `\everyeof`, final cleanup, terminal/v-template retirement, and explicit
   §§325/390 stack conservation. It is the cold processor retirement boundary;
   ordinary delivery retirement stays inside the resident input transition.
+  Stack conservation tests `loc=null` from each admitted row's scalar position
+  and limit; it never reclassifies a storage domain, indexes replay, or reads a
+  definition word merely to decide exhaustion.
 - `src/processor/backup.rs`, `src/processor/recovery.rs`, and
   `src/processor/outer_recovery.rs`: exact command backup/replay insertion,
   executor-facing recovery operations, and scanner-status outer/runaway

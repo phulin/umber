@@ -146,24 +146,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | InputLevel::AttemptTokens(_)) => {
                         let cursor = level.stored_common().expect("stored row");
                         (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                            && level
-                                .stored_indexed_token_at_cold(
-                                    PackedTokenSources::new(
-                                        &self.command.input.replay,
-                                        self.command.attempt.arena(),
-                                    ),
-                                    self.state,
-                                )
-                                .is_none())
+                            && level.stored_is_exhausted() == Some(true))
                         .then(|| cursor.identity())
                     }
                     InputLevel::MacroArgument(cursor) => {
                         cursor.is_exhausted().then(|| cursor.identity())
                     }
-                    InputLevel::MacroBody(cursor) => cursor
-                        .token_at(self.state)
-                        .is_none()
-                        .then(|| cursor.identity()),
+                    InputLevel::MacroBody(cursor) => {
+                        cursor.is_exhausted().then(|| cursor.identity())
+                    }
                     InputLevel::Source(_) => None,
                 })
             else {
@@ -564,22 +555,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | InputLevel::AttemptTokens(_)),
                 ) if drains_for_stack_conservation(
                     &level.stored_common().expect("stored row").behavior,
-                ) && level
-                    .stored_indexed_token_at_cold(
-                        PackedTokenSources::new(
-                            &self.command.input.replay,
-                            self.command.attempt.arena(),
-                        ),
-                        self.state,
-                    )
-                    .is_none() =>
+                ) && level.stored_is_exhausted() == Some(true) =>
                 {
                     Some(level.stored_common().expect("stored row").identity())
                 }
                 Some(InputLevel::MacroArgument(cursor)) if cursor.is_exhausted() => {
                     Some(cursor.identity())
                 }
-                Some(InputLevel::MacroBody(cursor)) if cursor.token_at(self.state).is_none() => {
+                Some(InputLevel::MacroBody(cursor)) if cursor.is_exhausted() => {
                     Some(cursor.identity())
                 }
                 Some(InputLevel::ReplayTokens(_))

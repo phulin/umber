@@ -175,13 +175,9 @@ impl<G> MacroBodyCursor<G> {
         self.frame.source_context()
     }
 
-    pub(crate) fn token_at(
-        &self,
-        _state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<PackedTokenAt> {
-        self.body
-            .word(self.position())
-            .map(|word| (word, OriginId::UNKNOWN))
+    /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
+    pub(crate) const fn is_exhausted(&self) -> bool {
+        self.frame.position() >= self.frame.len()
     }
 
     /// Advances the opaque resident replacement cursor by one packed word.
@@ -470,6 +466,17 @@ impl<G> InputLevel<G> {
             Self::DurableTokens(cursor) => Some(&mut cursor.common),
             Self::AttemptTokens(cursor) => Some(&mut cursor.common),
             _ => None,
+        }
+    }
+
+    /// Tests a generic stored-token row's `loc=null` condition without
+    /// reclassifying or loading its already-admitted storage domain.
+    pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
+        match self {
+            Self::ReplayTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
+            Self::DurableTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
+            Self::AttemptTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
+            Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
         }
     }
 

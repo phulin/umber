@@ -2539,6 +2539,12 @@ while (state=token_list)and(loc=null)and(token_type<>v_template) do
 `back_input`'s first act. The command core has exactly one implementation,
 `CommandProcessor::conserve_input_stack`, and both callers use it.
 
+Every admitted token row already carries the scalar position and limit which
+define `loc=null`. Stack conservation reads those bounds directly for replay,
+durable, attempt, macro-body, and macro-argument rows; it does not index the
+underlying replay/definition storage or classify that storage domain again.
+This keeps the semantic pre-push retirement loop independent of token content.
+
 The loop's condition is `loc=null` alone. It is therefore total over
 token-list kind -- depleted macro bodies, replayed parameters, backups,
 recovery insertions, u-templates, and stored replay episodes all drain here --

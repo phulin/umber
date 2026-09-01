@@ -461,6 +461,25 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn macro_stack_conservation_reads_only_admitted_cursor_bounds() {
+    let end_input = fs::read_to_string(
+        test_support::repository_root().join("crates/tex-command/src/processor/end_input.rs"),
+    )
+    .expect("read stack-conservation owner");
+    let conservation = end_input
+        .split("fn conserve_input_stack_with_owner(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Names the tex.web").next())
+        .expect("locate stack-conservation transition");
+
+    assert!(conservation.contains("level.stored_is_exhausted()"));
+    assert_eq!(conservation.matches("cursor.is_exhausted()").count(), 2);
+    assert!(!conservation.contains("stored_indexed_token_at_cold"));
+    assert!(!conservation.contains("cursor.token_at("));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let matcher = fs::read_to_string(manifest_dir.join("src/macro_call.rs"))

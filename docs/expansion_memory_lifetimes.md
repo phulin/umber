@@ -893,8 +893,10 @@ TeX82 §§325/390 stack conservation instead transfers the episode's single
 completion fence to the exact future backup or macro-body identity before that
 descendant is admitted; further final-token macro calls repeat the same
 ownership transfer. The last descendant retirement consequently publishes the
-episode once. No ordinary resident advance polls a completion flag or scans a
-pending-completion mailbox. The
+episode once. Its `loc=null` test reads the already-admitted row's scalar
+position and limit; it does not index replay storage, read a definition word,
+or reclassify the row's storage domain. No ordinary resident advance polls a
+completion flag or scans a pending-completion mailbox. The
 same TeX82 §357 restart pops an exhausted v-template after §1131's `do_endv`
 has inspected and released its retained boundary. Nothing returns an
 exhaustion status through the processor, and no second top lookup or owner
