@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn every_primitive_opcode_has_a_capability_classification() {
     let mut classified = 0;
-    for operand in 0..=265 {
+    for operand in 0..=266 {
         let Some(primitive) = UnexpandablePrimitive::from_operand(operand) else {
             continue;
         };
@@ -15,7 +15,7 @@ fn every_primitive_opcode_has_a_capability_classification() {
         ));
         classified += 1;
     }
-    assert_eq!(classified, 262);
+    assert_eq!(classified, 263);
 }
 
 #[test]
