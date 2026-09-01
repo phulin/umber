@@ -210,17 +210,13 @@ impl ArenaPostLineChannel {
         stores.open_page_active_list(&mut output);
         output_lineages.clear();
         if params.left_skip != GlueSpec::ZERO {
-            stores.construct_page_active_list(&mut output, |slot| {
-                *slot = Some(Node::Glue {
-                    spec: params.left_skip,
-                    kind: GlueKind::LeftSkip,
-                    leader: None,
-                });
+            stores.construct_page_active_list(&mut output, |destination| {
+                destination.glue(params.left_skip, GlueKind::LeftSkip, None);
             });
         }
         for direction in self.active_directions.iter().copied() {
-            stores.construct_page_active_list(&mut output, |slot| {
-                *slot = Some(Node::Direction(direction));
+            stores.construct_page_active_list(&mut output, |destination| {
+                destination.direction(direction);
             });
         }
         if !self.pending_post.is_empty() {
@@ -270,14 +266,14 @@ impl ArenaPostLineChannel {
                 PostLineNode::Discretionary { kind, pre, post, replace, physical_replace_count }
                     if decision.hyphenated && absolute + 1 == end =>
                 {
-                    stores.construct_page_active_list(&mut output, |slot| {
-                        *slot = Some(Node::Disc {
+                    stores.construct_page_active_list(&mut output, |destination| {
+                        destination.discretionary(
                             kind,
-                            pre: params.empty_list,
-                            post: params.empty_list,
-                            replace: params.empty_list,
-                            physical_replace_count: 0,
-                        });
+                            params.empty_list,
+                            params.empty_list,
+                            params.empty_list,
+                            0,
+                        );
                     });
                     let pre_span = stores
                         .admit_page_node_span(pre)
@@ -317,12 +313,12 @@ impl ArenaPostLineChannel {
                     );
                 }
                 PostLineNode::ParFillGlue if par_fill_override.is_some() => {
-                    stores.construct_page_active_list(&mut output, |slot| {
-                        *slot = Some(Node::Glue {
-                            spec: par_fill_override.expect("matched override"),
-                            kind: GlueKind::ParFillSkip,
-                            leader: None,
-                        });
+                    stores.construct_page_active_list(&mut output, |destination| {
+                        destination.glue(
+                            par_fill_override.expect("matched override"),
+                            GlueKind::ParFillSkip,
+                            None,
+                        );
                     });
                 }
                 PostLineNode::BreakDiscardable
@@ -338,8 +334,8 @@ impl ArenaPostLineChannel {
                             action == tex_typeset::linebreak::MaterializationAction::BreakMath
                         }) =>
                 {
-                    stores.construct_page_active_list(&mut output, |slot| {
-                        *slot = Some(Node::MathOff(Scaled::from_raw(0)));
+                    stores.construct_page_active_list(&mut output, |destination| {
+                        destination.math_off(Scaled::from_raw(0));
                     });
                 }
                 PostLineNode::Direction(direction) => {
@@ -351,16 +347,12 @@ impl ArenaPostLineChannel {
             }
         }
         for direction in self.active_directions.iter().rev().copied() {
-            stores.construct_page_active_list(&mut output, |slot| {
-                *slot = Some(Node::Direction(matching_direction_end(direction)));
+            stores.construct_page_active_list(&mut output, |destination| {
+                destination.direction(matching_direction_end(direction));
             });
         }
-        stores.construct_page_active_list(&mut output, |slot| {
-            *slot = Some(Node::Glue {
-                spec: params.right_skip,
-                kind: GlueKind::RightSkip,
-                leader: None,
-            });
+        stores.construct_page_active_list(&mut output, |destination| {
+            destination.glue(params.right_skip, GlueKind::RightSkip, None);
         });
         self.position = skip_post_line_discardable(stores, self.source, self.position);
         stores.finalize_page_active_list(&mut output)
@@ -450,32 +442,32 @@ fn post_line_event_is_exceptional(
     }
 }
 
-fn classify_post_line_node_value(node: &Node) -> PostLineNode {
+fn classify_post_line_node_value(node: tex_state::NodeView<'_>) -> PostLineNode {
     match node {
-        Node::Disc {
+        tex_state::NodeView::Disc {
             kind,
             pre,
             post,
             replace,
             physical_replace_count,
         } => PostLineNode::Discretionary {
-            kind: *kind,
-            pre: *pre,
-            post: *post,
-            replace: *replace,
-            physical_replace_count: *physical_replace_count,
+            kind,
+            pre,
+            post,
+            replace,
+            physical_replace_count,
         },
-        Node::Glue {
+        tex_state::NodeView::Glue {
             kind: GlueKind::ParFillSkip,
             ..
         } => PostLineNode::ParFillGlue,
-        Node::Glue { .. }
-        | Node::Kern {
+        tex_state::NodeView::Glue { .. }
+        | tex_state::NodeView::Kern {
             kind: KernKind::Explicit,
             ..
         } => PostLineNode::BreakDiscardable,
-        Node::MathOff(_) => PostLineNode::MathOff,
-        Node::Direction(direction) => PostLineNode::Direction(*direction),
+        tex_state::NodeView::MathOff(_) => PostLineNode::MathOff,
+        tex_state::NodeView::Direction(direction) => PostLineNode::Direction(direction),
         _ => PostLineNode::Other,
     }
 }
@@ -511,8 +503,8 @@ fn append_direction_evidence<G>(
         .expect("paragraph branch remains live")
         .nodes()
         .for_each(|node| {
-            if let Node::Direction(direction) = node {
-                update_direction(*direction, active);
+            if let tex_state::NodeView::Direction(direction) = node {
+                update_direction(direction, active);
             }
         });
 }
@@ -552,8 +544,8 @@ fn extend_frozen_lineages<G>(
     let mut row = 0_usize;
     nodes.for_each(|node| {
         let count = match node {
-            Node::Char { .. } => 1,
-            Node::Lig { orig, .. } => orig.len(),
+            tex_state::NodeView::Char { .. } => 1,
+            tex_state::NodeView::Lig { orig, .. } => orig.len(),
             _ => 0,
         };
         for unit in 0..count {
@@ -568,17 +560,17 @@ fn extend_frozen_lineages<G>(
     });
 }
 
-fn post_line_discardable(node: &Node) -> bool {
+fn post_line_discardable(node: tex_state::NodeView<'_>) -> bool {
     matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern {
+        tex_state::NodeView::Glue { .. }
+            | tex_state::NodeView::Kern {
                 kind: KernKind::Explicit | KernKind::Mu,
                 ..
             }
-            | Node::Penalty(_)
-            | Node::MathOn(_)
-            | Node::MathOff(_)
+            | tex_state::NodeView::Penalty(_)
+            | tex_state::NodeView::MathOn(_)
+            | tex_state::NodeView::MathOff(_)
     )
 }
 
@@ -635,13 +627,17 @@ pub(crate) fn break_current_paragraph<G>(
     let mut params = snapshot_paragraph_params(nest, stores);
     {
         let mut list = nest.current_list_mutation();
-        if matches!(list.nodes(stores).last(), Some(Node::Glue { .. })) {
+        if matches!(
+            list.nodes(stores).last(),
+            Some(tex_state::node_arena::NodeView::Glue { .. })
+        ) {
             let _ = list.pop_last_node(stores);
         }
     }
-    nest.current_list_mutation().construct(stores, |slot| {
-        *slot = Some(Node::Penalty(10_000));
-    });
+    nest.current_list_mutation()
+        .construct(stores, |destination| {
+            destination.penalty(10_000);
+        });
     nest.current_list_mutation().push(
         stores,
         Node::Glue {
@@ -822,15 +818,15 @@ fn discretionary_diagnostics_differ_list<G>(
             .page_node_list(physical)
             .expect("physical line remains live")
             .nodes()
-            .owned_node(physical_index)
+            .get(physical_index)
             .and_then(|node| match node {
-                Node::Disc {
+                tex_state::node_arena::NodeView::Disc {
                     kind,
                     pre,
                     post,
                     replace,
                     physical_replace_count,
-                } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+                } => Some((kind, pre, post, replace, physical_replace_count)),
                 _ => None,
             });
         let Some(physical_disc) = physical_disc else {
@@ -842,15 +838,15 @@ fn discretionary_diagnostics_differ_list<G>(
                 .page_node_list(semantic)
                 .expect("semantic line remains live")
                 .nodes()
-                .owned_node(semantic_index)
+                .get(semantic_index)
                 .and_then(|node| match node {
-                    Node::Disc {
+                    tex_state::node_arena::NodeView::Disc {
                         kind,
                         pre,
                         post,
                         replace,
                         physical_replace_count,
-                    } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+                    } => Some((kind, pre, post, replace, physical_replace_count)),
                     _ => None,
                 });
             semantic_index += 1;
@@ -874,8 +870,8 @@ fn discretionary_diagnostics_differ_list<G>(
                 .page_node_list(semantic)
                 .expect("semantic line remains live")
                 .nodes()
-                .owned_node(index),
-            Some(Node::Disc { .. })
+                .get(index),
+            Some(tex_state::node_arena::NodeView::Disc { .. })
         )
     })
 }
@@ -890,7 +886,7 @@ fn clear_discretionary_replacements<G>(
         .expect("semantic line remains live")
         .nodes()
         .iter()
-        .any(|node| matches!(node, Node::Disc { replace, .. } if *replace != empty));
+        .any(|node| matches!(node, tex_state::NodeView::Disc { replace, .. } if replace != empty));
     if !needs_replacement_clear {
         return source;
     }
@@ -901,15 +897,15 @@ fn clear_discretionary_replacements<G>(
             .page_node_list(source)
             .expect("semantic line remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .and_then(|node| match node {
-                Node::Disc {
+                tex_state::node_arena::NodeView::Disc {
                     kind,
                     pre,
                     post,
                     replace,
                     physical_replace_count,
-                } if *replace != empty => Some((*kind, *pre, *post, *physical_replace_count)),
+                } if replace != empty => Some((kind, pre, post, physical_replace_count)),
                 _ => None,
             });
         if let Some((kind, pre, post, physical_replace_count)) = disc {
@@ -942,8 +938,12 @@ fn filter_migrating_material_list<G>(
                 .page_node_list(source)
                 .expect("physical line remains live")
                 .nodes()
-                .owned_node(index),
-            Some(Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
+                .get(index),
+            Some(
+                tex_state::node_arena::NodeView::Mark { .. }
+                    | tex_state::node_arena::NodeView::Ins { .. }
+                    | tex_state::node_arena::NodeView::Adjust(_)
+            )
         );
         if !migrating {
             stores.append_page_active_list_range(&mut output, source, index..index + 1);
@@ -965,7 +965,14 @@ fn extract_migrating_material_list<G>(
         .expect("line remains live")
         .nodes()
         .iter()
-        .any(|node| matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)));
+        .any(|node| {
+            matches!(
+                node,
+                tex_state::NodeView::Mark { .. }
+                    | tex_state::NodeView::Ins { .. }
+                    | tex_state::NodeView::Adjust(_)
+            )
+        });
     if !has_migrating_material {
         return (
             source,
@@ -981,8 +988,12 @@ fn extract_migrating_material_list<G>(
                 .page_node_list(source)
                 .expect("line remains live")
                 .nodes()
-                .owned_node(index),
-            Some(Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
+                .get(index),
+            Some(
+                tex_state::node_arena::NodeView::Mark { .. }
+                    | tex_state::node_arena::NodeView::Ins { .. }
+                    | tex_state::node_arena::NodeView::Adjust(_)
+            )
         );
         if !migrating {
             stores.append_page_active_list_range(&mut retained, source, index..index + 1);
@@ -997,9 +1008,11 @@ fn extract_migrating_material_list<G>(
             .page_node_list(source)
             .expect("line remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .and_then(|node| match node {
-                Node::Adjust(adjust) if adjust.pre => Some(adjust.content),
+                tex_state::node_arena::NodeView::Adjust(adjust) if adjust.pre => {
+                    Some(adjust.content)
+                }
                 _ => None,
             });
         if let Some(content) = content {
@@ -1020,10 +1033,15 @@ fn extract_migrating_material_list<G>(
             .page_node_list(source)
             .expect("line remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
         {
-            Some(Node::Mark { .. } | Node::Ins { .. }) => PostMigration::Direct,
-            Some(Node::Adjust(adjust)) if !adjust.pre => PostMigration::Content(adjust.content),
+            Some(
+                tex_state::node_arena::NodeView::Mark { .. }
+                | tex_state::node_arena::NodeView::Ins { .. },
+            ) => PostMigration::Direct,
+            Some(tex_state::node_arena::NodeView::Adjust(adjust)) if !adjust.pre => {
+                PostMigration::Content(adjust.content)
+            }
             _ => PostMigration::None,
         };
         match migration {
@@ -1140,12 +1158,13 @@ fn expanded_line_node<G>(
         .page_node_list(nodes)
         .expect("line expansion source belongs to the live page arena")
         .nodes()
-        .owned_node(index)
+        .get(index)
         .and_then(|node| match node {
-            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-                u8::try_from(u32::from(*ch)).ok().map(|code| (*font, code))
+            tex_state::node_arena::NodeView::Char { font, ch, .. }
+            | tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
+                u8::try_from(u32::from(ch)).ok().map(|code| (font, code))
             }
-            Node::MarginKern { font, ch, .. } => Some((*font, *ch)),
+            tex_state::node_arena::NodeView::MarginKern { font, ch, .. } => Some((font, ch)),
             _ => None,
         });
     if let Some((font, code)) = expandable {
@@ -1171,15 +1190,15 @@ fn expanded_line_node<G>(
             .page_node_list(nodes)
             .expect("expanded glyph source remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .expect("expanded glyph index remains in bounds")
         {
-            Node::Char { ch, origin, .. } => Node::Char {
+            tex_state::node_arena::NodeView::Char { ch, origin, .. } => Node::Char {
                 font: expanded,
-                ch: *ch,
-                origin: *origin,
+                ch,
+                origin,
             },
-            Node::Lig {
+            tex_state::node_arena::NodeView::Lig {
                 ch,
                 orig,
                 left_hit,
@@ -1188,19 +1207,19 @@ fn expanded_line_node<G>(
                 ..
             } => Node::Lig {
                 font: expanded,
-                ch: *ch,
-                orig: orig.clone(),
-                left_hit: *left_hit,
-                right_hit: *right_hit,
-                origins: origins.clone(),
+                ch,
+                orig: orig.to_vec(),
+                left_hit,
+                right_hit,
+                origins: origins.to_vec(),
             },
-            Node::MarginKern {
+            tex_state::node_arena::NodeView::MarginKern {
                 amount, side, ch, ..
             } => Node::MarginKern {
-                amount: *amount,
-                side: *side,
+                amount,
+                side,
                 font: expanded,
-                ch: *ch,
+                ch,
             },
             _ => unreachable!("font expansion plan targets a glyph or marginal character"),
         };
@@ -1214,8 +1233,8 @@ fn expanded_line_node<G>(
             .page_node_list(nodes)
             .expect("line expansion source belongs to the live page arena")
             .nodes()
-            .owned_node(index),
-        Some(Node::Kern {
+            .get(index),
+        Some(tex_state::node_arena::NodeView::Kern {
             kind: KernKind::Font,
             ..
         })
@@ -1228,7 +1247,7 @@ fn expanded_line_node<G>(
             .page_node_list(nodes)
             .expect("line expansion source belongs to the live page arena")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .and_then(glyph_identity)
     };
     let (Some((left_font, left)), Some((right_font, right))) =
@@ -1410,10 +1429,13 @@ fn normalize_paragraph_glue<G>(
     Ok(())
 }
 
-fn glyph_identity(node: &Node) -> Option<(tex_state::ids::FontId, u8)> {
+fn glyph_identity(
+    node: tex_state::node_arena::NodeView<'_>,
+) -> Option<(tex_state::ids::FontId, u8)> {
     match node {
-        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-            u8::try_from(u32::from(*ch)).ok().map(|code| (*font, code))
+        tex_state::node_arena::NodeView::Char { font, ch, .. }
+        | tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
+            u8::try_from(u32::from(ch)).ok().map(|code| (font, code))
         }
         _ => None,
     }
@@ -1458,13 +1480,17 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
 fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
     nodes.for_each(|node| match node {
-        Node::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
-            active.push(*direction);
+        tex_state::NodeView::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
+            active.push(direction);
         }
-        Node::Direction(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
+        tex_state::NodeView::Direction(Direction::EndL)
+            if active.last() == Some(&Direction::BeginL) =>
+        {
             let _ = active.pop();
         }
-        Node::Direction(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
+        tex_state::NodeView::Direction(Direction::EndR)
+            if active.last() == Some(&Direction::BeginR) =>
+        {
             let _ = active.pop();
         }
         _ => {}

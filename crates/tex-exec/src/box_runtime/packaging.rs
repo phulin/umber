@@ -56,7 +56,10 @@ where
             else {
                 return Ok(None);
             };
-            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+            if !matches!(
+                tail.node(),
+                tex_state::NodeView::HList(_) | tex_state::NodeView::VList(_)
+            ) {
                 return Ok(None);
             }
             let removed = stores.remove_page_contribution_range(tail.removal_range());
@@ -71,7 +74,10 @@ where
             else {
                 return Ok(None);
             };
-            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+            if !matches!(
+                tail.node(),
+                tex_state::NodeView::HList(_) | tex_state::NodeView::VList(_)
+            ) {
                 return Ok(None);
             }
             let range = tail.removal_range();
@@ -90,8 +96,8 @@ where
     }
 }
 
-fn reset_removed_box_shift(node: &Node) -> Option<Node> {
-    let mut node = node.clone();
+fn reset_removed_box_shift(node: tex_state::node_arena::NodeView<'_>) -> Option<Node> {
+    let mut node = node.to_owned_with(std::convert::identity);
     match &mut node {
         Node::HList(box_node) | Node::VList(box_node) => {
             box_node.shift = tex_state::scaled::Scaled::from_raw(0);
@@ -139,11 +145,9 @@ pub(crate) fn hpack_with_overfull_rule<G>(
                 matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
             })
     {
-        let overfull_rule = stores.publish_page_nodes(vec![Node::Rule {
-            width: Some(params.overfull_rule),
-            height: None,
-            depth: None,
-        }]);
+        let overfull_rule = stores.construct_page_node(|destination| {
+            destination.rule(Some(params.overfull_rule), None, None);
+        });
         packed.node.children = stores
             .compose_page_node_sequences(&[packed.node.children, overfull_rule]);
     }
@@ -268,9 +272,9 @@ fn recover_texxet_directions_list<G>(
             .page_node_list(source)
             .expect("direction source belongs to the live page arena")
             .nodes()
-            .owned_node(index)
+            .get(index)
             .and_then(|node| match node {
-                Node::Direction(direction) => Some(*direction),
+                tex_state::node_arena::NodeView::Direction(direction) => Some(direction),
                 _ => None,
             });
         let replacement = direction.and_then(|direction| {
@@ -325,15 +329,15 @@ fn project_short_diagnostic_discs_list<G>(
             .page_node_list(physical)
             .expect("physical diagnostic list remains live")
             .nodes()
-            .owned_node(physical_index)
+            .get(physical_index)
             .and_then(|node| match node {
-                Node::Disc {
+                tex_state::node_arena::NodeView::Disc {
                     kind,
                     pre,
                     post,
                     replace,
                     physical_replace_count,
-                } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+                } => Some((kind, pre, post, replace, physical_replace_count)),
                 _ => None,
             });
         let Some((kind, physical_pre, physical_post, replace, physical_replace_count)) =
@@ -352,9 +356,9 @@ fn project_short_diagnostic_discs_list<G>(
                 .page_node_list(semantic)
                 .expect("semantic diagnostic list remains live")
                 .nodes()
-                .owned_node(semantic_index)
+                .get(semantic_index)
                 .and_then(|node| match node {
-                    Node::Disc { pre, post, .. } => Some((*pre, *post)),
+                    tex_state::node_arena::NodeView::Disc { pre, post, .. } => Some((pre, post)),
                     _ => None,
                 });
             semantic_index += 1;
@@ -390,11 +394,11 @@ fn physical_discretionary_projection<G>(
         .iter()
         .enumerate()
         .filter_map(|(index, node)| match node {
-            Node::Disc {
+            tex_state::NodeView::Disc {
                 replace,
                 physical_replace_count: 1..,
                 ..
-            } => Some((index, *replace)),
+            } => Some((index, replace)),
             _ => None,
         })
         .collect::<Vec<_>>();

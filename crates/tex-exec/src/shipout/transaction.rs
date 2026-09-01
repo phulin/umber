@@ -1,7 +1,7 @@
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::NodeView;
 use tex_state::{
     ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
     PureMemoLayer, PureShipoutEntry, Universe,
@@ -599,8 +599,7 @@ fn shipout_key<G>(stores: &mut Universe<G>, root: &Node) -> PureMemoKey {
 }
 
 fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
-    fn visit<G>(stores: &Universe<G>, node: &Node) -> bool {
-        let view = NodeRef::from(node);
+    fn visit<G>(stores: &Universe<G>, view: NodeView<'_>) -> bool {
         if matches!(
             view.kind(),
             NodeKind::Whatsit
@@ -618,7 +617,7 @@ fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
             return false;
         }
         let effect_free = std::cell::Cell::new(true);
-        node.visit_node_lists(|children| {
+        view.visit_semantic_node_lists(|children| {
             if effect_free.get() {
                 effect_free.set(
                     stores
@@ -632,7 +631,7 @@ fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
         });
         effect_free.get()
     }
-    visit(stores, root)
+    visit(stores, root.into())
 }
 
 fn shipout_box_dimensions(

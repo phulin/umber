@@ -107,9 +107,11 @@ pub(in crate::main_control) fn apply<G>(
                     command.diagnostic_effects,
                     command.fuel,
                 )?;
-                modes.current_list_mutation().construct(stores, |slot| {
-                    *slot = Some(Node::Direction(*direction));
-                });
+                modes
+                    .current_list_mutation()
+                    .construct(stores, |destination| {
+                        destination.direction(*direction);
+                    });
             } else {
                 let name = match direction {
                     tex_state::node::Direction::BeginM => "beginM",

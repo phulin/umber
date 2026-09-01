@@ -368,7 +368,7 @@ impl ModeList {
     pub fn construct<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        initialize: impl FnOnce(&mut Option<Node>),
+        initialize: impl FnOnce(tex_state::NodeDestination<'_>),
     ) {
         assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
@@ -416,8 +416,8 @@ impl ModeList {
         let mut node = stores
             .page_node_span(self.nodes)
             .ok()?
-            .owned_node(index)?
-            .clone();
+            .get(index)?
+            .to_owned_with(std::convert::identity);
         let result = mutate(&mut node);
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_span_range(&mut self.active, self.nodes, 0..index);
@@ -584,10 +584,15 @@ impl ModeList {
             return None;
         }
         match stores.page_node_span(self.nodes).ok()?.last() {
-            Some(Node::HList(_)) | Some(Node::VList(_)) => {}
+            Some(tex_state::node_arena::NodeView::HList(_))
+            | Some(tex_state::node_arena::NodeView::VList(_)) => {}
             _ => return None,
         }
-        let mut node = stores.page_node_span(self.nodes).ok()?.last()?.clone();
+        let mut node = stores
+            .page_node_span(self.nodes)
+            .ok()?
+            .last()?
+            .to_owned_with(std::convert::identity);
         self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
@@ -602,7 +607,11 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        let node = stores.page_node_span(self.nodes).ok()?.last()?.clone();
+        let node = stores
+            .page_node_span(self.nodes)
+            .ok()?
+            .last()?
+            .to_owned_with(std::convert::identity);
         self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         Some(node)
     }
@@ -807,7 +816,7 @@ impl ModeListMutation<'_> {
     pub(crate) fn construct<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        initialize: impl FnOnce(&mut Option<Node>),
+        initialize: impl FnOnce(tex_state::NodeDestination<'_>),
     ) {
         self.record_nodes();
         self.list.construct(stores, initialize);

@@ -267,7 +267,7 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
         .append_to_active_list(&mut builder, source)
         .expect("append source coordinates");
     arena
-        .construct_active_list(&mut builder, |slot| *slot = Some(Node::Penalty(30)))
+        .construct_active_list(&mut builder, |slot| slot.penalty(30))
         .expect("construct new semantic node");
     let composed = arena
         .finalize_active_list(&mut builder)
@@ -301,7 +301,7 @@ fn demand_enabled_shared_append_keeps_copied_tail_summary_open_for_generated_suf
         .append_to_active_list(&mut builder, source)
         .expect("copy summarized source");
     arena
-        .construct_active_list(&mut builder, |slot| *slot = Some(Node::Penalty(30)))
+        .construct_active_list(&mut builder, |slot| slot.penalty(30))
         .expect("generated suffix extends a summarized copied block");
     let composed = arena
         .finalize_active_list(&mut builder)
@@ -409,9 +409,7 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
             let mut builder = PageMaterialActiveListBuilder::vacant();
             arena.open_active_list(&mut builder).expect("open builder");
             arena
-                .construct_active_list(&mut builder, |slot| {
-                    *slot = Some(Node::Penalty(-1));
-                })
+                .construct_active_list(&mut builder, |slot| slot.penalty(-1))
                 .expect("exact splice prefix");
             arena
                 .append_to_active_list(&mut builder, source)
@@ -491,9 +489,7 @@ fn destination_construction_is_warmed_and_linear_across_chunks() {
         arena.open_active_list(&mut builder).expect("open builder");
         for penalty in 0..count {
             arena
-                .construct_active_list(&mut builder, |slot| {
-                    *slot = Some(Node::Penalty(penalty as i32));
-                })
+                .construct_active_list(&mut builder, |slot| slot.penalty(penalty as i32))
                 .expect("construct resident node");
         }
         let list = arena
@@ -609,13 +605,11 @@ fn overlapping_checked_span_composition_counts_its_unavoidable_copy() {
         .slice_span(composed, span.len()..composed.len())
         .expect("checked composite slices without re-admission");
 
-    let retained_addresses = arena
+    let retained_count = arena
         .span_node_cursor(retained)
         .expect("retained list")
-        .iter()
-        .map(std::ptr::from_ref)
-        .collect::<Vec<_>>();
-    assert_eq!(retained_addresses.len(), selected_addresses.len());
+        .len();
+    assert_eq!(retained_count, selected_addresses.len());
     assert_eq!(arena.counters().source_nodes_copied, copies_before + 100);
     assert!(arena.allocated_heap_bytes() >= bytes_before);
 }
@@ -736,7 +730,7 @@ fn long_direct_span_survives_checkpoint_rejection_and_operation_rollback_stales_
         .span_node_cursor(retained_span)
         .expect("retained span cursor")
         .for_each(|node| {
-            assert_eq!(node, &Node::Penalty(expected));
+            assert_eq!(node, crate::NodeView::Penalty(expected));
             expected += 1;
         });
     assert_eq!(expected, 4_096);

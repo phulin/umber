@@ -2,7 +2,6 @@ use tex_state::CommandContext;
 #[cfg(test)]
 mod tests;
 
-use tex_state::node::Node;
 use tex_typeset::alignment::{
     AlignmentPlanError, AlignmentWidthRequirement, plan_alignment_widths,
 };
@@ -51,7 +50,7 @@ fn collect_width_requirements<G>(
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();
     for node in rows.iter() {
-        let Node::Unset(row) = node else {
+        let tex_state::NodeView::Unset(row) = node else {
             continue;
         };
         let mut column = 0usize;
@@ -60,14 +59,14 @@ fn collect_width_requirements<G>(
             .expect("alignment row belongs to the live page arena")
             .iter()
         {
-            let Node::Unset(cell) = child else {
+            let tex_state::NodeView::Unset(cell) = child else {
                 continue;
             };
             let span = usize::from(cell.span_count) + 1;
             requirements.push(AlignmentWidthRequirement {
                 first_column: column,
                 span,
-                width: unset_axis_size(kind, cell)?,
+                width: unset_axis_size(kind, &cell)?,
             });
             column += span;
         }

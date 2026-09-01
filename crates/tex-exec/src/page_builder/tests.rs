@@ -175,8 +175,9 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
                 .page_node_list(discards)
                 .expect("saved page discards remain live")
                 .nodes()
-                .first(),
-            Some(&snap)
+                .first()
+                .map(|node| node.to_owned_with(std::convert::identity)),
+            Some(snap)
         );
         let current_page = stores.current_page_nodes().cloned().collect::<Vec<_>>();
         assert_eq!(
@@ -685,7 +686,12 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
 
             assert_eq!(error.as_fatal(), Some(FatalError::confusion("page")));
             assert_eq!(stores.page_contributions().len(), 1);
-            assert_eq!(stores.page_contribution_front(), Some(&node));
+            assert_eq!(
+                stores
+                    .page_contribution_front()
+                    .map(|view| view.to_owned_with(std::convert::identity)),
+                Some(node)
+            );
             assert_eq!(
                 stores.current_page_nodes().cloned().collect::<Vec<_>>(),
                 [Node::Penalty(41)]
@@ -713,7 +719,7 @@ fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
         assert_eq!(stores.page_dimension(PageDimension::Depth), s(3));
         assert!(matches!(
             stores.page_contribution_front(),
-            Some(Node::Kern { .. })
+            Some(tex_state::NodeView::Kern { .. })
         ));
         stores.append_page_contribution(Node::Penalty(INF_PENALTY));
         build_page_without_error_context(&mut stores).expect("white-box operation succeeds");
@@ -761,7 +767,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
         assert_eq!(stores.current_page_len(), 3);
         assert!(matches!(
             stores.page_contribution_front(),
-            Some(Node::Kern { .. })
+            Some(tex_state::NodeView::Kern { .. })
         ));
 
         stores.append_page_contribution(Node::Penalty(23));
@@ -832,7 +838,7 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
         let specs = stores
             .current_page_nodes()
             .filter_map(|node| match node {
-                Node::Glue {
+                tex_state::NodeView::Glue {
                     spec,
                     kind: GlueKind::Normal,
                     ..

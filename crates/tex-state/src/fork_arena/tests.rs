@@ -1767,7 +1767,7 @@ fn borrowed_node_cursor_traverses_page_material_without_materialization() {
         cursor
             .iter()
             .map(|node| match node {
-                Node::Penalty(value) => *value,
+                crate::NodeView::Penalty(value) => value,
                 _ => unreachable!("test list contains only penalties"),
             })
             .collect::<Vec<_>>(),

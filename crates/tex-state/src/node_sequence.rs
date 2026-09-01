@@ -359,14 +359,14 @@ pub type DirectHighCellLineages = SmallVec<[DirectHighCellLineage; 1]>;
 /// or duplicate any node payload from `nodes`.
 #[must_use]
 pub fn borrowed_mirrored_high_cell_lineages(nodes: &[Node]) -> Vec<DirectHighCellLineages> {
-    borrowed_mirrored_high_cell_lineages_from(nodes.iter())
+    borrowed_mirrored_high_cell_lineages_from(nodes.iter().map(Into::into))
 }
 
 /// Builds allocator lineage scratch while walking a non-contiguous immutable
 /// source. Node payload is borrowed and never copied into the scratch.
 #[must_use]
 pub fn borrowed_mirrored_high_cell_lineages_from<'a>(
-    nodes: impl IntoIterator<Item = &'a Node>,
+    nodes: impl IntoIterator<Item = crate::node_arena::NodeView<'a>>,
 ) -> Vec<DirectHighCellLineages> {
     nodes
         .into_iter()
@@ -735,7 +735,7 @@ impl NodeSequence {
             .next_sequence_lineage_row
             .checked_add(1)
             .expect("node sequence lineage rows exceed u32");
-        let lineages = direct_high_cell_lineages(&node, row);
+        let lineages = direct_high_cell_lineages((&node).into(), row);
         match &mut self.projection {
             PhysicalProjection::Mirrored => {
                 self.semantic.push(node);
@@ -903,13 +903,14 @@ fn projected_high_cell_lineages(
         let start = boundaries[semantic_row as usize];
         let end = boundaries[semantic_row as usize + 1];
         if end == start + 1 {
-            semantic_lineages.push(direct_high_cell_lineages(node, semantic_row));
-            physical_lineages[start] = direct_high_cell_lineages(&physical[start], semantic_row);
+            semantic_lineages.push(direct_high_cell_lineages(node.into(), semantic_row));
+            physical_lineages[start] =
+                direct_high_cell_lineages((&physical[start]).into(), semantic_row);
         } else {
-            semantic_lineages.push(direct_high_cell_lineages(node, semantic_row));
+            semantic_lineages.push(direct_high_cell_lineages(node.into(), semantic_row));
             for physical_row in start..end {
                 physical_lineages[physical_row] =
-                    direct_high_cell_lineages(&physical[physical_row], next_unpaired_row);
+                    direct_high_cell_lineages((&physical[physical_row]).into(), next_unpaired_row);
                 next_unpaired_row = next_unpaired_row
                     .checked_add(1)
                     .expect("node sequence lineage rows exceed u32");
@@ -925,7 +926,7 @@ fn mirrored_high_cell_lineages(nodes: &[Node]) -> (Vec<DirectHighCellLineages>, 
         .enumerate()
         .map(|(row, node)| {
             direct_high_cell_lineages(
-                node,
+                node.into(),
                 u32::try_from(row).expect("node sequence exceeds u32 rows"),
             )
         })
@@ -934,10 +935,13 @@ fn mirrored_high_cell_lineages(nodes: &[Node]) -> (Vec<DirectHighCellLineages>, 
     (lineages, next)
 }
 
-fn direct_high_cell_lineages(node: &Node, row: u32) -> DirectHighCellLineages {
+fn direct_high_cell_lineages(
+    node: crate::node_arena::NodeView<'_>,
+    row: u32,
+) -> DirectHighCellLineages {
     let count = match node {
-        Node::Char { .. } => 1,
-        Node::Lig { orig, .. } => orig.len(),
+        crate::node_arena::NodeView::Char { .. } => 1,
+        crate::node_arena::NodeView::Lig { orig, .. } => orig.len(),
         _ => 0,
     };
     (0..count)

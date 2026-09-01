@@ -4,7 +4,7 @@ use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
-use tex_state::node_arena::{NodeRef, PageListId};
+use tex_state::node_arena::{NodeView, PageListId};
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -24,7 +24,12 @@ pub(crate) fn prune_page_top_list<G>(
     let mut first_box = None;
     let mut adjusted_top_skip = None;
     let stopped = nodes.try_for_each_range(0..nodes.len(), |index, node| {
-        if matches!(node, Node::HList(_) | Node::VList(_) | Node::Rule { .. }) {
+        if matches!(
+            node,
+            tex_state::NodeView::HList(_)
+                | tex_state::NodeView::VList(_)
+                | tex_state::NodeView::Rule { .. }
+        ) {
             if let Some(start) = run_start.take() {
                 retained.push(start..index);
             }
@@ -67,11 +72,9 @@ pub(crate) fn prune_page_top_list<G>(
         pieces.push(stores.slice_page_node_sequence(source, range, &mut slices));
     }
     if let (Some(index), Some(spec)) = (first_box, adjusted_top_skip) {
-        pieces.push(stores.publish_page_nodes(vec![Node::Glue {
-            spec,
-            kind: GlueKind::SplitTopSkip,
-            leader: None,
-        }]));
+        pieces.push(stores.construct_page_node(|destination| {
+            destination.glue(spec, GlueKind::SplitTopSkip, None);
+        }));
         pieces.push(stores.slice_page_node_sequence(source, index..source_len, &mut slices));
     }
     stores.compose_page_node_sequences(&pieces)
@@ -97,7 +100,7 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
             .get(index)
             .expect("page-top source index remains in range");
         match node {
-            NodeRef::HList(_) | NodeRef::VList(_) | NodeRef::Rule { .. } => {
+            NodeView::HList(_) | NodeView::VList(_) | NodeView::Rule { .. } => {
                 let adjusted = GlueSpec {
                     width: split_top_skip
                         .width
@@ -140,7 +143,7 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
             .expect("page-top source index remains in range");
         if matches!(
             node,
-            NodeRef::HList(_) | NodeRef::VList(_) | NodeRef::Rule { .. }
+            NodeView::HList(_) | NodeView::VList(_) | NodeView::Rule { .. }
         ) {
             break;
         }
@@ -153,13 +156,13 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
 }
 
 /// TeX82 §969's discardable page-top material plus pdfTeX §1378's snap node.
-pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
+pub(crate) fn is_page_top_discardable(node: NodeView<'_>) -> bool {
     matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern { .. }
-            | Node::Penalty(_)
-            | Node::Whatsit(Whatsit::PdfSnapY { .. })
+        NodeView::Glue { .. }
+            | NodeView::Kern { .. }
+            | NodeView::Penalty(_)
+            | NodeView::Whatsit(Whatsit::PdfSnapY { .. })
     )
 }
 
@@ -206,24 +209,23 @@ pub(crate) fn vpack_natural<G>(
     .node
 }
 
-fn vertical_height(node: &Node) -> Scaled {
-    NodeRef::from(node)
-        .vertical_dimensions()
-        .map_or(Scaled::from_raw(0), |(height, _)| height)
-}
-
-fn vertical_height_ref(node: &NodeRef<'_>) -> Scaled {
+fn vertical_height(node: NodeView<'_>) -> Scaled {
     node.vertical_dimensions()
         .map_or(Scaled::from_raw(0), |(height, _)| height)
 }
 
-fn is_page_top_discardable_ref(node: &NodeRef<'_>) -> bool {
+fn vertical_height_ref(node: &NodeView<'_>) -> Scaled {
+    node.vertical_dimensions()
+        .map_or(Scaled::from_raw(0), |(height, _)| height)
+}
+
+fn is_page_top_discardable_ref(node: &NodeView<'_>) -> bool {
     matches!(
         node,
-        NodeRef::Glue { .. }
-            | NodeRef::Kern { .. }
-            | NodeRef::Penalty(_)
-            | NodeRef::Whatsit(Whatsit::PdfSnapY { .. })
+        NodeView::Glue { .. }
+            | NodeView::Kern { .. }
+            | NodeView::Penalty(_)
+            | NodeView::Whatsit(Whatsit::PdfSnapY { .. })
     )
 }
 

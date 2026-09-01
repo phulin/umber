@@ -1,7 +1,8 @@
 use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
+#[cfg(test)]
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, NodeRef, PackedNode, PageListId};
+use tex_state::node_arena::{NodeCursor, NodeView, PackedNode, PageListId};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -215,17 +216,15 @@ pub(super) fn add_node_width_source<S: TypesetState>(
     include_font_expansion: bool,
     discretionary_widths: DiscretionaryWidths,
 ) {
-    let Some(node) = nodes.owned_node(index) else {
+    let Some(node) = nodes.get(index) else {
         return;
     };
     add_node_width_value(
         widths,
         state,
         node,
-        index
-            .checked_sub(1)
-            .and_then(|index| nodes.owned_node(index)),
-        nodes.owned_node(index + 1),
+        index.checked_sub(1).and_then(|index| nodes.get(index)),
+        nodes.get(index + 1),
         include_font_expansion,
         discretionary_widths,
     );
@@ -234,13 +233,13 @@ pub(super) fn add_node_width_source<S: TypesetState>(
 pub(super) fn add_node_width_value<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
-    node: &Node,
-    previous: Option<&Node>,
-    next: Option<&Node>,
+    node: NodeView<'_>,
+    previous: Option<NodeView<'_>>,
+    next: Option<NodeView<'_>>,
     include_font_expansion: bool,
     discretionary_widths: DiscretionaryWidths,
 ) {
-    match NodeRef::from(node).packed() {
+    match node.packed() {
         PackedNode::Glyph { font, ch } => {
             if let Some(metrics) = state.font_character_metrics(font, ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
@@ -326,10 +325,8 @@ fn add_nested_list_widths<S: TypesetState>(
                     add_font_kern_expansion(
                         state,
                         widths,
-                        current
-                            .checked_sub(1)
-                            .and_then(|index| cursor.owned_node(index)),
-                        cursor.owned_node(current + 1),
+                        current.checked_sub(1).and_then(|index| cursor.get(index)),
+                        cursor.get(current + 1),
                         amount,
                     );
                 }
@@ -387,14 +384,14 @@ fn add_char_expansion<S: TypesetState>(
 fn add_font_kern_expansion<S: TypesetState>(
     state: &S,
     widths: &mut Widths,
-    previous: Option<&Node>,
-    next: Option<&Node>,
+    previous: Option<NodeView<'_>>,
+    next: Option<NodeView<'_>>,
     natural: Scaled,
 ) {
-    let Some((left_font, left)) = previous.map(NodeRef::from).and_then(glyph) else {
+    let Some((left_font, left)) = previous.and_then(glyph) else {
         return;
     };
-    let Some((right_font, right)) = next.map(NodeRef::from).and_then(glyph) else {
+    let Some((right_font, right)) = next.and_then(glyph) else {
         return;
     };
     add_font_kern_capacity(state, widths, left_font, left, right_font, right, natural);
@@ -433,9 +430,9 @@ fn add_font_kern_capacity<S: TypesetState>(
     );
 }
 
-fn glyph(node: NodeRef<'_>) -> Option<(tex_state::ids::FontId, u8)> {
+fn glyph(node: NodeView<'_>) -> Option<(tex_state::ids::FontId, u8)> {
     match node {
-        NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
+        NodeView::Char { font, ch, .. } | NodeView::Lig { font, ch, .. } => {
             u8::try_from(ch as u32).ok().map(|code| (font, code))
         }
         _ => None,

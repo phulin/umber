@@ -279,7 +279,7 @@ fn adjacent_math_chars(
     nodes: &ExpandedMathView,
     index: usize,
 ) -> Option<(MathChar, MathChar)> {
-    let Node::MathNoad(current) = nodes.node(ctx.state, index)? else {
+    let tex_state::node_arena::NodeView::MathNoad(current) = nodes.node(ctx.state, index)? else {
         return None;
     };
     if !matches!(current.kind, NoadKind::Normal(NoadClass::Ord))
@@ -289,10 +289,10 @@ fn adjacent_math_chars(
         return None;
     }
     let current_char = math_char_field(&current.nucleus)?;
-    let Node::MathNoad(next) = nodes.node(ctx.state, index + 1)? else {
+    let tex_state::node_arena::NodeView::MathNoad(next) = nodes.node(ctx.state, index + 1)? else {
         return None;
     };
-    if !can_follow_ord_for_lig_kern(next) {
+    if !can_follow_ord_for_lig_kern(&next) {
         return None;
     }
     let next_char = math_char_field(&next.nucleus)?;
@@ -336,7 +336,8 @@ fn apply_math_ligature(
 ) -> bool {
     let replacement = char::from(ligature.replacement);
     let restart = ligature.pass_over == 0;
-    let Some(Node::MathNoad(current)) = nodes.node(ctx.state, index).cloned() else {
+    let Some(tex_state::node_arena::NodeView::MathNoad(current)) = nodes.node(ctx.state, index)
+    else {
         return false;
     };
     let Some(current_char) = math_char_field(&current.nucleus).or(match current.nucleus {
@@ -360,7 +361,9 @@ fn apply_math_ligature(
 
     match (ligature.delete_current, ligature.delete_next) {
         (true, true) => {
-            let Some(Node::MathNoad(next)) = nodes.node(ctx.state, index + 1).cloned() else {
+            let Some(tex_state::node_arena::NodeView::MathNoad(next)) =
+                nodes.node(ctx.state, index + 1)
+            else {
                 return false;
             };
             if let Some(current) = nodes.noad_mut(ctx.state, index) {

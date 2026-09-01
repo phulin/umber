@@ -238,6 +238,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   compatibility start-position iteration;
   demand-enabled layout-independent list identities; and cold-only exact-root
   relocation.
+- `src/node_destination.rs`: One-use variant-directed construction capability
+  for initializing a final resident node slot without a complete caller-owned
+  node crossing the arena boundary.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.

@@ -1,7 +1,7 @@
 use super::*;
 use crate::mode::{AlignColumn, AlignmentPackSpec};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::{NodeTokenList, UnsetKind, UnsetNode, UnsetNodeFields};
+use tex_state::node::{Node, NodeTokenList, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 

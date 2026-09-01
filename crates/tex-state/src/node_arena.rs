@@ -2563,8 +2563,8 @@ pub(crate) type LegacyPageNodeArena = NodeArena<PageLifetime>;
 pub type DurableNodeArena<G> = NodeArena<G, GlueId<G>, TokenListId<G>>;
 
 /// Zero-allocation logical projection of one immutable node.
-#[derive(Clone, Debug)]
-pub enum NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     Char {
         font: crate::ids::FontId,
         ch: char,
@@ -2634,8 +2634,15 @@ pub enum NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList>
     Adjust(crate::node::AdjustNode<List>),
 }
 
+/// Transitional source alias. Production consumers use [`NodeView`]; the
+/// alias remains only so out-of-tree callers can migrate without naming the
+/// resident enum.
+#[deprecated(note = "use NodeView")]
+pub type NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> =
+    NodeView<'a, List, Glue, Tokens>;
+
 impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
-    for NodeRef<'a, List, Glue, Tokens>
+    for NodeView<'a, List, Glue, Tokens>
 {
     fn from(node: &'a Node<List, Glue, Tokens>) -> Self {
         match node {
@@ -2771,7 +2778,86 @@ pub enum PackedNode<'a> {
     Ignored,
 }
 
-impl NodeRef<'_> {
+impl NodeView<'_> {
+    pub(crate) fn tex_memory_words(&self, etex_node_sizes: bool) -> (usize, usize) {
+        let synctex_extra = usize::from(etex_node_sizes) * 2;
+        let variable = match self {
+            Self::Char { .. } => return (0, 1),
+            Self::Lig { orig, .. } => return (2, orig.len()),
+            Self::HList(_) | Self::VList(_) | Self::Unset(_) => 7 + synctex_extra,
+            Self::Rule { .. } => 4 + synctex_extra,
+            Self::Ins { .. } => 5,
+            Self::MathNoad(noad) => match noad.kind {
+                crate::math::NoadKind::Radical { .. } | crate::math::NoadKind::Accent { .. } => 5,
+                _ => 4,
+            },
+            Self::FractionNoad(_) => 6,
+            Self::MathStyle(_) | Self::MathChoice(_) | Self::MarginKern { .. } => 3,
+            Self::Kern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Nonscript => 2 + synctex_extra,
+            Self::Direction(_) if etex_node_sizes => 2 + synctex_extra,
+            Self::Disc { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::Direction(_)
+            | Self::MathList(_)
+            | Self::Adjust(_) => 2,
+        };
+        (variable, 0)
+    }
+
+    pub fn visit_semantic_node_lists(&self, mut visit: impl FnMut(&PageListId)) {
+        fn field(field: &crate::math::MathField<PageListId>, visit: &mut impl FnMut(&PageListId)) {
+            if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
+                field
+            {
+                visit(list);
+            }
+        }
+        match self {
+            Self::HList(node) | Self::VList(node) => visit(&node.children),
+            Self::Unset(node) => visit(&node.children),
+            Self::Glue {
+                leader:
+                    Some(
+                        crate::node::LeaderPayload::HList(node)
+                        | crate::node::LeaderPayload::VList(node),
+                    ),
+                ..
+            } => visit(&node.children),
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                visit(pre);
+                visit(post);
+                visit(replace);
+            }
+            Self::Ins { content, .. } => visit(content),
+            Self::MathNoad(noad) => {
+                field(&noad.nucleus, &mut visit);
+                field(&noad.subscript, &mut visit);
+                field(&noad.superscript, &mut visit);
+            }
+            Self::FractionNoad(fraction) => {
+                visit(&fraction.numerator);
+                visit(&fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                visit(&choice.display);
+                visit(&choice.text);
+                visit(&choice.script);
+                visit(&choice.script_script);
+            }
+            Self::MathList(list) => visit(&list.content),
+            Self::Adjust(adjustment) => visit(&adjustment.content),
+            _ => {}
+        }
+    }
+
     #[must_use]
     pub const fn kind(&self) -> crate::node::NodeKind {
         use crate::node::NodeKind;
@@ -2999,6 +3085,15 @@ pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
 }
 
+// Keep the large transitional enum projection out of the recursive
+// predecessor-walk frame. The compact-record cutover replaces this conversion
+// with its narrow decoded view, but the enum-backed stage must still traverse
+// one-value chunks on the routine test stack.
+#[inline(never)]
+fn visit_node_view<'a>(visit: &mut impl FnMut(NodeView<'a>), node: &'a Node) {
+    visit(NodeView::from(node));
+}
+
 /// Test-only observations which distinguish positional node probes from
 /// linear predecessor-topology traversal.
 #[cfg(feature = "testing")]
@@ -3077,29 +3172,35 @@ impl<'a> NodeCursor<'a> {
         }
     }
     #[must_use]
-    pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {
-        self.owned_node(index).map(NodeRef::from)
+    pub fn get(&self, index: usize) -> Option<NodeView<'a>> {
+        self.owned_node(index).map(NodeView::from)
+    }
+
+    /// Returns the backing-row address for exact retained-range tests.
+    ///
+    /// This is deliberately unavailable to production consumers: node reads
+    /// must use [`NodeView`], while allocation/copy tests may still prove that
+    /// a retained span names the same resident rows.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn testing_node_address(&self, index: usize) -> Option<*const Node> {
+        self.owned_node(index).map(core::ptr::from_ref)
     }
     #[must_use]
-    pub fn owned_node(&self, index: usize) -> Option<&'a Node> {
+    pub(crate) fn owned_node(&self, index: usize) -> Option<&'a Node> {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.get(index),
             NodeCursorSource::Fork(view) => view.get(index),
         }
     }
     #[must_use]
-    pub fn first(&self) -> Option<&'a Node> {
-        match self.source {
-            NodeCursorSource::Slice(nodes) => nodes.first(),
-            NodeCursorSource::Fork(view) => view.first(),
-        }
+    pub fn first(&self) -> Option<NodeView<'a>> {
+        self.owned_node(0).map(NodeView::from)
     }
     #[must_use]
-    pub fn last(&self) -> Option<&'a Node> {
-        match self.source {
-            NodeCursorSource::Slice(nodes) => nodes.last(),
-            NodeCursorSource::Fork(view) => view.last(),
-        }
+    pub fn last(&self) -> Option<NodeView<'a>> {
+        self.len().checked_sub(1).and_then(|index| self.get(index))
     }
     #[must_use]
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
@@ -3139,10 +3240,10 @@ impl<'a> NodeCursor<'a> {
     /// Arena-backed inputs use the direct chunk traversal rather than
     /// resolving each logical index independently. Slice-backed inputs retain
     /// their ordinary contiguous walk.
-    pub fn for_each(&self, mut visit: impl FnMut(&'a Node)) {
+    pub fn for_each(&self, mut visit: impl FnMut(NodeView<'a>)) {
         match self.source {
-            NodeCursorSource::Slice(nodes) => nodes.iter().for_each(visit),
-            NodeCursorSource::Fork(view) => view.for_each(&mut visit),
+            NodeCursorSource::Slice(nodes) => nodes.iter().map(NodeView::from).for_each(visit),
+            NodeCursorSource::Fork(view) => view.for_each(|node| visit_node_view(&mut visit, node)),
         }
     }
 
@@ -3155,7 +3256,7 @@ impl<'a> NodeCursor<'a> {
     pub fn try_for_each_range<B>(
         &self,
         selected: core::ops::Range<usize>,
-        mut visit: impl FnMut(usize, &'a Node) -> core::ops::ControlFlow<B>,
+        mut visit: impl FnMut(usize, NodeView<'a>) -> core::ops::ControlFlow<B>,
     ) -> core::ops::ControlFlow<B> {
         assert!(
             selected.start <= selected.end && selected.end <= self.len(),
@@ -3165,14 +3266,16 @@ impl<'a> NodeCursor<'a> {
             NodeCursorSource::Slice(nodes) => {
                 for (offset, node) in nodes[selected.clone()].iter().enumerate() {
                     if let core::ops::ControlFlow::Break(value) =
-                        visit(selected.start + offset, node)
+                        visit(selected.start + offset, NodeView::from(node))
                     {
                         return core::ops::ControlFlow::Break(value);
                     }
                 }
                 core::ops::ControlFlow::Continue(())
             }
-            NodeCursorSource::Fork(view) => view.try_for_each_range(selected, visit),
+            NodeCursorSource::Fork(view) => {
+                view.try_for_each_range(selected, |index, node| visit(index, NodeView::from(node)))
+            }
         }
     }
 
@@ -3181,7 +3284,7 @@ impl<'a> NodeCursor<'a> {
     pub fn for_each_range(
         &self,
         selected: core::ops::Range<usize>,
-        mut visit: impl FnMut(usize, &'a Node),
+        mut visit: impl FnMut(usize, NodeView<'a>),
     ) {
         let _: core::ops::ControlFlow<core::convert::Infallible> =
             self.try_for_each_range(selected, |index, node| {
@@ -3192,7 +3295,7 @@ impl<'a> NodeCursor<'a> {
 }
 
 impl<'a> IntoIterator for NodeCursor<'a> {
-    type Item = &'a Node;
+    type Item = NodeView<'a>;
     type IntoIter = NodeCursorIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -3206,6 +3309,16 @@ pub enum NodeCursorIter<'a> {
 }
 
 impl NodeCursorIter<'_> {
+    /// Explicitly materializes borrowed projections as owned transitional
+    /// enum values.
+    ///
+    /// This mirrors `Iterator::cloned` for callers which intentionally need
+    /// mutation scratch or detached test evidence. Ordinary consumers should
+    /// continue matching the `NodeView` items yielded by the iterator.
+    pub fn cloned(self) -> impl DoubleEndedIterator<Item = Node> + ExactSizeIterator {
+        self.map(|node| node.to_owned_with(std::convert::identity))
+    }
+
     /// Descriptor rows visited by reverse traversal of a page-material list.
     ///
     /// Direct chunk roots always report zero; slices have no descriptor lane.
@@ -3219,12 +3332,12 @@ impl NodeCursorIter<'_> {
 }
 
 impl<'a> Iterator for NodeCursorIter<'a> {
-    type Item = &'a Node;
+    type Item = NodeView<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Slice(nodes) => nodes.next(),
-            Self::Fork(nodes) => nodes.next(),
+            Self::Slice(nodes) => nodes.next().map(NodeView::from),
+            Self::Fork(nodes) => nodes.next().map(NodeView::from),
         }
     }
 
@@ -3241,8 +3354,8 @@ impl ExactSizeIterator for NodeCursorIter<'_> {}
 impl<'a> DoubleEndedIterator for NodeCursorIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Slice(nodes) => nodes.next_back(),
-            Self::Fork(nodes) => nodes.next_back(),
+            Self::Slice(nodes) => nodes.next_back().map(NodeView::from),
+            Self::Fork(nodes) => nodes.next_back().map(NodeView::from),
         }
     }
 }
@@ -3256,14 +3369,14 @@ pub struct CharCodes<'a> {
 
 impl<'a> CharCodes<'a> {
     fn new(nodes: NodeCursor<'a>, index: usize) -> Option<Self> {
-        let Node::Char { font, ch, .. } = nodes.owned_node(index)? else {
+        let NodeView::Char { font, ch, .. } = nodes.get(index)? else {
             return None;
         };
-        u8::try_from(*ch as u32).ok()?;
+        u8::try_from(ch as u32).ok()?;
         Some(Self {
             nodes,
             next: index,
-            font: *font,
+            font,
         })
     }
     #[must_use]
@@ -3275,13 +3388,13 @@ impl<'a> CharCodes<'a> {
 impl Iterator for CharCodes<'_> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
-        let Node::Char { font, ch, .. } = self.nodes.owned_node(self.next)? else {
+        let NodeView::Char { font, ch, .. } = self.nodes.get(self.next)? else {
             return None;
         };
-        if *font != self.font {
+        if font != self.font {
             return None;
         }
-        let code = u8::try_from(*ch as u32).ok()?;
+        let code = u8::try_from(ch as u32).ok()?;
         self.next += 1;
         Some(code)
     }

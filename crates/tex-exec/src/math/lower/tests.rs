@@ -13,20 +13,18 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
         let leaf_children = stores.publish_page_nodes(vec![Node::Penalty(17)]);
         let nested_box = Node::HList(box_node(leaf_children, 13));
         let box_children = stores.publish_page_nodes(vec![nested_box]);
-        let leaf_address = std::ptr::from_ref(
-            stores
-                .page_node_list(leaf_children)
-                .expect("leaf list belongs to the page arena")
-                .owned_node(0)
-                .expect("leaf node exists"),
-        );
-        let nested_box_address = std::ptr::from_ref(
-            stores
-                .page_node_list(box_children)
-                .expect("box-child list belongs to the page arena")
-                .owned_node(0)
-                .expect("nested box exists"),
-        );
+        let leaf_address = stores
+            .page_node_list(leaf_children)
+            .expect("leaf list belongs to the page arena")
+            .nodes()
+            .testing_node_address(0)
+            .expect("leaf node exists");
+        let nested_box_address = stores
+            .page_node_list(box_children)
+            .expect("box-child list belongs to the page arena")
+            .nodes()
+            .testing_node_address(0)
+            .expect("nested box exists");
         let font = stores.current_font();
         let math_content = stores.publish_page_nodes(vec![
             Node::Penalty(19),
@@ -58,11 +56,10 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
             .expect("math content belongs to the page arena");
         let native_addresses = (0..math_source.len())
             .map(|index| {
-                std::ptr::from_ref(
-                    math_source
-                        .owned_node(index)
-                        .expect("native math node exists"),
-                )
+                math_source
+                    .nodes()
+                    .testing_node_address(index)
+                    .expect("native math node exists")
             })
             .collect::<Vec<_>>();
         let source = stores.publish_page_nodes(vec![
@@ -76,10 +73,14 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
         let source_view = stores
             .page_node_list(source)
             .expect("math source belongs to the page arena");
-        let leading_address =
-            std::ptr::from_ref(source_view.owned_node(0).expect("leading marker exists"));
-        let trailing_address =
-            std::ptr::from_ref(source_view.owned_node(2).expect("trailing marker exists"));
+        let leading_address = source_view
+            .nodes()
+            .testing_node_address(0)
+            .expect("leading marker exists");
+        let trailing_address = source_view
+            .nodes()
+            .testing_node_address(2)
+            .expect("trailing marker exists");
         let before = stores.page_node_arena_counters();
 
         let lowered = finish_math_lists_owned(
@@ -106,10 +107,16 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
             .page_node_list(lowered)
             .expect("lowered math belongs to the page arena");
         assert_eq!(
-            std::ptr::from_ref(lowered.owned_node(0).expect("leading marker retained")),
+            lowered
+                .nodes()
+                .testing_node_address(0)
+                .expect("leading marker retained"),
             leading_address
         );
-        assert!(matches!(lowered.owned_node(1), Some(Node::MathOn(_))));
+        assert!(matches!(
+            lowered.get(1),
+            Some(tex_state::NodeView::MathOn(_))
+        ));
         for (offset, (category, expected)) in [
             "penalty",
             "non-mu kern",
@@ -125,19 +132,23 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
         .enumerate()
         {
             assert_eq!(
-                std::ptr::from_ref(
-                    lowered
-                        .owned_node(offset + 2)
-                        .unwrap_or_else(|| panic!("{category} survives lowering")),
-                ),
+                lowered
+                    .nodes()
+                    .testing_node_address(offset + 2)
+                    .unwrap_or_else(|| panic!("{category} survives lowering")),
                 expected,
                 "{category} must retain its exact arena address"
             );
         }
-        assert!(matches!(lowered.owned_node(10), Some(Node::MathOff(_))));
+        assert!(matches!(
+            lowered.get(10),
+            Some(tex_state::NodeView::MathOff(_))
+        ));
         for index in [7, 8] {
-            let children = match lowered.owned_node(index) {
-                Some(Node::HList(boxed) | Node::VList(boxed)) => boxed.children,
+            let children = match lowered.get(index) {
+                Some(tex_state::NodeView::HList(boxed) | tex_state::NodeView::VList(boxed)) => {
+                    boxed.children
+                }
                 other => panic!("source box survives at {index}: {other:?}"),
             };
             assert_eq!(children, box_children);
@@ -145,27 +156,32 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
                 .page_node_list(children)
                 .expect("retained nested list remains live");
             assert_eq!(
-                std::ptr::from_ref(nested.owned_node(0).expect("nested box remains live")),
+                nested
+                    .nodes()
+                    .testing_node_address(0)
+                    .expect("nested box remains live"),
                 nested_box_address
             );
-            let nested_children = match nested.owned_node(0) {
-                Some(Node::HList(boxed)) => boxed.children,
+            let nested_children = match nested.get(0) {
+                Some(tex_state::NodeView::HList(boxed)) => boxed.children,
                 other => panic!("nested hlist survives: {other:?}"),
             };
             assert_eq!(nested_children, leaf_children);
             assert_eq!(
-                std::ptr::from_ref(
-                    stores
-                        .page_node_list(nested_children)
-                        .expect("retained leaf list remains live")
-                        .owned_node(0)
-                        .expect("retained leaf remains live"),
-                ),
+                stores
+                    .page_node_list(nested_children)
+                    .expect("retained leaf list remains live")
+                    .nodes()
+                    .testing_node_address(0)
+                    .expect("retained leaf remains live"),
                 leaf_address
             );
         }
         assert_ne!(
-            std::ptr::from_ref(lowered.owned_node(11).expect("trailing marker retained")),
+            lowered
+                .nodes()
+                .testing_node_address(11)
+                .expect("trailing marker retained"),
             trailing_address,
             "the trailing wrapper edge must split from the retained prefix block"
         );
@@ -194,7 +210,10 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
             .page_node_list(math_content)
             .expect("math content belongs to the page arena");
         let source_addresses = [0, 1].map(|index| {
-            std::ptr::from_ref(source.owned_node(index).expect("mu source node exists"))
+            source
+                .nodes()
+                .testing_node_address(index)
+                .expect("mu source node exists")
         });
         let wrapper = stores.publish_page_nodes(vec![Node::MathList(MathListNode {
             display: false,
@@ -225,21 +244,24 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
             .expect("lowered math belongs to the page arena");
         for (index, source) in source_addresses.into_iter().enumerate() {
             assert_ne!(
-                std::ptr::from_ref(lowered.owned_node(index + 1).expect("rewrite exists")),
+                lowered
+                    .nodes()
+                    .testing_node_address(index + 1)
+                    .expect("rewrite exists"),
                 source,
                 "mu rewrite must have a fresh arena address"
             );
         }
         assert!(matches!(
-            lowered.owned_node(1),
-            Some(Node::Kern {
+            lowered.get(1),
+            Some(tex_state::NodeView::Kern {
                 kind: KernKind::Explicit,
                 ..
             })
         ));
         assert!(matches!(
-            lowered.owned_node(2),
-            Some(Node::Glue {
+            lowered.get(2),
+            Some(tex_state::NodeView::Glue {
                 kind: GlueKind::Normal,
                 ..
             })

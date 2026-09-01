@@ -451,6 +451,77 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
     }
 }
 
+#[cfg(test)]
+mod resolved_token_tests {
+    use super::*;
+    use crate::token::{Catcode, Token, TokenWord};
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    fn hash(value: &impl Hash) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn semantic_token_payloads_ignore_runtime_coordinates() {
+        let left_key = NodeTokenKey::new(1, 2, 3, 4, 1, 5);
+        let right_key = NodeTokenKey::new(6, 7, 8, 9, 1, 10);
+        let words = [TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        })];
+        let left: Node = Node::Mark {
+            class: 4,
+            tokens: left_key,
+        };
+        let right: Node = Node::Mark {
+            class: 4,
+            tokens: right_key,
+        };
+        let left = left
+            .resolve_token_payloads(|key| (key == left_key).then_some(words.as_slice()))
+            .expect("left key resolves");
+        let right = right
+            .resolve_token_payloads(|key| (key == right_key).then_some(words.as_slice()))
+            .expect("right key resolves");
+        assert_eq!(left, right);
+        assert_eq!(hash(&left), hash(&right));
+    }
+
+    #[test]
+    fn stale_token_key_cannot_enter_semantic_projection() {
+        let stale = NodeTokenKey::new(1, 2, 3, 4, 1, 5);
+        let node: Node = Node::Mark {
+            class: 0,
+            tokens: stale,
+        };
+        assert!(node.resolve_token_payloads(|_| None).is_none());
+    }
+}
+
+impl<List: Clone, Glue: Clone> Node<List, Glue, NodeTokenKey> {
+    /// Produces the canonical semantic payload projection for hashing or
+    /// equality. Runtime token coordinates are admitted through their owning
+    /// generation and never enter the projection.
+    pub(crate) fn resolve_token_payloads<'a>(
+        &self,
+        mut resolve: impl FnMut(NodeTokenKey) -> Option<&'a [crate::token::TokenWord]>,
+    ) -> Option<Node<List, Glue, &'a [crate::token::TokenWord]>> {
+        let mut missing = false;
+        let resolved =
+            self.clone()
+                .map_payloads(std::convert::identity, |key| match resolve(key) {
+                    Some(words) => words,
+                    None => {
+                        missing = true;
+                        &[]
+                    }
+                });
+        (!missing).then_some(resolved)
+    }
+}
+
 impl<List: PartialEq, Glue: PartialEq, Tokens: PartialEq> PartialEq for Node<List, Glue, Tokens> {
     fn eq(&self, other: &Self) -> bool {
         self.semantic_ref() == other.semantic_ref()

@@ -137,9 +137,10 @@ fn finish_math_list_node_with_reads<G>(
     sink.stores.open_page_active_list(&mut nodes);
     if !list.display {
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
-        sink.stores.construct_page_active_list(&mut nodes, |slot| {
-            *slot = Some(Node::MathOn(surround));
-        });
+        sink.stores
+            .construct_page_active_list(&mut nodes, |destination| {
+                destination.math_on(surround);
+            });
     }
     let hlist = sink.stores.reclaim_unique_page_list(hlist);
     sink.stores
@@ -147,9 +148,10 @@ fn finish_math_list_node_with_reads<G>(
     if !list.display {
         // AppG rule 22
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
-        sink.stores.construct_page_active_list(&mut nodes, |slot| {
-            *slot = Some(Node::MathOff(surround));
-        });
+        sink.stores
+            .construct_page_active_list(&mut nodes, |destination| {
+                destination.math_off(surround);
+            });
     }
     (
         sink.stores.finalize_unique_page_active_list(&mut nodes),
@@ -247,30 +249,27 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     self.stores.open_page_active_list(&mut target);
                     self.stores
                         .append_unique_page_active_list(&mut target, result);
-                    self.stores.construct_page_active_list(&mut target, |slot| {
-                        *slot = Some(if vertical {
-                            Node::VList(boxed_node)
-                        } else {
-                            Node::HList(boxed_node)
+                    self.stores
+                        .construct_page_active_list(&mut target, |destination| {
+                            if vertical {
+                                destination.vlist(boxed_node);
+                            } else {
+                                destination.hlist(boxed_node);
+                            }
                         });
-                    });
                 }
                 MathNode::Char {
                     font, ch, origin, ..
-                } => self.stores.construct_page_active_list(&mut target, |slot| {
-                    *slot = Some(Node::Char {
-                        font: *font,
-                        ch: *ch,
-                        origin: *origin,
-                    });
-                }),
+                } => self
+                    .stores
+                    .construct_page_active_list(&mut target, |destination| {
+                        destination.char(*font, *ch, *origin);
+                    }),
                 MathNode::Kern { amount, kind } => {
-                    self.stores.construct_page_active_list(&mut target, |slot| {
-                        *slot = Some(Node::Kern {
-                            amount: *amount,
-                            kind: *kind,
+                    self.stores
+                        .construct_page_active_list(&mut target, |destination| {
+                            destination.kern(*amount, *kind);
                         });
-                    });
                 }
                 MathNode::Glue { spec, kind, leader } => {
                     let value = if let Some((_, value)) =
@@ -281,30 +280,26 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                         self.glue_cache.push((*spec, *spec));
                         *spec
                     };
-                    self.stores.construct_page_active_list(&mut target, |slot| {
-                        *slot = Some(Node::Glue {
-                            spec: value,
-                            kind: lower_math_glue_kind(*kind),
-                            leader: *leader,
+                    self.stores
+                        .construct_page_active_list(&mut target, |destination| {
+                            destination.glue(value, lower_math_glue_kind(*kind), *leader);
                         });
-                    });
                 }
                 MathNode::Penalty(penalty) => {
-                    self.stores.construct_page_active_list(&mut target, |slot| {
-                        *slot = Some(Node::Penalty(*penalty));
-                    });
+                    self.stores
+                        .construct_page_active_list(&mut target, |destination| {
+                            destination.penalty(*penalty);
+                        });
                 }
                 MathNode::Rule {
                     width,
                     height,
                     depth,
-                } => self.stores.construct_page_active_list(&mut target, |slot| {
-                    *slot = Some(Node::Rule {
-                        width: *width,
-                        height: *height,
-                        depth: *depth,
-                    });
-                }),
+                } => self
+                    .stores
+                    .construct_page_active_list(&mut target, |destination| {
+                        destination.rule(*width, *height, *depth);
+                    }),
                 MathNode::NativeSource { list, index, .. } => {
                     self.stores.append_page_active_list_range(
                         &mut target,
@@ -493,9 +488,9 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 .stores
                                 .page_node_list(*list)
                                 .expect("math native source belongs to the page arena")
-                                .owned_node(*index as usize)
+                                .get(*index as usize)
                                 .expect("math native source index remains live")
-                                .clone()
+                                .to_owned_with(std::convert::identity)
                                 .map_lists(|child| {
                                     self.stores
                                         .copy_page_list_to_shipout_scratch(child)
@@ -518,17 +513,17 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                 .stores
                 .page_node_list(source.list)
                 .ok()
-                .and_then(|nodes| nodes.owned_node(source.index as usize))?;
+                .and_then(|nodes| nodes.get(source.index as usize))?;
             match node {
-                Node::HList(source_box)
-                    if !vertical && lower_math_box(boxed, source_box.children) == *source_box =>
+                tex_state::node_arena::NodeView::HList(source_box)
+                    if !vertical && lower_math_box(boxed, source_box.children) == source_box =>
                 {
-                    Some(*source_box)
+                    Some(source_box)
                 }
-                Node::VList(source_box)
-                    if vertical && lower_math_box(boxed, source_box.children) == *source_box =>
+                tex_state::node_arena::NodeView::VList(source_box)
+                    if vertical && lower_math_box(boxed, source_box.children) == source_box =>
                 {
-                    Some(*source_box)
+                    Some(source_box)
                 }
                 _ => None,
             }

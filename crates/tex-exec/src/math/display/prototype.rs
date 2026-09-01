@@ -138,27 +138,27 @@ pub(super) fn package_directed_display_line<G>(
             "e-TeX display prototype has exactly two boundaries"
         );
         let left = match boundaries
-            .owned_node(0)
+            .get(0)
             .expect("display prototype has a left boundary")
         {
-            Node::Glue {
+            tex_state::node_arena::NodeView::Glue {
                 spec,
                 kind,
                 leader: None,
-            } => PrototypeBoundary::Glue(*spec, *kind),
-            Node::Kern { kind, .. } => PrototypeBoundary::Kern(*kind),
+            } => PrototypeBoundary::Glue(spec, kind),
+            tex_state::node_arena::NodeView::Kern { kind, .. } => PrototypeBoundary::Kern(kind),
             _ => panic!("e-TeX display prototype left boundary is glue or kern"),
         };
         let right = match boundaries
-            .owned_node(1)
+            .get(1)
             .expect("display prototype has a right boundary")
         {
-            Node::Glue {
+            tex_state::node_arena::NodeView::Glue {
                 spec,
                 kind,
                 leader: None,
-            } => PrototypeBoundary::Glue(*spec, *kind),
-            Node::Kern { kind, .. } => PrototypeBoundary::Kern(*kind),
+            } => PrototypeBoundary::Glue(spec, kind),
+            tex_state::node_arena::NodeView::Kern { kind, .. } => PrototypeBoundary::Kern(kind),
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         };
 

@@ -1187,7 +1187,7 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
                 .expect("restored source context")
                 .page_contributions()
                 .iter()
-                .cloned()
+                .map(|node| node.to_owned_with(std::convert::identity))
                 .collect::<Vec<_>>(),
             [Node::Penalty(1), Node::Penalty(2)]
         );
@@ -1449,7 +1449,7 @@ fn runtime_checkpoint_preserves_exact_font_roots_across_every_state_owner() {
         assert_eq!(context.font_name(font), "checkpointfont");
         assert!(matches!(
             context.page_contribution_front(),
-            Some(Node::Char { font: retained, .. }) if *retained == font
+            Some(crate::NodeView::Char { font: retained, .. }) if retained == font
         ));
     })
     .expect("universe allocation");
@@ -1880,6 +1880,41 @@ fn engine_boundary_hash_resolves_children_and_erases_runtime_provenance() {
 }
 
 #[test]
+fn engine_boundary_hash_resolves_node_token_coordinates() {
+    with_universe(budget(), |universe| {
+        let word = TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: crate::token::Catcode::Letter,
+        });
+        let (left, right) = {
+            let mut context = universe.command_context().expect("command admission");
+            let left = context
+                .allocate_node_token_list(&[word])
+                .expect("left node token payload");
+            let right = context
+                .allocate_node_token_list(&[word])
+                .expect("right node token payload");
+            assert_ne!(
+                left, right,
+                "the negative control uses distinct coordinates"
+            );
+            (left, right)
+        };
+
+        let hash = |universe: &super::Universe<_>, key| {
+            universe.engine_boundary_hash(29, |hash| {
+                hash.nodes(&[Node::Mark {
+                    class: 7,
+                    tokens: key,
+                }]);
+            })
+        };
+        assert_eq!(hash(universe, left), hash(universe, right));
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn multi_byte_source_origin_detaches_the_complete_registered_range() {
     with_universe(budget(), |universe| {
         let source = crate::input::SourceId::new(41);
@@ -1933,7 +1968,7 @@ fn page_node_transform_counts_new_payload_and_never_copies_source_nodes() {
                 .page_node_sequence(transformed)
                 .expect("transformed sequence resolves")
                 .iter()
-                .cloned()
+                .map(|node| node.to_owned_with(std::convert::identity))
                 .collect::<Vec<_>>(),
             [Node::Penalty(1), Node::Penalty(9), Node::Penalty(4)]
         );

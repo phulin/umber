@@ -133,9 +133,11 @@ fn normalize_split_infinite_shrink<G>(
             .page_node_list(nodes)
             .expect("vsplit source remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
         {
-            Some(Node::Glue { spec, kind, leader }) => Some((*spec, *kind, *leader)),
+            Some(tex_state::node_arena::NodeView::Glue { spec, kind, leader }) => {
+                Some((spec, kind, leader))
+            }
             _ => None,
         };
         let Some((mut finite, kind, leader)) = replacement else {
@@ -188,7 +190,7 @@ fn replace_split_source<G>(
         diagnostic_context,
         pruned,
     );
-    let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
+    let boxed = stores.construct_page_node(|destination| destination.vlist(packed));
     stores
         .replace_page_box(index, boxed)
         .expect("split remainder stays in admitted page storage");
@@ -205,8 +207,8 @@ fn update_split_marks<G>(
         .expect("vsplit prefix remains live")
         .nodes()
         .for_each(|node| {
-            if let Node::Mark { class, tokens } = node {
-                let (first, bot) = classes.entry(*class).or_insert((None, None));
+            if let tex_state::NodeView::Mark { class, tokens } = node {
+                let (first, bot) = classes.entry(class).or_insert((None, None));
                 if first.is_none() {
                     *first = Some(*tokens);
                 }

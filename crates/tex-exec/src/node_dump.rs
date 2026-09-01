@@ -13,7 +13,7 @@ use tex_state::math::{
 use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
 };
-use tex_state::node_arena::PageListId;
+use tex_state::node_arena::{NodeView, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
@@ -262,18 +262,20 @@ fn dump_projected_list<G, List: DumpListProjection<G, Storage>, Storage>(
     list.dump(stores, config, depth, context, false, out);
 }
 
-trait DumpNodeCollection<List, Glue, Tokens> {
+trait DumpNodeCollection<List: Copy, Glue: Copy, Tokens> {
     fn len(&self) -> usize;
-    fn get(&self, index: usize) -> Option<&Node<List, Glue, Tokens>>;
+    fn get(&self, index: usize) -> Option<NodeView<'_, List, Glue, Tokens>>;
 }
 
-impl<List, Glue, Tokens> DumpNodeCollection<List, Glue, Tokens> for &[Node<List, Glue, Tokens>] {
+impl<List: Copy, Glue: Copy, Tokens> DumpNodeCollection<List, Glue, Tokens>
+    for &[Node<List, Glue, Tokens>]
+{
     fn len(&self) -> usize {
         <[Node<List, Glue, Tokens>]>::len(self)
     }
 
-    fn get(&self, index: usize) -> Option<&Node<List, Glue, Tokens>> {
-        <[Node<List, Glue, Tokens>]>::get(self, index)
+    fn get(&self, index: usize) -> Option<NodeView<'_, List, Glue, Tokens>> {
+        <[Node<List, Glue, Tokens>]>::get(self, index).map(NodeView::from)
     }
 }
 
@@ -284,8 +286,8 @@ impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
         tex_state::node_arena::NodeCursor::len(self)
     }
 
-    fn get(&self, index: usize) -> Option<&Node> {
-        self.owned_node(index)
+    fn get(&self, index: usize) -> Option<NodeView<'_>> {
+        self.get(index)
     }
 }
 
@@ -296,8 +298,8 @@ impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
         tex_state::node_sequence::NodeSequenceView::len(*self)
     }
 
-    fn get(&self, index: usize) -> Option<&Node> {
-        tex_state::node_sequence::NodeSequenceView::get(*self, index)
+    fn get(&self, index: usize) -> Option<NodeView<'_>> {
+        tex_state::node_sequence::NodeSequenceView::get(*self, index).map(NodeView::from)
     }
 }
 
@@ -310,7 +312,7 @@ fn dump_nodes<G, List, Glue, Tokens, Storage>(
     physical_replacement_spans: bool,
     out: &mut String,
 ) where
-    List: DumpListProjection<G, Storage> + Clone,
+    List: DumpListProjection<G, Storage> + Copy,
     Glue: DumpGlueProjection<G>,
     Tokens: DumpTokensProjection<G>,
 {
@@ -323,15 +325,15 @@ fn dump_nodes<G, List, Glue, Tokens, Storage>(
     while displayed < limit && index < nodes.len() {
         if physical_replacement_spans
             && let (
-                Some(Node::Lig { .. }),
+                Some(NodeView::Lig { .. }),
                 Some(
-                    disc @ Node::Disc {
+                    disc @ NodeView::Disc {
                         kind: tex_state::node::DiscKind::AutomaticHyphen,
                         physical_replace_count: 2,
                         ..
                     },
                 ),
-                Some(Node::Kern {
+                Some(NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 }),
@@ -382,13 +384,13 @@ fn dump_nodes<G, List, Glue, Tokens, Storage>(
 
 fn dump_node<G, List, Glue, Tokens, Storage>(
     stores: &CommandContext<'_, G>,
-    node: &Node<List, Glue, Tokens>,
+    node: NodeView<'_, List, Glue, Tokens>,
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
     out: &mut String,
 ) where
-    List: DumpListProjection<G, Storage> + Clone,
+    List: DumpListProjection<G, Storage> + Copy,
     Glue: DumpGlueProjection<G>,
     Tokens: DumpTokensProjection<G>,
 {
@@ -397,45 +399,41 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
         // TeX82 §184 names both ordinary and mu kerns through `print_esc`,
         // so their headers observe the live `\escapechar` just like the
         // neighboring glue, math, and discretionary node headers.
-        Node::Kern { amount, kind } => match kind {
+        NodeView::Kern { amount, kind } => match kind {
             KernKind::Explicit => {
                 append_escaped_name(stores, "kern", out);
-                let _ = writeln!(out, " {}", format_scaled_without_unit(*amount));
+                let _ = writeln!(out, " {}", format_scaled_without_unit(amount));
             }
             KernKind::Font => {
                 append_escaped_name(stores, "kern", out);
-                let _ = writeln!(out, "{}", format_scaled_without_unit(*amount));
+                let _ = writeln!(out, "{}", format_scaled_without_unit(amount));
             }
             KernKind::Auto => {
                 append_escaped_name(stores, "kern", out);
                 let _ = writeln!(
                     out,
                     " {} (for \\pdfprependkern/\\pdfappendkern)",
-                    format_scaled_without_unit(*amount)
+                    format_scaled_without_unit(amount)
                 );
             }
             KernKind::Accent => {
                 append_escaped_name(stores, "kern", out);
-                let _ = writeln!(out, " {} (for accent)", format_scaled_without_unit(*amount));
+                let _ = writeln!(out, " {} (for accent)", format_scaled_without_unit(amount));
             }
             KernKind::Mu => {
                 append_escaped_name(stores, "mkern", out);
-                let _ = writeln!(out, "{}mu", format_scaled_without_unit(*amount));
+                let _ = writeln!(out, "{}mu", format_scaled_without_unit(amount));
             }
             KernKind::LeftMargin => {
                 append_escaped_name(stores, "kern", out);
-                let _ = writeln!(out, "{} (left margin)", format_scaled_without_unit(*amount));
+                let _ = writeln!(out, "{} (left margin)", format_scaled_without_unit(amount));
             }
             KernKind::RightMargin => {
                 append_escaped_name(stores, "kern", out);
-                let _ = writeln!(
-                    out,
-                    "{} (right margin)",
-                    format_scaled_without_unit(*amount)
-                );
+                let _ = writeln!(out, "{} (right margin)", format_scaled_without_unit(amount));
             }
         },
-        Node::MarginKern { amount, side, .. } => {
+        NodeView::MarginKern { amount, side, .. } => {
             let side = match side {
                 tex_state::node::MarginKernSide::Left => "left",
                 tex_state::node::MarginKernSide::Right => "right",
@@ -444,10 +442,10 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
             let _ = writeln!(
                 out,
                 "{} ({side} margin)",
-                format_scaled_without_unit(*amount)
+                format_scaled_without_unit(amount)
             );
         }
-        Node::Glue { spec, kind, leader } => {
+        NodeView::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
                 kind.append_leader_dump_prefix(stores, out);
                 let _ = writeln!(
@@ -455,7 +453,7 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
                     "{}",
                     format_glue(spec.resolve(stores), kind.glue_unit())
                 );
-                dump_leader_payload(stores, leader, config, depth + 1, context, out);
+                dump_leader_payload(stores, &leader, config, depth + 1, context, out);
             } else {
                 kind.append_glue_dump_prefix(stores, out);
                 if kind.prints_glue_spec() {
@@ -464,35 +462,35 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
                 out.push('\n');
             }
         }
-        Node::HList(box_node) => {
-            dump_box("hbox", stores, box_node, config, depth, context, out);
+        NodeView::HList(box_node) => {
+            dump_box("hbox", stores, &box_node, config, depth, context, out);
         }
-        Node::VList(box_node) => {
-            dump_box("vbox", stores, box_node, config, depth, context, out);
+        NodeView::VList(box_node) => {
+            dump_box("vbox", stores, &box_node, config, depth, context, out);
         }
-        Node::Unset(unset) => {
-            dump_unset(stores, unset, config, depth, out);
+        NodeView::Unset(unset) => {
+            dump_unset(stores, &unset, config, depth, out);
         }
-        Node::Rule {
+        NodeView::Rule {
             width,
             height,
             depth,
-        } => dump_rule(stores, *width, *height, *depth, out),
-        Node::Penalty(value) => {
+        } => dump_rule(stores, width, height, depth, out),
+        NodeView::Penalty(value) => {
             // TeX82 §184 names a penalty node through §63 `print_esc`, so
             // the header observes the live `\escapechar` value.
             append_escaped_name(stores, "penalty", out);
             let _ = writeln!(out, " {value}");
         }
-        Node::Char { font, ch, .. } => {
+        NodeView::Char { font, ch, .. } => {
             let _ = writeln!(
                 out,
                 "{} {}",
-                font_identifier(stores, *font),
-                dump_character_string(stores, *ch)
+                font_identifier(stores, font),
+                dump_character_string(stores, ch)
             );
         }
-        Node::Lig {
+        NodeView::Lig {
             font,
             ch,
             orig,
@@ -503,26 +501,26 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
             let _ = writeln!(
                 out,
                 "{} {}",
-                font_identifier(stores, *font),
-                dump_ligature(stores, *ch, orig, *left_hit, *right_hit)
+                font_identifier(stores, font),
+                dump_ligature(stores, ch, orig, left_hit, right_hit)
             );
         }
-        Node::Disc {
+        NodeView::Disc {
             pre,
             post,
             physical_replace_count,
             ..
         } => dump_disc(
             stores,
-            pre,
-            post,
-            *physical_replace_count,
+            &pre,
+            &post,
+            physical_replace_count,
             config,
             depth,
             out,
         ),
-        Node::Mark { class, tokens } => dump_mark_projected(stores, *class, tokens, out),
-        Node::Adjust(adjust) => {
+        NodeView::Mark { class, tokens } => dump_mark_projected(stores, class, tokens, out),
+        NodeView::Adjust(adjust) => {
             out.push_str(if adjust.pre {
                 "\\vadjust pre\n"
             } else {
@@ -537,13 +535,13 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
                 out,
             );
         }
-        Node::MathOn(width) => {
-            dump_math_marker(stores, "mathon", *width, out);
+        NodeView::MathOn(width) => {
+            dump_math_marker(stores, "mathon", width, out);
         }
-        Node::MathOff(width) => {
-            dump_math_marker(stores, "mathoff", *width, out);
+        NodeView::MathOff(width) => {
+            dump_math_marker(stores, "mathoff", width, out);
         }
-        Node::Direction(direction) => {
+        NodeView::Direction(direction) => {
             let name = match direction {
                 tex_state::node::Direction::BeginM => "beginM",
                 tex_state::node::Direction::EndM => "endM",
@@ -554,16 +552,16 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
             };
             let _ = writeln!(out, "\\{name}");
         }
-        Node::MathNoad(noad) => dump_math_noad(stores, noad, config, depth, out),
-        Node::FractionNoad(fraction) => dump_fraction(stores, fraction, config, depth, out),
-        Node::MathStyle(style) => {
-            let _ = writeln!(out, "\\{}", math_style_name(*style));
+        NodeView::MathNoad(noad) => dump_math_noad(stores, &noad, config, depth, out),
+        NodeView::FractionNoad(fraction) => dump_fraction(stores, &fraction, config, depth, out),
+        NodeView::MathStyle(style) => {
+            let _ = writeln!(out, "\\{}", math_style_name(style));
         }
-        Node::MathChoice(choice) => dump_math_choice(stores, choice, config, depth, out),
-        Node::MathList(list) => dump_math_list(stores, list, config, depth, out),
-        Node::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
-        Node::Whatsit(whatsit) => dump_whatsit(stores, whatsit, out),
-        Node::Ins {
+        NodeView::MathChoice(choice) => dump_math_choice(stores, &choice, config, depth, out),
+        NodeView::MathList(list) => dump_math_list(stores, &list, config, depth, out),
+        NodeView::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
+        NodeView::Whatsit(whatsit) => dump_whatsit(stores, whatsit, out),
+        NodeView::Ins {
             class,
             size,
             split_top_skip,
@@ -574,11 +572,11 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
             let _ = writeln!(
                 out,
                 "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
-                format_scaled_without_unit(*size),
+                format_scaled_without_unit(size),
                 format_glue(split_top_skip.resolve(stores), ""),
-                format_scaled_without_unit(*split_max_depth),
+                format_scaled_without_unit(split_max_depth),
             );
-            dump_projected_list(stores, content, config, depth + 1, ListContext::VList, out);
+            dump_projected_list(stores, &content, config, depth + 1, ListContext::VList, out);
         }
     }
 }

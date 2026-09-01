@@ -240,14 +240,14 @@ fn normalization_work_cursor(
         .then(|| DirectionPermutationBuilder::new(nodes.len()));
     let mut active_indices = SmallVec::<[usize; 32]>::new();
     nodes.for_each_range(0..nodes.len(), |index, node| {
-        if node_requires_normalization(node) {
+        if node_view_requires_normalization(&node) {
             active_indices.push(index);
         }
         if let Some(permutation) = &mut permutation {
             permutation.push(
                 index,
                 match node {
-                    Node::Direction(direction) => Some(*direction),
+                    tex_state::NodeView::Direction(direction) => Some(direction),
                     _ => None,
                 },
             );
@@ -316,6 +316,30 @@ fn node_requires_normalization<List, Glue, Tokens>(node: &Node<List, Glue, Token
     )
 }
 
+fn node_view_requires_normalization(node: &tex_state::NodeView<'_>) -> bool {
+    matches!(
+        node,
+        tex_state::NodeView::HList(_)
+            | tex_state::NodeView::VList(_)
+            | tex_state::NodeView::Unset(_)
+            | tex_state::NodeView::Disc { .. }
+            | tex_state::NodeView::Ins { .. }
+            | tex_state::NodeView::Whatsit(_)
+            | tex_state::NodeView::Direction(_)
+            | tex_state::NodeView::MathNoad(_)
+            | tex_state::NodeView::FractionNoad(_)
+            | tex_state::NodeView::MathStyle(_)
+            | tex_state::NodeView::MathChoice(_)
+            | tex_state::NodeView::MathList(_)
+            | tex_state::NodeView::Nonscript
+            | tex_state::NodeView::Adjust(_)
+            | tex_state::NodeView::Glue {
+                leader: Some(_),
+                ..
+            }
+    )
+}
+
 #[allow(clippy::too_many_arguments)] // Recursive normalization carries explicit replay and overlay state.
 fn normalize_index<G>(
     stores: &mut Universe<G>,
@@ -334,7 +358,7 @@ fn normalize_index<G>(
                 .page_node_list(id)
                 .expect("shipout root belongs to the live page arena")
                 .nodes()
-                .owned_node(index)
+                .get(index)
                 .expect("normalization index belongs to the frozen list");
             classify_page_node(node, list, index, suppress_deferred_streams, in_hlist)
         }
@@ -448,20 +472,20 @@ fn normalize_index<G>(
 }
 
 fn classify_page_node<G>(
-    node: &Node,
+    node: tex_state::node_arena::NodeView<'_>,
     source: tex_state::ShipoutListId,
     index: usize,
     suppress_deferred_streams: bool,
     in_hlist: bool,
 ) -> NormalizeNode<G> {
-    if let Node::MathList(math) = node {
-        return NormalizeNode::Math(*math);
+    if let tex_state::node_arena::NodeView::MathList(math) = node {
+        return NormalizeNode::Math(math);
     }
-    if let Node::Whatsit(whatsit) = node {
+    if let tex_state::node_arena::NodeView::Whatsit(whatsit) = node {
         return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
     }
     classify_transient_node(
-        node,
+        &node.to_owned_with(std::convert::identity),
         tex_state::ShipoutListId::Page,
         suppress_deferred_streams,
         in_hlist,
@@ -1361,8 +1385,8 @@ fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
         nodes.iter().enumerate().map(|(index, node)| {
             (
                 index,
-                match NodeRef::from(node) {
-                    NodeRef::Direction(direction) => Some(direction),
+                match NodeView::from(node) {
+                    NodeView::Direction(direction) => Some(direction),
                     _ => None,
                 },
             )

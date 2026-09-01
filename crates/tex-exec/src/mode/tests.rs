@@ -32,7 +32,10 @@ fn with_context<R>(
 }
 
 fn list_nodes<G>(list: &super::ModeList, context: &tex_state::CommandContext<'_, G>) -> Vec<Node> {
-    list.nodes(context).iter().cloned().collect()
+    list.nodes(context)
+        .iter()
+        .map(|node| node.to_owned_with(std::convert::identity))
+        .collect()
 }
 
 fn nest_nodes<G>(nest: &ModeNest, context: &tex_state::CommandContext<'_, G>) -> Vec<Node> {

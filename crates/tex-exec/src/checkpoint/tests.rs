@@ -104,7 +104,7 @@ impl RetainedEngineOperation for InspectAndRejectModeFork {
                 .nodes(&context)
                 .iter()
                 .filter_map(|node| match node {
-                    tex_state::node::Node::Penalty(penalty) => Some(*penalty),
+                    tex_state::NodeView::Penalty(penalty) => Some(penalty),
                     _ => None,
                 })
                 .collect()

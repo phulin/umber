@@ -249,12 +249,15 @@ fn private_box_construction_retains_only_committed_lists() {
             .nodes()
             .first()
         {
-            Some(Node::HList(node)) => stores
+            Some(tex_state::NodeView::HList(node)) => stores
                 .page_node_list(node.children)
                 .expect("hbox children belong to the page arena"),
             other => panic!("expected committed hbox, got {other:?}"),
         };
-        assert!(matches!(children.nodes().first(), Some(Node::Kern { .. })));
+        assert!(matches!(
+            children.nodes().first(),
+            Some(tex_state::NodeView::Kern { .. })
+        ));
     });
 }
 
@@ -291,7 +294,10 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
         let alias = stores
             .page_node_list(alias)
             .expect("alias publishes back into the current page arena");
-        assert!(matches!(alias.nodes().first(), Some(Node::HList(_))));
+        assert!(matches!(
+            alias.nodes().first(),
+            Some(tex_state::NodeView::HList(_))
+        ));
     });
 }
 
@@ -3663,8 +3669,8 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
                 .nodes()
             {
                 match node {
-                    Node::Lig { orig, .. } => found.push(orig.clone()),
-                    Node::HList(boxed) | Node::VList(boxed) => {
+                    tex_state::NodeView::Lig { orig, .. } => found.push(orig.to_vec()),
+                    tex_state::NodeView::HList(boxed) | tex_state::NodeView::VList(boxed) => {
                         collect_ligatures(stores, boxed.children, found);
                     }
                     _ => {}

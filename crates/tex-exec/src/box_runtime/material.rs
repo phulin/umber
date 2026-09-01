@@ -139,9 +139,16 @@ where
     };
     let matches_target = matches!(
         (primitive, tail.node()),
-        (UnexpandablePrimitive::UnSkip, Node::Glue { .. })
-            | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
-            | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
+        (
+            UnexpandablePrimitive::UnSkip,
+            tex_state::NodeView::Glue { .. }
+        ) | (
+            UnexpandablePrimitive::UnPenalty,
+            tex_state::NodeView::Penalty(_)
+        ) | (
+            UnexpandablePrimitive::UnKern,
+            tex_state::NodeView::Kern { .. }
+        )
     );
     let range = tail.removal_range();
     let _ = current_list;
@@ -182,9 +189,16 @@ where
     };
     let matches_target = matches!(
         (primitive, tail.node()),
-        (UnexpandablePrimitive::UnSkip, Node::Glue { .. })
-            | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
-            | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
+        (
+            UnexpandablePrimitive::UnSkip,
+            tex_state::NodeView::Glue { .. }
+        ) | (
+            UnexpandablePrimitive::UnPenalty,
+            tex_state::NodeView::Penalty(_)
+        ) | (
+            UnexpandablePrimitive::UnKern,
+            tex_state::NodeView::Kern { .. }
+        )
     );
     if matches_target {
         let range = tail.removal_range();
@@ -363,9 +377,9 @@ pub(crate) fn split_hpack_migrations<G>(
                 .get(index)
                 .expect("hpack source index remains in range")
             {
-                tex_state::node_arena::NodeRef::Mark { .. }
-                | tex_state::node_arena::NodeRef::Ins { .. } => (2, None),
-                tex_state::node_arena::NodeRef::Adjust(adjust) => {
+                tex_state::node_arena::NodeView::Mark { .. }
+                | tex_state::node_arena::NodeView::Ins { .. } => (2, None),
+                tex_state::node_arena::NodeView::Adjust(adjust) => {
                     (usize::from(!adjust.pre) + 1, Some(adjust.content))
                 }
                 _ => (0, None),
@@ -417,8 +431,8 @@ fn append_unboxed<G>(
             .is_some_and(|node| {
                 matches!(
                     node,
-                    tex_state::node_arena::NodeRef::MarginKern { .. }
-                        | tex_state::node_arena::NodeRef::Kern {
+                    tex_state::node_arena::NodeView::MarginKern { .. }
+                        | tex_state::node_arena::NodeView::Kern {
                             kind: KernKind::LeftMargin | KernKind::RightMargin,
                             ..
                         }

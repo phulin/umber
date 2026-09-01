@@ -655,9 +655,10 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                 .nodes()
                 .first()
             {
-                Some(Node::HList(node) | Node::VList(node)) => {
-                    (node.width, node.height, node.depth)
-                }
+                Some(
+                    tex_state::node_arena::NodeView::HList(node)
+                    | tex_state::node_arena::NodeView::VList(node),
+                ) => (node.width, node.height, node.depth),
                 _ => {
                     stores
                         .release_page_node_region(form_build)
@@ -1418,26 +1419,31 @@ impl crate::output_provenance::ArtifactSourceResolver for DetachedArtifactSource
 }
 
 impl DetachedArtifactSourceResolver {
-    fn capture<G>(node: &Node, stores: &tex_state::CommandContext<'_, G>) -> Self {
+    fn capture<G>(
+        node: tex_state::NodeView<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
+    ) -> Self {
         fn visit<G>(
-            node: &Node,
+            node: tex_state::NodeView<'_>,
             stores: &tex_state::CommandContext<'_, G>,
             recipes: &mut std::collections::HashMap<
                 tex_state::token::OriginId,
                 tex_state::world::ArtifactSourceRecipe,
             >,
         ) {
-            let origins: &[tex_state::token::OriginId] = match node {
-                Node::Char { origin, .. } => std::slice::from_ref(origin),
-                Node::Lig { origins, .. } => origins,
-                _ => &[],
-            };
-            for &origin in origins {
+            let mut record = |origin| {
                 if !recipes.contains_key(&origin)
                     && let Some(recipe) = stores.detach_artifact_source_recipe(origin)
                 {
                     recipes.insert(origin, recipe);
                 }
+            };
+            match &node {
+                tex_state::NodeView::Char { origin, .. } => record(*origin),
+                tex_state::NodeView::Lig { origins, .. } => {
+                    origins.iter().copied().for_each(record)
+                }
+                _ => {}
             }
             node.visit_semantic_node_lists(|child| {
                 if let Ok(list) = stores.page_node_list(*child) {
@@ -1506,7 +1512,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             (tracing_stats > 1).then_some((usage.memory_words, usage.font_info_words));
         let source_resolver = match &source {
             PreparedShipoutSource::Page(node) => {
-                DetachedArtifactSourceResolver::capture(node, &context)
+                DetachedArtifactSourceResolver::capture(node.into(), &context)
             }
         };
         let traced_dump = (tracing_output > 0).then(|| {

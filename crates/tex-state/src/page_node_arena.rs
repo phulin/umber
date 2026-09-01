@@ -23,6 +23,13 @@ use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
 type PageMaterialNode = Node<PageListId>;
 
+/// Scalar publication evidence derived from the completed resident node.
+pub(crate) struct ConstructedNodeMetadata {
+    pub(crate) tex82_words: (usize, usize),
+    pub(crate) etex_words: (usize, usize),
+    pub(crate) font: Option<crate::ids::FontId>,
+}
+
 /// Persistent coordinate-only construction state for one active node list.
 #[must_use = "a page-material active list must be finalized or rolled back"]
 pub struct PageMaterialActiveListBuilder {
@@ -1108,17 +1115,31 @@ impl<'a> PageMaterialArena<'a> {
     }
 
     /// Constructs one generated node directly in its final checked arena slot.
-    pub fn construct_active_list(
+    pub(crate) fn construct_active_list(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
-        initialize: impl FnOnce(&mut Option<PageMaterialNode>),
-    ) -> Result<(), ForkArenaError> {
-        let item_identity = self.region.pub_arena.construct_region_value_active_list(
+        initialize: impl FnOnce(crate::NodeDestination<'_>),
+    ) -> Result<ConstructedNodeMetadata, ForkArenaError> {
+        let (item_identity, metadata) = self.region.pub_arena.construct_region_value_active_list(
             &mut self.pool.chunks,
             &mut builder.inner,
             *self.semantic_identity_enabled,
-            initialize,
+            |slot| initialize(crate::NodeDestination::new(slot)),
             semantic_node_identity,
+            |node| {
+                let mut font = None;
+                node.visit_fonts(|value| {
+                    assert!(
+                        font.replace(value).is_none(),
+                        "one node has at most one direct font"
+                    );
+                });
+                ConstructedNodeMetadata {
+                    tex82_words: node.tex_memory_words(false),
+                    etex_words: node.tex_memory_words(true),
+                    font,
+                }
+            },
         )?;
         if let Some(item_identity) = item_identity {
             builder
@@ -1129,7 +1150,7 @@ impl<'a> PageMaterialArena<'a> {
             builder.identity_work.hashed_values =
                 builder.identity_work.hashed_values.saturating_add(1);
         }
-        Ok(())
+        Ok(metadata)
     }
 
     pub fn append_to_active_list(

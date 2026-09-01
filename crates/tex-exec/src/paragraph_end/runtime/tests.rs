@@ -4,12 +4,16 @@ fn node_addresses<G>(
     stores: &CommandContext<'_, G>,
     list: tex_state::node_arena::PageListId,
 ) -> Vec<*const Node> {
-    stores
+    let nodes = stores
         .page_node_list(list)
         .expect("test list remains live")
-        .nodes()
-        .iter()
-        .map(core::ptr::from_ref)
+        .nodes();
+    (0..nodes.len())
+        .map(|index| {
+            nodes
+                .testing_node_address(index)
+                .expect("test node remains live")
+        })
         .collect()
 }
 
@@ -131,12 +135,12 @@ fn normalize_test_paragraph_indexed_reference<G>(
             .page_node_list(source)
             .expect("reference paragraph remains live")
             .nodes()
-            .owned_node(index)
+            .get(index)
         {
-            Some(Node::Glue { spec, kind, leader })
+            Some(tex_state::NodeView::Glue { spec, kind, leader })
                 if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
             {
-                Some((*spec, *kind, *leader))
+                Some((spec, kind, leader))
             }
             _ => None,
         };
@@ -417,10 +421,10 @@ fn final_font_expansion_includes_the_preceding_margin_kern_width() {
             .page_node_list(without_protrusion)
             .expect("ordinary expanded line remains live")
             .nodes()
-            .owned_node(0)
+            .get(0)
             .expect("ordinary expanded line has a first glyph")
         {
-            Node::Char { font, .. } => *font,
+            tex_state::NodeView::Char { font, .. } => font,
             node => panic!("expected a character, got {node:?}"),
         };
         assert!(matches!(

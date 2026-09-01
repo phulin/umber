@@ -97,7 +97,7 @@ fn recover_frozen_texxet_directions<G>(
     let mut expected = Vec::new();
     let mut extra_indices = Vec::new();
     nodes.for_each_range(0..nodes.len(), |index, node| {
-        let Node::Direction(direction) = node else {
+        let tex_state::NodeView::Direction(direction) = node else {
             return;
         };
         let closes = match direction {
@@ -108,7 +108,7 @@ fn recover_frozen_texxet_directions<G>(
         };
         if let Some(closes) = closes {
             expected.push(closes);
-        } else if expected.last() == Some(direction) {
+        } else if expected.last() == Some(&direction) {
             let _ = expected.pop();
         } else {
             extra_indices.push(index);
@@ -129,19 +129,23 @@ fn recover_frozen_texxet_directions<G>(
         if start < index {
             pieces.push(stores.slice_page_node_sequence(list, start..index, &mut slices));
         }
-        pieces.push(stores.publish_page_nodes(vec![Node::Kern {
-            amount: Scaled::from_raw(0),
-            kind: KernKind::Explicit,
-        }]));
+        pieces.push(stores.construct_page_node(|destination| {
+            destination.kern(Scaled::from_raw(0), KernKind::Explicit);
+        }));
         start = index + 1;
     }
     if start < source_len {
         pieces.push(stores.slice_page_node_sequence(list, start..source_len, &mut slices));
     }
     if missing != 0 {
-        pieces.push(
-            stores.publish_page_nodes(expected.into_iter().rev().map(Node::Direction).collect()),
-        );
+        let mut directions = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+        stores.open_page_active_list(&mut directions);
+        for direction in expected.into_iter().rev() {
+            stores.construct_page_active_list(&mut directions, |destination| {
+                destination.direction(direction);
+            });
+        }
+        pieces.push(stores.finalize_page_active_list(&mut directions));
     }
     (
         stores.compose_page_node_sequences(&pieces),

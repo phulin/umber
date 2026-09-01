@@ -244,7 +244,7 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
                 .expect("row children belong to the page arena")
                 .nodes()
                 .iter()
-                .all(|node| !matches!(node, Node::Unset(_)))
+                .all(|node| !matches!(node, tex_state::NodeView::Unset(_)))
         );
     });
 }

@@ -429,17 +429,17 @@ impl<'a> PageContributionView<'a> {
     }
 
     #[must_use]
-    pub fn get(self, index: usize) -> Option<&'a Node> {
-        self.nodes.owned_node(index)
+    pub fn get(self, index: usize) -> Option<crate::NodeView<'a>> {
+        self.nodes.get(index)
     }
 
     #[must_use]
-    pub fn front(self) -> Option<&'a Node> {
+    pub fn front(self) -> Option<crate::NodeView<'a>> {
         self.get(0)
     }
 
     #[must_use]
-    pub fn back(self) -> Option<&'a Node> {
+    pub fn back(self) -> Option<crate::NodeView<'a>> {
         self.len().checked_sub(1).and_then(|index| self.get(index))
     }
 
@@ -449,7 +449,9 @@ impl<'a> PageContributionView<'a> {
 
     #[must_use]
     pub fn to_vec(self) -> Vec<Node> {
-        self.iter().cloned().collect()
+        self.iter()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect()
     }
 }
 
@@ -3029,7 +3031,7 @@ impl PageBuilderState {
                     .span_node_cursor(root)
                     .expect("memo root belongs to the caller-owned page arena")
                     .iter()
-                    .cloned(),
+                    .map(|node| node.to_owned_with(std::convert::identity)),
             );
         }
         if let Some(spec) = &self.last_glue {
@@ -3738,11 +3740,17 @@ impl PageBuilderState {
         }
     }
 
-    pub(crate) fn contribution_front<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+    pub(crate) fn contribution_front<'a>(
+        &self,
+        arena: &'a PageNodeArena,
+    ) -> Option<crate::NodeView<'a>> {
         self.contribution(arena).front()
     }
 
-    pub(crate) fn contribution_second<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+    pub(crate) fn contribution_second<'a>(
+        &self,
+        arena: &'a PageNodeArena,
+    ) -> Option<crate::NodeView<'a>> {
         self.contribution(arena).get(1)
     }
 
@@ -3753,7 +3761,7 @@ impl PageBuilderState {
         if self.contribution.is_empty() {
             return None;
         }
-        let node = arena.span_list(self.contribution).ok()?.get(0)?;
+        let node = arena.span_node_cursor(self.contribution).ok()?.get(0)?;
         let words = node.tex_memory_words(false).1;
         let etex_words = node.tex_memory_words(true).1;
         let retains_root = node_retains_page_handle(node);
@@ -3921,7 +3929,10 @@ impl PageBuilderState {
         self.semantic_roots.split_discards = SemanticSequenceIdentity::empty();
     }
 
-    pub(crate) fn current_page_tail<'a>(&self, arena: &'a PageNodeArena) -> Option<&'a Node> {
+    pub(crate) fn current_page_tail<'a>(
+        &self,
+        arena: &'a PageNodeArena,
+    ) -> Option<crate::node_arena::NodeView<'a>> {
         arena
             .span_node_cursor(self.current_page)
             .expect("current page root belongs to the live arena")
@@ -4083,7 +4094,7 @@ impl PageBuilderState {
         current.for_each(|node| {
             words.0 = words.0.saturating_add(node.tex_memory_words(false).1);
             words.1 = words.1.saturating_add(node.tex_memory_words(true).1);
-            roots += usize::from(node_retains_page_handle(node));
+            roots += usize::from(node_retains_page_handle(node.into()));
         });
         let _ = current;
         self.current_page = PageListSpan::empty();
@@ -4106,7 +4117,7 @@ impl PageBuilderState {
             .expect("page dynamic-memory accounting overflow");
         self.page_node_root_count = self
             .page_node_root_count
-            .checked_add(usize::from(node_retains_page_handle(node)))
+            .checked_add(usize::from(node_retains_page_handle(node.into())))
             .expect("page root accounting overflow");
     }
 
@@ -4122,7 +4133,7 @@ impl PageBuilderState {
             .expect("released more page dynamic memory than was live");
         self.page_node_root_count = self
             .page_node_root_count
-            .checked_sub(usize::from(node_retains_page_handle(node)))
+            .checked_sub(usize::from(node_retains_page_handle(node.into())))
             .expect("released more page roots than were live");
     }
 
@@ -4332,9 +4343,9 @@ fn list_identity(list: impl PageListRoot) -> SemanticSequenceIdentity {
     SemanticSequenceIdentity::from_raw(list.semantic_identity().unwrap_or(0), list.len())
 }
 
-fn node_retains_page_handle(node: &Node) -> bool {
+fn node_retains_page_handle(node: crate::NodeView<'_>) -> bool {
     let mut retains = false;
-    node.visit_node_lists(|list| retains |= !list.is_empty());
+    node.visit_semantic_node_lists(|list: &PageListId| retains |= !list.is_empty());
     retains
 }
 

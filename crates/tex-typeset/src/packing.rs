@@ -1,7 +1,7 @@
 use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::NodeView;
 use tex_state::node_arena::{NodeCursor, PackedNode, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -355,10 +355,10 @@ fn common_diagnostics(
 fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
     nodes.for_each(|node| {
-        match NodeRef::from(node).packed() {
+        match node.clone().packed() {
             PackedNode::Glyph { font, ch } => {
                 let metrics = match node {
-                    Node::Char { .. } => u8::try_from(ch as u32)
+                    NodeView::Char { .. } => u8::try_from(ch as u32)
                         .ok()
                         .and_then(|code| {
                             if state.font_uses_tfm_metrics(font) {
@@ -461,7 +461,7 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
 
 fn measure_vlist(_state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    nodes.for_each(|node| match NodeRef::from(node).packed() {
+    nodes.for_each(|node| match node.packed() {
         PackedNode::Box(box_node) => {
             meas.observe_vertical(
                 MetricEvent::Box {
@@ -580,8 +580,8 @@ fn vtop_split(
     total_depth: Scaled,
 ) -> (Scaled, Scaled) {
     let first_height = match state.page_nodes(*list).first() {
-        Some(Node::HList(box_node) | Node::VList(box_node)) => box_node.height,
-        Some(Node::Rule { height, .. }) => height.unwrap_or(Scaled::from_raw(0)),
+        Some(NodeView::HList(box_node) | NodeView::VList(box_node)) => box_node.height,
+        Some(NodeView::Rule { height, .. }) => height.unwrap_or(Scaled::from_raw(0)),
         _ => Scaled::from_raw(0),
     };
     let depth = sub(add(total_height, total_depth), first_height);

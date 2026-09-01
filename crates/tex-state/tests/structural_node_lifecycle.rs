@@ -25,16 +25,16 @@ fn boxed_penalty_value<G>(universe: &Universe<G>, root: PageListId) -> i32 {
     let root = universe
         .page_node_list(root)
         .expect("page root remains readable");
-    let Some(Node::HList(box_node)) = root.nodes().first() else {
+    let Some(tex_state::NodeView::HList(box_node)) = root.nodes().first() else {
         panic!("root must contain one hbox")
     };
     let children = universe
         .page_node_list(box_node.children)
         .expect("box child remains readable");
-    let Some(Node::Penalty(value)) = children.nodes().first() else {
+    let Some(tex_state::NodeView::Penalty(value)) = children.nodes().first() else {
         panic!("hbox must contain one penalty")
     };
-    *value
+    value
 }
 
 fn box_register_penalty<G>(universe: &mut Universe<G>) -> i32 {

@@ -15,7 +15,7 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload,
     MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::{NodeRef, PageListId};
+use tex_state::node_arena::{NodeView, PageListId};
 use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token, TokenWord};
 use tex_state::{
@@ -123,8 +123,12 @@ fn stage_form_inner<G>(
         .first()
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {
-        Node::HList(node) => (lower_box_header(node), node.children, false, node.box_lr),
-        Node::VList(node) => (lower_box_header(node), node.children, true, node.box_lr),
+        tex_state::node_arena::NodeView::HList(node) => {
+            (lower_box_header(&node), node.children, false, node.box_lr)
+        }
+        tex_state::node_arena::NodeView::VList(node) => {
+            (lower_box_header(&node), node.children, true, node.box_lr)
+        }
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
@@ -771,7 +775,7 @@ fn emit_node_list<G>(
                     overlay,
                     list,
                     index,
-                    NodeRef::from(node),
+                    node,
                     output,
                     dvi,
                     emission,
@@ -834,12 +838,12 @@ fn shipout_kern<G>(
 ) -> Option<(tex_state::scaled::Scaled, StateKernKind)> {
     match list {
         ShipoutListId::Page(list) => match stores.page_node_list(list).ok()?.get(index)? {
-            NodeRef::Kern { amount, kind } => Some((amount, kind)),
+            NodeView::Kern { amount, kind } => Some((amount, kind)),
             _ => None,
         },
         ShipoutListId::Scratch(list) => {
-            match NodeRef::from(stores.shipout_scratch_nodes(list)?.get(index)?) {
-                NodeRef::Kern { amount, kind } => Some((amount, kind)),
+            match NodeView::from(stores.shipout_scratch_nodes(list)?.get(index)?) {
+                NodeView::Kern { amount, kind } => Some((amount, kind)),
                 _ => None,
             }
         }
@@ -953,7 +957,7 @@ fn emit_index<G>(
             overlay,
             list,
             index,
-            NodeRef::from(
+            NodeView::from(
                 stores
                     .shipout_scratch_nodes(list_id)
                     .expect("shipout scratch list belongs to the active transaction")
@@ -975,7 +979,7 @@ fn emit_resolved_page_index<G>(
     overlay: &PageOverlay,
     list: &ShipoutListId,
     index: usize,
-    node: NodeRef<'_>,
+    node: NodeView<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
@@ -997,7 +1001,7 @@ fn emit_resolved_page_index<G>(
             depth + 1,
         );
     }
-    if let NodeRef::Char { font, ch, origin } = node
+    if let NodeView::Char { font, ch, origin } = node
         && let Ok(code) = u8::try_from(ch as u32)
     {
         return emit_direct_character(stores, font, code, origin, output, dvi, emission);
@@ -1020,7 +1024,7 @@ fn emit_resolved_index<G, P: ShipoutPayload<G>>(
     overlay: &PageOverlay,
     list: &ShipoutListId,
     index: usize,
-    node: NodeRef<'_, P::List, P::Glue, P::Tokens>,
+    node: NodeView<'_, P::List, P::Glue, P::Tokens>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
@@ -1058,7 +1062,7 @@ fn emit_resolved_index<G, P: ShipoutPayload<G>>(
 fn emit_node_ref<G, P: ShipoutPayload<G>>(
     stores: &CommandContext<'_, G>,
     overlay: &PageOverlay,
-    node: NodeRef<'_, P::List, P::Glue, P::Tokens>,
+    node: NodeView<'_, P::List, P::Glue, P::Tokens>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
@@ -1066,11 +1070,11 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
     depth: usize,
 ) -> Result<(), ExecError> {
     match node {
-        NodeRef::Char { font, ch, origin } => {
+        NodeView::Char { font, ch, origin } => {
             let (code, width) = glyph(stores, font, ch)?;
             emit_glyph(stores, font, code, width, [origin], output, dvi, emission)?;
         }
-        NodeRef::Lig {
+        NodeView::Lig {
             font,
             ch,
             orig,
@@ -1090,12 +1094,12 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
                 emission,
             )?;
         }
-        NodeRef::Kern { amount, kind } => {
+        NodeView::Kern { amount, kind } => {
             emission.node([]);
             output.kern(amount, lower_kern_kind(kind))?;
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
-        NodeRef::MarginKern {
+        NodeView::MarginKern {
             amount,
             side,
             font,
@@ -1107,18 +1111,18 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
-        NodeRef::Glue { spec, kind, leader } => {
+        NodeView::Glue { spec, kind, leader } => {
             let spec = lower_glue(P::glue(stores, spec));
             let kind = lower_glue_kind(kind);
             emit_glue::<G, P>(
                 stores, overlay, output, dvi, emission, spec, kind, leader, depth,
             )?;
         }
-        NodeRef::Penalty(value) => {
+        NodeView::Penalty(value) => {
             emission.node([]);
             output.penalty(value)?;
         }
-        NodeRef::Rule {
+        NodeView::Rule {
             width,
             height,
             depth,
@@ -1127,8 +1131,8 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             output.rule(width, height, depth)?;
             dvi.rule(width, height, depth).map_err(invalid_artifact)?;
         }
-        NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
-            let vertical = matches!(node, NodeRef::VList(_));
+        NodeView::HList(box_node) | NodeView::VList(box_node) => {
+            let vertical = matches!(node, NodeView::VList(_));
             emit_box::<G, P>(
                 stores,
                 overlay,
@@ -1141,12 +1145,12 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
                 depth,
             )?;
         }
-        NodeRef::Unset(_) => {
+        NodeView::Unset(_) => {
             return Err(ExecError::UnsupportedShipoutNode {
                 node: "unset alignment",
             });
         }
-        NodeRef::Disc {
+        NodeView::Disc {
             kind,
             pre,
             post,
@@ -1196,7 +1200,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             })?;
             emission.dvi_font_count = dvi_font_count;
         }
-        NodeRef::Mark { class, tokens } => {
+        NodeView::Mark { class, tokens } => {
             emission.node([]);
             output.mark_stream(class, |tokens_out| {
                 P::visit_tokens(stores, tokens, |word| {
@@ -1218,7 +1222,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
                 Ok::<(), ExecError>(())
             })?;
         }
-        NodeRef::Ins { class, content, .. } => {
+        NodeView::Ins { class, content, .. } => {
             emission.node([]);
             let dvi_font_count = emission.dvi_font_count;
             let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
@@ -1236,7 +1240,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             })?;
             emission.dvi_font_count = dvi_font_count;
         }
-        NodeRef::Whatsit(whatsit) => {
+        NodeView::Whatsit(whatsit) => {
             if let Some(effect_index) =
                 anchor_for_whatsit(whatsit, suppress_deferred_streams, &mut emission.anchor)?
             {
@@ -1246,18 +1250,18 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
                     .map_err(invalid_artifact)?;
             }
         }
-        NodeRef::MathOn(width) => {
+        NodeView::MathOn(width) => {
             emission.node([]);
             output.math_on(width)?;
             dvi.math(width).map_err(invalid_artifact)?;
         }
-        NodeRef::MathOff(width) => {
+        NodeView::MathOff(width) => {
             emission.node([]);
             output.math_off(width)?;
             dvi.math(width).map_err(invalid_artifact)?;
         }
-        NodeRef::Direction(_) => {}
-        NodeRef::Adjust(content) => {
+        NodeView::Direction(_) => {}
+        NodeView::Adjust(content) => {
             emission.node([]);
             let dvi_font_count = emission.dvi_font_count;
             let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
@@ -1275,12 +1279,12 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             })?;
             emission.dvi_font_count = dvi_font_count;
         }
-        NodeRef::MathList(_) => unreachable!("phase A records every math-list substitution"),
-        NodeRef::MathNoad(_)
-        | NodeRef::FractionNoad(_)
-        | NodeRef::MathStyle(_)
-        | NodeRef::MathChoice(_)
-        | NodeRef::Nonscript => {
+        NodeView::MathList(_) => unreachable!("phase A records every math-list substitution"),
+        NodeView::MathNoad(_)
+        | NodeView::FractionNoad(_)
+        | NodeView::MathStyle(_)
+        | NodeView::MathChoice(_)
+        | NodeView::Nonscript => {
             return Err(ExecError::UnsupportedShipoutNode { node: "math" });
         }
     }

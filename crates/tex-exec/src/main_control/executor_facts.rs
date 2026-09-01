@@ -266,17 +266,23 @@ fn effective_tail_facts<G>(
 /// `case cur_chr of ... end {there are no other cases}`.
 fn classify_last_node<G>(
     stores: &tex_state::CommandContext<'_, G>,
-    node: &Node,
+    node: tex_state::node_arena::NodeView<'_>,
 ) -> Option<tex_command::LastNodeItem> {
     match node {
-        Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
-        Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
-        Node::Glue {
+        tex_state::node_arena::NodeView::Penalty(value) => {
+            Some(tex_command::LastNodeItem::Penalty(value))
+        }
+        tex_state::node_arena::NodeView::Kern { amount, .. } => {
+            Some(tex_command::LastNodeItem::Kern(amount))
+        }
+        tex_state::node_arena::NodeView::Glue {
             spec,
             kind: GlueKind::MuSkip,
             ..
-        } => Some(tex_command::LastNodeItem::MuGlue(*spec)),
-        Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(*spec)),
+        } => Some(tex_command::LastNodeItem::MuGlue(spec)),
+        tex_state::node_arena::NodeView::Glue { spec, .. } => {
+            Some(tex_command::LastNodeItem::Glue(spec))
+        }
         // TeX82 keeps a discretionary's no-break replacement nodes in
         // the surrounding list (§1119), immediately after the disc node.
         // Umber freezes that physical suffix as the disc's `replace`
@@ -284,8 +290,8 @@ fn classify_last_node<G>(
         // container to preserve TeX's physical-tail view.  This is
         // intentionally distinct from §1105 deletion, which refuses to
         // remove a discretionary replacement suffix.
-        Node::Disc { replace, .. } => stores
-            .page_node_list(*replace)
+        tex_state::node_arena::NodeView::Disc { replace, .. } => stores
+            .page_node_list(replace)
             .expect("discretionary replacement belongs to the live page arena")
             .nodes()
             .last()

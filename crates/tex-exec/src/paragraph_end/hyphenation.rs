@@ -495,7 +495,7 @@ fn physical_pre_break_pending<G>(
         replacement.len() == 1
             && matches!(
                 replacement.first(),
-                Some(Node::Kern {
+                Some(tex_state::node_arena::NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 })
@@ -572,7 +572,7 @@ fn compacted_physical_boundaries<G>(
     boundaries.push(0);
     nodes.nodes().for_each(|node| {
         boundary = boundary.saturating_add(match node {
-            Node::Lig { orig, .. } => orig.len().max(1),
+            tex_state::NodeView::Lig { orig, .. } => orig.len().max(1),
             _ => 1,
         });
         boundaries.push(boundary.min(physical_len));
@@ -583,8 +583,13 @@ fn compacted_physical_boundaries<G>(
     boundaries
 }
 
-fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, right: &mut usize) {
-    if let Node::Whatsit(tex_state::node::Whatsit::Language {
+fn update_hyphenation_context(
+    node: tex_state::NodeView<'_>,
+    language: &mut u8,
+    left: &mut usize,
+    right: &mut usize,
+) {
+    if let tex_state::NodeView::Whatsit(tex_state::node::Whatsit::Language {
         language: new_language,
         left_hyphen_min,
         right_hyphen_min,
@@ -633,11 +638,11 @@ fn hyphenate_candidate_after_glue<G>(
     let trailing_font_kern = stores
         .page_node_span(source)
         .expect("hyphenation source belongs to the live page arena")
-        .owned_node(index - 1)
+        .get(index - 1)
         .is_some_and(|node| {
             matches!(
                 node,
-                Node::Kern {
+                tex_state::node_arena::NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 }
@@ -647,11 +652,11 @@ fn hyphenate_candidate_after_glue<G>(
         && stores
             .page_node_span(source)
             .expect("hyphenation source belongs to the live page arena")
-            .owned_node(word_start - 1)
+            .get(word_start - 1)
             .is_some_and(|node| {
                 matches!(
                     node,
-                    Node::Kern {
+                    tex_state::node_arena::NodeView::Kern {
                         kind: KernKind::Font,
                         ..
                     }
@@ -731,7 +736,7 @@ fn find_hyphenation_candidate<G>(
     // once, while preserving the word-end coordinate from the middle phase.
     let permitted = nodes.try_for_each_range(start..nodes.len(), |index, node| {
         if word_start.is_none() {
-            match first_word_char(stores, language, node) {
+            match first_word_char(stores, language, node.clone()) {
                 Some((candidate_font, ch, lower)) => {
                     if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
                         return core::ops::ControlFlow::Break(false);
@@ -748,7 +753,7 @@ fn find_hyphenation_candidate<G>(
                     font = Some(candidate_font);
                     minima = candidate_minima;
                 }
-                None if is_pre_word_skip(node) => {
+                None if is_pre_word_skip(node.clone()) => {
                     update_hyphenation_context(node, &mut language, &mut left, &mut right);
                     return core::ops::ControlFlow::Continue(());
                 }
@@ -759,37 +764,37 @@ fn find_hyphenation_candidate<G>(
         if word_end.is_none() {
             let candidate_font = font.expect("word start establishes its font");
             let continues_word = match node {
-                Node::Char {
+                tex_state::NodeView::Char {
                     font: node_font,
                     ch,
                     origin,
-                } if *node_font == candidate_font => {
+                } if node_font == candidate_font => {
                     if word.len() < 63
-                        && let Some(lower) = normalized_hyphen_code(stores, language, *ch)
+                        && let Some(lower) = normalized_hyphen_code(stores, language, ch)
                     {
                         word.push(WordChar {
                             font: candidate_font,
-                            ch: *ch,
+                            ch,
                             lower,
-                            origin: *origin,
+                            origin,
                         });
                         right_boundary = HyphenationRightBoundary::None;
                         true
                     } else {
-                        right_boundary = u8::try_from(*ch as u32).map_or(
+                        right_boundary = u8::try_from(ch as u32).map_or(
                             HyphenationRightBoundary::None,
                             HyphenationRightBoundary::Character,
                         );
                         false
                     }
                 }
-                Node::Lig {
+                tex_state::NodeView::Lig {
                     font: node_font,
                     orig,
                     origins,
                     right_hit,
                     ..
-                } if *node_font == candidate_font => {
+                } if node_font == candidate_font => {
                     let original_len = word.len();
                     let capacity_ok = word
                         .len()
@@ -821,14 +826,14 @@ fn find_hyphenation_candidate<G>(
                                 HyphenationRightBoundary::None,
                                 HyphenationRightBoundary::Character,
                             );
-                    } else if *right_hit {
+                    } else if right_hit {
                         right_boundary = HyphenationRightBoundary::Font;
                     } else {
                         right_boundary = HyphenationRightBoundary::None;
                     }
                     valid
                 }
-                Node::Kern {
+                tex_state::NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 } => {
@@ -844,25 +849,25 @@ fn find_hyphenation_candidate<G>(
         }
 
         match node {
-            Node::Char { .. }
-            | Node::Lig { .. }
-            | Node::Kern {
+            tex_state::NodeView::Char { .. }
+            | tex_state::NodeView::Lig { .. }
+            | tex_state::NodeView::Kern {
                 kind: KernKind::Font,
                 ..
             } => core::ops::ControlFlow::Continue(()),
-            Node::Glue { .. }
-            | Node::Penalty(_)
-            | Node::Ins { .. }
-            | Node::Adjust(_)
-            | Node::Mark { .. }
-            | Node::Whatsit(_)
-            | Node::Direction(
+            tex_state::NodeView::Glue { .. }
+            | tex_state::NodeView::Penalty(_)
+            | tex_state::NodeView::Ins { .. }
+            | tex_state::NodeView::Adjust(_)
+            | tex_state::NodeView::Mark { .. }
+            | tex_state::NodeView::Whatsit(_)
+            | tex_state::NodeView::Direction(
                 tex_state::node::Direction::BeginL
                 | tex_state::node::Direction::EndL
                 | tex_state::node::Direction::BeginR
                 | tex_state::node::Direction::EndR,
             )
-            | Node::Kern { .. } => core::ops::ControlFlow::Break(true),
+            | tex_state::NodeView::Kern { .. } => core::ops::ControlFlow::Break(true),
             _ => core::ops::ControlFlow::Break(false),
         }
     });
@@ -887,33 +892,36 @@ fn find_hyphenation_candidate<G>(
 fn first_word_char<G>(
     stores: &CommandContext<'_, G>,
     language: u8,
-    node: &Node,
+    node: tex_state::NodeView<'_>,
 ) -> Option<(tex_state::ids::FontId, char, char)> {
     match node {
-        Node::Char { font, ch, .. } => {
-            normalized_hyphen_code(stores, language, *ch).map(|lower| (*font, *ch, lower))
+        tex_state::NodeView::Char { font, ch, .. } => {
+            normalized_hyphen_code(stores, language, ch).map(|lower| (font, ch, lower))
         }
-        Node::Lig { font, orig, .. } => orig.first().and_then(|&first| {
-            normalized_hyphen_code(stores, language, first).map(|lower| (*font, first, lower))
+        tex_state::NodeView::Lig { font, orig, .. } => orig.first().and_then(|&first| {
+            normalized_hyphen_code(stores, language, first).map(|lower| (font, first, lower))
         }),
         _ => None,
     }
 }
 
-fn is_pre_word_skip(node: &Node) -> bool {
+fn is_pre_word_skip(node: tex_state::NodeView<'_>) -> bool {
     matches!(
         node,
-        Node::Kern {
+        tex_state::NodeView::Kern {
             kind: KernKind::Font,
             ..
-        } | Node::Whatsit(_)
-            | Node::Direction(
+        } | tex_state::NodeView::Whatsit(_)
+            | tex_state::NodeView::Direction(
                 tex_state::node::Direction::BeginL
                     | tex_state::node::Direction::EndL
                     | tex_state::node::Direction::BeginR
                     | tex_state::node::Direction::EndR
             )
-    ) || matches!(node, Node::Char { .. } | Node::Lig { .. })
+    ) || matches!(
+        node,
+        tex_state::NodeView::Char { .. } | tex_state::NodeView::Lig { .. }
+    )
 }
 
 fn parse_exception_word<G>(
@@ -1671,17 +1679,17 @@ mod tests {
                 .expect("semantic list");
             let disc = semantic
                 .iter()
-                .find(|node| matches!(node, Node::Disc { .. }))
+                .find(|node| matches!(node, tex_state::NodeView::Disc { .. }))
                 .expect("exception inserts a discretionary");
-            let Node::Disc { pre, .. } = disc else {
+            let tex_state::NodeView::Disc { pre, .. } = disc else {
                 unreachable!()
             };
             assert!(matches!(
                 stores
-                    .page_node_list(*pre)
+                    .page_node_list(pre)
                     .expect("pre-break child remains live")
                     .first(),
-                Some(Node::Char { ch: '-', .. })
+                Some(tex_state::NodeView::Char { ch: '-', .. })
             ));
 
             let afterward = stores.publish_page_nodes(vec![Node::Penalty(17)]);
@@ -1736,13 +1744,13 @@ mod tests {
                 .expect("semantic list");
             let disc = semantic
                 .iter()
-                .find(|node| matches!(node, Node::Disc { .. }))
+                .find(|node| matches!(node, tex_state::NodeView::Disc { .. }))
                 .expect("exception inserts a discretionary");
-            let Node::Disc { pre, .. } = disc else {
+            let tex_state::NodeView::Disc { pre, .. } = disc else {
                 unreachable!()
             };
             let pre = stores
-                .page_node_list(*pre)
+                .page_node_list(pre)
                 .expect("pre-break branch")
                 .iter()
                 .cloned()
@@ -1778,7 +1786,7 @@ mod tests {
                     .page_nodes(unchanged.semantic)
                     .expect("semantic list")
                     .iter()
-                    .all(|node| !matches!(node, Node::Disc { .. })),
+                    .all(|node| !matches!(node, tex_state::NodeView::Disc { .. })),
                 "the same word without hyphenation history is the negative control"
             );
         });
@@ -2149,7 +2157,7 @@ mod tests {
                 );
 
                 let probe_before = nodes.testing_traversal_counters();
-                assert!(nodes.owned_node(0).is_some());
+                assert!(nodes.get(0).is_some());
                 let positional = delta(nodes.testing_traversal_counters(), probe_before);
                 assert_eq!(positional.index_resolutions, 1);
                 if values == 4_096 {

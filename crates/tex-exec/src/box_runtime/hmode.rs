@@ -781,19 +781,12 @@ impl OpenTypeSourceWalk<'_> {
     fn flush_run<G>(&mut self, stores: &mut CommandContext<'_, G>, end: usize) {
         let adjustments = plan_open_type_adjustments(stores, self.chars, &[], self.shaping);
         for (entry, adjustment) in self.chars.iter().zip(adjustments.iter().copied()) {
-            stores.construct_page_active_list(self.output, |slot| {
-                *slot = Some(Node::Char {
-                    font: entry.font,
-                    ch: entry.ch,
-                    origin: entry.origin,
-                });
+            stores.construct_page_active_list(self.output, |destination| {
+                destination.char(entry.font, entry.ch, entry.origin);
             });
             if adjustment.raw() != 0 {
-                stores.construct_page_active_list(self.output, |slot| {
-                    *slot = Some(Node::Kern {
-                        amount: adjustment,
-                        kind: KernKind::Font,
-                    });
+                stores.construct_page_active_list(self.output, |destination| {
+                    destination.kern(adjustment, KernKind::Font);
                 });
             }
         }
@@ -1313,11 +1306,12 @@ pub(crate) fn adjust_interword_glue<G>(
     let mut glyph = None;
     for node in nodes.iter().rev() {
         match node {
-            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-                glyph = u8::try_from(*ch as u32).ok().map(|code| (*font, code));
+            tex_state::NodeView::Char { font, ch, .. }
+            | tex_state::NodeView::Lig { font, ch, .. } => {
+                glyph = u8::try_from(ch as u32).ok().map(|code| (font, code));
                 break;
             }
-            Node::Kern {
+            tex_state::NodeView::Kern {
                 kind: KernKind::Auto,
                 ..
             } => {}
@@ -1559,7 +1553,8 @@ pub(crate) fn last_font_char(
     nodes: tex_state::node_arena::NodeCursor<'_>,
 ) -> Option<(tex_state::ids::FontId, char)> {
     match nodes.last()? {
-        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => Some((*font, *ch)),
+        tex_state::node_arena::NodeView::Char { font, ch, .. }
+        | tex_state::node_arena::NodeView::Lig { font, ch, .. } => Some((font, ch)),
         _ => None,
     }
 }

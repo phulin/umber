@@ -6,7 +6,7 @@ use tex_state::diagnostic::{Diagnostic, DiagnosticEffects};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{GlueKind, Node};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::NodeView;
 use tex_state::page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageContents, PageDimension, PageInsertion,
     PageInsertionStatus,
@@ -147,7 +147,10 @@ fn build_page_cold<G>(
         return Ok(());
     }
 
-    while let Some(node) = stores.page_contribution_front().cloned() {
+    while let Some(node) = stores
+        .page_contribution_front()
+        .map(|node| node.to_owned_with(std::convert::identity))
+    {
         if !matches!(
             node,
             Node::HList(_)
@@ -195,7 +198,10 @@ fn build_page_cold<G>(
                     discard_front(stores);
                 } else if stores.page_contribution_second().is_none() {
                     return Ok(());
-                } else if matches!(stores.page_contribution_second(), Some(Node::Glue { .. })) {
+                } else if matches!(
+                    stores.page_contribution_second(),
+                    Some(tex_state::NodeView::Glue { .. })
+                ) {
                     check_break(stores, diagnostic_effects, 0)?;
                     if stores.page_fire_up().is_some() {
                         return Ok(());
@@ -235,7 +241,7 @@ fn build_page_cold<G>(
             }
             Node::Whatsit(_)
                 if !stores.page_contents().has_box()
-                    && crate::splitting::is_page_top_discardable(&node) =>
+                    && crate::splitting::is_page_top_discardable((&node).into()) =>
             {
                 discard_front(stores);
             }
@@ -369,7 +375,7 @@ fn insertion_box_size_with_context<G>(
         return Ok(Scaled::from_raw(0));
     };
     match node {
-        Node::VList(box_node) => add(box_node.height, box_node.depth),
+        tex_state::node_arena::NodeView::VList(box_node) => add(box_node.height, box_node.depth),
         _ => Ok(Scaled::from_raw(0)),
     }
 }
@@ -391,7 +397,7 @@ fn ensure_insertion_vbox_with_context<G>(
             .expect("box was copied into the live page arena")
             .nodes()
             .first(),
-        Some(Node::HList(_))
+        Some(tex_state::node_arena::NodeView::HList(_))
     ) {
         return Ok(Some(list));
     }
@@ -531,12 +537,10 @@ fn split_page_insertion<G>(
     )
     .map_err(vertical_break_error)?;
     let break_penalty = split.break_index.map_or(EJECT_PENALTY, |index| {
-        content_nodes
-            .owned_node(index)
-            .map_or(0, |node| match node {
-                Node::Penalty(value) => *value,
-                _ => 0,
-            })
+        content_nodes.get(index).map_or(0, |node| match node {
+            tex_state::node_arena::NodeView::Penalty(value) => value,
+            _ => 0,
+        })
     });
     let _ = content_nodes;
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
@@ -741,15 +745,17 @@ fn normalize_insert_content_shrink<G>(
         .nodes();
     let mut replacements = Vec::new();
     for &index in indices {
-        let Some(Node::Glue { spec, kind, leader }) = content_nodes.owned_node(index) else {
+        let Some(tex_state::node_arena::NodeView::Glue { spec, kind, leader }) =
+            content_nodes.get(index)
+        else {
             continue;
         };
-        let mut finite = *spec;
+        let mut finite = spec;
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
         finite.shrink_order = Order::Normal;
-        replacements.push((index, finite, *kind, *leader));
+        replacements.push((index, finite, kind, leader));
     }
     let content_len = content_nodes.len();
     let _ = content_nodes;
@@ -770,7 +776,9 @@ fn normalize_insert_content_shrink<G>(
         if start < index {
             pieces.push(stores.slice_page_node_sequence(content, start..index, &mut slices));
         }
-        pieces.push(stores.publish_page_nodes(vec![Node::Glue { spec, kind, leader }]));
+        pieces.push(stores.construct_page_node(|destination| {
+            destination.glue(spec, kind, leader);
+        }));
         start = index + 1;
     }
     if start < content_len {
@@ -1019,25 +1027,25 @@ fn ensure_max_depth<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecErr
     Ok(())
 }
 
-fn precedes_break(node: &Node) -> bool {
+fn precedes_break(node: NodeView<'_>) -> bool {
     !matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern { .. }
-            | Node::Penalty(_)
-            | Node::MathOn(_)
-            | Node::MathOff(_)
+        NodeView::Glue { .. }
+            | NodeView::Kern { .. }
+            | NodeView::Penalty(_)
+            | NodeView::MathOn(_)
+            | NodeView::MathOff(_)
     )
 }
 
 fn vertical_height(node: &Node) -> Scaled {
-    NodeRef::from(node)
+    NodeView::from(node)
         .vertical_dimensions()
         .map_or(Scaled::from_raw(0), |(height, _)| height)
 }
 
 fn vertical_depth(node: &Node) -> Scaled {
-    NodeRef::from(node)
+    NodeView::from(node)
         .vertical_dimensions()
         .map_or(Scaled::from_raw(0), |(_, depth)| depth)
 }

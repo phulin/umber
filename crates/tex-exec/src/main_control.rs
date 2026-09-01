@@ -2926,12 +2926,12 @@ impl<G> MainControl<G> {
             let first_forbidden = match part_nodes.try_for_each_range(0..part_len, |index, node| {
                 if matches!(
                     node,
-                    Node::Char { .. }
-                        | Node::Lig { .. }
-                        | Node::Kern { .. }
-                        | Node::Rule { .. }
-                        | Node::HList(_)
-                        | Node::VList(_)
+                    tex_state::NodeView::Char { .. }
+                        | tex_state::NodeView::Lig { .. }
+                        | tex_state::NodeView::Kern { .. }
+                        | tex_state::NodeView::Rule { .. }
+                        | tex_state::NodeView::HList(_)
+                        | tex_state::NodeView::VList(_)
                 ) {
                     core::ops::ControlFlow::Continue(())
                 } else {
@@ -8333,24 +8333,23 @@ pub(crate) fn reserve_script_target<G>(
     let mut context = stores.command_context().expect("math script admission");
     // `t<>empty`: the tail was eligible but already carries this script.
     let tail_index = list.nodes(&context).len().checked_sub(1);
-    let (eligible, occupied) =
-        match tail_index.and_then(|index| list.nodes(&context).owned_node(index)) {
-            Some(Node::MathNoad(noad))
-                if !matches!(
-                    noad.kind,
-                    NoadKind::LeftDelimiter { .. }
-                        | NoadKind::RightDelimiter { .. }
-                        | NoadKind::MiddleDelimiter { .. }
-                ) =>
-            {
-                let occupied = match kind {
-                    MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
-                    MathScriptKind::Subscript => !matches!(noad.subscript, MathField::Empty),
-                };
-                (true, occupied)
-            }
-            _ => (false, false),
-        };
+    let (eligible, occupied) = match tail_index.and_then(|index| list.nodes(&context).get(index)) {
+        Some(tex_state::node_arena::NodeView::MathNoad(noad))
+            if !matches!(
+                noad.kind,
+                NoadKind::LeftDelimiter { .. }
+                    | NoadKind::RightDelimiter { .. }
+                    | NoadKind::MiddleDelimiter { .. }
+            ) =>
+        {
+            let occupied = match kind {
+                MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
+                MathScriptKind::Subscript => !matches!(noad.subscript, MathField::Empty),
+            };
+            (true, occupied)
+        }
+        _ => (false, false),
+    };
 
     let node_index = if eligible && !occupied {
         tail_index.expect("eligible tail has an index")
@@ -8427,8 +8426,8 @@ fn fill_math_field_target<G>(
                     .page_node_list(list)
                     .expect("math field belongs to the live page arena")
                     .nodes();
-                match nodes.owned_node(0) {
-                    Some(Node::MathNoad(accent))
+                match nodes.get(0) {
+                    Some(tex_state::node_arena::NodeView::MathNoad(accent))
                         if nodes.len() == 1 && matches!(accent.kind, NoadKind::Accent { .. }) =>
                     {
                         Some(accent.clone())
@@ -8527,7 +8526,7 @@ fn finish_math_list<G>(
         let boundary = numerator_nodes.iter().rposition(|node| {
             matches!(
                 node,
-                Node::MathNoad(MathNoad {
+                tex_state::NodeView::MathNoad(MathNoad {
                     kind: NoadKind::LeftDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
                     ..
                 })
@@ -8574,7 +8573,7 @@ fn collapse_singleton_math_group<G>(
         .expect("math group belongs to the live page arena")
         .nodes();
     if nodes.len() == 1
-        && let Some(Node::MathNoad(noad)) = nodes.owned_node(0)
+        && let Some(tex_state::node_arena::NodeView::MathNoad(noad)) = nodes.get(0)
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
@@ -8737,10 +8736,10 @@ fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
     {
         return false;
     }
-    let starts_left_node = |node: Option<&Node>| {
+    let starts_left_node = |node: Option<tex_state::node_arena::NodeView<'_>>| {
         matches!(
             node,
-            Some(Node::MathNoad(MathNoad {
+            Some(tex_state::node_arena::NodeView::MathNoad(MathNoad {
                 kind: NoadKind::LeftDelimiter { .. },
                 ..
             }))
@@ -8897,7 +8896,7 @@ mod discretionary_hyphen_tests {
             );
             crate::test_harness::with_admitted(stores, |context| {
                 let current_list = control.modes.current_list();
-                let Some(Node::Disc {
+                let Some(tex_state::NodeView::Disc {
                     kind: DiscKind::ExplicitHyphen,
                     pre,
                     ..
@@ -8942,7 +8941,9 @@ mod discretionary_hyphen_tests {
             );
             crate::test_harness::with_admitted(stores, |context| {
                 let current_list = control.modes.current_list();
-                let Some(Node::Disc { pre, .. }) = current_list.nodes(context).last() else {
+                let Some(tex_state::NodeView::Disc { pre, .. }) =
+                    current_list.nodes(context).last()
+                else {
                     panic!("canonical replay appended an explicit discretionary hyphen");
                 };
                 assert!(pre.is_empty());

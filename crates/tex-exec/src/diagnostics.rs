@@ -634,8 +634,15 @@ fn page_activity_snapshot<G>(
         })
         .collect();
     Ok(PageActivitySnapshot {
-        current_page: stores.current_page_nodes().cloned().collect(),
-        contributions: stores.page_contributions().iter().cloned().collect(),
+        current_page: stores
+            .current_page_nodes()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect(),
+        contributions: stores
+            .page_contributions()
+            .iter()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect(),
         insertions,
         contents: stores.page_contents(),
         goal: dimension(PageDimension::Goal),

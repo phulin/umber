@@ -87,12 +87,12 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
         .page_node_list(root)
         .expect("copied box belongs to the admitted page arena")
         .nodes();
-    let Some(source) = nodes.owned_node(0) else {
+    let Some(source) = nodes.get(0) else {
         return;
     };
     let (mut node, horizontal) = match source {
-        Node::HList(node) => (*node, true),
-        Node::VList(node) => (*node, false),
+        tex_state::node_arena::NodeView::HList(node) => (node, true),
+        tex_state::node_arena::NodeView::VList(node) => (node, false),
         _ => return,
     };
     match dimension {
@@ -1106,9 +1106,11 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
-        modes.current_list_mutation().construct(stores, |slot| {
-            *slot = Some(Node::HList(boxed));
-        });
+        modes
+            .current_list_mutation()
+            .construct(stores, |destination| {
+                destination.hlist(boxed);
+            });
     }
     modes.current_list_mutation().push(
         stores,

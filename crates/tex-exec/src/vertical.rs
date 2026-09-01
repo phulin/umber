@@ -3,7 +3,7 @@ use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::NodeView;
 use tex_state::scaled::Scaled;
 
 use crate::{ExecError, Mode, ModeNest};
@@ -127,5 +127,5 @@ pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
 }
 
 fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
-    NodeRef::from(node).vertical_dimensions()
+    NodeView::from(node).vertical_dimensions()
 }

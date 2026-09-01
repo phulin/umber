@@ -57,18 +57,18 @@ pub(super) fn set_alignment_nodes<G>(
         let action = match stores
             .page_node_list(rows)
             .expect("alignment rows belong to the live page arena")
-            .owned_node(index)
+            .get(index)
             .expect("alignment row index remains in range")
         {
-            Node::Unset(row) => RowAction::Unset(*row),
-            Node::Rule {
+            tex_state::node_arena::NodeView::Unset(row) => RowAction::Unset(row),
+            tex_state::node_arena::NodeView::Rule {
                 width,
                 height,
                 depth,
             } => RowAction::Rule {
-                width: *width,
-                height: *height,
-                depth: *depth,
+                width,
+                height,
+                depth,
             },
             _ => RowAction::Retain,
         };
@@ -238,10 +238,10 @@ fn set_row_children<G>(
         let cell = match stores
             .page_node_list(row.children)
             .expect("alignment row belongs to the live page arena")
-            .owned_node(index)
+            .get(index)
             .expect("alignment child index remains in range")
         {
-            Node::Unset(cell) => *cell,
+            tex_state::node_arena::NodeView::Unset(cell) => cell,
             _ => continue,
         };
         let span = usize::from(cell.span_count) + 1;

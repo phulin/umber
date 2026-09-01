@@ -142,10 +142,10 @@ impl<G> EngineBoundaryHasher<'_, G> {
     }
 
     pub fn nodes(&mut self, nodes: &[Node]) {
-        self.nodes_iter(nodes.iter());
+        self.nodes_iter(nodes.iter().map(crate::NodeView::from));
     }
 
-    pub fn nodes_iter<'a>(&mut self, nodes: impl ExactSizeIterator<Item = &'a Node>) {
+    pub fn nodes_iter<'a>(&mut self, nodes: impl ExactSizeIterator<Item = crate::NodeView<'a>>) {
         self.hasher.usize(nodes.len());
         for node in nodes {
             self.node(node);
@@ -160,7 +160,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
         self.nodes_iter(nodes.iter());
     }
 
-    fn node(&mut self, node: &Node) {
+    fn node(&mut self, node: crate::NodeView<'_>) {
         node.visit_semantic_node_lists(|child| {
             self.hasher.tag(0xf0);
             let child = self
@@ -169,7 +169,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
                 .expect("semantic child belongs to the live page arena");
             self.nodes_iter(child.iter());
         });
-        let mut value = node.clone();
+        let mut value = node.to_owned_with(std::convert::identity);
         value.visit_node_lists_mut(|child| *child = PageListId::empty());
         match &mut value {
             Node::Char { font, .. } => {
@@ -187,6 +187,10 @@ impl<G> EngineBoundaryHasher<'_, G> {
             _ => {}
         }
         value.erase_diagnostic_sidecars();
+        let admitted = self.universe.admitted().expect("live boundary generation");
+        let value = value
+            .resolve_token_payloads(|key| admitted.node_token_words(key))
+            .expect("node token key belongs to the live boundary generation");
         self.hasher.str(&format!("{value:?}"));
     }
 }

@@ -12,7 +12,7 @@ fn resolved_nodes<G>(stores: &CommandContext<'_, G>, list: PageListId) -> Vec<No
         .page_node_list(list)
         .expect("test list belongs to the page arena")
         .iter()
-        .cloned()
+        .map(|node| node.to_owned_with(std::convert::identity))
         .collect()
 }
 
@@ -193,7 +193,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             .expect("wrapper children belong to the page arena")
             .nodes()
             .iter()
-            .cloned()
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>();
         let [
             Node::Rule {
@@ -287,7 +287,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             .expect("row children belong to the page arena")
             .nodes()
             .iter()
-            .cloned()
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>();
         let [
             Node::Glue {
@@ -368,29 +368,25 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         let source_rows = stores
             .page_node_list(rows)
             .expect("alignment source belongs to the page arena");
-        let first_marker_address = std::ptr::from_ref(
-            source_rows
-                .owned_node(0)
-                .expect("first retained marker exists"),
-        );
-        let last_marker_address = std::ptr::from_ref(
-            source_rows
-                .owned_node(3)
-                .expect("last retained marker exists"),
-        );
+        let first_marker_address = source_rows
+            .nodes()
+            .testing_node_address(0)
+            .expect("first retained marker exists");
+        let last_marker_address = source_rows
+            .nodes()
+            .testing_node_address(3)
+            .expect("last retained marker exists");
         let source_children = stores
             .page_node_list(children)
             .expect("row source children belong to the page arena");
-        let leading_tabskip_address = std::ptr::from_ref(
-            source_children
-                .owned_node(0)
-                .expect("leading retained tabskip exists"),
-        );
-        let trailing_tabskip_address = std::ptr::from_ref(
-            source_children
-                .owned_node(2)
-                .expect("trailing retained tabskip exists"),
-        );
+        let leading_tabskip_address = source_children
+            .nodes()
+            .testing_node_address(0)
+            .expect("leading retained tabskip exists");
+        let trailing_tabskip_address = source_children
+            .nodes()
+            .testing_node_address(2)
+            .expect("trailing retained tabskip exists");
         let counters_before = stores.page_node_arena_counters();
         let set = set_alignment_nodes(
             AlignmentKind::HAlign,
@@ -428,15 +424,21 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             .page_node_list(set)
             .expect("set alignment belongs to the page arena");
         assert_eq!(
-            std::ptr::from_ref(set_view.owned_node(0).expect("first marker retained")),
+            set_view
+                .nodes()
+                .testing_node_address(0)
+                .expect("first marker retained"),
             first_marker_address
         );
         assert_ne!(
-            std::ptr::from_ref(set_view.owned_node(3).expect("last marker retained")),
+            set_view
+                .nodes()
+                .testing_node_address(3)
+                .expect("last marker retained"),
             last_marker_address
         );
-        let Node::HList(set_row) = set_view
-            .owned_node(2)
+        let tex_state::NodeView::HList(set_row) = set_view
+            .get(2)
             .expect("unset row is replaced in place logically")
         else {
             panic!("unset row must become an hlist");
@@ -445,19 +447,17 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             .page_node_list(set_row.children)
             .expect("set row children belong to the page arena");
         assert_eq!(
-            std::ptr::from_ref(
-                set_children
-                    .owned_node(0)
-                    .expect("leading tabskip retained"),
-            ),
+            set_children
+                .nodes()
+                .testing_node_address(0)
+                .expect("leading tabskip retained"),
             leading_tabskip_address
         );
         assert_ne!(
-            std::ptr::from_ref(
-                set_children
-                    .owned_node(2)
-                    .expect("trailing tabskip retained"),
-            ),
+            set_children
+                .nodes()
+                .testing_node_address(2)
+                .expect("trailing tabskip retained"),
             trailing_tabskip_address
         );
         let set = resolved_nodes(&stores, set);

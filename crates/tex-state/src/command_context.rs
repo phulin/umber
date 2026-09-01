@@ -8,8 +8,8 @@ use crate::durable_arena::{
 };
 use crate::env::banks::IntParam;
 use crate::env::{
-    AssignmentScope, CodeTableKind, DenseState, DurableBoxState, DurableFormState,
-    DurableNodeMetadata, StateError,
+    AssignmentScope, CodeTableKind, DurableBoxState, DurableFormState, DurableNodeMetadata,
+    StateError,
 };
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
@@ -1792,9 +1792,9 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        match (list.len(), list.get(0)) {
-            (1, Some(crate::node::Node::HList(_))) => Some(CommandBoxKind::Horizontal),
-            (1, Some(crate::node::Node::VList(_))) => Some(CommandBoxKind::Vertical),
+        match (list.len(), list.get(0).map(crate::NodeView::from)) {
+            (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
+            (1, Some(crate::NodeView::VList(_))) => Some(CommandBoxKind::Vertical),
             _ => None,
         }
     }
@@ -1809,8 +1809,8 @@ impl<'a, G> CommandContext<'a, G> {
             .page_node_list(value)
             .expect("box assignment root belongs to the admitted page arena");
         let (kind, node) = match (list.len(), list.nodes().first()) {
-            (1, Some(crate::node::Node::HList(node))) => ("hbox", node),
-            (1, Some(crate::node::Node::VList(node))) => ("vbox", node),
+            (1, Some(crate::node_arena::NodeView::HList(node))) => ("hbox", node),
+            (1, Some(crate::node_arena::NodeView::VList(node))) => ("vbox", node),
             _ => return "void".to_owned(),
         };
         let abbreviated_children = if self
@@ -1821,7 +1821,7 @@ impl<'a, G> CommandContext<'a, G> {
         } else {
             ""
         };
-        let glue_setting = box_glue_setting_text(node);
+        let glue_setting = box_glue_setting_text(&node);
         let shift = if node.shift.raw() != 0 {
             format!(", shifted {}", crate::scaled::print_scaled(node.shift))
         } else {
@@ -1851,8 +1851,8 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        let node = match (list.len(), list.get(0)) {
-            (1, Some(crate::node::Node::HList(node) | crate::node::Node::VList(node))) => node,
+        let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+            (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
             _ => return None,
         };
         Some(match dimension {
@@ -1866,22 +1866,22 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn box_margin_kern(&self, index: u16, side: crate::node::MarginKernSide) -> Option<Scaled> {
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        let children = match (list.len(), list.get(0)) {
-            (1, Some(crate::node::Node::HList(node))) => self
+        let children = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+            (1, Some(crate::NodeView::HList(node))) => self
                 .page_nodes
                 .durable_child_list(owner, node.children)
                 .ok()?,
             _ => return None,
         };
-        let skippable = |node: &crate::node::Node| match node {
+        let skippable = |node: crate::NodeView<'_>| match node {
             // pdftex.web's `left_margin_kern_code` and
             // `right_margin_kern_code` walk past `cp_skipable` nodes and the
             // finalized skip on the queried side before testing the margin
             // kern. In particular, post-line-break boxes put `\leftskip`
             // before the left margin kern and `\rightskip` after the right
             // one.
-            crate::node::Node::Glue { spec, kind, .. } => {
-                *spec == crate::glue::GlueSpec::ZERO
+            crate::NodeView::Glue { spec, kind, .. } => {
+                spec == crate::glue::GlueSpec::ZERO
                     || matches!(
                         (side, kind),
                         (
@@ -1893,30 +1893,35 @@ impl<'a, G> CommandContext<'a, G> {
                         )
                     )
             }
-            crate::node::Node::Kern { amount, .. }
-            | crate::node::Node::MathOn(amount)
-            | crate::node::Node::MathOff(amount) => amount.raw() == 0,
-            crate::node::Node::Penalty(_)
-            | crate::node::Node::Mark { .. }
-            | crate::node::Node::Ins { .. }
-            | crate::node::Node::Whatsit(_)
-            | crate::node::Node::Direction(_)
-            | crate::node::Node::Adjust(_)
-            | crate::node::Node::Nonscript => true,
+            crate::NodeView::Kern { amount, .. }
+            | crate::NodeView::MathOn(amount)
+            | crate::NodeView::MathOff(amount) => amount.raw() == 0,
+            crate::NodeView::Penalty(_)
+            | crate::NodeView::Mark { .. }
+            | crate::NodeView::Ins { .. }
+            | crate::NodeView::Whatsit(_)
+            | crate::NodeView::Direction(_)
+            | crate::NodeView::Adjust(_)
+            | crate::NodeView::Nonscript => true,
             _ => false,
         };
         let candidate = match side {
-            crate::node::MarginKernSide::Left => children.iter().find(|node| !skippable(node)),
-            crate::node::MarginKernSide::Right => {
-                children.iter().rev().find(|node| !skippable(node))
-            }
+            crate::node::MarginKernSide::Left => children
+                .iter()
+                .map(crate::NodeView::from)
+                .find(|node| !skippable(node.clone())),
+            crate::node::MarginKernSide::Right => children
+                .iter()
+                .rev()
+                .map(crate::NodeView::from)
+                .find(|node| !skippable(node.clone())),
         };
         Some(match candidate {
-            Some(crate::node::Node::MarginKern {
+            Some(crate::NodeView::MarginKern {
                 amount,
                 side: candidate_side,
                 ..
-            }) if *candidate_side == side => *amount,
+            }) if candidate_side == side => amount,
             _ => Scaled::from_raw(0),
         })
     }
@@ -3132,12 +3137,8 @@ impl<'a, G> CommandContext<'a, G> {
         resources: Option<TokenListId<G>>,
         immediate: bool,
     ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
-        let semantic_id = page_list_semantic_id(
-            &self.page_nodes,
-            self.fonts,
-            self.admitted.state_ref(),
-            box_list,
-        );
+        let semantic_id =
+            page_list_semantic_id(&self.page_nodes, self.fonts, &self.admitted, box_list);
         let owner = self
             .page_nodes
             .copy_page_root_to_durable(box_list)
@@ -3179,12 +3180,8 @@ impl<'a, G> CommandContext<'a, G> {
         immediate: bool,
     ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
         let (box_list, build) = source;
-        let semantic_id = page_list_semantic_id(
-            &self.page_nodes,
-            self.fonts,
-            self.admitted.state_ref(),
-            box_list,
-        );
+        let semantic_id =
+            page_list_semantic_id(&self.page_nodes, self.fonts, &self.admitted, box_list);
         let owner = self
             .page_nodes
             .finish_built_page_root_to_durable_preserving_roots(
@@ -3390,12 +3387,11 @@ impl<'a, G> CommandContext<'a, G> {
         id: u32,
         target: crate::PdfColorStackTarget,
     ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
-        fn action<List, Glue, Tokens>(
-            node: &crate::node::Node<List, Glue, Tokens>,
+        fn action<'a, List, Glue, Tokens>(
+            node: crate::NodeView<'a, List, Glue, Tokens>,
             expected_id: u32,
-        ) -> &crate::PdfColorStackAction {
-            let crate::node::Node::Whatsit(crate::node::Whatsit::PdfColorStack { id, action }) =
-                node
+        ) -> &'a crate::PdfColorStackAction {
+            let crate::NodeView::Whatsit(crate::node::Whatsit::PdfColorStack { id, action }) = node
             else {
                 panic!("shipout color source is not a color-stack whatsit")
             };
@@ -3407,7 +3403,7 @@ impl<'a, G> CommandContext<'a, G> {
             crate::ShipoutListId::Page(list) => {
                 let action = action(
                     self.page_nodes
-                        .get(list)
+                        .node_cursor(list)
                         .expect("page shipout color row is live")
                         .get(source.index)
                         .expect("page shipout color index is live"),
@@ -3417,10 +3413,12 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Scratch(list) => {
                 let action = action(
-                    self.shipout_scratch
-                        .get(list)
-                        .and_then(|nodes| nodes.get(source.index))
-                        .expect("scratch shipout color source is live"),
+                    crate::NodeView::from(
+                        self.shipout_scratch
+                            .get(list)
+                            .and_then(|nodes| nodes.get(source.index))
+                            .expect("scratch shipout color source is live"),
+                    ),
                     id,
                 );
                 self.pdf.apply_color_stack(id, target, action)
@@ -3492,6 +3490,17 @@ impl<'a, G> CommandContext<'a, G> {
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
         self.publish_page_node_range(nodes).list()
+    }
+
+    /// Constructs one generated page node in its final resident slot.
+    pub fn construct_page_node(
+        &mut self,
+        initialize: impl FnOnce(crate::NodeDestination<'_>),
+    ) -> PageListId {
+        let mut builder = crate::page_node_arena::PageMaterialActiveListBuilder::default();
+        self.open_page_active_list(&mut builder);
+        self.construct_page_active_list(&mut builder, initialize);
+        self.finalize_page_active_list(&mut builder)
     }
 
     /// Publishes a move-only whole list for one direct-chain suffix splice.
@@ -3588,11 +3597,24 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn construct_page_active_list(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
-        initialize: impl FnOnce(&mut Option<crate::node::Node>),
+        initialize: impl FnOnce(crate::NodeDestination<'_>),
     ) {
-        self.page_nodes
+        let metadata = self
+            .page_nodes
             .construct_active_list(builder, initialize)
             .expect("page active-list builder belongs to its live owner");
+        if let Some(font) = metadata.font {
+            assert!(
+                self.fonts.contains(font),
+                "durable node contains a font outside the admitted timeline"
+            );
+        }
+        let words = if self.engine_usage.uses_etex_node_sizes() {
+            metadata.etex_words
+        } else {
+            metadata.tex82_words
+        };
+        self.engine_usage.observe_transient_memory(words.0, words.1);
     }
 
     pub fn append_page_active_list(
@@ -3938,7 +3960,7 @@ impl<'a, G> CommandContext<'a, G> {
             let nodes = context
                 .page_node_list(source)?
                 .iter()
-                .cloned()
+                .map(|node| node.to_owned_with(std::convert::identity))
                 .collect::<Vec<_>>();
             let destination = context.begin_shipout_scratch_list();
             copied.insert(source, destination);
@@ -3975,50 +3997,49 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::ShipoutTokenSource<G>,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        fn payload<Glue, Tokens>(
-            node: &crate::node::Node<impl Copy, Glue, Tokens>,
+        fn payload<'a, List, Glue, Tokens>(
+            node: crate::NodeView<'a, List, Glue, Tokens>,
             field: crate::ShipoutTokenField,
-        ) -> Option<&Tokens> {
+        ) -> Option<&'a Tokens> {
             match (node, field) {
                 (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                    crate::NodeView::Whatsit(crate::node::Whatsit::DeferredWrite {
                         tokens, ..
                     }),
                     crate::ShipoutTokenField::DeferredWrite,
                 )
                 | (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
-                        tokens,
-                        ..
+                    crate::NodeView::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                        tokens, ..
                     }),
                     crate::ShipoutTokenField::DeferredSpecial,
                 )
                 | (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                    crate::NodeView::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
                         tokens,
                         ..
                     }),
                     crate::ShipoutTokenField::DeferredPdfLiteral,
                 ) => Some(tokens),
                 (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfThread(thread)),
+                    crate::NodeView::Whatsit(crate::node::Whatsit::PdfThread(thread)),
                     crate::ShipoutTokenField::PdfThreadAttributes,
                 ) => Some(&thread.attributes),
                 _ => None,
             }
         }
 
-        fn identifier<List, Glue, Tokens>(
-            node: &crate::node::Node<List, Glue, Tokens>,
+        fn identifier<'a, List, Glue, Tokens>(
+            node: crate::NodeView<'a, List, Glue, Tokens>,
             field: crate::ShipoutTokenField,
-        ) -> Option<&Tokens> {
+        ) -> Option<&'a Tokens> {
             let identifier = match (node, field) {
                 (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfThread(thread)),
+                    crate::NodeView::Whatsit(crate::node::Whatsit::PdfThread(thread)),
                     crate::ShipoutTokenField::PdfThreadIdentifier,
                 ) => &thread.identifier,
                 (
-                    crate::node::Node::Whatsit(crate::node::Whatsit::PdfDestination(destination)),
+                    crate::NodeView::Whatsit(crate::node::Whatsit::PdfDestination(destination)),
                     crate::ShipoutTokenField::PdfDestinationIdentifier,
                 ) => &destination.identifier,
                 _ => return None,
@@ -4034,11 +4055,11 @@ impl<'a, G> CommandContext<'a, G> {
             crate::ShipoutListId::Page(list) => {
                 let tokens = self
                     .page_nodes
-                    .get(list)
+                    .node_cursor(list)
                     .ok()
-                    .and_then(|list| list.nodes().get(source.index))
+                    .and_then(|list| list.get(source.index))
                     .expect("shipout token source belongs to the live page row");
-                let key = identifier(tokens, source.field)
+                let key = identifier(tokens.clone(), source.field)
                     .or_else(|| payload(tokens, source.field))
                     .expect("shipout token field belongs to its page source");
                 self.admitted
@@ -4054,7 +4075,8 @@ impl<'a, G> CommandContext<'a, G> {
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
                     .expect("shipout token source belongs to the active scratch row");
-                let key = identifier(node, source.field)
+                let node = crate::NodeView::from(node);
+                let key = identifier(node.clone(), source.field)
                     .or_else(|| payload(node, source.field))
                     .expect("shipout token field belongs to its scratch source");
                 self.admitted
@@ -4078,27 +4100,27 @@ impl<'a, G> CommandContext<'a, G> {
             crate::ShipoutListId::Page(list) => {
                 let node = self
                     .page_nodes
-                    .get(list)
+                    .node_cursor(list)
                     .expect("page shipout token row is live")
                     .get(source.index)
                     .expect("page shipout token index is live");
                 let tokens = match (node, source.field) {
                     (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredWrite {
                             tokens,
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredWrite,
                     )
                     | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredSpecial {
                             tokens,
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredSpecial,
                     )
                     | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
                             tokens,
                             ..
                         }),
@@ -4115,23 +4137,23 @@ impl<'a, G> CommandContext<'a, G> {
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
                     .expect("scratch shipout token source is live");
-                let tokens = match (node, source.field) {
+                let tokens = match (crate::NodeView::from(node), source.field) {
                     (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredWrite {
                             tokens,
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredWrite,
                     )
                     | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredSpecial {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredSpecial {
                             tokens,
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredSpecial,
                     )
                     | (
-                        crate::node::Node::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
+                        crate::NodeView::Whatsit(crate::node::Whatsit::DeferredPdfLiteral {
                             tokens,
                             ..
                         }),
@@ -4200,7 +4222,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Borrows the live page-builder sequence for diagnostic rendering only.
-    pub fn current_page_nodes(&self) -> impl DoubleEndedIterator<Item = &crate::node::Node> {
+    pub fn current_page_nodes(&self) -> crate::node_arena::NodeCursorIter<'_> {
         self.page.current_page(&self.page_nodes)
     }
 
@@ -4368,12 +4390,12 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn page_contribution_front(&self) -> Option<&crate::node::Node> {
+    pub fn page_contribution_front(&self) -> Option<crate::NodeView<'_>> {
         self.page.contribution_front(&self.page_nodes)
     }
 
     #[must_use]
-    pub fn page_contribution_second(&self) -> Option<&crate::node::Node> {
+    pub fn page_contribution_second(&self) -> Option<crate::NodeView<'_>> {
         self.page.contribution_second(&self.page_nodes)
     }
 
@@ -4389,9 +4411,9 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn page_carrier_node<'b>(
         &'b self,
         carrier: &crate::page::PageNodeCarrier,
-    ) -> &'b crate::node::Node {
+    ) -> crate::NodeView<'b> {
         self.page_nodes
-            .list(carrier.list())
+            .node_cursor(carrier.list())
             .expect("page carrier belongs to the live arena")
             .get(0)
             .expect("page carrier contains one node")
@@ -4403,7 +4425,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn current_page_tail(&self) -> Option<&crate::node::Node> {
+    pub fn current_page_tail(&self) -> Option<crate::node_arena::NodeView<'_>> {
         self.page.current_page_tail(&self.page_nodes)
     }
 
@@ -5182,13 +5204,13 @@ fn box_glue_setting_text<List>(node: &crate::node::BoxNode<List>) -> String {
 fn page_list_semantic_id<G>(
     page_nodes: &PageNodeArena<'_>,
     fonts: &FontStore,
-    state: &DenseState<G>,
+    admitted: &crate::stores::AdmittedStateMut<'_, G>,
     root: PageListId,
 ) -> crate::state_hash::StateHashFragment {
     struct PageSemanticHasher<'a, G> {
         page_nodes: &'a PageNodeArena<'a>,
         fonts: &'a FontStore,
-        state: &'a DenseState<G>,
+        admitted: &'a crate::stores::AdmittedStateMut<'a, G>,
         hasher: crate::state_hash::StateHasher,
     }
 
@@ -5199,23 +5221,24 @@ fn page_list_semantic_id<G>(
                 .get(root)
                 .expect("PDF form root belongs to the live page arena");
             self.hasher.usize(list.nodes().len());
-            list.for_each(|node| self.node(node));
+            list.for_each(|node| self.node(crate::NodeView::from(node)));
         }
 
         fn font(&mut self, font: crate::ids::FontId) {
             let recipe = self.fonts.artifact_recipe(font);
             self.hasher.str(&format!("{recipe:?}"));
-            self.state
+            self.admitted
+                .state_ref()
                 .hash_font_runtime(font, self.fonts.get(font), &mut self.hasher)
                 .expect("live PDF form font has runtime state");
         }
 
-        fn node(&mut self, node: &crate::node::Node) {
+        fn node(&mut self, node: crate::NodeView<'_>) {
             node.visit_semantic_node_lists(|child| {
                 self.hasher.tag(0xf0);
                 self.list(*child);
             });
-            let mut value = node.clone();
+            let mut value = node.to_owned_with(std::convert::identity);
             value.visit_node_lists_mut(|child| *child = PageListId::empty());
             match &mut value {
                 crate::node::Node::Char { font, .. } => {
@@ -5233,6 +5256,9 @@ fn page_list_semantic_id<G>(
                 _ => {}
             }
             value.erase_diagnostic_sidecars();
+            let value = value
+                .resolve_token_payloads(|key| self.admitted.node_token_words(key))
+                .expect("PDF form node token key belongs to the admitted generation");
             self.hasher.str(&format!("{value:?}"));
         }
     }
@@ -5240,7 +5266,7 @@ fn page_list_semantic_id<G>(
     let mut projection = PageSemanticHasher {
         page_nodes,
         fonts,
-        state,
+        admitted,
         hasher: crate::state_hash::StateHasher::new_exact(0x7064_665f_666f_726d),
     };
     projection.list(root);

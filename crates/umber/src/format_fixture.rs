@@ -825,7 +825,7 @@ fn push_detached_node_children<G>(
             kind: node.kind(),
         });
         if depth > 0
-            && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
+            && let tex_state::NodeView::HList(boxed) | tex_state::NodeView::VList(boxed) = node
         {
             let children = universe
                 .durable_child_node_list(boxed.children)

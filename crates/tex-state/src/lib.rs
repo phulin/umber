@@ -87,6 +87,7 @@ pub mod memo;
 mod memory_accounting;
 pub mod node;
 pub mod node_arena;
+mod node_destination;
 pub mod node_region;
 pub mod node_sequence;
 pub mod packed_input;
@@ -216,6 +217,8 @@ pub use memo::{
     DetachedPageTransition, DetachedPureKernelPlan, DetachedVirtualEffect,
     MEMO_VALUE_SCHEMA_VERSION, MemoValueError, MemoValueKind, MemoValueLimits,
 };
+pub use node_arena::NodeView;
+pub use node_destination::NodeDestination;
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageBuilderProgressToken,
     PageCandidateSettlementCounters, PageContents, PageDimension, PageFireUp, PageInteger,

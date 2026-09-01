@@ -48,18 +48,18 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
         let discarded = stores.page_nodes(discarded).expect("discard root");
         assert_eq!(discarded.len(), 3);
         let pruned = stores.page_nodes(pruned).expect("retained root");
-        let Node::Glue {
+        let tex_state::NodeView::Glue {
             spec,
             kind: GlueKind::SplitTopSkip,
             ..
-        } = pruned.owned_node(0).expect("split top skip")
+        } = pruned.get(0).expect("split top skip")
         else {
             panic!("split top skip")
         };
         assert_eq!(spec.width, sp(6));
         assert!(matches!(
-            pruned.owned_node(1).expect("retained box"),
-            Node::HList(_)
+            pruned.get(1).expect("retained box"),
+            tex_state::NodeView::HList(_)
         ));
     });
 }

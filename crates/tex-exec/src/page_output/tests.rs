@@ -88,38 +88,37 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
                 .expect("distributed page list remains live")
                 .nodes()
                 .first(),
-            Some(Node::Penalty(29))
+            Some(tex_state::NodeView::Penalty(29))
         ));
-        assert!(
-            stores
-                .page_node_list(distributed.heldover)
-                .expect("held-over list remains live")
-                .nodes()
-                .iter()
-                .eq([&unrelated, &later])
-        );
+        let heldover = stores
+            .page_node_list(distributed.heldover)
+            .expect("held-over list remains live")
+            .nodes()
+            .iter()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>();
+        assert_eq!(heldover, [unrelated, later]);
         assert_eq!(distributed.heldover_count, 2);
         let register = stores
             .copy_box_to_page(class)
             .expect("accepted inserts are repackaged");
-        let Node::VList(box_node) = stores
+        let tex_state::NodeView::VList(box_node) = stores
             .page_node_list(register)
             .expect("register belongs to the page arena")
             .nodes()
             .first()
-            .cloned()
             .expect("register contains its vbox")
         else {
             panic!("insertion register must become a vbox");
         };
-        assert!(
-            stores
-                .page_node_list(box_node.children)
-                .expect("register children belong to the page arena")
-                .nodes()
-                .iter()
-                .eq([rule(11), rule(13)].iter())
-        );
+        let register_children = stores
+            .page_node_list(box_node.children)
+            .expect("register children belong to the page arena")
+            .nodes()
+            .iter()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>();
+        assert_eq!(register_children, [rule(11), rule(13)]);
         drop(stores);
         universe
             .world_mut()
@@ -205,13 +204,15 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
         .expect("vbox is valid");
-        assert!(
+        assert_eq!(
             stores
                 .page_node_list(insertion_nodes)
                 .expect("insertion children remain live")
                 .nodes()
                 .iter()
-                .eq([rule(17), Node::Penalty(23)].iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+            [rule(17), Node::Penalty(23)]
         );
         let retained = stores
             .copy_box_to_page(2)
@@ -222,7 +223,7 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
                 .expect("retained register belongs to the page arena")
                 .nodes()
                 .first(),
-            Some(Node::VList(_))
+            Some(tex_state::NodeView::VList(_))
         ));
     });
 }
@@ -255,13 +256,14 @@ fn earlier_break_preserves_unrelated_pending_penalty() {
                 .page_node_list(after_break)
                 .expect("unchosen break remains live")
                 .nodes()
-                .first(),
-            Some(&chosen_break)
+                .first()
+                .map(|node| node.to_owned_with(std::convert::identity)),
+            Some(chosen_break)
         );
         assert_eq!(stores.page_contributions().len(), 1);
         assert_eq!(
             stores.page_contributions().front(),
-            Some(&Node::Penalty(EJECT_PENALTY))
+            Some(tex_state::NodeView::Penalty(EJECT_PENALTY))
         );
     });
 }
@@ -283,7 +285,7 @@ fn chosen_pending_penalty_is_rewritten() {
                 .expect("rewritten break remains live")
                 .nodes()
                 .first(),
-            Some(Node::Penalty(INF_PENALTY))
+            Some(tex_state::NodeView::Penalty(INF_PENALTY))
         ));
         assert!(stores.page_contributions().is_empty());
     });
@@ -298,7 +300,7 @@ fn end_cleanup_uses_tex_its_all_over_penalty() {
 
         assert_eq!(
             stores.page_contributions().back(),
-            Some(&Node::Penalty(-1_073_741_824))
+            Some(tex_state::NodeView::Penalty(-1_073_741_824))
         );
     });
 }

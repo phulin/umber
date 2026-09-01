@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::{NodeCursor, PageListId, PageNodeSequenceId};
+use tex_state::node_arena::{NodeCursor, NodeView, PageListId, PageNodeSequenceId};
 use tex_state::node_sequence::DirectHighCellLineages;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
@@ -437,14 +437,16 @@ impl<'a> ParagraphTape<'a> {
             ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
             ParagraphSource::BorrowedArena(sequence) => {
                 let mut nodes = Vec::with_capacity(sequence.len());
-                sequence.for_each(|node| nodes.push(node.clone()));
+                sequence.for_each(|node| {
+                    nodes.push(node.to_owned_with(std::convert::identity));
+                });
                 nodes
             }
             ParagraphSource::ArenaId { semantic, .. } => state
                 .page_node_sequence(semantic)
                 .expect("paragraph sequence remains live while its tape is consumed")
                 .iter()
-                .cloned()
+                .map(|node| node.to_owned_with(std::convert::identity))
                 .collect(),
         }
     }
@@ -746,20 +748,19 @@ fn observe_expansion_fonts<S: TypesetState>(
             return;
         }
         match node {
-            Node::Char { font, .. } | Node::Lig { font, .. } => {
-                if let Some(spec) = state.font_expansion_spec(*font)
+            NodeView::Char { font, .. } | NodeView::Lig { font, .. } => {
+                if let Some(spec) = state.font_expansion_spec(font)
                     && let Err(found) = paragraph.observe(spec)
                 {
                     error = Some(found);
                 }
             }
-            Node::Disc {
+            NodeView::Disc {
                 pre, post, replace, ..
             } => {
                 for list in [pre, post, replace] {
-                    let owned = state.page_nodes(*list).iter().cloned().collect::<Vec<_>>();
                     if let Err(found) =
-                        observe_expansion_fonts(state, NodeCursor::owned(&owned), paragraph)
+                        observe_expansion_fonts(state, state.page_nodes(list), paragraph)
                     {
                         error = Some(found);
                         break;
@@ -1249,38 +1250,38 @@ fn trace_display_suffix(nodes: NodeCursor<'_>, bp: Breakpoint) -> Option<PageLis
     if !matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.owned_node(index)),
-        Some(Node::Kern {
+            .and_then(|index| nodes.get(index)),
+        Some(NodeView::Kern {
             kind: KernKind::Font,
             ..
         })
     ) {
         return None;
     }
-    let Node::Disc {
+    let NodeView::Disc {
         kind: tex_state::node::DiscKind::AutomaticHyphen,
         replace,
         ..
-    } = nodes.owned_node(bp.position.checked_sub(1)?)?
+    } = nodes.get(bp.position.checked_sub(1)?)?
     else {
         return None;
     };
-    Some(*replace)
+    Some(replace)
 }
 
 fn trace_display_end(state: &impl TypesetState, nodes: NodeCursor<'_>, bp: Breakpoint) -> usize {
-    let Some(Node::Disc { replace, .. }) = bp
+    let Some(NodeView::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
-        .and_then(|index| nodes.owned_node(index))
+        .and_then(|index| nodes.get(index))
     else {
         return bp.position;
     };
     if matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.owned_node(index)),
-        Some(Node::Kern {
+            .and_then(|index| nodes.get(index)),
+        Some(NodeView::Kern {
             kind: KernKind::Font,
             ..
         })
@@ -1291,25 +1292,25 @@ fn trace_display_end(state: &impl TypesetState, nodes: NodeCursor<'_>, bp: Break
         // replacement after its detached suffix has been rendered.
         return bp
             .position
-            .saturating_add(state.page_nodes(*replace).len())
+            .saturating_add(state.page_nodes(replace).len())
             .min(nodes.len());
     }
     if !matches!(
         bp.position
             .checked_sub(2)
-            .and_then(|index| nodes.owned_node(index)),
-        Some(Node::Disc { .. })
-    ) || matches!(nodes.owned_node(bp.position), Some(Node::Disc { .. }))
+            .and_then(|index| nodes.get(index)),
+        Some(NodeView::Disc { .. })
+    ) || matches!(nodes.get(bp.position), Some(NodeView::Disc { .. }))
     {
         return bp.position;
     }
-    let mut replacement_count = state.page_nodes(*replace).len();
+    let mut replacement_count = state.page_nodes(replace).len();
     let mut index = bp.position - 1;
     while let Some(previous) = index.checked_sub(1) {
-        let Some(Node::Disc { replace, .. }) = nodes.owned_node(previous) else {
+        let Some(NodeView::Disc { replace, .. }) = nodes.get(previous) else {
             break;
         };
-        replacement_count = replacement_count.saturating_add(state.page_nodes(*replace).len());
+        replacement_count = replacement_count.saturating_add(state.page_nodes(replace).len());
         index = previous;
     }
     bp.position
@@ -1325,11 +1326,11 @@ fn trace_display_next_start(
 ) -> usize {
     if trace_display_suffix(nodes, bp).is_some() {
         display_end.saturating_add(1).min(nodes.len())
-    } else if let Some(Node::Disc { replace, .. }) = bp
+    } else if let Some(NodeView::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
-        .and_then(|index| nodes.owned_node(index))
-        && display_end.saturating_sub(bp.position) == state.page_nodes(*replace).len()
+        .and_then(|index| nodes.get(index))
+        && display_end.saturating_sub(bp.position) == state.page_nodes(replace).len()
     {
         // §851's temporary link surgery may make the current structural slice
         // include nodes used to model `replace_count`; §855 skips them only
@@ -1348,14 +1349,14 @@ fn trace_breakpoint(nodes: NodeCursor<'_>, bp: Breakpoint) -> TraceBreakpoint {
         return TraceBreakpoint::Paragraph;
     }
     match nodes
-        .owned_node(bp.position - 1)
+        .get(bp.position - 1)
         .expect("breakpoint belongs to paragraph")
     {
-        Node::Glue { .. } => TraceBreakpoint::Glue,
-        Node::Penalty(_) => TraceBreakpoint::Penalty,
-        Node::Disc { .. } => TraceBreakpoint::Discretionary,
-        Node::Kern { .. } => TraceBreakpoint::Kern,
-        Node::MathOn(_) | Node::MathOff(_) => TraceBreakpoint::Math,
+        NodeView::Glue { .. } => TraceBreakpoint::Glue,
+        NodeView::Penalty(_) => TraceBreakpoint::Penalty,
+        NodeView::Disc { .. } => TraceBreakpoint::Discretionary,
+        NodeView::Kern { .. } => TraceBreakpoint::Kern,
+        NodeView::MathOn(_) | NodeView::MathOff(_) => TraceBreakpoint::Math,
         _ => TraceBreakpoint::Glue,
     }
 }
@@ -1793,8 +1794,8 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         let nodes = self.nodes;
         let mut output = Vec::new();
         let mut pending_start = None;
-        let mut previous = None;
-        let mut pending = None;
+        let mut previous: Option<NodeView<'_>> = None;
+        let mut pending: Option<(usize, NodeView<'_>, Option<NodeView<'_>>)> = None;
         let mut index = 0_usize;
         nodes.for_each(|node| {
             if let Some((pending_index, pending_node, pending_previous)) = pending.take() {
@@ -1802,12 +1803,12 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                     pending_index,
                     pending_node,
                     pending_previous,
-                    Some(node),
+                    Some(node.clone()),
                     &mut output,
                     &mut pending_start,
                 );
             }
-            pending = Some((index, node, previous));
+            pending = Some((index, node.clone(), previous.clone()));
             previous = Some(node);
             index += 1;
         });
@@ -1845,13 +1846,13 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
     fn observe_direct_node(
         &mut self,
         index: usize,
-        node: &Node,
-        previous: Option<&Node>,
-        next: Option<&Node>,
+        node: NodeView<'_>,
+        previous: Option<NodeView<'_>>,
+        next: Option<NodeView<'_>>,
         output: &mut Vec<BreakSite>,
         pending_start: &mut Option<usize>,
     ) {
-        if !is_discardable(node) {
+        if !is_discardable(node.clone()) {
             Self::finalize_pending(output, pending_start, index, self.prefix);
         }
         let Some((site, awaits_discardable_end)) = self.observe_node(index, node, previous, next)
@@ -1884,80 +1885,80 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
     fn observe_node(
         &mut self,
         index: usize,
-        node: &Node,
-        previous: Option<&Node>,
-        next: Option<&Node>,
+        node: NodeView<'_>,
+        previous: Option<NodeView<'_>>,
+        next: Option<NodeView<'_>>,
     ) -> Option<(BreakSite, bool)> {
         let before = self.prefix;
         add_node_width_value(
             &mut self.prefix,
             self.state,
-            node,
-            previous,
-            next,
+            node.clone(),
+            previous.clone(),
+            next.clone(),
             self.include_font_expansion,
             DiscretionaryWidths::Replacement,
         );
-        let definition = match node {
-            Node::Glue { .. }
+        let definition = match node.clone() {
+            NodeView::Glue { .. }
                 if self.auto_breaking
                     && index > 0
                     && previous.is_some_and(|node| !is_discardable(node)) =>
             {
                 Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
-            Node::Kern {
+            NodeView::Kern {
                 kind: KernKind::Explicit,
                 ..
-            } if self.auto_breaking && matches!(next, Some(Node::Glue { .. })) => {
+            } if self.auto_breaking && matches!(next, Some(NodeView::Glue { .. })) => {
                 Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
-            Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
+            NodeView::Penalty(penalty) if penalty < INF_PENALTY => Some((
                 index + 1,
                 index,
-                (*penalty).max(EJECT_PENALTY),
+                penalty.max(EJECT_PENALTY),
                 false,
                 Widths::zero(),
                 before,
                 None,
             )),
-            Node::Disc { pre, post, .. } => Some((
+            NodeView::Disc { pre, post, .. } => Some((
                 index + 1,
                 index + 1,
                 discretionary_penalty(pre.is_empty(), self.params),
                 true,
                 line_widths_view(
                     self.state,
-                    pre,
+                    &pre,
                     0,
-                    self.state.page_nodes(*pre).len(),
+                    self.state.page_nodes(pre).len(),
                     self.include_font_expansion,
                 ),
                 before,
-                Some(*post),
+                Some(post),
             )),
-            Node::MathOff(_) if matches!(next, Some(Node::Glue { .. })) => {
+            NodeView::MathOff(_) if matches!(next, Some(NodeView::Glue { .. })) => {
                 self.auto_breaking = true;
                 Some((index + 1, index, 0, false, Widths::zero(), before, None))
             }
-            Node::MathOn(_) => {
+            NodeView::MathOn(_) => {
                 self.auto_breaking = false;
                 None
             }
-            Node::MathOff(_) => {
+            NodeView::MathOff(_) => {
                 self.auto_breaking = true;
                 None
             }
             _ => None,
         };
         self.materialization.push(match node {
-            Node::Disc { .. } => MaterializationAction::Discretionary,
-            Node::Glue { .. }
-            | Node::Kern {
+            NodeView::Disc { .. } => MaterializationAction::Discretionary,
+            NodeView::Glue { .. }
+            | NodeView::Kern {
                 kind: KernKind::Explicit,
                 ..
             } if definition.is_some() => MaterializationAction::BreakDiscardable,
-            Node::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
+            NodeView::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
             _ => MaterializationAction::Copy,
         });
         definition.map(
@@ -2011,17 +2012,17 @@ fn legal_breakpoints<S: TypesetState>(
         .collect()
 }
 
-fn is_discardable(node: &Node) -> bool {
+fn is_discardable(node: NodeView<'_>) -> bool {
     matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern {
+        NodeView::Glue { .. }
+            | NodeView::Kern {
                 kind: KernKind::Explicit | KernKind::Mu,
                 ..
             }
-            | Node::Penalty(_)
-            | Node::MathOn(_)
-            | Node::MathOff(_)
+            | NodeView::Penalty(_)
+            | NodeView::MathOn(_)
+            | NodeView::MathOff(_)
     )
 }
 

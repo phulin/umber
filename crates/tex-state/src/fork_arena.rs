@@ -2453,14 +2453,15 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// and child-region metadata are derived only after that slot contains the
     /// final value. A rejected child coordinate truncates the one unpublished
     /// reservation and restores the active root exactly.
-    pub(crate) fn construct_region_value_active_list(
+    pub(crate) fn construct_region_value_active_list<Observation>(
         &mut self,
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         identity_enabled: bool,
         initialize: impl FnOnce(&mut Option<T>),
         identity: impl FnOnce(&T) -> u64,
-    ) -> Result<Option<u64>, ForkArenaError>
+        observe: impl FnOnce(&T) -> Observation,
+    ) -> Result<(Option<u64>, Observation), ForkArenaError>
     where
         T: RegionValue<Lane>,
     {
@@ -2497,6 +2498,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .ok_or(ForkArenaError::InvalidRange)?;
             let dependency_floor = self.region_value_dependency_floor(pool, value)?;
             let item_identity = identity_enabled.then(|| identity(value));
+            let observation = observe(value);
             pool.payload.complete_reservation(
                 key,
                 self.owner,
@@ -2508,7 +2510,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     dependency_floor,
                 },
             )?;
-            Ok(item_identity)
+            Ok((item_identity, observation))
         })();
         if completed.is_err() {
             self.active_list_open_mut(builder)?.root = previous_root;

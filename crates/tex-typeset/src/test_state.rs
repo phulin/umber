@@ -235,7 +235,7 @@ impl TestState {
             .node_cursor(source)
             .ok()?
             .iter()
-            .cloned()
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>();
         self.pages_mut().publish_owned(nodes).ok()
     }

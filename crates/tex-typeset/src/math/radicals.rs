@@ -86,7 +86,7 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
     if let MathField::SubBox(list) = nucleus
         && let nodes = ctx.state.page_nodes(*list)
         && nodes.len() == 1
-        && let Some(tex_state::node::Node::VList(boxed)) = nodes.first()
+        && let Some(tex_state::node_arena::NodeView::VList(boxed)) = nodes.first()
     {
         let list = source_box_payload(ctx, boxed.children);
         return MathBox {

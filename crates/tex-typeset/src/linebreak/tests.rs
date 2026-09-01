@@ -184,7 +184,7 @@ fn ordinary_breakpoint_analysis_crosses_each_block_once_at_required_sizes() {
         );
 
         let positional_before = cursor.testing_traversal_counters();
-        assert!(cursor.owned_node(0).is_some());
+        assert!(cursor.get(0).is_some());
         let positional = delta(cursor.testing_traversal_counters(), positional_before);
         assert_eq!(positional.index_resolutions, 1);
         if values == 4_096 {
@@ -3666,9 +3666,9 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
     let arena_view = universe
         .page_node_sequence(sequence)
         .expect("paragraph resolves");
-    let source_addresses = arena_view
+    let source_nodes = arena_view
         .iter()
-        .map(core::ptr::from_ref)
+        .map(|node| node.to_owned_with(std::convert::identity))
         .collect::<Vec<_>>();
     let line_params = params(18);
     let slice_tape = ParagraphTape::analyze_borrowed(&universe, &source, &line_params);
@@ -3709,9 +3709,9 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
             .page_node_sequence(sequence)
             .expect("source remains live")
             .iter()
-            .map(core::ptr::from_ref)
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>(),
-        source_addresses,
+        source_nodes,
         "analysis and materialization retain the original arena payload"
     );
 }
@@ -3767,7 +3767,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
             .page_node_sequence(sequence)
             .expect("coordinate source remains live")
             .iter()
-            .cloned()
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>(),
         [
             rule(8),

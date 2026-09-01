@@ -123,7 +123,7 @@ mod tests {
                 let root = context
                     .page_node_list(root)
                     .expect("box-register node list");
-                let Some(tex_state::node::Node::VList(vbox)) = root.nodes().first() else {
+                let Some(tex_state::NodeView::VList(vbox)) = root.nodes().first() else {
                     panic!("box register is not a vbox");
                 };
                 context
@@ -132,7 +132,7 @@ mod tests {
                     .nodes()
                     .iter()
                     .filter_map(|node| match node {
-                        tex_state::node::Node::HList(line) => Some((line.height, line.depth)),
+                        tex_state::NodeView::HList(line) => Some((line.height, line.depth)),
                         _ => None,
                     })
                     .collect()

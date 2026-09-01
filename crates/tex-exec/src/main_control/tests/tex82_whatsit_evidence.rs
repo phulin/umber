@@ -460,7 +460,8 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
                     .first()
                     .expect("box has a root");
                 let boxed = match (vertical, root) {
-                    (false, Node::HList(boxed)) | (true, Node::VList(boxed)) => boxed,
+                    (false, tex_state::NodeView::HList(boxed))
+                    | (true, tex_state::NodeView::VList(boxed)) => boxed,
                     (_, other) => {
                         panic!("box {register} has the expected orientation: {other:?}")
                     }

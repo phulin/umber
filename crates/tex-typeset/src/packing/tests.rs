@@ -86,9 +86,9 @@ fn width_font(name: &str, salt: u8) -> LoadedFont {
 
 fn scalar_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
     let mut out = Measurement::ZERO;
-    for node in nodes.iter().map(NodeRef::from) {
+    for node in nodes.iter().map(NodeView::from) {
         match node {
-            NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
+            NodeView::Char { font, ch, .. } | NodeView::Lig { font, ch, .. } => {
                 if let Ok(code) = u8::try_from(ch as u32)
                     && let Some(metric) = state.font_char_metrics(font, code)
                 {
@@ -97,12 +97,12 @@ fn scalar_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                     out.depth = out.depth.max(metric.depth);
                 }
             }
-            NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
-            NodeRef::Glue { spec, .. } => {
+            NodeView::Kern { amount, .. } => out.width = add(out.width, amount),
+            NodeView::Glue { spec, .. } => {
                 out.observe_horizontal(MetricEvent::Glue(spec), MetricOverflow::PACKING);
             }
-            NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
-            NodeRef::Penalty(_) => {}
+            NodeView::MathOn(width) | NodeView::MathOff(width) => out.width = add(out.width, width),
+            NodeView::Penalty(_) => {}
             _ => {}
         }
     }
@@ -166,7 +166,10 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
             .expect("test list belongs to the page arena")
             .nodes();
         let fast = measure_hlist(&universe, view);
-        let owned = view.iter().cloned().collect::<Vec<_>>();
+        let owned = view
+            .iter()
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>();
         let scalar = scalar_hlist(&universe, &owned);
         let params = HpackParams {
             hbadness: case % 10_001,
@@ -884,6 +887,6 @@ fn packed_box_can_round_trip_through_structural_box_register() {
             .page_node_list(owner)
             .expect("copied box belongs to the page arena")
             .get(0),
-        Some(NodeRef::HList(_))
+        Some(NodeView::HList(_))
     ));
 }

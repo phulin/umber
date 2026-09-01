@@ -122,7 +122,7 @@ pub(crate) fn finish_display_math<G>(
     let shrink = hlist_shrink(display_view);
     let display_starts_with_glue = display_view
         .first()
-        .is_some_and(|node| matches!(node, Node::Glue { .. }));
+        .is_some_and(|node| matches!(node, tex_state::node_arena::NodeView::Glue { .. }));
     let mut display_box = hpack_nodes(
         stores,
         diagnostic_effects,
@@ -346,7 +346,7 @@ pub(crate) fn finish_display_alignment<G>(
                 .page_node_list(finished.nodes)
                 .expect("display alignment belongs to the live page arena")
                 .nodes()
-                .owned_node(index)
+                .get(index)
                 .expect("display alignment index remains in range");
             display_alignment_replacement(node)
         };
@@ -417,15 +417,19 @@ pub(crate) fn finish_display_alignment<G>(
 /// once as `o` and §806/§807 apply it while the unset boxes and running rules
 /// are being set, which is the only place a rule -- a node with no
 /// `shift_amount` field -- can receive it at all.
-fn display_alignment_replacement(node: &Node) -> Option<Node> {
+fn display_alignment_replacement(node: tex_state::node_arena::NodeView<'_>) -> Option<Node> {
     match node {
-        Node::HList(boxed) if boxed.box_lr != tex_state::node::BoxLr::DList => {
-            let mut boxed = *boxed;
+        tex_state::node_arena::NodeView::HList(boxed)
+            if boxed.box_lr != tex_state::node::BoxLr::DList =>
+        {
+            let mut boxed = boxed;
             boxed.box_lr = tex_state::node::BoxLr::DList;
             Some(Node::HList(boxed))
         }
-        Node::VList(boxed) if boxed.box_lr != tex_state::node::BoxLr::DList => {
-            let mut boxed = *boxed;
+        tex_state::node_arena::NodeView::VList(boxed)
+            if boxed.box_lr != tex_state::node::BoxLr::DList =>
+        {
+            let mut boxed = boxed;
             boxed.box_lr = tex_state::node::BoxLr::DList;
             Some(Node::VList(boxed))
         }
@@ -506,7 +510,7 @@ struct ShrinkTotals {
 fn hlist_shrink(nodes: tex_state::node_arena::NodeCursor<'_>) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     nodes.for_each(|node| {
-        if let Node::Glue { spec, .. } = node {
+        if let tex_state::NodeView::Glue { spec, .. } = node {
             let glue = spec;
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
         }
@@ -555,7 +559,7 @@ pub(crate) fn pre_display_size<G>(stores: &CommandContext<'_, G>, line: &BoxNode
         .expect("display line belongs to the live page arena")
         .iter()
     {
-        let (d, visible, glue_depends_on_set) = pre_display_node_width(stores, line, node.into());
+        let (d, visible, glue_depends_on_set) = pre_display_node_width(stores, line, node);
         if glue_depends_on_set {
             v = Scaled::MAX_DIMEN;
         }
@@ -576,26 +580,26 @@ pub(crate) fn pre_display_size<G>(stores: &CommandContext<'_, G>, line: &BoxNode
 fn pre_display_node_width<G>(
     stores: &CommandContext<'_, G>,
     line: &BoxNode,
-    node: tex_state::node_arena::NodeRef<'_>,
+    node: tex_state::node_arena::NodeView<'_>,
 ) -> (Scaled, bool, bool) {
     match node {
-        tex_state::node_arena::NodeRef::Char { font, ch, .. }
-        | tex_state::node_arena::NodeRef::Lig { font, ch, .. } => {
+        tex_state::node_arena::NodeView::Char { font, ch, .. }
+        | tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
             let width = u8::try_from(ch as u32)
                 .ok()
                 .and_then(|code| stores.font_char_metrics(font, code))
                 .map_or(Scaled::from_raw(0), |metrics| metrics.width);
             (width, true, false)
         }
-        tex_state::node_arena::NodeRef::HList(boxed)
-        | tex_state::node_arena::NodeRef::VList(boxed) => (boxed.width, true, false),
-        tex_state::node_arena::NodeRef::Rule { width, .. } => {
+        tex_state::node_arena::NodeView::HList(boxed)
+        | tex_state::node_arena::NodeView::VList(boxed) => (boxed.width, true, false),
+        tex_state::node_arena::NodeView::Rule { width, .. } => {
             (width.unwrap_or(Scaled::from_raw(0)), true, false)
         }
-        tex_state::node_arena::NodeRef::Kern { amount, .. }
-        | tex_state::node_arena::NodeRef::MathOn(amount)
-        | tex_state::node_arena::NodeRef::MathOff(amount) => (amount, false, false),
-        tex_state::node_arena::NodeRef::Glue { spec, .. } => {
+        tex_state::node_arena::NodeView::Kern { amount, .. }
+        | tex_state::node_arena::NodeView::MathOn(amount)
+        | tex_state::node_arena::NodeView::MathOff(amount) => (amount, false, false),
+        tex_state::node_arena::NodeView::Glue { spec, .. } => {
             let glue = spec;
             let depends = match line.glue_sign {
                 Sign::Stretching => {

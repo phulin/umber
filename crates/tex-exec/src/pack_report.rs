@@ -404,39 +404,39 @@ fn append_short_display_cursor<G>(
 ) {
     let end = end.min(nodes.len());
     let mut index = start.min(end);
-    while let Some(node) = (index < end).then(|| nodes.owned_node(index)).flatten() {
+    while let Some(node) = (index < end).then(|| nodes.get(index)).flatten() {
         index += 1;
         match node {
-            Node::Char { font, ch, .. } => {
-                append_short_char(stores, *font, *ch, font_in_short_display, out);
+            tex_state::node_arena::NodeView::Char { font, ch, .. } => {
+                append_short_char(stores, font, ch, font_in_short_display, out);
             }
-            Node::Lig { orig, font, .. } => {
+            tex_state::node_arena::NodeView::Lig { orig, font, .. } => {
                 // §175 recurses into `lig_ptr`, the original characters the
                 // ligature replaced, not the ligature character itself.
                 for original in orig {
-                    append_short_char(stores, *font, *original, font_in_short_display, out);
+                    append_short_char(stores, font, *original, font_in_short_display, out);
                 }
             }
-            Node::HList(_)
-            | Node::VList(_)
-            | Node::Unset(_)
-            | Node::Ins { .. }
-            | Node::Whatsit(_)
-            | Node::Mark { .. }
-            | Node::Adjust(_) => out.push_str("[]"),
-            Node::Rule { .. } => out.push('|'),
-            Node::Glue { spec, .. } => {
-                if *spec != tex_state::glue::GlueSpec::ZERO {
+            tex_state::node_arena::NodeView::HList(_)
+            | tex_state::node_arena::NodeView::VList(_)
+            | tex_state::node_arena::NodeView::Unset(_)
+            | tex_state::node_arena::NodeView::Ins { .. }
+            | tex_state::node_arena::NodeView::Whatsit(_)
+            | tex_state::node_arena::NodeView::Mark { .. }
+            | tex_state::node_arena::NodeView::Adjust(_) => out.push_str("[]"),
+            tex_state::node_arena::NodeView::Rule { .. } => out.push('|'),
+            tex_state::node_arena::NodeView::Glue { spec, .. } => {
+                if spec != tex_state::glue::GlueSpec::ZERO {
                     out.push(' ');
                 }
             }
-            Node::MathOn(_)
-            | Node::MathOff(_)
-            | Node::Direction(
+            tex_state::node_arena::NodeView::MathOn(_)
+            | tex_state::node_arena::NodeView::MathOff(_)
+            | tex_state::node_arena::NodeView::Direction(
                 tex_state::node::Direction::BeginM | tex_state::node::Direction::EndM,
             ) => out.push('$'),
-            Node::Direction(_) => out.push_str("[]"),
-            Node::Disc {
+            tex_state::node_arena::NodeView::Direction(_) => out.push_str("[]"),
+            tex_state::node_arena::NodeView::Disc {
                 pre,
                 post,
                 replace,
@@ -445,14 +445,14 @@ fn append_short_display_cursor<G>(
             } => {
                 append_short_display(
                     stores,
-                    *pre,
+                    pre,
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
                 );
                 append_short_display(
                     stores,
-                    *post,
+                    post,
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
@@ -464,10 +464,10 @@ fn append_short_display_cursor<G>(
                 // immutable replacement side list.
                 let replacement_count = match disc_layout {
                     DiscReplacementLayout::DetachedProjection => stores
-                        .page_node_list(*replace)
+                        .page_node_list(replace)
                         .expect("discretionary replacement belongs to the live page arena")
                         .len(),
-                    DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),
+                    DiscReplacementLayout::FrozenList => usize::from(physical_replace_count),
                 };
                 index = index.saturating_add(replacement_count).min(end);
             }

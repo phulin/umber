@@ -1,6 +1,7 @@
 use tex_state::glue::Order;
+#[cfg(test)]
 use tex_state::node::Node;
-use tex_state::node_arena::NodeCursor;
+use tex_state::node_arena::{NodeCursor, NodeView};
 use tex_state::page::{AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY};
 use tex_state::scaled::Scaled;
 
@@ -38,13 +39,13 @@ pub fn vert_break(
     let mut prev_node = nodes.first();
 
     for index in 0..=nodes.len() {
-        let node = nodes.owned_node(index);
+        let node = nodes.get(index);
         let mut update_spacing = false;
         let mut penalty = None;
 
         match node {
             None => penalty = Some(EJECT_PENALTY),
-            Some(Node::HList(box_node)) | Some(Node::VList(box_node)) => {
+            Some(NodeView::HList(box_node)) | Some(NodeView::VList(box_node)) => {
                 // Vertical breaking accounts only for the box's vertical
                 // extent. Perpendicular width and shift belong to packing and
                 // must not introduce an otherwise impossible overflow here.
@@ -56,7 +57,7 @@ pub fn vert_break(
                 })
                 .ok_or(VerticalBreakError::ArithmeticOverflow)?;
             }
-            Some(Node::Rule { height, depth, .. }) => {
+            Some(NodeView::Rule { height, depth, .. }) => {
                 acc.try_observe_vertical(MetricEvent::Rule {
                     width: Scaled::from_raw(0),
                     height: height.unwrap_or_else(|| Scaled::from_raw(0)),
@@ -64,41 +65,41 @@ pub fn vert_break(
                 })
                 .ok_or(VerticalBreakError::ArithmeticOverflow)?;
             }
-            Some(Node::Glue { .. }) => {
-                if prev_node.is_some_and(precedes_break) {
+            Some(NodeView::Glue { .. }) => {
+                if prev_node.as_ref().is_some_and(precedes_break) {
                     penalty = Some(0);
                     update_spacing = true;
                 } else {
-                    update_spacing_node(state, node, &mut acc, index)?;
+                    update_spacing_node(state, node.clone(), &mut acc, index)?;
                 }
             }
-            Some(Node::Kern { .. } | Node::MarginKern { .. }) => {
-                if matches!(nodes.owned_node(index + 1), Some(Node::Glue { .. })) {
+            Some(NodeView::Kern { .. } | NodeView::MarginKern { .. }) => {
+                if matches!(nodes.get(index + 1), Some(NodeView::Glue { .. })) {
                     penalty = Some(0);
                     update_spacing = true;
                 } else {
-                    update_spacing_node(state, node, &mut acc, index)?;
+                    update_spacing_node(state, node.clone(), &mut acc, index)?;
                 }
             }
-            Some(Node::Penalty(value)) => penalty = Some(*value),
+            Some(NodeView::Penalty(value)) => penalty = Some(value),
             Some(
-                Node::Whatsit(_)
-                | Node::Mark { .. }
-                | Node::Ins { .. }
-                | Node::Char { .. }
-                | Node::Lig { .. }
-                | Node::Unset(_)
-                | Node::Disc { .. }
-                | Node::MathOn(_)
-                | Node::MathOff(_)
-                | Node::Direction(_)
-                | Node::MathNoad(_)
-                | Node::FractionNoad(_)
-                | Node::MathStyle(_)
-                | Node::MathChoice(_)
-                | Node::MathList(_)
-                | Node::Nonscript
-                | Node::Adjust(_),
+                NodeView::Whatsit(_)
+                | NodeView::Mark { .. }
+                | NodeView::Ins { .. }
+                | NodeView::Char { .. }
+                | NodeView::Lig { .. }
+                | NodeView::Unset(_)
+                | NodeView::Disc { .. }
+                | NodeView::MathOn(_)
+                | NodeView::MathOff(_)
+                | NodeView::Direction(_)
+                | NodeView::MathNoad(_)
+                | NodeView::FractionNoad(_)
+                | NodeView::MathStyle(_)
+                | NodeView::MathChoice(_)
+                | NodeView::MathList(_)
+                | NodeView::Nonscript
+                | NodeView::Adjust(_),
             ) => {}
         }
 
@@ -120,7 +121,7 @@ pub fn vert_break(
             if cost <= least_cost {
                 least_cost = cost;
                 best = VerticalBreak {
-                    break_index: node.map(|_| index),
+                    break_index: node.as_ref().map(|_| index),
                     best_height_plus_depth: add(acc.height, acc.depth)?,
                     infinite_shrink_glue: Vec::new(),
                 };
@@ -131,7 +132,7 @@ pub fn vert_break(
         }
 
         if update_spacing {
-            update_spacing_node(state, node, &mut acc, index)?;
+            update_spacing_node(state, node.clone(), &mut acc, index)?;
         }
 
         if acc.depth > max_depth {
@@ -181,14 +182,13 @@ impl std::ops::DerefMut for VerticalBreakAccum {
 
 fn update_spacing_node(
     _state: &impl TypesetState,
-    node: Option<&Node>,
+    node: Option<NodeView<'_>>,
     acc: &mut VerticalBreakAccum,
     index: usize,
 ) -> Result<(), VerticalBreakError> {
     let width = match node {
-        Some(Node::Kern { amount, .. }) => *amount,
-        Some(Node::Glue { spec, .. }) => {
-            let spec = *spec;
+        Some(NodeView::Kern { amount, .. }) => amount,
+        Some(NodeView::Glue { spec, .. }) => {
             let order = spec.stretch_order as usize;
             acc.stretch[order] = add(acc.stretch[order], spec.stretch)?;
             acc.shrink = add(acc.shrink, spec.shrink)?;
@@ -232,14 +232,14 @@ fn vertical_break_badness(
     }
 }
 
-fn precedes_break(node: &Node) -> bool {
+fn precedes_break(node: &NodeView<'_>) -> bool {
     !matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern { .. }
-            | Node::Penalty(_)
-            | Node::MathOn(_)
-            | Node::MathOff(_)
+        NodeView::Glue { .. }
+            | NodeView::Kern { .. }
+            | NodeView::Penalty(_)
+            | NodeView::MathOn(_)
+            | NodeView::MathOff(_)
     )
 }
 

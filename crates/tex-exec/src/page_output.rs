@@ -160,7 +160,7 @@ pub(crate) fn prepare_box255<G>(
             box_max_depth: page_max_depth,
         },
     );
-    let box255 = stores.publish_page_nodes(vec![Node::VList(packed.node)]);
+    let box255 = stores.construct_page_node(|destination| destination.vlist(packed.node));
     stores
         .assign_page_box_global(255, box255)
         .expect("output box stays in admitted page storage");
@@ -189,7 +189,7 @@ fn update_page_marks_at_fire_up<G>(
         .nodes()
         .iter()
         .filter_map(|node| match node {
-            Node::Mark { class, tokens } => Some((*class, *tokens)),
+            tex_state::NodeView::Mark { class, tokens } => Some((class, *tokens)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -316,9 +316,9 @@ fn distribute_insertions<G>(
             .page_node_list(page_nodes)
             .expect("fire-up page belongs to the live arena")
             .nodes()
-            .owned_node(index)
+            .get(index)
         {
-            Some(Node::Ins {
+            Some(tex_state::node_arena::NodeView::Ins {
                 class,
                 size,
                 split_top_skip,
@@ -326,12 +326,12 @@ fn distribute_insertions<G>(
                 floating_penalty,
                 content,
             }) => Some((
-                *class,
-                *size,
-                *split_top_skip,
-                *split_max_depth,
-                *floating_penalty,
-                *content,
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
             )),
             _ => None,
         };
@@ -424,8 +424,10 @@ fn insertion_box_nodes<G>(
         return Ok(tex_state::node_arena::PageListId::empty());
     };
     match node {
-        Node::VList(box_node) => Ok(box_node.children),
-        Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
+        tex_state::node_arena::NodeView::VList(box_node) => Ok(box_node.children),
+        tex_state::node_arena::NodeView::HList(_) => {
+            unreachable!("ensure_insertion_vbox rejected the hbox")
+        }
         _ => Ok(tex_state::node_arena::PageListId::empty()),
     }
 }
@@ -495,7 +497,7 @@ fn package_insertion_box<G>(
         diagnostic_context,
         nodes,
     );
-    let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
+    let boxed = stores.construct_page_node(|destination| destination.vlist(packed));
     stores
         .assign_page_box_global(class, boxed)
         .expect("insertion box stays in admitted page storage");
@@ -524,12 +526,15 @@ pub(crate) fn prepend_output_heldover<G>(
                     .expect("heldover list belongs to the live page arena")
                     .nodes()
                     .first(),
-                Some(Node::Penalty(value)) if *value == INF_PENALTY
+                Some(tex_state::node_arena::NodeView::Penalty(value)) if value == INF_PENALTY
             )
             && stores.page_contributions().is_empty();
         let contribution_is_rewritten_break = heldover.is_empty()
             && stores.page_contributions().len() == 1
-            && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY);
+            && matches!(
+                stores.page_contribution_front(),
+                Some(tex_state::NodeView::Penalty(value)) if value == INF_PENALTY
+            );
         if heldover_is_rewritten_break {
             heldover = tex_state::node_arena::PageListId::empty();
         } else if contribution_is_rewritten_break
@@ -555,11 +560,12 @@ fn output_penalty_and_rewrite_break<G>(
         .nodes()
         .first()
     {
-        Some(Node::Penalty(value)) => Some(*value),
+        Some(tex_state::node_arena::NodeView::Penalty(value)) => Some(value),
         _ => None,
     };
     if let Some(penalty) = first_penalty {
-        let replacement = stores.publish_page_nodes(vec![Node::Penalty(INF_PENALTY)]);
+        let replacement =
+            stores.construct_page_node(|destination| destination.penalty(INF_PENALTY));
         let mut slices = Vec::new();
         let tail = stores.slice_page_node_sequence(after_break, 1..after_break.len(), &mut slices);
         return (
@@ -569,12 +575,13 @@ fn output_penalty_and_rewrite_break<G>(
     }
 
     if fire_up.trigger() == fire_up.best_break()
-        && let Some(Node::Penalty(penalty)) = stores.page_contribution_front().cloned()
+        && let Some(tex_state::NodeView::Penalty(penalty)) = stores.page_contribution_front()
     {
         if let Some(carrier) = stores.pop_page_contribution_front() {
             stores.discard_page_node(carrier);
         }
-        let replacement = stores.publish_page_nodes(vec![Node::Penalty(INF_PENALTY)]);
+        let replacement =
+            stores.construct_page_node(|destination| destination.penalty(INF_PENALTY));
         return (
             penalty,
             stores.compose_page_node_sequences(&[after_break, replacement]),
@@ -694,8 +701,14 @@ pub(crate) fn take_box255_node<G>(
         .expect("consumed box 255 belongs to the live page region")
         .nodes()
         .first()
-        .cloned()
-        .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)));
+        .filter(|node| {
+            matches!(
+                node,
+                tex_state::node_arena::NodeView::HList(_)
+                    | tex_state::node_arena::NodeView::VList(_)
+            )
+        })
+        .map(|node| node.to_owned_with(std::convert::identity));
     let Some(root) = root else {
         return Err(ExecError::MissingToken { context: "box" });
     };

@@ -58,7 +58,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
             .expect("display children belong to the page arena")
             .nodes()
             .iter()
-            .cloned()
+            .map(|node| node.to_owned_with(std::convert::identity))
             .collect::<Vec<_>>();
         assert!(matches!(
             nodes.as_slice(),
@@ -128,10 +128,14 @@ fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
         let prototype_view = stores
             .page_node_list(children)
             .expect("prototype children belong to the page arena");
-        let left_address =
-            std::ptr::from_ref(prototype_view.owned_node(0).expect("left skip exists"));
-        let right_address =
-            std::ptr::from_ref(prototype_view.owned_node(1).expect("right skip exists"));
+        let left_address = prototype_view
+            .nodes()
+            .testing_node_address(0)
+            .expect("left skip exists");
+        let right_address = prototype_view
+            .nodes()
+            .testing_node_address(1)
+            .expect("right skip exists");
         let before = stores.page_node_arena_counters();
 
         let reused = package_directed_display_line(
@@ -158,11 +162,17 @@ fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
             .page_node_list(reused.children)
             .expect("directed display belongs to the page arena");
         assert_eq!(
-            std::ptr::from_ref(reused.owned_node(0).expect("left skip retained")),
+            reused
+                .nodes()
+                .testing_node_address(0)
+                .expect("left skip retained"),
             left_address
         );
         assert_ne!(
-            std::ptr::from_ref(reused.owned_node(6).expect("right skip retained")),
+            reused
+                .nodes()
+                .testing_node_address(6)
+                .expect("right skip retained"),
             right_address
         );
     });

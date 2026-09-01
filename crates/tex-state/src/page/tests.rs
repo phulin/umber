@@ -54,7 +54,7 @@ fn list_nodes(arena: &PageMaterialArena, root: impl super::PageListRoot) -> Vec<
         .node_cursor(root.list_id())
         .expect("test page root remains live")
         .iter()
-        .cloned()
+        .map(|node| node.to_owned_with(std::convert::identity))
         .collect()
 }
 
@@ -76,7 +76,9 @@ fn page_buffers_mutate_directly_without_cow_roots() {
 
     assert_eq!(page.contribution(&arena).to_vec(), [kern(1), kern(3)]);
     assert_eq!(
-        page.current_page(&arena).cloned().collect::<Vec<_>>(),
+        page.current_page(&arena)
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>(),
         [kern(2), kern(4)]
     );
 }
@@ -200,7 +202,7 @@ fn hash_page(page: &PageBuilderState, arena: &PageMaterialArena) -> u64 {
         |nodes, projection| {
             projection.usize(nodes.len());
             for node in nodes.iter() {
-                let Node::Kern { amount, .. } = node else {
+                let crate::NodeView::Kern { amount, .. } = node else {
                     panic!("hash fixture contains only kerns");
                 };
                 projection.i32(amount.raw());
@@ -301,7 +303,9 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     let tail = page.begin_checkpoint_candidate(checkpoint);
     assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
     assert_eq!(
-        page.current_page(&arena).cloned().collect::<Vec<_>>(),
+        page.current_page(&arena)
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>(),
         [kern(-2)]
     );
     assert_eq!(
@@ -356,7 +360,9 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
 
     assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
     assert_eq!(
-        page.current_page(&arena).cloned().collect::<Vec<_>>(),
+        page.current_page(&arena)
+            .map(|node| node.to_owned_with(std::convert::identity))
+            .collect::<Vec<_>>(),
         [kern(-2)]
     );
     let page_discards = page.take_page_discards(&arena);

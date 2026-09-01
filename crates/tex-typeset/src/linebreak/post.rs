@@ -31,6 +31,9 @@ pub struct LineMaterializer<'a> {
     par_fill_override: Option<GlueSpec>,
 }
 
+// Boxing the arena cursor would add one allocation to every retained-range
+// paragraph solely to shrink this short-lived control enum.
+#[allow(clippy::large_enum_variant)]
 enum ChannelNodes<'a> {
     Owned(std::vec::IntoIter<Node>),
     Borrowed(core::slice::Iter<'a, Node>),
@@ -315,7 +318,9 @@ impl ChannelNodes<'_> {
         match self {
             Self::Owned(nodes) => nodes.next(),
             Self::Borrowed(nodes) => nodes.next().cloned(),
-            Self::Arena(nodes) => nodes.next().cloned(),
+            Self::Arena(nodes) => nodes
+                .next()
+                .map(|node| node.to_owned_with(std::convert::identity)),
             #[cfg(test)]
             Self::ArenaId {
                 sequence,
@@ -328,9 +333,9 @@ impl ChannelNodes<'_> {
                 let node = _state
                     .page_node_sequence(*sequence)
                     .expect("paragraph sequence remains live during materialization")
-                    .owned_node(*cursor)
+                    .get(*cursor)
                     .expect("arena-id cursor remains in bounds")
-                    .clone();
+                    .to_owned_with(std::convert::identity);
                 *cursor += 1;
                 *remaining -= 1;
                 Some(node)
@@ -338,11 +343,14 @@ impl ChannelNodes<'_> {
         }
     }
 
-    fn first<'state, S: TypesetState>(&'state mut self, _state: &'state S) -> Option<&'state Node> {
+    fn first<'state, S: TypesetState>(
+        &'state mut self,
+        _state: &'state S,
+    ) -> Option<tex_state::node_arena::NodeView<'state>> {
         match self {
-            Self::Owned(nodes) => nodes.as_slice().first(),
-            Self::Borrowed(nodes) => nodes.as_slice().first(),
-            Self::Arena(nodes) => nodes.peek().copied(),
+            Self::Owned(nodes) => nodes.as_slice().first().map(Into::into),
+            Self::Borrowed(nodes) => nodes.as_slice().first().map(Into::into),
+            Self::Arena(nodes) => nodes.peek().cloned(),
             #[cfg(test)]
             Self::ArenaId {
                 sequence,
@@ -353,7 +361,7 @@ impl ChannelNodes<'_> {
                     _state
                         .page_node_sequence(*sequence)
                         .expect("paragraph sequence remains live during materialization")
-                        .owned_node(*cursor)
+                        .get(*cursor)
                 })
                 .flatten(),
         }
@@ -539,9 +547,19 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace: *empty_list,
                     physical_replace_count: 0,
                 });
-                out.extend(state.page_nodes(pre).iter().cloned());
+                out.extend(
+                    state
+                        .page_nodes(pre)
+                        .iter()
+                        .map(|node| node.to_owned_with(std::convert::identity)),
+                );
                 out_lineages.extend(frozen_high_cell_lineages(state, &pre, FrozenListRole::Pre));
-                post.extend(state.page_nodes(post_list).iter().cloned());
+                post.extend(
+                    state
+                        .page_nodes(post_list)
+                        .iter()
+                        .map(|node| node.to_owned_with(std::convert::identity)),
+                );
                 post_lineages.extend(frozen_high_cell_lineages(
                     state,
                     &post_list,
@@ -562,7 +580,12 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace,
                     physical_replace_count,
                 });
-                out.extend(state.page_nodes(replace).iter().cloned());
+                out.extend(
+                    state
+                        .page_nodes(replace)
+                        .iter()
+                        .map(|node| node.to_owned_with(std::convert::identity)),
+                );
                 out_lineages.extend(frozen_high_cell_lineages(
                     state,
                     &replace,
@@ -604,8 +627,8 @@ fn frozen_high_cell_lineages<S: TypesetState>(
         .enumerate()
         .flat_map(|(row, node)| {
             let count = match node {
-                Node::Char { .. } => 1,
-                Node::Lig { orig, .. } => orig.len(),
+                tex_state::node_arena::NodeView::Char { .. } => 1,
+                tex_state::node_arena::NodeView::Lig { orig, .. } => orig.len(),
                 _ => 0,
             };
             (0..count).map(move |unit| DirectHighCellLineage::Frozen {
@@ -665,16 +688,16 @@ fn penalty_array_value(values: &[i32], one_based_index: usize) -> Option<i32> {
     (!values.is_empty()).then(|| values[one_based_index.min(values.len()) - 1])
 }
 
-fn is_discardable(node: &Node) -> bool {
+fn is_discardable(node: tex_state::node_arena::NodeView<'_>) -> bool {
     matches!(
         node,
-        Node::Glue { .. }
-            | Node::Kern {
+        tex_state::node_arena::NodeView::Glue { .. }
+            | tex_state::node_arena::NodeView::Kern {
                 kind: KernKind::Explicit | KernKind::Mu,
                 ..
             }
-            | Node::Penalty(_)
-            | Node::MathOn(_)
-            | Node::MathOff(_)
+            | tex_state::node_arena::NodeView::Penalty(_)
+            | tex_state::node_arena::NodeView::MathOn(_)
+            | tex_state::node_arena::NodeView::MathOff(_)
     )
 }
