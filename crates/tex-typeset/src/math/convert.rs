@@ -322,14 +322,11 @@ fn first_pass<S: MathTypesetState>(
             Node::MathChoice(_) => unreachable!("math choices are expanded by the iterative view"),
             Node::Glue { spec, kind, leader } => {
                 // AppG rule 2
-                if matches!(kind, GlueKind::NonScript)
+                let suppress_next = matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
                     && view
                         .node(state, index + 1)
-                        .is_some_and(|next| matches!(next, Node::Glue { .. } | Node::Kern { .. }))
-                {
-                    index += 1;
-                }
+                        .is_some_and(|next| matches!(next, Node::Glue { .. } | Node::Kern { .. }));
                 if matches!(kind, tex_state::node::GlueKind::MuSkip) {
                     // TeX82 §732 converts both parts of an unconditional
                     // math-glue node: `math_glue` rewrites its specification
@@ -350,6 +347,13 @@ fn first_pass<S: MathTypesetState>(
                             leader: *leader,
                         },
                     }));
+                }
+                // TeX82 §732 keeps the conditional-glue marker and removes
+                // its glue/kern successor. Advance only after retaining the
+                // marker's own source coordinate; otherwise lowering revives
+                // the removed successor through that borrowed coordinate.
+                if suppress_next {
+                    index += 1;
                 }
             }
             Node::Kern { amount, kind } => {

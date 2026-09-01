@@ -176,6 +176,40 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
 }
 
 #[test]
+fn nonscript_suppression_retains_marker_source_not_removed_node() {
+    // TeX82 §732 removes the glue/kern node following conditional math
+    // glue in script sizes, while the conditional-glue marker itself remains.
+    // The retained native coordinate must therefore still name the marker.
+    let mut stores = setup_universe();
+    let marker = GlueSpec::ZERO;
+    let input = stores.publish_page_nodes(&[
+        Node::Glue {
+            spec: marker,
+            kind: GlueKind::NonScript,
+            leader: None,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(-3 * Scaled::UNITY),
+            kind: KernKind::Mu,
+        },
+    ]);
+    let params = MathParams::read(&stores);
+
+    let layout = mlist_to_hlist(&stores, input, Style::SCRIPT, false, &params);
+    let nodes = root_nodes(&layout);
+
+    assert_eq!(nodes.len(), 1);
+    assert!(matches!(
+        nodes[0],
+        MathNode::NativeSource {
+            list,
+            index: 0,
+            evidence: NativeNodeEvidence::Glue(spec),
+        } if *list == input && *spec == marker
+    ));
+}
+
+#[test]
 fn middle_and_right_restore_base_style_before_nested_math_choices() {
     // e-TeX [36.727]: unlike a left noad, every middle/right noad resets
     // `cur_style` to the style supplied to `mlist_to_hlist`.
