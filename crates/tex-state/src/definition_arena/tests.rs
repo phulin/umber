@@ -51,6 +51,11 @@ fn checked_builder(
 fn definition_key_fits_the_coordinated_compact_boundary() {
     assert!(std::mem::size_of::<super::DefinitionId<()>>() <= 16);
     assert_eq!(std::mem::size_of::<super::DefinitionRegionCoordinate>(), 4);
+    assert_eq!(
+        std::mem::size_of::<super::DefinitionCheckpointLease<()>>(),
+        std::mem::size_of::<super::DefinitionRegionLease<()>>(),
+        "one current-region checkpoint pin has no stale multi-region container"
+    );
 }
 
 #[test]
@@ -356,6 +361,32 @@ fn one_checkpoint_child_lease_transitively_pins_and_releases_its_parent_chain() 
         assert_eq!(after.regions_reclaimed - before.regions_reclaimed, 2);
         assert!(arena.region(child.region()).is_none());
         assert!(arena.region(parent.region()).is_none());
+    });
+}
+
+#[test]
+fn deep_checkpoint_release_reclaims_the_parent_chain_iteratively() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let depth = 16_384_u64;
+        for _ in 0..depth {
+            arena.begin_group().expect("deep checkpoint group");
+        }
+        let checkpoint = arena.checkpoint_lease();
+        for _ in 0..depth {
+            arena.end_group();
+        }
+
+        let before = arena.retirement_counters();
+        drop(checkpoint);
+        let after = arena.retirement_counters();
+        assert_eq!(after.regions_reclaimed - before.regions_reclaimed, depth);
+        assert_eq!(
+            after.lease_release_region_inspections - before.lease_release_region_inspections,
+            1,
+            "one final checkpoint release drains only its structural ancestor chain"
+        );
+        assert!(arena.local_slots.is_empty());
     });
 }
 

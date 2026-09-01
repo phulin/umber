@@ -49,9 +49,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   meanings before directly popping its one local region; a parent region is
   reactivated through the child's exact parent key without an active-prefix
   stack, continuation segment, or history traversal. One current-region
-  checkpoint lease transitively pins the structural parent chain. Active macro
+  checkpoint lease is represented by that one scalar region pin and
+  transitively pins the structural parent chain. Active macro
   input rows may hold coarse local-region leases whose
-  final release directly reclaims that exact retired payload. Stable 64-slot
+  final release directly reclaims that exact retired payload. Structural
+  parent-pin release drains iteratively, so a maximally deep retired ancestry
+  cannot recurse on the Rust stack. Stable 64-slot
   chunks supply direct reusable group slots without a per-group shell
   allocation; address incarnations reject stale keys after exact reuse.
   Candidate settlement resolves and visits only the exact first-write region

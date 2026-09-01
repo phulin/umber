@@ -684,17 +684,6 @@ impl LocalDefinitionSlots {
     }
 
     fn release_inner(&self, key: u32, _count_inspection: bool) {
-        let reclaim = {
-            let mut store = self.store.borrow_mut();
-            let region = store
-                .region_mut(key)
-                .expect("definition lease names its live slot incarnation");
-            region.leases = region
-                .leases
-                .checked_sub(1)
-                .expect("definition region lease count underflow");
-            region.leases == 0 && region.retired
-        };
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
         if _count_inspection {
             self.counters.lease_release_region_inspections.set(
@@ -704,8 +693,26 @@ impl LocalDefinitionSlots {
                     .saturating_add(1),
             );
         }
-        if reclaim {
-            self.reclaim(key);
+        let mut current = key;
+        loop {
+            let reclaim = {
+                let mut store = self.store.borrow_mut();
+                let region = store
+                    .region_mut(current)
+                    .expect("definition lease names its live slot incarnation");
+                region.leases = region
+                    .leases
+                    .checked_sub(1)
+                    .expect("definition region lease count underflow");
+                region.leases == 0 && region.retired
+            };
+            if !reclaim {
+                break;
+            }
+            current = self.reclaim(current);
+            if current == 0 {
+                break;
+            }
         }
     }
 
@@ -719,7 +726,10 @@ impl LocalDefinitionSlots {
             region.leases == 0
         };
         if reclaim {
-            self.reclaim(key);
+            let parent = self.reclaim(key);
+            if parent != 0 {
+                self.release_inner(parent, false);
+            }
         }
     }
 
@@ -741,7 +751,7 @@ impl LocalDefinitionSlots {
         );
     }
 
-    fn reclaim(&self, key: u32) {
+    fn reclaim(&self, key: u32) -> u32 {
         let (address, incarnation) =
             local_region_address(key).expect("local definition key is encoded");
         let mut store = self.store.borrow_mut();
@@ -750,7 +760,7 @@ impl LocalDefinitionSlots {
             .expect("reclaimed definition slot exists");
         assert_eq!(slot.incarnation, incarnation, "definition slot is current");
         let Some(mut region) = slot.region.take() else {
-            return;
+            return 0;
         };
         let parent = region.data.parent;
         #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -778,9 +788,7 @@ impl LocalDefinitionSlots {
                     .saturating_add(promotions),
             );
         }
-        if parent != 0 {
-            self.release_inner(parent, false);
-        }
+        parent
     }
 
     fn row_count(&self) -> usize {
@@ -877,13 +885,13 @@ struct LocalDefinitionRegionLease {
 }
 
 pub(crate) struct DefinitionCheckpointLease<G> {
-    regions: smallvec::SmallVec<[DefinitionRegionLease<G>; 8]>,
+    region: DefinitionRegionLease<G>,
 }
 
 impl<G> Clone for DefinitionCheckpointLease<G> {
     fn clone(&self) -> Self {
         Self {
-            regions: self.regions.clone(),
+            region: self.region.clone(),
         }
     }
 }
@@ -1687,7 +1695,6 @@ impl<G> DefinitionArena<G> {
     }
 
     pub(crate) fn checkpoint_lease(&self) -> DefinitionCheckpointLease<G> {
-        let mut regions = smallvec::SmallVec::new();
         if self.active_local != 0 {
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             self.retirement_counters.checkpoint_region_inspections.set(
@@ -1696,19 +1703,10 @@ impl<G> DefinitionArena<G> {
                     .get()
                     .saturating_add(1),
             );
-            assert!(
-                self.local_slots.acquire(self.active_local),
-                "active checkpoint definition region exists"
-            );
-            regions.push(DefinitionRegionLease {
-                region: Some(LocalDefinitionRegionLease {
-                    slots: Rc::clone(&self.local_slots),
-                    key: self.active_local,
-                }),
-                _brand: PhantomData,
-            });
         }
-        DefinitionCheckpointLease { regions }
+        DefinitionCheckpointLease {
+            region: self.lease_active_region(self.active_local),
+        }
     }
 
     pub(crate) fn begin_build(

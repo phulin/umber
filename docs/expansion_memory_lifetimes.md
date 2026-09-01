@@ -297,12 +297,14 @@ stores its exact parent key. Reclaimed addresses are reused through an
 intrusive exact free-slot chain, while the key's incarnation rejects an
 ABA-stale definition coordinate. Nesting leaves the parent region intact, and
 `end_group` follows the child's parent key and retires only that child. Each
-child structurally pins its parent until exact child reclamation, so a single
-current-region checkpoint lease pins the whole ancestry without walking it.
+child structurally pins its parent until exact child reclamation, so one scalar
+current-region checkpoint lease pins the whole ancestry without walking it or
+retaining a stale region collection.
 An otherwise unleased child drops immediately. A leased child retains its
 payload until the final coarse input/checkpoint lease drops, and that release
-clears and re-enqueues the exact retired slot without visiting any peer or
-accumulated history. Slot chunks are coarse generation high-water capacity;
+iteratively clears and re-enqueues the exact retired child and any now-unpinned
+retired ancestors without visiting any peer, accumulated history, or the Rust
+call stack. Slot chunks are coarse generation high-water capacity;
 entering a group does not allocate an individual region shell. Promotion
 mappings live inside their source local region and leave with it.
 

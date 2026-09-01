@@ -315,8 +315,11 @@ view interface:
   alias the new occupant. Neither group transition searches local-region
   history. A child structurally pins its parent until the child itself is
   reclaimed. Consequently one lease of the current region pins the complete
-  checkpoint ancestry in constant work; final child reclamation releases that
-  one exact parent pin.
+  checkpoint ancestry in constant work; the checkpoint owner stores that one
+  scalar lease rather than a region container. Final child reclamation releases
+  that one exact parent pin. A final release drains a reclaimable retired
+  ancestry iteratively, so maximum supported group depth does not become Rust
+  call-stack depth.
 
 `DefinitionId<G>` is only a stable key. Its region and row locate one immutable
 header plus the contiguous `[parameter][replacement]` word span; its identity
