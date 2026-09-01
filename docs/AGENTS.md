@@ -122,6 +122,12 @@ and durable regions, TeX move/copy transitions, two-lineage suffix settlement,
 held-over evacuation, and the static prohibition on naked owning list
 coordinates. It supersedes page-batch dependency/refcount designs.
 
+`fork_arena_dense_prefix_emplacement.md` is the approval-ready proposed
+physical-storage design below that ownership contract. It separates semantic
+lineages from dense initialized-prefix pages, fixes the smallest isolated
+unsafe surface, and defines the copy/allocation and panic/drop gates required
+before production adoption.
+
 `expansion_memory_lifetimes.md` maps that end-state contract onto the current
 expansion, scanner, input, suspension, incremental-candidate, and format code.
 It also records the source-audited retention classes and verified migration
