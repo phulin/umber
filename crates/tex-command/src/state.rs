@@ -18,7 +18,6 @@ use crate::input::{
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
-use crate::macro_call::ParameterState;
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
     AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState,
@@ -61,7 +60,6 @@ pub struct CommandStateRoots<G> {
     /// of portable format identity.
     pub(crate) engine_semantics: CommandEngineSemantics,
     pub(crate) input: InputState<G>,
-    pub(crate) parameters: ParameterState<G>,
     pub(crate) scanner: ScannerState,
     pub(crate) conditions: ConditionStack,
     pub(crate) alignment: AlignmentDeliveryState<G>,
@@ -351,7 +349,6 @@ impl<G> Default for CommandStateRoots<G> {
             reachable_state_identity_enabled: false,
             engine_semantics: CommandEngineSemantics::default(),
             input: InputState::default(),
-            parameters: ParameterState::default(),
             scanner: ScannerState::default(),
             conditions: ConditionStack::default(),
             alignment: AlignmentDeliveryState::default(),
@@ -835,6 +832,7 @@ impl<G> CommandState<G> {
                     ReplayTrace::Stored(_) => "stored-token-list",
                     ReplayTrace::Transient(_) => "transient-token-list",
                 },
+                InputLevel::MacroBody(_) => "macro-body",
                 InputLevel::MacroArgument(_) => "macro-argument",
             })
             .collect();
@@ -1049,7 +1047,6 @@ impl<G> CommandState<G> {
         let mut counters = self.timeline.packed_journal_counters();
         for stack in [
             self.input.levels.counters(),
-            self.parameters.activations.counters(),
             self.conditions.frames.counters(),
             self.group_payloads.counters(),
             self.aftergroup_payloads.counters(),
@@ -1308,12 +1305,8 @@ impl<G> CommandState<G> {
     /// releases the command processor borrow.
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input.output_open_context(
-            stores,
-            &self.parameters,
-            self.attempt.arena(),
-            &self.scratch,
-        )
+        self.input
+            .output_open_context(stores, self.attempt.arena(), &self.scratch)
     }
 
     /// Captures the allocation-free live-input coordinate used until a real
@@ -1369,12 +1362,8 @@ impl<G> CommandState<G> {
         &self,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
-        self.input.open_context_starts_with_print_ln(
-            stores,
-            &self.parameters,
-            self.attempt.arena(),
-            &self.scratch,
-        )
+        self.input
+            .open_context_starts_with_print_ln(stores, self.attempt.arena(), &self.scratch)
     }
 
     pub(crate) fn output_retiring_source_context(
@@ -1385,7 +1374,6 @@ impl<G> CommandState<G> {
         self.input.output_retiring_source_context(
             source,
             stores,
-            &self.parameters,
             self.attempt.arena(),
             &self.scratch,
         )
@@ -1399,12 +1387,8 @@ impl<G> CommandState<G> {
     /// exactly as it would after §1026's `end_token_list`.
     #[must_use]
     pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input.output_close_context(
-            stores,
-            &self.parameters,
-            self.attempt.arena(),
-            &self.scratch,
-        )
+        self.input
+            .output_close_context(stores, self.attempt.arena(), &self.scratch)
     }
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.
@@ -2365,7 +2349,10 @@ impl<G> CommandState<G> {
                 .source_level_slot(source)
                 .open_depths
                 .as_ref(),
-            InputLevel::Source(_) | InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
+            InputLevel::Source(_)
+            | InputLevel::Tokens(_)
+            | InputLevel::MacroBody(_)
+            | InputLevel::MacroArgument(_) => None,
         })
     }
 
@@ -2380,7 +2367,9 @@ impl<G> CommandState<G> {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(level) => Some(level),
-                InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
+                InputLevel::Tokens(_) | InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => {
+                    None
+                }
             })
             .is_some();
         if has_source {
@@ -2604,7 +2593,9 @@ impl<G> CommandState<G> {
                         self.input.levels.source_level_slot(source).name_class
                             == SourceNameClass::File,
                     ),
-                    InputLevel::Tokens(_) | InputLevel::MacroArgument(_) => None,
+                    InputLevel::Tokens(_)
+                    | InputLevel::MacroBody(_)
+                    | InputLevel::MacroArgument(_) => None,
                 })
                 == Some(true)
     }

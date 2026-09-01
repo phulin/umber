@@ -96,11 +96,6 @@ impl<G> CommandState<G> {
             .levels
             .mark()
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let parameters = self
-            .parameters
-            .activations
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
         let conditions = self
             .conditions
             .frames
@@ -126,7 +121,6 @@ impl<G> CommandState<G> {
             .ok_or(CommandSummaryError::TimelineCapacity)?;
         Ok(CommandRollbackCoordinates {
             input,
-            parameters,
             conditions,
             groups,
             aftergroups,
@@ -208,7 +202,6 @@ impl<G> CommandState<G> {
             .ok_or(CommandRestoreError::InvalidCursor)?;
         let attempt = owner.attempt;
         let matches = self.input.levels.validates(rollback.input)
-            && self.parameters.activations.validates(rollback.parameters)
             && self.conditions.frames.validates(rollback.conditions)
             && self.group_payloads.validates(rollback.groups)
             && self.aftergroup_payloads.validates(rollback.aftergroups)
@@ -235,7 +228,6 @@ impl<G> CommandState<G> {
 
     fn restore_logical_stacks(&mut self, rollback: CommandRollbackCoordinates) -> bool {
         self.input.levels.restore(rollback.input)
-            && self.parameters.activations.restore(rollback.parameters)
             && self.conditions.frames.restore(rollback.conditions)
             && self.group_payloads.restore(rollback.groups)
             && self.aftergroup_payloads.restore(rollback.aftergroups)
@@ -253,9 +245,6 @@ impl<G> CommandState<G> {
         self.input
             .levels
             .begin_checkpoint_candidate(restore.rollback.input);
-        self.parameters
-            .activations
-            .begin_checkpoint_candidate(restore.rollback.parameters);
         self.conditions
             .frames
             .begin_checkpoint_candidate(restore.rollback.conditions);
@@ -290,7 +279,6 @@ impl<G> CommandState<G> {
         self.aftergroup_payloads.reject_checkpoint_candidate();
         self.group_payloads.reject_checkpoint_candidate();
         self.conditions.frames.reject_checkpoint_candidate();
-        self.parameters.activations.reject_checkpoint_candidate();
         self.input.levels.reject_checkpoint_candidate();
         self.timeline.reject_checkpoint_candidate(&mut self.roots);
     }
@@ -299,7 +287,6 @@ impl<G> CommandState<G> {
     pub fn accept_checkpoint_candidate(&mut self) {
         self.timeline.accept_checkpoint_candidate();
         self.input.levels.accept_checkpoint_candidate();
-        self.parameters.activations.accept_checkpoint_candidate();
         self.conditions.frames.accept_checkpoint_candidate();
         self.group_payloads.accept_checkpoint_candidate();
         self.aftergroup_payloads.accept_checkpoint_candidate();
@@ -524,7 +511,6 @@ impl<G> CommandState<G> {
                 .release_prefix(rollback.input)
                 .ok_or(CommandRestoreError::InvalidCursor)?,
         );
-        release_stack_prefix!(self.parameters.activations, rollback.parameters);
         release_stack_prefix!(self.conditions.frames, rollback.conditions);
         release_stack_prefix!(self.group_payloads, rollback.groups);
         release_stack_prefix!(self.aftergroup_payloads, rollback.aftergroups);

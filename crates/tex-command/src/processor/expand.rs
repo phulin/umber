@@ -8,7 +8,7 @@ use crate::input::{
     InputLevel, InputLevelId, ResidentCommandInterception, ResidentCommandTransition,
     SourceNameClass,
 };
-use crate::macro_call::MacroArguments;
+use crate::macro_call::ArgumentSet;
 use crate::profile::CommandProfile;
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -968,7 +968,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         if cursor.identity() == identity =>
                                     {
                                         Some((
-                                            cursor.frame.position(),
+                                            cursor.frame.position() as u32,
                                             cursor.frame.source_context(),
                                         ))
                                     }
@@ -1806,12 +1806,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: tex_state::DefinitionId<G>,
         definition_region: tex_state::DefinitionRegionLease<G>,
         call_site: OriginId,
-        arguments: MacroArguments<G>,
+        arguments: Option<ArgumentSet<G>>,
         replacement_len: usize,
     ) -> InputLevelId {
-        let parent = self.command.parameters.parent_invocation();
         let invocation = call_site;
-        let _ = parent;
         self.command.push_macro_activation(
             name,
             definition,

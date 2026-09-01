@@ -568,25 +568,6 @@ impl<G> CurrentCommand<G> {
         self.meaning
     }
 
-    /// Moves the resident macro-definition owner after invocation settlement.
-    ///
-    /// The caller must complete every fallible matching, recovery, and input
-    /// conservation transition before consuming this owner. Until then the
-    /// command remains the exact retry and suspension owner.
-    pub(crate) fn take_settled_macro_definition(&mut self) -> Option<DefinitionId<G>> {
-        let meaning = std::mem::replace(
-            &mut self.meaning,
-            ResolvedMeaning::Static(Meaning::Undefined),
-        );
-        match meaning {
-            ResolvedMeaning::Macro { definition, .. } => Some(definition),
-            meaning => {
-                self.meaning = meaning;
-                None
-            }
-        }
-    }
-
     /// Returns the control-sequence identity, if this spelling resolves via
     /// a control-sequence meaning cell.
     #[must_use]

@@ -2,7 +2,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 #[cfg(feature = "profiling")]
-use crate::input::{InputLevel, MacroArgumentCursor, packed_token_frame};
+use crate::input::{InputLevel, MacroArgumentCursor};
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
@@ -1265,7 +1265,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .scratch
                 .finish_argument_collector(writer)
                 .expect("macro argument range");
-            let macro_frame = command
+            let argument_set = command
                 .scratch
                 .commit_macro_match(matching)
                 .expect("macro frame");
@@ -1281,20 +1281,17 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 macro_name,
                 definition,
                 definition_region,
-                crate::macro_call::MacroArguments::new(macro_frame),
+                Some(crate::macro_call::ArgumentSet::new(argument_set)),
                 OriginId::UNKNOWN,
                 operations,
             );
             let range = command
                 .scratch
-                .argument_range(macro_frame, 1)
+                .argument_range(argument_set, 1)
                 .expect("live macro frame")
                 .expect("macro argument");
             let identity = command.allocate_input_level_identity();
-            let behavior = TokenBehavior::Parameter;
-            let retirement = RetirementBehavior::Pop;
-            let trace = ReplayTrace::MacroParameter { slot: 1 };
-            let mut frame = packed_token_frame(identity, operations, &behavior, retirement, &trace);
+            let mut frame = crate::input::ResidentSpanCursor::new(identity, operations);
             frame.set_source_context(command.input.levels.current_source_context());
             command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor {
                 range,

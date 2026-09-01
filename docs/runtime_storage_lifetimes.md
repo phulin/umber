@@ -444,9 +444,9 @@ which matches the dense state it will execute. The packed-token resolver takes
 the actual caller-owned `CurrentCommand` target, performs one dense-row access,
 and lets that canonical row decode its compact definition key once into the
 final slot. `CurrentCommand` acquires no definition owner. A committed local
-macro activation obtains one coarse region lease in the macro input ownership
-row; format and revision-global activations store only the key. Parameter and
-replacement reads borrow the arena span directly. Admission acquires one guard
+macro body obtains one coarse region lease in its specialized input row;
+format and revision-global rows store only the key. Parameter and replacement
+reads borrow the arena span directly. Admission acquires one guard
 for the episode, not one lock or heap allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
@@ -468,11 +468,11 @@ or resource request stores the current-generation execution lease plus ids and
 integer cursors:
 
 ```rust
-struct MacroCursor<G> {
+struct MacroBodyCursor<G> {
     definition: DefinitionId<G>,
-    replacement_offset: u32,
-    frame: ScratchIndex<G, MacroFrameTag>,
-    argument_record: ScratchIndex<G, MacroArgumentRecordTag>,
+    definition_region: DefinitionRegionLease<G>,
+    arguments: Option<ArgumentSet<G>>,
+    frame: ResidentSpanCursor,
 }
 
 struct SuspendedExecution<G> {
@@ -482,10 +482,12 @@ struct SuspendedExecution<G> {
 }
 ```
 
-Resume moves or clones the already-owned definition/token-list handle and
-continues at the stored scalar cursor in the same scratch lanes. The
-continuation never contains a Rust reference into an arena, no runtime type is
-self-referential, and suspension never admits a second current generation.
+Resume retains the admitted input row and continues at its stored scalar
+cursor. A local-definition row retains the one direct region lease admitted at
+the push boundary; a format or revision-global row has no lifetime operation.
+The continuation never contains a Rust reference into an arena, no runtime
+type is self-referential, and suspension never admits a second current
+generation.
 
 ## Execution scratch and destination-directed construction
 
@@ -496,8 +498,9 @@ and survival patterns differ:
 
 ```rust
 struct ExecutionScratch<G> {
-    macro_frames: Vec<PackedMacroFrame<G>>,
-    macro_words: FixedChunkLifoLane<TracedTokenWord, 4096>,
+    argument_sets: Vec<PackedArgumentSet<G>>,
+    macro_words: FixedChunkLifoLane<TokenWord, 4096>,
+    macro_origins: ProvenanceChangeRuns,
     scanner_frames: Vec<PackedScannerFrame<G>>,
     scanner_words: FixedChunkForkLane<TracedTokenWord, 64>,
     scanner_builders: Vec<PackedScannerBuilder<G>>,
@@ -506,7 +509,7 @@ struct ExecutionScratch<G> {
 }
 
 struct ScratchCursors {
-    macro_frames: u32,
+    argument_sets: u32,
     macro_words: u32,
     scanner_frames: u32,
     scanner_words: u32,

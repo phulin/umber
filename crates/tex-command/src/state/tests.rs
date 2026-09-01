@@ -863,40 +863,19 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
 
 #[test]
 fn operation_rollback_restores_the_opening_macro_depth() {
-    crate::test_harness::with_universe(|universe| {
-        let definition = universe
-            .allocate_definition(&[], &[])
-            .expect("empty macro definition");
-        let name = universe
-            .intern("rollbackmacro")
-            .expect("macro name")
-            .symbol();
-        let mut state = CommandState::default();
-        let operation = state.begin_attempt_operation();
-        let matching = state.scratch.begin_macro_match().expect("macro match");
-        let frame = state
-            .scratch
-            .commit_macro_match(matching)
-            .expect("sealed empty frame");
-        let definition_region = universe
-            .command_context()
-            .expect("command context")
-            .definition_region_lease(definition);
-        state.parameters.push_activation(
-            name,
-            definition,
-            definition_region,
-            crate::macro_call::MacroArguments::new(frame),
-            OriginId::UNKNOWN,
-        );
-        assert_eq!(state.parameters.activations.len(), 1);
+    let mut state = CommandState::<()>::default();
+    let operation = state.begin_attempt_operation();
+    let matching = state.scratch.begin_macro_match().expect("macro match");
+    let _frame = state
+        .scratch
+        .commit_macro_match(matching)
+        .expect("sealed empty frame");
+    assert_eq!(state.scratch.frame_len(), 1);
 
-        state
-            .rollback_attempt_operation(operation)
-            .expect("rollback retires operation-local macro frames");
-        assert!(state.parameters.activations.is_empty());
-        assert!(state.scratch.is_quiescent());
-    });
+    state
+        .rollback_attempt_operation(operation)
+        .expect("rollback retires operation-local macro frames");
+    assert!(state.scratch.is_quiescent());
 }
 
 #[test]
@@ -993,7 +972,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             name,
             definition,
             definition_region,
-            crate::macro_call::MacroArguments::new(frame),
+            Some(crate::macro_call::ArgumentSet::new(frame)),
             OriginId::UNKNOWN,
             0,
         );
@@ -1024,7 +1003,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
 }
 
 #[test]
-fn warmed_macro_activations_copy_only_compact_definition_keys() {
+fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
             .allocate_definition(&[], &[])
@@ -1036,34 +1015,29 @@ fn warmed_macro_activations_copy_only_compact_definition_keys() {
         let mut run = |activations: u64| {
             let retained_before = tex_state::definition_retain_count();
             for _ in 0..activations {
-                let matching = state.scratch.begin_macro_match().expect("macro match");
-                let frame = state
-                    .scratch
-                    .commit_macro_match(matching)
-                    .expect("sealed empty frame");
                 let level = state.push_macro_activation(
                     name,
                     definition,
                     context.definition_region_lease(definition),
-                    crate::macro_call::MacroArguments::new(frame),
+                    None,
                     OriginId::UNKNOWN,
                     0,
                 );
-                let activation = state
-                    .parameters
-                    .activations
+                let body = state
+                    .input
+                    .levels
                     .last()
-                    .expect("live macro activation");
-                assert_eq!(activation.definition.semantic_owner_count(), 0);
+                    .and_then(|level| match level {
+                        crate::input::InputLevel::MacroBody(body) => Some(body),
+                        _ => None,
+                    })
+                    .expect("live macro body");
+                assert_eq!(body.definition.semantic_owner_count(), 0);
                 assert!(matches!(
                     state.input.levels.last(),
-                    Some(crate::input::InputLevel::Tokens(
-                        crate::input::TokenCursor {
-                            span: crate::input::PackedTokenSpanHandle::MacroReplacement { len: 0 },
-                            ..
-                        }
-                    ))
+                    Some(crate::input::InputLevel::MacroBody(_))
                 ));
+                assert_eq!(state.scratch.frame_len(), 0);
                 let retained_before_context = tex_state::definition_retain_count();
                 assert!(state.output_open_context(&context).contains("ownerprobe"));
                 assert_eq!(

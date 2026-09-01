@@ -12,7 +12,7 @@ impl<G> CommandState<G> {
         );
         let mark = self
             .attempt
-            .begin_operation(self.parameters.activations.len())
+            .begin_operation(self.scratch.frame_len())
             .expect("command operation scope capacity is bounded");
         self.active_attempt_operation = Some(mark);
         crate::CommandAttemptOperation::new()
@@ -93,13 +93,13 @@ impl<G> CommandState<G> {
             .take()
             .ok_or(crate::AttemptError::InvalidCoordinate)?;
         let result = (|| {
-            while self.parameters.activations.len() > mark.macro_depth() {
-                let arguments = self
-                    .parameters
-                    .retire_last_activation()
+            while self.scratch.frame_len() > mark.macro_depth() {
+                let frame = self
+                    .scratch
+                    .active_argument_set()
                     .ok_or(crate::AttemptError::InvalidCoordinate)?;
                 self.scratch
-                    .pop_macro_frame(arguments.frame())
+                    .release_argument_set(frame)
                     .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
             }
             self.attempt.rollback_operation(mark)

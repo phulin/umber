@@ -463,6 +463,13 @@ collector (see `src/conditionals.rs`).
   token, brace/delimiter/parameter state, destination phase, and publication
   cursor while preserving activation-scratch versus attempt/durable
   destination lifetimes.
+- `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
+  macro invocation borrows the definition synchronously and admits one
+  specialized macro-body row. That row is the local-region lease and carries
+  an optional `ArgumentSet`; parameterless macros create no argument state.
+  Body and argument replay use specialized span cursors, packed `TokenWord`
+  blocks, and provenance-change runs. Tail-child argument spans never rebase
+  or copy.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

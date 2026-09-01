@@ -2,12 +2,11 @@
 #![allow(dead_code)] // expansion dispatch is the next ordered integration slice
 use tex_state::DefinitionId;
 use tex_state::env::banks::IntParam;
-use tex_state::interner::Symbol;
 use tex_state::macro_definition::MacroParameterPattern;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::execution_scratch::{MacroFrameId, MacroMatch, MacroWords};
+use crate::execution_scratch::{ArgumentSetId, MacroMatch, MacroWords};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
 };
@@ -21,74 +20,29 @@ use crate::observation::{
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
 pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
-/// Semantic ownership of live macro activations.
-///
-/// Macro-body input behavior carries a typed activation identity. Each
-/// activation solely owns the live-call definition and holds a private
-/// generation-branded descriptor for its stable execution-scratch slot.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ParameterState<G> {
-    pub(crate) activations: crate::timeline::LogicalStack<MacroActivation<G>>,
-    pub(crate) next_activation_identity: u64,
-}
-
-impl<G> Default for ParameterState<G> {
-    fn default() -> Self {
-        Self {
-            activations: crate::timeline::LogicalStack::default(),
-            next_activation_identity: 0,
-        }
-    }
-}
-
-/// Typed identity of one live macro activation.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct MacroActivationId(pub(crate) u64);
-
-/// One live macro call and its stable scratch-slot descriptor.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct MacroActivation<G> {
-    pub(crate) identity: MacroActivationId,
-    /// TeX82 §389's `warning_index`: the control sequence being expanded.
-    /// §314 prints it as this level's context descriptor.
-    pub(crate) name: Symbol,
-    pub(crate) definition: DefinitionId<G>,
-    pub(crate) definition_region: tex_state::DefinitionRegionLease<G>,
-    pub(crate) arguments: MacroArguments<G>,
-    pub(crate) invocation: OriginId,
-}
-
-impl<G> crate::timeline::LogicalStackElement for MacroActivation<G> {
-    type State = ();
-
-    fn capture_state(&self) -> Self::State {}
-
-    fn swap_state(&mut self, (): &mut Self::State) {}
-}
-
 /// Private descriptor for one sealed at-most-nine-argument scratch slot.
 #[derive(Debug)]
-pub(crate) struct MacroArguments<G> {
-    frame: MacroFrameId<G>,
+pub(crate) struct ArgumentSet<G> {
+    frame: ArgumentSetId<G>,
 }
 
-impl<G> Copy for MacroArguments<G> {}
+impl<G> Copy for ArgumentSet<G> {}
 
-impl<G> Clone for MacroArguments<G> {
+impl<G> Clone for ArgumentSet<G> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<G> PartialEq for MacroArguments<G> {
+impl<G> PartialEq for ArgumentSet<G> {
     fn eq(&self, other: &Self) -> bool {
         self.frame == other.frame
     }
 }
 
-impl<G> Eq for MacroArguments<G> {}
+impl<G> Eq for ArgumentSet<G> {}
 
-impl<G> core::hash::Hash for MacroArguments<G> {
+impl<G> core::hash::Hash for ArgumentSet<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.frame.hash(state);
     }
@@ -132,110 +86,12 @@ impl MacroParameterEscape {
     }
 }
 
-impl<G> ParameterState<G> {
-    /// Installs the sole owner of a macro activation before its body level is
-    /// pushed. The caller immediately associates the returned identity with
-    /// `TokenBehavior::MacroBody`, making retirement an atomic ownership pair.
-    pub(crate) fn push_activation(
-        &mut self,
-        name: Symbol,
-        definition: DefinitionId<G>,
-        definition_region: tex_state::DefinitionRegionLease<G>,
-        arguments: MacroArguments<G>,
-        invocation: OriginId,
-    ) -> MacroActivationId {
-        let identity = MacroActivationId(self.next_activation_identity);
-        self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
-        self.install_activation(
-            identity,
-            name,
-            definition,
-            definition_region,
-            arguments,
-            invocation,
-        );
-        identity
-    }
-
-    pub(crate) fn restore_activation(
-        &mut self,
-        identity: MacroActivationId,
-        name: Symbol,
-        definition: DefinitionId<G>,
-        definition_region: tex_state::DefinitionRegionLease<G>,
-        arguments: MacroArguments<G>,
-        invocation: OriginId,
-    ) {
-        self.install_activation(
-            identity,
-            name,
-            definition,
-            definition_region,
-            arguments,
-            invocation,
-        );
-    }
-
-    fn install_activation(
-        &mut self,
-        identity: MacroActivationId,
-        name: Symbol,
-        definition: DefinitionId<G>,
-        definition_region: tex_state::DefinitionRegionLease<G>,
-        arguments: MacroArguments<G>,
-        invocation: OriginId,
-    ) {
-        self.activations.push(MacroActivation {
-            identity,
-            name,
-            definition,
-            definition_region,
-            arguments,
-            invocation,
-        });
-    }
-
-    pub(crate) fn parent_invocation(&self) -> OriginId {
-        self.activations
-            .last()
-            .map_or(OriginId::UNKNOWN, |activation| activation.invocation)
-    }
-
-    pub(crate) fn active_invocation_origin(&self) -> Option<OriginId> {
-        self.activations
-            .last()
-            .map(|activation| activation.invocation)
-    }
-
-    /// Borrows one activation by its authoritative live identity.
-    pub(crate) fn activation(&self, identity: MacroActivationId) -> Option<&MacroActivation<G>> {
-        self.activations
-            .iter()
-            .find(|activation| activation.identity == identity)
-    }
-
-    /// Borrows the exact LIFO activation whose body is currently delivering.
-    pub(crate) fn active_activation(
-        &self,
-        identity: MacroActivationId,
-    ) -> Option<&MacroActivation<G>> {
-        self.activations
-            .last()
-            .filter(|activation| activation.identity == identity)
-    }
-
-    pub(crate) fn retire_last_activation(&mut self) -> Option<MacroArguments<G>> {
-        self.activations
-            .pop_project(|activation| activation.arguments)
-    }
-}
-
-impl<G> MacroArguments<G> {
-    pub(crate) const fn new(frame: MacroFrameId<G>) -> Self {
+impl<G> ArgumentSet<G> {
+    pub(crate) const fn new(frame: ArgumentSetId<G>) -> Self {
         Self { frame }
     }
 
-    pub(crate) const fn frame(self) -> MacroFrameId<G> {
+    pub(crate) const fn frame(self) -> ArgumentSetId<G> {
         self.frame
     }
 }
@@ -287,11 +143,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         let call_site = call.origin();
-        let matching = self
-            .command
-            .scratch
-            .begin_macro_match()
-            .map_err(|_| CommandError::input_invariant())?;
         let definition_view = self.state.definition(definition);
         let pattern = definition_view.parameter_pattern();
         let parameter_len = definition_view.parameter_text().len();
@@ -305,6 +156,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // matcher even when there are no numbered parameters.
         let needs_matching =
             pattern.leading_end(parameter_len) != 0 || pattern.parameter_count() != 0;
+        let matching = needs_matching
+            .then(|| self.command.scratch.begin_macro_match())
+            .transpose()
+            .map_err(|_| CommandError::input_invariant())?;
         let episode = if needs_matching {
             let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
             self.command.transient.next_builder_identity =
@@ -323,14 +178,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments = self.macro_call_scalar(
-            &matching,
-            macro_name,
-            &definition,
-            flags,
-            pattern,
-            parameter_len,
-        );
+        let scanned_arguments = if let Some(matching) = matching.as_ref() {
+            self.macro_call_scalar(
+                matching,
+                macro_name,
+                &definition,
+                flags,
+                pattern,
+                parameter_len,
+            )
+        } else {
+            Ok(())
+        };
         match scanned_arguments {
             Ok(()) => {}
             Err(CommandError::MacroPrefixMismatch) => {
@@ -352,20 +211,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }
-                self.command
-                    .scratch
-                    .discard_macro_match(matching)
-                    .map_err(|_| CommandError::input_invariant())?;
+                if let Some(matching) = matching {
+                    self.command
+                        .scratch
+                        .discard_macro_match(matching)
+                        .map_err(|_| CommandError::input_invariant())?;
+                }
                 return Ok(MacroCallOutcome::PrefixMismatchRecovered);
             }
             Err(error) => {
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }
-                self.command
-                    .scratch
-                    .discard_macro_match(matching)
-                    .map_err(|_| CommandError::input_invariant())?;
+                if let Some(matching) = matching {
+                    self.command
+                        .scratch
+                        .discard_macro_match(matching)
+                        .map_err(|_| CommandError::input_invariant())?;
+                }
                 return Err(error);
             }
         }
@@ -381,16 +244,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Those retirements must precede this body's input push. The pending
         // frame stays canonical if an older active frame retires beneath it.
         self.conserve_input_stack_for_descendant()?;
-        let frame = self
-            .command
-            .scratch
-            .commit_macro_match(matching)
-            .map_err(|_| CommandError::input_invariant())?;
-        let arguments = MacroArguments::new(frame);
+        let arguments = if pattern.parameter_count() == 0 {
+            if let Some(matching) = matching {
+                self.command
+                    .scratch
+                    .discard_macro_match(matching)
+                    .map_err(|_| CommandError::input_invariant())?;
+            }
+            None
+        } else {
+            let frame = self
+                .command
+                .scratch
+                .commit_macro_match(matching.ok_or_else(CommandError::input_invariant)?)
+                .map_err(|_| CommandError::input_invariant())?;
+            Some(ArgumentSet::new(frame))
+        };
         let definition_region = self.state.definition_region_lease(definition);
-        let definition = call
-            .take_settled_macro_definition()
-            .ok_or_else(CommandError::input_invariant)?;
         let _level = self.push_macro_activation(
             macro_name,
             definition,
@@ -415,7 +285,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             CommandObservation::Macro(MacroRecord::Activation {
                 control_sequence: self.state.resolve(macro_name).to_owned(),
                 argument_count: pattern.parameter_count() as u8,
-                token_count: self.argument_token_count(arguments) as u64,
+                token_count: arguments.map_or(0, |arguments| {
+                    self.argument_token_count(arguments) as u64
+                }),
             }),
         );
         if let Some(episode) = episode {
@@ -1136,7 +1008,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(buffer)
     }
 
-    fn argument_token_count(&self, arguments: MacroArguments<G>) -> usize {
+    fn argument_token_count(&self, arguments: ArgumentSet<G>) -> usize {
         (1..=9)
             .filter_map(|slot| {
                 self.command

@@ -10,7 +10,6 @@ impl<G> CommandStateRoots<G> {
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(self.input.retained_bytes())
-            .saturating_add(self.parameters.activations.retained_bytes())
             .saturating_add(self.conditions.frames.retained_bytes())
             .saturating_add(self.alignment.align_stack.retained_bytes())
             .saturating_add(self.alignment.suspended.retained_bytes())
@@ -58,8 +57,7 @@ impl<G> CommandState<G> {
             state.unsupported_command_state();
             return;
         };
-        let supported_continuation = self.parameters.activations.is_empty()
-            && self.scratch.is_quiescent()
+        let supported_continuation = self.scratch.is_quiescent()
             && self.scanner.is_quiescent()
             && self.alignment == AlignmentDeliveryState::<G>::default()
             && self.transient == super::TransientState::default()

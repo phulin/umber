@@ -84,6 +84,7 @@ impl<G> InlineCursorRecorder<'_, G> {
 enum ResidentInputTop<'a, G> {
     Source(ResidentSourceTop<'a, G>),
     StoredToken(ResidentStoredTokenTop<'a, G>),
+    MacroBody(ResidentMacroBodyTop<'a, G>),
     MacroArgument(ResidentMacroArgumentTop<'a, G>),
 }
 
@@ -244,7 +245,7 @@ impl<G> ResidentStoredTokenTop<'_, G> {
         sources: super::PackedTokenSources<'_, G>,
         destination: crate::command::EmptyCommand<'_, G>,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<super::levels::StoredTokenAdvance, ()> {
+    ) -> Result<super::levels::StoredTokenAdvance<G>, ()> {
         let Self {
             cursor,
             mut recorder,
@@ -259,6 +260,27 @@ struct ResidentMacroArgumentTop<'a, G> {
     recorder: InlineCursorRecorder<'a, G>,
 }
 
+struct ResidentMacroBodyTop<'a, G> {
+    cursor: &'a mut super::MacroBodyCursor<G>,
+    recorder: InlineCursorRecorder<'a, G>,
+}
+
+impl<G> ResidentMacroBodyTop<'_, G> {
+    #[inline(never)]
+    fn advance_into(
+        self,
+        destination: crate::command::EmptyCommand<'_, G>,
+        state: &tex_state::CommandContext<'_, G>,
+    ) -> Result<super::levels::StoredTokenAdvance<G>, ()> {
+        let Self {
+            cursor,
+            mut recorder,
+        } = self;
+        recorder.record(InputLevelInlineState::macro_span(cursor.position()));
+        cursor.deliver_into(destination, state)
+    }
+}
+
 impl<G> ResidentMacroArgumentTop<'_, G> {
     #[inline(never)]
     fn advance_into(
@@ -271,10 +293,7 @@ impl<G> ResidentMacroArgumentTop<'_, G> {
             cursor,
             mut recorder,
         } = self;
-        recorder.record(InputLevelInlineState::new(
-            cursor.frame,
-            super::RetirementBehavior::Pop,
-        ));
+        recorder.record(InputLevelInlineState::macro_span(cursor.position()));
         cursor.deliver_into(scratch, destination, state)
     }
 }
@@ -407,8 +426,13 @@ enum DiagnosticInputTop {
         frame: super::PackedInputFrame,
         retirement: super::RetirementBehavior,
     },
+    MacroBody {
+        identity: super::InputLevelId,
+        position: u32,
+    },
     MacroArgument {
-        frame: super::PackedInputFrame,
+        identity: super::InputLevelId,
+        position: u32,
     },
 }
 
@@ -616,8 +640,13 @@ impl<G> InputStack<G> {
                 frame: cursor.frame,
                 retirement: cursor.retirement,
             },
+            Some(InputLevel::MacroBody(cursor)) => DiagnosticInputTop::MacroBody {
+                identity: cursor.identity(),
+                position: cursor.position() as u32,
+            },
             Some(InputLevel::MacroArgument(cursor)) => DiagnosticInputTop::MacroArgument {
-                frame: cursor.frame,
+                identity: cursor.identity(),
+                position: cursor.position() as u32,
             },
         };
         InputStackContextCoordinate {
@@ -701,6 +730,22 @@ impl<G> InputStack<G> {
                     }),
                 ))
             }
+            InputLevel::MacroBody(cursor) => Some((
+                index,
+                ResidentInputTop::MacroBody(ResidentMacroBodyTop {
+                    cursor,
+                    recorder: InlineCursorRecorder {
+                        recording,
+                        interval,
+                        index,
+                        touched: &mut self.touched[index],
+                        partially_captured: &mut self.partially_captured[index],
+                        undo: &mut self.undo,
+                        #[cfg(any(test, feature = "profiling"))]
+                        counters: &mut self.cursor_mutations,
+                    },
+                }),
+            )),
             InputLevel::MacroArgument(cursor) => {
                 #[cfg(any(test, feature = "profiling"))]
                 {
@@ -1016,7 +1061,6 @@ impl<G> crate::CommandState<G> {
                     let sources = super::PackedTokenSources::new(
                         &self.roots.input.replay,
                         self.attempt.arena(),
-                        &self.roots.parameters,
                     );
                     match top.advance_into(sources, destination.reborrow(), state)? {
                         super::levels::StoredTokenAdvance::Delivered(resolution) => {
@@ -1037,7 +1081,7 @@ impl<G> crate::CommandState<G> {
                         }
                         super::levels::StoredTokenAdvance::OutParameter {
                             slot,
-                            has_macro_lineage,
+                            arguments,
                             active_source,
                         } => {
                             #[cfg(test)]
@@ -1047,11 +1091,39 @@ impl<G> crate::CommandState<G> {
                                     .out_parameter_interceptions
                                     .saturating_add(1);
                             }
-                            self.push_resident_parameter_level(
-                                slot,
-                                has_macro_lineage,
-                                active_source,
-                            )?
+                            self.push_resident_parameter_level(slot, arguments, active_source)?
+                        }
+                        super::levels::StoredTokenAdvance::Exhausted(identity) => {
+                            super::ResidentCommandTransition::TokenExhausted {
+                                identity,
+                                resident_index,
+                            }
+                        }
+                    }
+                }
+                ResidentInputTop::MacroBody(top) => {
+                    match top.advance_into(destination.reborrow(), state)? {
+                        super::levels::StoredTokenAdvance::Delivered(resolution) => self
+                            .settle_resident_delivery(
+                                fuel,
+                                destination.reborrow(),
+                                resolution,
+                                #[cfg(feature = "profiling")]
+                                crate::fuel::RawDeliveryKind::StoredToken,
+                            ),
+                        super::levels::StoredTokenAdvance::OutParameter {
+                            slot,
+                            arguments,
+                            active_source,
+                        } => {
+                            #[cfg(test)]
+                            {
+                                self.raw_delivery_path_counters.out_parameter_interceptions = self
+                                    .raw_delivery_path_counters
+                                    .out_parameter_interceptions
+                                    .saturating_add(1);
+                            }
+                            self.push_resident_parameter_level(slot, arguments, active_source)?
                         }
                         super::levels::StoredTokenAdvance::Exhausted(identity) => {
                             super::ResidentCommandTransition::TokenExhausted {
@@ -1157,13 +1229,13 @@ impl<G> crate::CommandState<G> {
     fn push_resident_parameter_level(
         &mut self,
         slot: u8,
-        has_macro_lineage: bool,
+        arguments: Option<crate::macro_call::ArgumentSet<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     ) -> Result<super::ResidentCommandTransition, ()> {
-        if !(1..=9).contains(&slot) || !has_macro_lineage {
+        if !(1..=9).contains(&slot) {
             return Err(());
         }
-        let owner = self.scratch.active_macro_frame().ok_or(())?;
+        let owner = arguments.ok_or(())?.frame();
         let range = self
             .scratch
             .argument_range(owner, slot)
@@ -1173,14 +1245,7 @@ impl<G> crate::CommandState<G> {
         self.timeline
             .record_next_input_level_identity(self.roots.input.next_level_identity);
         self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
-        let trace = super::ReplayTrace::MacroParameter { slot };
-        let mut frame = super::packed_token_frame(
-            identity,
-            range.len() as usize,
-            &super::TokenBehavior::Parameter,
-            super::RetirementBehavior::Pop,
-            &trace,
-        );
+        let mut frame = super::ResidentSpanCursor::new(identity, range.len() as usize);
         frame.set_source_context(active_source);
         self.stack_usage.input_stack = self
             .stack_usage

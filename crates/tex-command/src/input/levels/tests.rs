@@ -193,7 +193,7 @@ fn stored_and_transient_payloads_have_the_same_semantic_words() {
 #[test]
 fn replay_coordinates_keep_input_frames_compact() {
     assert_eq!(
-        std::mem::size_of::<crate::execution_scratch::MacroFrameId<()>>(),
+        std::mem::size_of::<crate::execution_scratch::ArgumentSetId<()>>(),
         8
     );
     assert_eq!(
@@ -201,9 +201,11 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
-    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 56);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
+    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::ResidentSpanCursor>(), 24);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 56);
+    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 48);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 80);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert!(std::mem::size_of::<super::SourceLevel<()>>() <= 48);
     assert!(

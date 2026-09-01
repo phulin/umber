@@ -449,7 +449,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// when they actually publish provenance.
     #[must_use]
     pub fn active_macro_origin(&self) -> Option<tex_state::token::OriginId> {
-        self.command.parameters.active_invocation_origin()
+        self.command
+            .input
+            .levels
+            .iter()
+            .rev()
+            .find_map(|level| match level {
+                crate::input::InputLevel::MacroBody(body) => Some(body.invocation),
+                _ => None,
+            })
     }
 
     /// Returns the glue node retained by the most recent glue scan when the

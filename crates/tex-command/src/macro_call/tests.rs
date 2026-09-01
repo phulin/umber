@@ -121,11 +121,15 @@ fn install_replacement_macro<G>(
 
 fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
     let arguments = processor
-        .parameters
-        .activations
-        .last()
-        .expect("macro activation")
-        .arguments;
+        .input
+        .levels
+        .iter()
+        .rev()
+        .find_map(|level| match level {
+            crate::input::InputLevel::MacroBody(body) => body.arguments,
+            _ => None,
+        })
+        .expect("macro argument set");
     let range = processor
         .scratch
         .argument_range(arguments.frame(), 1)
@@ -218,7 +222,7 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
 }
 
 #[test]
-fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
+fn successful_macro_calls_admit_one_nonowning_replacement_row() {
     crate::test_harness::with_universe(|universe| {
         let parameterless =
             install_replacement_macro(universe, "parameterlessowner", &[letter('p')]);
@@ -238,7 +242,7 @@ fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
         );
         let mut destination = None;
 
-        for expected_replacement_len in [1, 1] {
+        for (expected_replacement_len, has_arguments) in [(1, false), (1, true)] {
             assert_eq!(
                 processor
                     .get_next_into(&mut destination)
@@ -262,24 +266,33 @@ fn successful_macro_calls_move_the_resident_definition_owner_into_activation() {
                 retains_before,
                 "successful matching and activation borrow then move the resident owner"
             );
-            let activation = processor
+            let body = processor
                 .command
-                .parameters
-                .activations
+                .input
+                .levels
                 .last()
-                .expect("live activation");
-            assert_eq!(activation.definition.semantic_owner_count(), owners_before);
+                .and_then(|level| match level {
+                    crate::input::InputLevel::MacroBody(body) => Some(body),
+                    _ => None,
+                })
+                .expect("live macro body");
+            assert_eq!(body.arguments.is_some(), has_arguments);
+            assert_eq!(
+                processor.command.scratch.frame_len(),
+                usize::from(has_arguments)
+            );
+            assert_eq!(body.definition.semantic_owner_count(), owners_before);
             assert_eq!(
                 processor
                     .state
-                    .definition(activation.definition)
+                    .definition(body.definition)
                     .replacement_text()
                     .len(),
                 expected_replacement_len
             );
             assert!(matches!(
                 call.meaning_ref(),
-                tex_state::meaning::ResolvedMeaning::Static(Meaning::Undefined)
+                tex_state::meaning::ResolvedMeaning::Macro { .. }
             ));
 
             assert_eq!(
@@ -331,7 +344,14 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
             }
             _ => panic!("failed call retains macro meaning"),
         }
-        assert!(processor.command.parameters.activations.is_empty());
+        assert!(
+            !processor
+                .command
+                .input
+                .levels
+                .iter()
+                .any(|level| matches!(level, crate::input::InputLevel::MacroBody(_)))
+        );
     });
 }
 
@@ -371,7 +391,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 2);
+        assert_eq!(processor.command.scratch.frame_len(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -386,7 +406,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('t')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 1);
+        assert_eq!(processor.command.scratch.frame_len(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -417,8 +437,8 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 1);
-        assert_eq!(processor.command.scratch.retained_slot_len(), 2);
+        assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(processor.command.scratch.retained_slot_len(), 0);
         assert_eq!(processor.command.scratch.physical_macro_word_copies(), 0);
         assert_eq!(
             processor
@@ -970,7 +990,16 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             processor.macro_call(&mut long_call),
             Ok(MacroCallOutcome::Activated)
         );
-        let arguments = processor.command.parameters.activations[0].arguments;
+        let arguments = processor
+            .command
+            .input
+            .levels
+            .iter()
+            .find_map(|level| match level {
+                crate::input::InputLevel::MacroBody(body) => body.arguments,
+                _ => None,
+            })
+            .expect("long macro argument set");
         let range = processor
             .command
             .scratch
@@ -1057,7 +1086,16 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
             active_argument_tokens(processor.command),
             [paragraph, letter('x')]
         );
-        let arguments = processor.command.parameters.activations[0].arguments;
+        let arguments = processor
+            .command
+            .input
+            .levels
+            .iter()
+            .find_map(|level| match level {
+                crate::input::InputLevel::MacroBody(body) => body.arguments,
+                _ => None,
+            })
+            .expect("delimited macro argument set");
         let range = processor
             .command
             .scratch
@@ -1165,7 +1203,7 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() {
+fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies() {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct Evidence {
         fact_classifications: u64,
@@ -1342,16 +1380,18 @@ fn mixed_one_and_4096_token_arguments_use_one_fused_settlement_without_copies() 
             aggregate_word_reads: 0,
         }
     );
-    let four_k = run(4_096);
-    assert_eq!(four_k.fact_classifications, 4_096);
-    assert_eq!(four_k.token_settlements, 4_096);
-    assert_eq!(four_k.writer_admissions, 1);
-    assert_eq!(four_k.writer_finalizations, 1);
-    assert_eq!(four_k.allocation_calls, 0);
-    assert_eq!(four_k.requested_bytes, 0);
-    assert_eq!(four_k.whole_token_copies, 0);
-    assert_eq!(four_k.whole_command_copies, 0);
-    assert_eq!(four_k.definition_retains, 0);
-    assert_eq!(four_k.whole_input_frame_copies, 0);
-    assert_eq!(four_k.aggregate_word_reads, 0);
+    for token_count in [64, 4_096] {
+        let measured = run(token_count);
+        assert_eq!(measured.fact_classifications, token_count as u64);
+        assert_eq!(measured.token_settlements, token_count as u64);
+        assert_eq!(measured.writer_admissions, 1);
+        assert_eq!(measured.writer_finalizations, 1);
+        assert_eq!(measured.allocation_calls, 0);
+        assert_eq!(measured.requested_bytes, 0);
+        assert_eq!(measured.whole_token_copies, 0);
+        assert_eq!(measured.whole_command_copies, 0);
+        assert_eq!(measured.definition_retains, 0);
+        assert_eq!(measured.whole_input_frame_copies, 0);
+        assert_eq!(measured.aggregate_word_reads, 0);
+    }
 }

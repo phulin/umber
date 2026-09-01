@@ -149,7 +149,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
-                                        &self.command.parameters,
                                     ),
                                     self.state,
                                 )
@@ -159,6 +158,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     InputLevel::MacroArgument(cursor) => {
                         cursor.is_exhausted().then(|| cursor.identity())
                     }
+                    InputLevel::MacroBody(cursor) => cursor
+                        .token_at(self.state)
+                        .is_none()
+                        .then(|| cursor.identity()),
                     InputLevel::Source(_) => None,
                 })
             else {
@@ -238,12 +241,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
-                        &self.command.parameters,
                     ),
                     self.state,
                 )
                 .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
+            InputLevel::MacroBody(_) => unreachable!("output replay is not a macro body"),
             InputLevel::MacroArgument(_) => unreachable!("output replay is not an argument"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
@@ -257,7 +260,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .token_at(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
-                                    &self.command.parameters,
                                 ), self.state)
                             .is_none()
                 )
@@ -277,6 +279,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             == match &self.command.input.levels[output_index] {
                                 InputLevel::Tokens(output) => output.identity(),
                                 InputLevel::Source(_) => unreachable!("output token level"),
+                                InputLevel::MacroBody(_) => {
+                                    unreachable!("output token level is not a macro body")
+                                }
                                 InputLevel::MacroArgument(_) => {
                                     unreachable!("output token level is not an argument")
                                 }
@@ -288,7 +293,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
-                                        &self.command.parameters,
                                     ),
                                     self.state,
                                 )
@@ -297,6 +301,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     InputLevel::Source(_)
                     | InputLevel::Tokens(_)
+                    | InputLevel::MacroBody(_)
                     | InputLevel::MacroArgument(_) => None,
                 })
                 .unwrap_or(false)
@@ -332,7 +337,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
-                        &self.command.parameters,
                     ),
                     self.state,
                 )
@@ -551,7 +555,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
-                                    &self.command.parameters,
                                 ),
                                 self.state,
                             )
@@ -562,7 +565,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(InputLevel::MacroArgument(cursor)) if cursor.is_exhausted() => {
                     Some(cursor.identity())
                 }
+                Some(InputLevel::MacroBody(cursor)) if cursor.token_at(self.state).is_none() => {
+                    Some(cursor.identity())
+                }
                 Some(InputLevel::Tokens(_))
+                | Some(InputLevel::MacroBody(_))
                 | Some(InputLevel::MacroArgument(_))
                 | Some(InputLevel::Source(_))
                 | None => None,
@@ -640,7 +647,6 @@ fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
     match behavior {
         TokenBehavior::Ordinary
         | TokenBehavior::Recovery
-        | TokenBehavior::MacroBody(_)
         | TokenBehavior::Parameter
         | TokenBehavior::BackedUp(_)
         | TokenBehavior::UTemplate => true,

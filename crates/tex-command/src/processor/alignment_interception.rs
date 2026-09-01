@@ -166,7 +166,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             PackedTokenSources::new(
                                 &self.command.input.replay,
                                 self.command.attempt.arena(),
-                                &self.command.parameters,
                             ),
                             self.state,
                         )
@@ -187,6 +186,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 InputLevel::MacroArgument(cursor) => {
                     if !cursor.is_exhausted() {
+                        break;
+                    }
+                }
+                InputLevel::MacroBody(cursor) => {
+                    if cursor.token_at(self.state).is_some() {
                         break;
                     }
                 }

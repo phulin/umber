@@ -40,7 +40,6 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     feed(u64::from(roots.input.terminal_context_line.is_some()));
     feed(roots.input.pending_sources.len() as u64);
     feed(u64::from(roots.input.force_eof));
-    feed(roots.parameters.activations.len() as u64);
     feed(roots.conditions.tracked_stack_projection());
     feed(roots.alignment.align_state as u64);
     feed(roots.alignment.align_stack.len() as u64);
@@ -127,7 +126,6 @@ struct CommandTimelineFrame {
 #[derive(Clone, Copy, Debug)]
 struct CommandRollbackCoordinates {
     input: crate::input::InputStackMark,
-    parameters: crate::timeline::LogicalStackMark,
     conditions: crate::timeline::LogicalStackMark,
     groups: crate::timeline::LogicalStackMark,
     aftergroups: crate::timeline::LogicalStackMark,

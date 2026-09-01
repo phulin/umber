@@ -99,7 +99,9 @@ fn cursor_position<G>(level: &InputLevel<G>) -> usize {
     match level {
         InputLevel::Tokens(cursor) => cursor.position(),
         InputLevel::MacroArgument(cursor) => cursor.position(),
-        InputLevel::Source(_) => panic!("fixture admits a stored-token cursor"),
+        InputLevel::Source(_) | InputLevel::MacroBody(_) => {
+            panic!("fixture admits a stored-token cursor")
+        }
     }
 }
 
@@ -166,25 +168,22 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
             .scratch
             .finish_argument_collector(buffer)
             .expect("argument range");
-        let macro_frame = state
+        let argument_set = state
             .scratch
             .commit_macro_match(matching)
             .expect("sealed macro frame");
         let range = state
             .scratch
-            .argument_range(macro_frame, 1)
+            .argument_range(argument_set, 1)
             .expect("live macro frame")
             .expect("first argument");
-        let behavior = TokenBehavior::Parameter;
-        let retirement = RetirementBehavior::Pop;
-        let trace = ReplayTrace::MacroParameter { slot: 1 };
         state
             .input
             .levels
             .push(InputLevel::MacroArgument(MacroArgumentCursor {
                 range,
                 slot: 1,
-                frame: packed_token_frame(InputLevelId(2), 2, &behavior, retirement, &trace),
+                frame: super::super::ResidentSpanCursor::new(InputLevelId(2), 2),
             }));
         let mut fuel = crate::CommandFuelLedger::default();
 
@@ -356,30 +355,24 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                         .scratch
                         .finish_argument_collector(writer)
                         .expect("macro argument range");
-                    let macro_frame = state
+                    let argument_set = state
                         .scratch
                         .commit_macro_match(matching)
                         .expect("macro frame");
                     let range = state
                         .scratch
-                        .argument_range(macro_frame, 1)
+                        .argument_range(argument_set, 1)
                         .expect("live macro frame")
                         .expect("macro argument");
-                    let behavior = TokenBehavior::Parameter;
-                    let retirement = RetirementBehavior::Pop;
-                    let trace = ReplayTrace::MacroParameter { slot: 1 };
                     state
                         .input
                         .levels
                         .push(InputLevel::MacroArgument(MacroArgumentCursor {
                             range,
                             slot: 1,
-                            frame: packed_token_frame(
+                            frame: super::super::ResidentSpanCursor::new(
                                 InputLevelId(1),
                                 operations,
-                                &behavior,
-                                retirement,
-                                &trace,
                             ),
                         }));
                 }

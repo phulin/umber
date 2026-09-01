@@ -1957,8 +1957,9 @@ the synthetic `endlinechar` does.
 
 ### 12.2 Token cursor
 
-Span ownership, semantic delivery behavior, retirement, and trace explanation are
-orthogonal:
+Ordinary token-list storage keeps ownership, semantic delivery behavior,
+retirement, and trace explanation orthogonal. Macro spans instead use their
+own resident rows:
 
 ```rust
 struct TokenCursor {
@@ -1971,21 +1972,28 @@ struct TokenCursor {
 
 enum PackedTokenSpanHandle {
     Replay { replay: ReplayPayloadId, len: u32 },
-    MacroReplacement { len: u32 },
     DurableList { cursor: TokenListCursor, len: u32 },
     AttemptList { list: AttemptTokenListId, len: u32 },
+}
+
+struct MacroBodyCursor {
+    definition: DefinitionId,
+    definition_region: DefinitionRegionLease,
+    arguments: Option<ArgumentSet>,
+    name: Symbol,
+    invocation: OriginId,
+    frame: ResidentSpanCursor,
 }
 
 struct MacroArgumentCursor {
     range: MacroArgumentRange,
     slot: u8,
-    frame: PackedInputFrame,
+    frame: ResidentSpanCursor,
 }
 
 enum TokenBehavior {
     Ordinary,
     Recovery,
-    MacroBody(MacroActivationId),
     BackedUp(BackupTreatment),
     UTemplate(TemplateId),
     VTemplate(TemplateId),
@@ -2000,30 +2008,26 @@ enum RetirementBehavior {
 }
 ```
 
-The implemented `PackedInputFrame` is the canonical fixed 40-byte frame from
-`tex-state`. Its copy-only owner coordinate is the level identity and its
-32-bit current offset is the sole live token delivery cursor; `SourceLevel`
-and `TokenCursor` carry no duplicate identity, and `TokenCursor` carries no
-duplicate index. A source retains its exact 64-bit byte/scalar/line cursor in
-the physical sidecar because source sizes are not bounded by the frame's token
-offset domain. The source frame's current offset is a delivered-token count,
-not future semantics; unchanged future-state comparison normalizes that count
-after verifying the exact source cursor and frame identity. TeX82's token types
-retain their exact values, with disjoint source, `everyeof`, and Umber replay
-kinds. Flags represent noexpand suppression, terminal-stop retirement, and
-retained v-template retirement independently of storage.
+The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
+for generic token lists. `MacroBodyCursor` and `MacroArgumentCursor` do not
+wrap it: each stores a 24-byte `ResidentSpanCursor` with only identity, bounds,
+position, and optional source coordinates. The body row is the macro call. It
+stores the eight-byte non-owning definition coordinate, and it is also the
+only invocation-side lease for a local definition region. Format and
+revision-global definitions admit a no-op lease. Only parameterized macros
+store an `ArgumentSet`; parameterless macros allocate and push only the body
+row.
 
-Every source is adapted once at level creation into the same
-`PackedTokenSpanHandle` plus the packed frame's scalar offset. Stored delivery
-then calls `PackedTokenSources::token_at(handle, behavior, offset)` and advances
-only that offset. A macro-replacement behavior resolves its activation identity
-and borrows that activation's definition; the span retains no second owner.
-The storage boundary makes one small direct owner-domain match
-required by safe Rust; no delivery caller discriminates source variants,
-builds a generic stored-delivery object, advances a second durable or macro
-cursor, or clones a definition/token-list owner per word. `token_at` returns
-canonical `TokenWord`; origin and source provenance remain adjacent diagnostic
-coordinates and never become token or meaning semantics.
+Every ordinary token-list source is adapted once at level creation into a
+`PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
+instead borrows a `DefinitionView` synchronously, records its compact
+`DefinitionId`, and pushes the specialized body row. Body delivery borrows the
+same immutable replacement span directly. It intercepts `Token::Param` before
+materializing a `CurrentCommand` and pushes a specialized argument row over
+the sealed fixed-block range. Neither path clones a definition/token-list
+owner or copies token words. The semantic lane stores four-byte `TokenWord`
+values; exact provenance occupies coordinate-change runs alongside the lane,
+not a twelve-byte value for every captured token.
 
 `CommandState::push_input_level` is the single live source/token frame
 transition. It updates TeX82's `max_in_stack` scalar on the singular live
@@ -2092,30 +2096,18 @@ physical byte/scalar/line cursor and rebuild the source frame after
 registration, preserving diagnostic positions without publishing runtime
 coordinates.
 
-The implemented ownership model keeps stable `MacroActivation` payloads in
-the `ParameterState` activation chain and stores a typed activation identity
-in `TokenBehavior::MacroBody`. The activation is the sole live-call definition
-owner. Matching, tracing, and replacement-length inspection borrow the
-resident `CurrentCommand` owner; after every fallible call transition settles,
-successful activation moves that exact owner into `MacroActivation`. Prefix
-mismatch, error, rollback/retry, and typed suspension retain it in the command.
-Replacement delivery and diagnostic context borrow through the activation
-identity, and context projection performs no duplicate-owner equality
-validation. One admitted owner retains up to 64 macro
-records and their live token/provenance closure. `MacroArguments` and every
-live `ArgumentRange` name the same command-owned argument chunk by compact
-coordinates. `InputLevelId` is typed separately from source identity and is
-present on both source and token levels. Exact-byte and Unicode source cursors
-use this identical enum.
+The implemented ownership model has no macro activation chain. A specialized
+`MacroBody` input row is the complete live-call record: an 8-byte non-owning
+definition coordinate, optional local-region lease, optional `ArgumentSet`,
+name, invocation origin, and compact replacement cursor. Parameterless macros
+publish only this row. `InputLevelId` is typed separately from source identity
+and is present on source, stored-token, macro-body, and argument rows.
 
-An executing macro resolves its generation-safe meaning identifier through the
-strong environment root already held for that meaning. Raw delivery creates
-the live-call owner in `CurrentCommand`; activation admission moves it into
-`MacroActivation` without another retain, and the input span creates none.
-Diagnostic parameter/replacement context is rendered by borrowing that
-activation owner, so retirement of the original definition-store entry cannot
-invalidate an active input level. General cold
-and stale lookup APIs retain their validation and rejection behavior.
+An executing macro borrows its `DefinitionView` synchronously, completes any
+argument matching, and admits the immutable replacement cursor. The input row
+is the local-region structural lease; format and revision-global definitions
+pay no per-invocation lifetime operation. Diagnostic context borrows through
+the same coordinate. No macro object or definition owner is reified.
 
 The centralized transient and backed-up constructors avoid caller-side rich
 staging for fixed insertions and stream directly into the replay lane. e-TeX's
@@ -2150,9 +2142,8 @@ of transient or stored backing. An exhausted v-template instead transitions
 once to `AwaitingVTemplateRetirement`, remains the exact top level through
 end-template delivery, and is popped by the resident §357 restart only after
 successful §1131 `do_endv`.
-Macro-body retirement atomically removes the activation matching that level's
-typed `param_start`; a mismatched activation chain is rejected before either
-owner is mutated. Before a source pop, the processor borrows the still-live
+Macro-body retirement releases its optional argument set and local-region
+lease with that exact row. Before a source pop, the processor borrows the still-live
 `SourceOpenDepths` and compares it with the current group and conditional
 stacks. Retirement returns only the two copy-small common-prefix coordinates;
 the boxed ancestry never crosses the pop and is never cloned for checkpoint
@@ -2181,25 +2172,8 @@ local observation state.
 
 ### 12.3 Macro parameters
 
-A macro activation owns one compact argument record with at most nine ranges:
-
-```rust
-struct MacroActivation {
-    definition: MacroDefinitionId,
-    arguments: MacroArguments,
-    invocation: OriginId,
-}
-
-struct MacroArguments {
-    chunk: u32,
-    start: u32,
-    len: u32,
-    record: u32,
-}
-```
-
-`MacroArguments` is one compact frame id, and each live scratch frame stores
-nine absolute ranges plus the exact §394 paragraph
+Only a parameterized macro creates an `ArgumentSet`. Each set stores at most
+nine direct sealed spans plus the exact §394 paragraph
 and removable-outer-group facts established during their first scan, beside
 one traced-word suffix in the generation's fixed-chunk lane. The paragraph fact records only
 the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
@@ -2217,37 +2191,29 @@ provenance/group facts again nor rebuilds
 an aggregate. The writer's brace depth is also the delimiter matcher's depth;
 there is no scanner-local duplicate. The matcher consumes the resident facts
 for the non-`\long` decision and outer-pair removal without rereading stored words.
-Sealing advances the live depth of that same metadata frame without moving its
-physical words because admission already appended to the shared lane. No
-chunk owner, argument table, range, fact, or sealed word moves.
+Sealing publishes the set without moving its physical words. Semantic storage
+uses packed 4-byte `TokenWord` values in generation-owned fixed blocks. Exact
+primary and invocation provenance is held in compact coordinate-change runs,
+so repeated coordinates add no side entry.
 Empty arguments retain empty half-open ranges. A compact
 `OutParameter(u8)` remains distinct from a literal parameter character emitted
 by the canonical `##` escape, so replay can substitute only the former without
 rewriting immutable macro definition token lists. Physical chunks hold 4,096
 words, and an absolute index maps directly to chunk and offset. Parameter
-admission resolves `(frame, argument slot)` once into a first-class
+admission resolves `(argument set, slot)` once into a first-class
 `MacroArgumentCursor`; replay never enters the generic packed-span dispatch,
-searches the input stack, searches activations, or walks chunk links. Exact
-LIFO retirement truncates to the frame mark and returns suffix chunks to the
-reusable stack. If an older frame retires beneath a pending child, the child
-inherits its reclaim mark; only that unpublished suffix may rebase after the
-last active ancestor retires, so no admitted cursor or sealed word moves.
-That exceptional rebase physically copies exactly the unpublished suffix
-length into the reclaimed prefix; test accounting records those word copies
-instead of describing the whole matcher as zero-copy. Ordinary sealing,
-replay, and strict-LIFO retirement move no words.
+searches the input stack, or walks chunk links. Macro-body and argument rows
+both use specialized compact span cursors rather than `PackedInputFrame`.
+If an older body retires beneath a pending tail child, the child keeps its
+original sealed coordinates; pending arguments are never rebased or copied.
 Quiescent top-level calls clear lengths but retain every
-warmed allocation. The processor appends one fixed-width invocation provenance
-record using the active activation's invocation coordinate as parent; no rooted
-weak value is created on replay. Node, diagnostic, and continuation boundaries
-materialize a structural root on demand. The activation is installed before
-its immutable replacement-body span becomes visible.
+warmed allocation. Node, diagnostic, and continuation boundaries materialize
+structural provenance only on demand.
 
-An `OutParameter` read directly from a macro body pushes a parameter range.
-Nested token input inherits one packed macro-lineage flag, while a source level
-clears it. Resolution therefore uses the active scratch frame directly, without
-an input-stack or activation search. A parameter level replays its already materialized range
-literally and cannot recursively substitute itself.
+An `OutParameter` is intercepted by the resident macro-body cursor before a
+`CurrentCommand` is materialized and pushes the selected direct argument span.
+A parameter row replays that span literally and cannot recursively substitute
+itself. There is no packed macro-lineage flag.
 
 ### 12.4 Backup and `\noexpand`
 
