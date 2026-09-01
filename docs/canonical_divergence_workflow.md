@@ -219,6 +219,33 @@ divergence, not a new one.
 Reference DVI generation: `python3 scripts/provision.py worktree .`, using the
 pinned instrumented pdfTeX 1.40.29 build from TeX Live 2026.
 
+### Recent-arXiv document front
+
+A recent-arXiv document enters the canonical DVI parity front only after the
+complete, unmodified source compiles cleanly with the pinned TeX Live 2026
+pdfTeX in both DVI and PDF modes. Record the archive, entrypoint, oracle,
+format, output, and page-count identities for both qualification runs before
+running Umber. PDF compilation is only an eligibility check during this pass;
+record PDF-only or otherwise non-DVI-capable rows for the later PDF pass.
+
+Run the complete source once in Umber's DVI mode with 500,000,000 expansion
+fuel, the ordinary 10,000,000 execution-step cap, and the standing wall-time,
+RSS, and termination-grace guards. Expansion fuel is only a runaway guard:
+ordinary consumption differences have no parity significance. Compare the
+result with `parity-harness --compare-existing-dvi`, whose only DVI
+normalization is the preamble comment, and diagnose the first meaningful
+semantic or DVI divergence. Do not search source prefixes or recompile one
+page at a time.
+
+When one document's complete DVI is canonically exact, advance directly to the
+next eligible source in the locked corpus and repeat the full-source DVI run.
+Do not run, inspect, render, or use Umber PDF output for diagnosis until the
+corpus-wide DVI pass is complete. The later PDF pass will compare the same
+qualified papers in corpus order and ignore equivalent serialization,
+font-subset tags, and extractor rounding. This corpus-wide DVI-first,
+PDF-second order prevents PDF finalization details from hiding an earlier TeX
+typesetting divergence.
+
 ## 6. Never half-implement, never weaken to get green
 
 - Do not silently half-implement a primitive or scanner arm just to unblock

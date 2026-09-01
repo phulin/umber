@@ -666,6 +666,23 @@ UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
   scripts/run-stepwise-arxiv-census.sh
 ```
 
+The canonical per-document parity workflow is separate from the census. A
+candidate qualifies only when its complete, unmodified archive compiles
+cleanly with the pinned TeX Live 2026 pdfTeX in both DVI and PDF modes; retain
+the two output identities and page counts. PDF compilation is only an
+eligibility check in this pass, and PDF-only or otherwise non-DVI-capable rows
+are recorded for the later PDF pass. Then compile the complete source once
+with Umber in DVI mode under 500,000,000 expansion fuel, the ordinary
+10,000,000 execution-step cap, and the established wall-time, RSS, and
+termination-grace guards. Fuel is solely a nontermination guard and is never a
+parity metric. Compare DVI through `parity-harness --compare-existing-dvi` and
+stop at the first meaningful semantic or DVI divergence. After complete DVI
+parity, advance directly to the next eligible source in the locked corpus. Do
+not run, inspect, render, or use Umber PDF output for diagnosis until that
+corpus-wide DVI pass is complete. Prefix boundary searches, per-page
+recompilation, serialization-only PDF differences, font-subset tags, and
+extractor rounding are not parity work.
+
 The runner is serial and gives every paper one process through
 `scripts/run-umber-guarded.py`, with cumulative engine fuel, wall-time,
 aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
