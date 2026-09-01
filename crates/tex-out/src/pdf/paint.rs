@@ -147,6 +147,14 @@ impl PdfPainter {
 
     fn text(&mut self, run: &super::PdfContentTextRun) {
         if !self.in_text {
+            // pdftex.web §690 (`pdf_begin_text`) restores the page/form
+            // origin before opening every text object. Paint-program
+            // coordinates are already PDF-oriented, so that logical origin is
+            // `(0, 0)` here. In particular, an origin-mode literal must not
+            // leave later text expressed through its translated CTM: although
+            // the affine positions are equivalent, PDF consumers raster and
+            // extract the composed floating-point coordinates differently.
+            self.set_origin(0.0, 0.0);
             self.content.begin_text();
             self.in_text = true;
         }

@@ -54,7 +54,10 @@ fn origin_literal_moves_but_page_and_direct_literals_do_not() {
 }
 
 #[test]
-fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
+fn begin_text_restores_page_origin_after_an_origin_literal() {
+    // pdftex.web §690: `pdf_begin_text` calls `pdf_set_origin` for the
+    // page/form origin. The inverse `cm` is observable normalized PDF
+    // evidence; retaining the literal's CTM changes consumer float rounding.
     let bytes = ordered_page_content(&[
         PdfContentOperation::Literal {
             mode: crate::PdfLiteralMode::Origin,
@@ -100,17 +103,18 @@ fn origin_literal_keeps_later_paint_at_absolute_page_positions() {
             "2 0 0 3 0 0 cm\n",
             "/Im1 Do\n",
             "Q\n",
+            "1 0 0 1 -10 -20 cm\n",
             "BT\n",
             "/F1 10 Tf\n",
-            "1 0 0 1 20 20 Tm\n",
+            "1 0 0 1 30 40 Tm\n",
             "(A) Tj\n",
             "ET\n",
             "q\n",
-            "40 40 7 8 re\n",
+            "50 60 7 8 re\n",
             "f\n",
             "Q\n",
             "q\n",
-            "1 0 0 1 60 60 cm\n",
+            "1 0 0 1 70 80 cm\n",
             "/Fm1 Do\n",
             "Q",
         )
