@@ -2142,7 +2142,7 @@ impl<'a, G> DefinitionView<'a, G> {
 
     #[must_use]
     pub fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.header().pattern
+        self.header.pattern
     }
 
     #[must_use]

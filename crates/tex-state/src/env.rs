@@ -381,7 +381,7 @@ impl<G> GroupRestorationReceipt<G> {
 
 /// One packed scalar or typed generation coordinate stored by a bank/journal.
 pub(crate) enum StateWord<G> {
-    Meaning(MeaningWord<G>, Option<u64>),
+    Meaning(MeaningWord<G>),
     Integer(i32),
     Dimension(Scaled),
     TokenList(Option<TokenListId<G>>),
@@ -393,7 +393,7 @@ pub(crate) enum StateWord<G> {
 impl<G> Clone for StateWord<G> {
     fn clone(&self) -> Self {
         match self {
-            Self::Meaning(value, identity) => Self::Meaning(*value, *identity),
+            Self::Meaning(value) => Self::Meaning(*value),
             Self::Integer(value) => Self::Integer(*value),
             Self::Dimension(value) => Self::Dimension(*value),
             Self::TokenList(value) => Self::TokenList(value.clone()),
@@ -407,7 +407,7 @@ impl<G> Clone for StateWord<G> {
 impl<G> core::fmt::Debug for StateWord<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Meaning(value, _) => value.fmt(formatter),
+            Self::Meaning(value) => value.fmt(formatter),
             Self::Integer(value) => value.fmt(formatter),
             Self::Dimension(value) => value.fmt(formatter),
             Self::TokenList(None) => formatter.write_str("TokenList(None)"),
@@ -423,9 +423,7 @@ impl<G> core::fmt::Debug for StateWord<G> {
 impl<G> PartialEq for StateWord<G> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Meaning(left, left_identity), Self::Meaning(right, right_identity)) => {
-                left == right && left_identity == right_identity
-            }
+            (Self::Meaning(left), Self::Meaning(right)) => left == right,
             (Self::Integer(left), Self::Integer(right)) => left == right,
             (Self::Dimension(left), Self::Dimension(right)) => left == right,
             (Self::TokenList(left), Self::TokenList(right)) => left == right,
@@ -462,7 +460,6 @@ impl From<BankError> for StateError {
 /// All eqtb-equivalent current-value banks for one revision generation.
 pub(crate) struct DenseState<G> {
     meanings: DenseBank<MeaningWord<G>>,
-    meaning_identities: DenseBank<Option<u64>>,
     counts: RegisterBank<i32>,
     dimensions: RegisterBank<Scaled>,
     token_registers: RegisterBank<Option<TokenListId<G>>>,
@@ -486,6 +483,11 @@ pub(crate) struct DenseState<G> {
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
     reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
+    /// Cold semantic identities for definition coordinates currently or
+    /// historically reachable from eqtb. The hot meaning row remains the
+    /// compact non-owning coordinate; checkpoint hashing consults this side
+    /// table only when maintained semantic identity is enabled.
+    definition_identities: std::collections::HashMap<crate::DefinitionId<G>, u64>,
 }
 
 /// Accepted dense suffix retained while the current candidate mutates the
@@ -852,7 +854,6 @@ impl<G> DenseState<G> {
     pub(crate) fn new() -> Result<Self, StateError> {
         Ok(Self {
             meanings: DenseBank::growing(MeaningWord::UNDEFINED),
-            meaning_identities: DenseBank::growing(None),
             counts: RegisterBank::new(zero_i32)?,
             dimensions: RegisterBank::new(zero_scaled)?,
             token_registers: RegisterBank::new(no_token_list::<G>)?,
@@ -880,6 +881,7 @@ impl<G> DenseState<G> {
             groups: Vec::new(),
             next_group_lineage: 1,
             reachable_state_identity: None,
+            definition_identities: std::collections::HashMap::new(),
         })
     }
 
@@ -894,40 +896,32 @@ impl<G> DenseState<G> {
         {
             return false;
         }
-        for (index, meaning) in self.meanings.values().enumerate() {
-            let identity = match meaning {
-                MeaningWord::Macro { definition, .. } => {
-                    let Some(identity) = definition_identity(definition) else {
-                        return false;
-                    };
-                    Some(identity)
-                }
-                MeaningWord::Static(_) | MeaningWord::Font(_) => None,
-            };
-            self.meaning_identities
-                .get_mut(index as u32)
-                .expect("meaning identity bank matches admitted meanings")
-                .value = identity;
+        for meaning in self.meanings.values() {
+            if let MeaningWord::Macro { definition, .. } = meaning {
+                let Some(identity) = definition_identity(definition) else {
+                    return false;
+                };
+                self.definition_identities.insert(definition, identity);
+            }
         }
         let mut root = crate::state_hash::SemanticMapIdentity::empty(0x636f_7265_5f65_6e76);
         let mut complete = true;
-        let mut include =
-            |cell, word: StateWord<G>| match state_word_semantic_contribution(cell, &word) {
-                Ok(Some(value)) => {
-                    root.replace(state_cell_semantic_key(cell), None, Some(value));
-                }
-                Ok(None) => {}
-                Err(()) => complete = false,
-            };
+        let definition_identities = &self.definition_identities;
+        let mut include = |cell, word: StateWord<G>| match state_word_semantic_contribution(
+            cell,
+            &word,
+            definition_identities,
+        ) {
+            Ok(Some(value)) => {
+                root.replace(state_cell_semantic_key(cell), None, Some(value));
+            }
+            Ok(None) => {}
+            Err(()) => complete = false,
+        };
         for (index, meaning) in self.meanings.values().enumerate() {
-            let identity = self
-                .meaning_identities
-                .get(index as u32)
-                .expect("meaning identity bank matches admitted meanings")
-                .value;
             include(
                 StateCell::Meaning(index as u32),
-                StateWord::Meaning(meaning, identity),
+                StateWord::Meaning(meaning),
             );
         }
         for index in u16::MIN..=u16::MAX {
@@ -1118,7 +1112,6 @@ impl<G> DenseState<G> {
 
     /// Admits a session-validated symbol into the direct meaning bank.
     pub(crate) fn admit_symbol(&mut self, symbol: Symbol) -> Result<(), StateError> {
-        self.meaning_identities.admit_through(symbol.raw())?;
         self.meanings.admit_through(symbol.raw())?;
         Ok(())
     }
@@ -1142,7 +1135,7 @@ impl<G> DenseState<G> {
     ) -> Result<(), StateError> {
         self.assign(
             StateCell::Meaning(symbol.raw()),
-            StateWord::Meaning(value, None),
+            StateWord::Meaning(value),
             scope,
         )
     }
@@ -1154,11 +1147,14 @@ impl<G> DenseState<G> {
         definition_identity: Option<u64>,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        self.assign(
-            StateCell::Meaning(symbol.raw()),
-            StateWord::Meaning(value, definition_identity),
-            scope,
-        )
+        if let MeaningWord::Macro { definition, .. } = value {
+            if let Some(identity) = definition_identity {
+                self.definition_identities.insert(definition, identity);
+            } else if self.reachable_state_identity.is_some() {
+                self.reachable_state_identity = None;
+            }
+        }
+        self.assign_meaning(symbol, value, scope)
     }
 
     #[inline(always)]
@@ -1989,15 +1985,7 @@ impl<G> DenseState<G> {
 
     fn read_cell(&self, cell: StateCell) -> Result<BankCell<StateWord<G>>, StateError> {
         let value = match cell {
-            StateCell::Meaning(index) => {
-                let meaning = self.meanings.get(index)?;
-                let identity = self.meaning_identities.get(index)?.value;
-                BankCell::new(
-                    StateWord::Meaning(meaning.value, identity),
-                    meaning.level,
-                    meaning.save_serial,
-                )
-            }
+            StateCell::Meaning(index) => self.meanings.get(index)?.map(StateWord::Meaning),
             StateCell::Count(index) => self.counts.get(index)?.map(StateWord::Integer),
             StateCell::Dimension(index) => self.dimensions.get(index)?.map(StateWord::Dimension),
             StateCell::TokenRegister(index) => {
@@ -2055,12 +2043,9 @@ impl<G> DenseState<G> {
             save_serial,
         } = value;
         match (cell, value) {
-            (StateCell::Meaning(index), StateWord::Meaning(word, identity)) => {
-                self.meaning_identities
-                    .write(index, BankCell::new(identity, level, save_serial))?;
-                self.meanings
-                    .write(index, BankCell::new(word, level, save_serial))?;
-            }
+            (StateCell::Meaning(index), StateWord::Meaning(word)) => self
+                .meanings
+                .write(index, BankCell::new(word, level, save_serial))?,
             (StateCell::Count(index), StateWord::Integer(word)) => self
                 .counts
                 .write(index, BankCell::new(word, level, save_serial))?,
@@ -2112,8 +2097,13 @@ impl<G> DenseState<G> {
             (identity_before, self.reachable_state_identity.as_mut())
         {
             let key = state_cell_semantic_key(cell);
-            let old = state_word_semantic_contribution(cell, &before.value);
-            let new = state_word_semantic_contribution(cell, &identity_after);
+            let old =
+                state_word_semantic_contribution(cell, &before.value, &self.definition_identities);
+            let new = state_word_semantic_contribution(
+                cell,
+                &identity_after,
+                &self.definition_identities,
+            );
             match (old, new) {
                 (Ok(old), Ok(new)) => root.replace(key, old, new),
                 (Err(()), _) | (_, Err(())) => self.reachable_state_identity = None,
@@ -2143,15 +2133,12 @@ impl<G> DenseState<G> {
             .then(|| self.read_cell(delta.cell))
             .transpose()?;
         match (delta.cell, &mut delta.alternate) {
-            (StateCell::Meaning(index), StateWord::Meaning(value, identity)) => {
-                swap_cell(
-                    self.meanings.get_mut(index)?,
-                    value,
-                    &mut delta.alternate_level,
-                    &mut delta.alternate_save_serial,
-                );
-                core::mem::swap(&mut self.meaning_identities.get_mut(index)?.value, identity);
-            }
+            (StateCell::Meaning(index), StateWord::Meaning(value)) => swap_cell(
+                self.meanings.get_mut(index)?,
+                value,
+                &mut delta.alternate_level,
+                &mut delta.alternate_save_serial,
+            ),
             (StateCell::Count(index), StateWord::Integer(value)) => swap_cell(
                 self.counts.get_mut(index)?,
                 value,
@@ -2247,8 +2234,16 @@ impl<G> DenseState<G> {
         if let Some(before) = identity_before {
             let after = self.read_cell(delta.cell)?;
             let key = state_cell_semantic_key(delta.cell);
-            let old = state_word_semantic_contribution(delta.cell, &before.value);
-            let new = state_word_semantic_contribution(delta.cell, &after.value);
+            let old = state_word_semantic_contribution(
+                delta.cell,
+                &before.value,
+                &self.definition_identities,
+            );
+            let new = state_word_semantic_contribution(
+                delta.cell,
+                &after.value,
+                &self.definition_identities,
+            );
             match (old, new, self.reachable_state_identity.as_mut()) {
                 (Ok(old), Ok(new), Some(root)) => root.replace(key, old, new),
                 (Err(()), _, _) | (_, Err(()), _) => self.reachable_state_identity = None,
@@ -2467,9 +2462,10 @@ fn font_runtime_cell_semantic_key(cell: FontRuntimeCell) -> u64 {
 fn state_word_semantic_contribution<G>(
     cell: StateCell,
     word: &StateWord<G>,
+    definition_identities: &std::collections::HashMap<crate::DefinitionId<G>, u64>,
 ) -> Result<Option<u64>, ()> {
     let is_default = match (cell, word) {
-        (StateCell::Meaning(_), StateWord::Meaning(value, _)) => value == &MeaningWord::UNDEFINED,
+        (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,
         (StateCell::Count(_) | StateCell::IntegerParameter(_), StateWord::Integer(value)) => {
             *value == 0
         }
@@ -2505,8 +2501,14 @@ fn state_word_semantic_contribution<G>(
         return Ok(None);
     }
     let identity = match word {
-        StateWord::Meaning(value, definition_identity) => {
-            value.semantic_identity(*definition_identity).ok_or(())?
+        StateWord::Meaning(value) => {
+            let definition_identity = match value {
+                MeaningWord::Macro { definition, .. } => {
+                    definition_identities.get(definition).copied()
+                }
+                MeaningWord::Static(_) | MeaningWord::Font(_) => None,
+            };
+            value.semantic_identity(definition_identity).ok_or(())?
         }
         StateWord::Integer(value) => {
             crate::state_hash::semantic_scalar_root(0x636f_7265_5f69_6e74, |hasher| {
@@ -2551,7 +2553,7 @@ fn is_extended_register_cell(cell: StateCell) -> bool {
 
 fn restoration_value<G>(word: StateWord<G>) -> GroupRestorationValue<G> {
     match word {
-        StateWord::Meaning(value, _) => GroupRestorationValue::Meaning(value.resolve()),
+        StateWord::Meaning(value) => GroupRestorationValue::Meaning(value.resolve()),
         StateWord::Integer(value) => GroupRestorationValue::Integer(value),
         StateWord::Dimension(value) => GroupRestorationValue::Dimension(value),
         StateWord::TokenList(value) => GroupRestorationValue::TokenList(value),
@@ -2564,7 +2566,7 @@ fn restoration_value<G>(word: StateWord<G>) -> GroupRestorationValue<G> {
 fn word_matches<G>(cell: StateCell, word: &StateWord<G>) -> bool {
     matches!(
         (cell, word),
-        (StateCell::Meaning(_), StateWord::Meaning(_, _))
+        (StateCell::Meaning(_), StateWord::Meaning(_))
             | (StateCell::Count(_), StateWord::Integer(_))
             | (StateCell::Dimension(_), StateWord::Dimension(_))
             | (StateCell::TokenRegister(_), StateWord::TokenList(_))

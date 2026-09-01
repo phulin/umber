@@ -1421,7 +1421,7 @@ impl<G> SaveJournal<G> {
         self.profile.append_calls = self.profile.append_calls.saturating_add(1);
         self.profile.mutations = self.profile.mutations.saturating_add(1);
         let word = match &mutation.before {
-            StateWord::Meaning(_, _) => 0,
+            StateWord::Meaning(_) => 0,
             StateWord::Integer(_) => 1,
             StateWord::Dimension(_) => 2,
             StateWord::TokenList(_) => 3,
