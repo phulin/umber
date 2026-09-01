@@ -170,6 +170,10 @@ impl<G> MacroBodyCursor<G> {
         self.frame.position()
     }
 
+    pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
+        self.frame.source_context()
+    }
+
     pub(crate) fn token_at(
         &self,
         state: &tex_state::CommandContext<'_, G>,
@@ -190,16 +194,7 @@ impl<G> MacroBodyCursor<G> {
     pub(super) fn advance_word(
         &mut self,
         state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<
-        Option<(
-            TokenWord,
-            u32,
-            u64,
-            Option<tex_state::packed_input::SourceContext>,
-            Option<crate::execution_scratch::ArgumentSetId<G>>,
-        )>,
-        (),
-    > {
+    ) -> Result<Option<TokenWord>, ()> {
         let position = self.frame.position as usize;
         let Some(word) = state.definition(self.definition).replacement_word(position) else {
             return Ok(None);
@@ -207,13 +202,7 @@ impl<G> MacroBodyCursor<G> {
         if self.frame.advance() != Some(position as u32) {
             return Err(());
         }
-        Ok(Some((
-            word,
-            position as u32,
-            self.frame.identity,
-            self.frame.source_context(),
-            self.arguments,
-        )))
+        Ok(Some(word))
     }
 }
 
@@ -342,6 +331,10 @@ impl<G> MacroArgumentCursor<G> {
         self.frame.position()
     }
 
+    pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
+        self.frame.source_context()
+    }
+
     pub(crate) fn argument_set(&self) -> crate::execution_scratch::ArgumentSetId<G> {
         self.range.frame()
     }
@@ -365,18 +358,8 @@ impl<G> MacroArgumentCursor<G> {
     pub(super) fn advance_word(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Result<
-        Option<(
-            TracedTokenWord,
-            u32,
-            u64,
-            Option<tex_state::packed_input::SourceContext>,
-        )>,
-        (),
-    > {
+    ) -> Result<Option<TracedTokenWord>, ()> {
         let position = self.frame.position() as u32;
-        let identity = self.frame.identity().0;
-        let active_source = self.frame.source_context();
         let Ok(word) = scratch.admitted_argument_word_sequential(
             self.range,
             position as usize,
@@ -387,7 +370,7 @@ impl<G> MacroArgumentCursor<G> {
         if self.frame.advance() != Some(position) {
             return Err(());
         }
-        Ok(Some((word, position, identity, active_source)))
+        Ok(Some(word))
     }
 }
 

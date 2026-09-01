@@ -1099,9 +1099,11 @@ impl<G> crate::CommandState<G> {
                 }
                 ResidentInputTop::MacroBody(top) => {
                     let exhausted_identity = top.identity();
-                    let Some((word, position, identity, active_source, arguments)) =
-                        top.advance_word(state)?
-                    else {
+                    let position = top.position() as u32;
+                    let identity = exhausted_identity.0;
+                    let active_source = top.active_source();
+                    let arguments = top.arguments;
+                    let Some(word) = top.advance_word(state)? else {
                         if let Some(transition) = self.finish_resident_exhaustion(
                             resident_index,
                             exhausted_identity,
@@ -1172,9 +1174,10 @@ impl<G> crate::CommandState<G> {
                 }
                 ResidentInputTop::MacroArgument(top) => {
                     let exhausted_identity = top.identity();
-                    let Some((word, position, identity, active_source)) =
-                        top.advance_word(&self.scratch)?
-                    else {
+                    let position = top.position() as u32;
+                    let identity = exhausted_identity.0;
+                    let active_source = top.active_source();
+                    let Some(word) = top.advance_word(&self.scratch)? else {
                         if let Some(transition) = self.finish_resident_exhaustion(
                             resident_index,
                             exhausted_identity,

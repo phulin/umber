@@ -930,7 +930,7 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
+        assert!(processor.macro_call(&mut call).expect("macro call"));
         assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
         assert_eq!(
             processor
@@ -960,6 +960,64 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
                 .semantic_token(),
             letter('z')
         );
+    });
+}
+
+#[test]
+fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(Token::Param(1))],
+                &[
+                    TokenWord::pack(Token::Param(1)),
+                    TokenWord::pack(Token::Char {
+                        ch: '#',
+                        cat: Catcode::Parameter,
+                    }),
+                ],
+            )
+            .expect("parameter escape definition");
+        let symbol = universe.intern("parameterescape").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let argument = letter('x');
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol()), argument]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        for expected in [
+            argument,
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+        ] {
+            assert_eq!(
+                processor
+                    .get_x_token()
+                    .expect("replacement delivery")
+                    .expect("replacement command")
+                    .spelling()
+                    .semantic_token(),
+                expected
+            );
+        }
     });
 }
 
@@ -1008,7 +1066,7 @@ fn delimited_argument_preserves_a_failed_overlapping_prefix() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
+        assert!(processor.macro_call(&mut call).expect("macro call"));
         assert_eq!(active_argument_tokens(processor.command), expected);
         for expected_token in expected {
             assert_eq!(
@@ -1089,7 +1147,7 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert_eq!(processor.macro_call(&mut call).expect("macro call"), true);
+        assert!(processor.macro_call(&mut call).expect("macro call"));
         assert_eq!(
             active_argument_tokens(processor.command),
             [
