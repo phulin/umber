@@ -1,7 +1,7 @@
 //! Pure pdfTeX character-protrusion edge discovery and line materialization.
 
 use tex_state::font::PdfFontCode;
-use tex_state::node::{GlueKind, MarginKernSide, Node};
+use tex_state::node::{GlueKind, KernKind, MarginKernSide, Node};
 use tex_state::node_arena::NodeCursor;
 use tex_state::scaled::Scaled;
 
@@ -511,11 +511,12 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
             edge_glyph_cursor(state, children, 0, children.len(), edge)
                 .map_or(Search::Skip, Search::Glyph)
         }
-        Node::Kern { amount, .. } | Node::MathOn(amount) | Node::MathOff(amount)
-            if amount.raw() == 0 =>
+        Node::Kern { amount, kind }
+            if amount.raw() == 0 || matches!(kind, KernKind::Font | KernKind::Auto) =>
         {
             Search::Skip
         }
+        Node::MathOn(amount) | Node::MathOff(amount) if amount.raw() == 0 => Search::Skip,
         // pdftex.web §1003 recognizes pointer identity with the shared
         // `zero_glue`, not merely an equal-valued specification. Parameter
         // and `\nonscript` kinds retain that identity when their value is

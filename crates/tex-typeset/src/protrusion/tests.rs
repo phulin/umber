@@ -423,6 +423,16 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
             amount: sp(0),
             kind: KernKind::Explicit,
         },
+        // pdftex.web §1003's `cp_skipable` crosses both normal font kerns
+        // and pdfTeX automatic kerns even when they have nonzero width.
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Font,
+        },
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Auto,
+        },
         // `\nonscript` directly retains pdfTeX's shared `zero_glue` pointer.
         Node::Glue {
             spec: zero_glue,
