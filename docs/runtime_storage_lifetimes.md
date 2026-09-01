@@ -568,7 +568,11 @@ applied, or diagnostic payload while preparation returns only a compact status.
 Application consumes its fields directly and completion reuses the empty slot.
 One admitted semantic command context remains resident across ordinary cold
 inspection, application, and command-owned named-hook receipt drainage; only an
-actual host boundary releases it. A resource suspension moves that same frame
+actual host boundary releases it. The executor admits that reference-only
+facade through a callback which constructs it in the callee's stack slot;
+ordinary cold application neither returns the whole facade through a
+`Result` nor moves it between stack owners. Only copy-small detached settlement
+facts leave the callback. A resource suspension moves the same operation frame
 into the singular typed attempt; there is no per-operation box and no append
 lane retaining completed commands.
 

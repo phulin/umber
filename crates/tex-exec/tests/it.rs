@@ -540,13 +540,19 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .map(|(body, _)| body)
         .expect("locate resident prepared application");
     let ordinary_application = prepared_application
-        .split_once("} else {\n            let result = apply_cold_operation(")
-        .and_then(|(_, body)| body.split_once("\n        };"))
+        .split_once(".with_command_context(|context| {\n                    if let ColdOperation::ShowGroups")
+        .and_then(|(_, body)| {
+            body.split_once(".map_err(|_| ExecError::MissingToken {\n                    context: \"cold operation admission\",")
+        })
         .map(|(body, _)| body)
         .expect("locate ordinary resident cold application");
-    assert!(ordinary_application.contains("operation,\n                &mut context,"));
+    assert!(ordinary_application.contains("operation,\n                        context,"));
     assert!(!ordinary_application.contains("frame.unavailable_mut(cold)"));
     assert!(!ordinary_application.contains("command_context()"));
+    assert!(
+        !prepared_application
+            .contains("stores.command_context().expect(\"cold operation admission\")")
+    );
     assert!(!prepared_application.contains("cold.operation.take()"));
     assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
     assert!(!prepared_application.contains("CommandEpisode"));

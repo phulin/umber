@@ -1510,9 +1510,10 @@ impl<G> MainControl<G> {
     }
 
     fn local_glue_pointer_reassigned<T, D>(
-        &self,
         context: &CommandContext<'_, G>,
         scanned: &ColdOperation<G, T, D>,
+        skip_pointer_sources: &[GluePointerSource<G>],
+        muskip_pointer_sources: &[GluePointerSource<G>],
     ) -> bool {
         let (index, value, source_identity, source_is_target, physical, pointer_sources) =
             match scanned {
@@ -1532,7 +1533,7 @@ impl<G> MainControl<G> {
                         Some(physical) => physical,
                         None => return false,
                     },
-                    &self.skip_pointer_sources,
+                    skip_pointer_sources,
                 ),
                 ColdOperation::Muskip {
                     index,
@@ -1550,7 +1551,7 @@ impl<G> MainControl<G> {
                         Some(physical) => physical,
                         None => return false,
                     },
-                    &self.muskip_pointer_sources,
+                    muskip_pointer_sources,
                 ),
                 _ => return false,
             };
@@ -1574,12 +1575,18 @@ impl<G> MainControl<G> {
     }
 
     fn etex_redundant_local_glue_assignment<T, D>(
-        &self,
         context: &CommandContext<'_, G>,
         scanned: &ColdOperation<G, T, D>,
+        skip_pointer_sources: &[GluePointerSource<G>],
+        muskip_pointer_sources: &[GluePointerSource<G>],
     ) -> bool {
         context.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
-            && self.local_glue_pointer_reassigned(context, scanned)
+            && Self::local_glue_pointer_reassigned(
+                context,
+                scanned,
+                skip_pointer_sources,
+                muskip_pointer_sources,
+            )
     }
 
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
@@ -7362,38 +7369,6 @@ impl<G> MainControl<G> {
                 .world_mut()
                 .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
         }
-        let mut context = stores.command_context().expect("cold operation admission");
-        if let ColdOperation::ShowGroups { diagnostic } = &mut *operation
-            && diagnostic.is_none()
-        {
-            *diagnostic = Some(detached_showgroups(
-                &context,
-                &self.active_alignment,
-                &self.boxes,
-                &self.active_discretionaries,
-                &self.active_math_choices,
-                &self.active_math_left_boundaries,
-                &self.active_math_shifts,
-            ));
-        }
-        let reassigning_glue = self.local_glue_pointer_reassigned(&context, &*operation);
-        let redundant_glue = self.etex_redundant_local_glue_assignment(&context, &*operation);
-        match &mut *operation {
-            ColdOperation::Skip {
-                redundant,
-                reassigning,
-                ..
-            }
-            | ColdOperation::Muskip {
-                redundant,
-                reassigning,
-                ..
-            } => {
-                *redundant = redundant_glue;
-                *reassigning = reassigning_glue;
-            }
-            _ => {}
-        }
         let scanned = &*operation;
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
@@ -7496,7 +7471,6 @@ impl<G> MainControl<G> {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
-        let effect = applied_effect_observation(scanned, &context);
         let output_routine_was_active = self.boxes.output_routine_active;
         let mut command = CommandMachine {
             state: &mut self.command,
@@ -7518,47 +7492,45 @@ impl<G> MainControl<G> {
             pending_outer_page_build_context: None,
             output_routine_active: self.boxes.output_routine_active,
         };
-        let (mut result, mut post_apply_facts) = if matches!(
+        let (mut result, mut post_apply_facts, redundant_glue, effect) = if matches!(
             &*operation,
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(_))
         ) {
             // Immediate form creation crosses back to the aggregate Universe;
-            // only this uncommon host boundary releases the resident semantic
-            // context and admits the narrower form context below.
-            drop(context);
-            let request = match &mut *operation {
-                ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
-                    request
-                }
-                _ => unreachable!("immediate-form discriminant remains resident"),
-            };
+            // only this uncommon host boundary publishes outside the resident
+            // semantic context admitted below.
             let provenance_demand = stores.provenance_demand();
             let provenance_budget_bytes =
                 stores.provenance_budgets().detached_artifact_recipe_bytes;
-            let (form, source_resolver, post_apply_facts) = {
-                let mut context =
-                    stores
-                        .command_context()
-                        .map_err(|_| ExecError::MissingToken {
-                            context: "immediate form admission",
-                        })?;
-                let form = apply_pdf_form_request(
-                    request,
-                    &mut context,
-                    &mut self.modes,
-                    &mut command,
-                    true,
-                )?
-                .expect("immediate form creation returns a publication record");
-                let form_page = context
-                    .copy_pdf_form_to_page(form.object())
-                    .ok_or(ExecError::PdfXFormVoidBox)?;
-                let source_resolver =
-                    DetachedArtifactSourceResolver::capture_page_list(form_page, &context);
-                let post_apply_facts =
-                    PostApplyFacts::capture(parking, self.modes.current_mode(), &context);
-                (form, source_resolver, post_apply_facts)
-            };
+            let (form, source_resolver, post_apply_facts, effect) = stores
+                .with_command_context(|context| {
+                    let effect = applied_effect_observation(&*operation, context);
+                    let request = match &mut *operation {
+                        ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(
+                            request,
+                        )) => request,
+                        _ => unreachable!("immediate-form discriminant remains resident"),
+                    };
+                    let form = apply_pdf_form_request(
+                        request,
+                        context,
+                        &mut self.modes,
+                        &mut command,
+                        true,
+                    )?
+                    .expect("immediate form creation returns a publication record");
+                    let form_page = context
+                        .copy_pdf_form_to_page(form.object())
+                        .ok_or(ExecError::PdfXFormVoidBox)?;
+                    let source_resolver =
+                        DetachedArtifactSourceResolver::capture_page_list(form_page, context);
+                    let post_apply_facts =
+                        PostApplyFacts::capture(parking, self.modes.current_mode(), context);
+                    Ok::<_, ExecError>((form, source_resolver, post_apply_facts, effect))
+                })
+                .map_err(|_| ExecError::MissingToken {
+                    context: "immediate form admission",
+                })??;
             let mut geometry = DetachedShipoutGeometry::default();
             publish_immediate_pdf_form(
                 form,
@@ -7576,37 +7548,84 @@ impl<G> MainControl<G> {
                     geometry,
                 );
             }
-            (Ok(ReplayStep::Continue), post_apply_facts)
+            (Ok(ReplayStep::Continue), post_apply_facts, false, effect)
         } else {
-            let result = apply_cold_operation(
-                operation,
-                &mut context,
-                &mut self.modes,
-                &mut self.next_alignment_identity,
-                &mut self.active_alignment,
-                &mut command,
-                &mut self.boxes,
-                &self.active_discretionaries,
-                &self.active_math_choices,
-                &mut self.active_math_fields,
-                &self.active_math_left_boundaries,
-                &self.active_math_shifts,
-                &mut self.prepared_dvi_pages,
-            );
-            if result.is_ok() {
-                command.publish_named_token_list_pushes(&mut context);
-            }
-            Self::capture_save_stack_usage(
-                host_preparation,
-                &context,
-                &self.boxes,
-                command.state,
-                command.state.profile(),
-            );
-            let post_apply_facts =
-                PostApplyFacts::capture(parking, self.modes.current_mode(), &context);
-            drop(context);
-            (result, post_apply_facts)
+            stores
+                .with_command_context(|context| {
+                    if let ColdOperation::ShowGroups { diagnostic } = &mut *operation
+                        && diagnostic.is_none()
+                    {
+                        *diagnostic = Some(detached_showgroups(
+                            context,
+                            &self.active_alignment,
+                            &self.boxes,
+                            &self.active_discretionaries,
+                            &self.active_math_choices,
+                            &self.active_math_left_boundaries,
+                            &self.active_math_shifts,
+                        ));
+                    }
+                    let reassigning_glue = Self::local_glue_pointer_reassigned(
+                        context,
+                        &*operation,
+                        &self.skip_pointer_sources,
+                        &self.muskip_pointer_sources,
+                    );
+                    let redundant_glue = Self::etex_redundant_local_glue_assignment(
+                        context,
+                        &*operation,
+                        &self.skip_pointer_sources,
+                        &self.muskip_pointer_sources,
+                    );
+                    match &mut *operation {
+                        ColdOperation::Skip {
+                            redundant,
+                            reassigning,
+                            ..
+                        }
+                        | ColdOperation::Muskip {
+                            redundant,
+                            reassigning,
+                            ..
+                        } => {
+                            *redundant = redundant_glue;
+                            *reassigning = reassigning_glue;
+                        }
+                        _ => {}
+                    }
+                    let effect = applied_effect_observation(&*operation, context);
+                    let result = apply_cold_operation(
+                        operation,
+                        context,
+                        &mut self.modes,
+                        &mut self.next_alignment_identity,
+                        &mut self.active_alignment,
+                        &mut command,
+                        &mut self.boxes,
+                        &self.active_discretionaries,
+                        &self.active_math_choices,
+                        &mut self.active_math_fields,
+                        &self.active_math_left_boundaries,
+                        &self.active_math_shifts,
+                        &mut self.prepared_dvi_pages,
+                    );
+                    if result.is_ok() {
+                        command.publish_named_token_list_pushes(context);
+                    }
+                    Self::capture_save_stack_usage(
+                        host_preparation,
+                        context,
+                        &self.boxes,
+                        command.state,
+                        command.state.profile(),
+                    );
+                    let post_apply_facts =
+                        PostApplyFacts::capture(parking, self.modes.current_mode(), context);
+                    (result, post_apply_facts, redundant_glue, effect)
+                })
+                .map_err(|_| ExecError::MissingToken {
+                    context: "cold operation admission",
+                })?
         };
         if result.is_ok()
             && let Some(completion) = command.pending_show_completion.take()

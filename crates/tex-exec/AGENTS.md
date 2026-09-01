@@ -95,7 +95,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   aggregate receipt; `scan.rs` owns uncommon operand collection and writes
   completed leaves directly into the borrowed caller slot while returning only
   compact control outcomes; `apply.rs` mutably borrows the cold branch owned by
-  `ColdExecutionEpisode` and consumes only its semantic leaves;
+  `ColdExecutionEpisode` and consumes only its semantic leaves. Ordinary cold
+  application admits the reference-only `CommandContext` through a callback
+  which constructs it directly in the callee stack and returns only detached
+  copy-small settlement facts;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
   families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
