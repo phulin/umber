@@ -124,8 +124,12 @@ semantic work or allocation.
 ## Validation and evidence
 
 `cargo test -q --tests -p tex-command` passes 383 unit and 23 boundary tests.
-The complete routine suite and repository formatting/clippy gates are recorded
-after final validation.
+The complete `cargo test -q --tests` run passes every suite except
+`pdf_parity::committed_embedded_font_fixtures_match_bytes_structure_and_attestations`;
+that deterministic embedded-Type1 fixture mismatch reproduces outside this
+change and is already tracked by `umber2-emmj`. The complete routine suite with
+only that exact known test skipped passes. `scripts/check.sh` reports all four
+repository gates passed: dprint, Biome, rustfmt, and both clippy resolutions.
 
 Ignored evidence is under `target/umber2-66p0.8.40.118/`. The authority receipt,
 `perf.data`, raw copy report, symbolized copy report, self report, inclusive
