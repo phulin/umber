@@ -179,6 +179,12 @@ collector (see `src/conditionals.rs`).
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
   temporary owned ledger or whole-context handoff.
+- `src/command.rs`: test builds count resolved-command and delivery-stamp
+  writes for structural assertions. Profiling builds derive that exact
+  one-write-per-raw-delivery volume from the singular command-work ledger, so
+  the resident loop does not maintain a parallel ownership census. Genuine
+  backup copies and suspension moves remain separately counted because they
+  are not implied by the raw-delivery vector.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.

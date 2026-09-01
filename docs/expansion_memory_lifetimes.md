@@ -399,6 +399,12 @@ move-only backup. Neither the ordinary nor profiling path updates a parallel
 freshness-publication census; focused fixtures derive their exact admitted
 delivery volume at the measurement boundary. A genuine typed retry readmits
 its command/cursor explicitly.
+Resolved-command and delivery-stamp writes obey the same rule: each successful
+raw delivery writes both fields exactly once, so production profiling derives
+their volume from the singular command-work ledger rather than updating a
+second thread-local ownership census. Test builds retain the direct counters
+for structural assertions. Backup copies and suspension moves remain distinct
+because the raw-delivery vector does not imply them.
 No decoded provenance copy, command projection, or delivery owner is stored in
 executor preparation.
 

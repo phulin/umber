@@ -667,7 +667,10 @@ impl<'slot, G> EmptyCommand<'slot, G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> tex_state::token::PackedMeaningResolution {
-        #[cfg(any(test, feature = "profiling"))]
+        // Every successful raw delivery writes both fields exactly once, so
+        // profiling derives this volume from the singular command-work ledger
+        // instead of maintaining a second per-delivery census.
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
             counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
