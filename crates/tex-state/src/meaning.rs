@@ -1057,6 +1057,8 @@ pub enum UnexpandablePrimitive {
     PdfEndThread,
     PdfXImage,
     PdfRefXImage,
+    /// encTeX's input-translation assignment, exposed by the pinned pdfTeX.
+    Mubyte,
 }
 
 impl UnexpandablePrimitive {
@@ -1325,6 +1327,7 @@ impl UnexpandablePrimitive {
             Self::PdfStartThread => 263,
             Self::PdfEndThread => 264,
             Self::QuitVMode => 265,
+            Self::Mubyte => 266,
         }
     }
 
@@ -1593,6 +1596,7 @@ impl UnexpandablePrimitive {
             263 => Some(Self::PdfStartThread),
             264 => Some(Self::PdfEndThread),
             265 => Some(Self::QuitVMode),
+            266 => Some(Self::Mubyte),
             _ => None,
         }
     }

@@ -96,6 +96,7 @@ primitive_metadata! {
         Xdef => { spellings: [(Tex82, "xdef")], identity: ("def", Some(3)) },
         Let => { spellings: [(Tex82, "let")], identity: ("let", Some(0)) },
         FutureLet => { spellings: [(Tex82, "futurelet")], identity: ("let", Some(1)) },
+        Mubyte => { spellings: [(Pdftex, "mubyte")], identity: ("let", Some(10)) },
         GlobalDefs => { spellings: [], identity: ("assign_int", None) },
         Global => { spellings: [(Tex82, "global")], identity: ("prefix", Some(4)) },
         Long => { spellings: [(Tex82, "long")], identity: ("prefix", Some(1)) },

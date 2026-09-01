@@ -1248,6 +1248,15 @@ name sets, and documentation consume its generated views. Restoration registers
 frozen meanings without replacing format-shadowed live meanings. Handwritten
 dispatch remains the behavioral authority.
 
+The pdfTeX profile also exposes encTeX's `\mubyte` capability with its
+canonical `let`/10 observation identity from `enctex2.ch` [49.1219]. The
+pinned pdfTeX enables encTeX, and LaTeX tests whether this control sequence is
+defined before deciding whether bytes 128--255 should become active while the
+format is built. Umber therefore registers the name so the format records the
+same byte catcodes. Execution remains fail-loud until the complete encTeX
+input-translation state machine is implemented; catalogue presence is not a
+partial `\mubyte` assignment implementation.
+
 ## 6. Engine and character profiles
 
 Command behavior is selected by an immutable profile installed before job

@@ -200,7 +200,7 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
     }
 
     let mut unexpandable = std::collections::HashSet::new();
-    for operand in 0..=265 {
+    for operand in 0..=266 {
         if let Some(primitive) = UnexpandablePrimitive::from_operand(operand) {
             assert_eq!(primitive.operand(), operand);
             assert!(
@@ -216,6 +216,14 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
     );
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::QuitVMode,
+    ));
+    assert_eq!(UnexpandablePrimitive::Mubyte.operand(), 266);
+    assert_eq!(
+        UnexpandablePrimitive::from_operand(266),
+        Some(UnexpandablePrimitive::Mubyte)
+    );
+    round_trip(Meaning::UnexpandablePrimitive(
+        UnexpandablePrimitive::Mubyte,
     ));
     let internals = [
         (17, InternalInteger::PdfLastAnnot),

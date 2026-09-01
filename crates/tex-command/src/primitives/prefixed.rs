@@ -117,6 +117,7 @@ const fn is_prefixed_command_primitive(primitive: UnexpandablePrimitive) -> bool
             // `let` (94).
             | UnexpandablePrimitive::Let
             | UnexpandablePrimitive::FutureLet
+            | UnexpandablePrimitive::Mubyte
             // `shorthand_def` (95).
             | UnexpandablePrimitive::CharDef
             | UnexpandablePrimitive::MathCharDef
