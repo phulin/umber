@@ -1952,7 +1952,11 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         };
         self.materialization.push(match node {
             Node::Disc { .. } => MaterializationAction::Discretionary,
-            Node::Glue { .. } if definition.is_some() => MaterializationAction::BreakDiscardable,
+            Node::Glue { .. }
+            | Node::Kern {
+                kind: KernKind::Explicit,
+                ..
+            } if definition.is_some() => MaterializationAction::BreakDiscardable,
             Node::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
             _ => MaterializationAction::Copy,
         });

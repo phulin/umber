@@ -2549,7 +2549,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
 fn explicit_kern_break_scores_before_adding_the_kern() {
     // TeX82 §§822/866 tests the break before adding the explicit kern, then
     // discards that kern while constructing the following line's prefix.
-    let universe = TestState::new();
+    let mut universe = TestState::new();
     let glue = GlueSpec::ZERO;
     let nodes = vec![
         rule(10),
@@ -2567,6 +2567,49 @@ fn explicit_kern_break_scores_before_adding_the_kern() {
     assert_eq!(breakpoints[0].position, 2);
     assert_eq!(breakpoints[0].line_width.natural.raw(), 10);
     assert_eq!(breakpoints[0].next_width.natural.raw(), 15);
+
+    let empty = universe.publish_page_nodes(&[]);
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &[
+            BreakDecision {
+                position: 2,
+                penalty: 0,
+                hyphenated: false,
+            },
+            BreakDecision {
+                position: nodes.len(),
+                penalty: -10_000,
+                hyphenated: false,
+            },
+        ],
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: glue,
+            right_skip: glue,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(10)),
+        },
+    );
+
+    assert!(
+        !lines[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Kern { .. })),
+        "the chosen explicit kern is outside the prior line"
+    );
+    assert!(
+        matches!(lines[1].nodes.first(), Some(Node::Rule { .. })),
+        "the kern and following glue are discarded before the next line"
+    );
 }
 
 #[test]

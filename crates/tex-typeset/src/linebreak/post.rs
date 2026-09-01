@@ -202,7 +202,11 @@ impl<'a> LineMaterializer<'a> {
                 .and_then(|index| nodes.get(index).zip(actions.get_mut(index)))
             {
                 *action = match node {
-                    Node::Glue { .. } => MaterializationAction::BreakDiscardable,
+                    Node::Glue { .. }
+                    | Node::Kern {
+                        kind: KernKind::Explicit,
+                        ..
+                    } => MaterializationAction::BreakDiscardable,
                     Node::MathOff(_) => MaterializationAction::BreakMath,
                     _ => *action,
                 };
@@ -566,11 +570,13 @@ fn push_owned_line_segment<S: TypesetState>(
                 ));
             }
             Node::Glue { .. }
-                if absolute + 1 == end
-                    && end < node_count
-                    && action
-                        .is_none_or(|action| action == MaterializationAction::BreakDiscardable) => {
-            }
+            | Node::Kern {
+                kind: KernKind::Explicit,
+                ..
+            } if absolute + 1 == end
+                && end < node_count
+                && action
+                    .is_none_or(|action| action == MaterializationAction::BreakDiscardable) => {}
             Node::MathOff(_)
                 if absolute + 1 == end
                     && end < node_count

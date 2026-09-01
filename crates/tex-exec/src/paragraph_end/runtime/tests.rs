@@ -13,6 +13,55 @@ fn node_addresses<G>(
         .collect()
 }
 
+fn test_line_break_params(width: i32) -> LineBreakParams {
+    LineBreakParams {
+        pretolerance: 10_000,
+        tolerance: 10_000,
+        line_penalty: 0,
+        hyphen_penalty: 0,
+        ex_hyphen_penalty: 0,
+        adj_demerits: 0,
+        double_hyphen_demerits: 0,
+        final_hyphen_demerits: 0,
+        emergency_stretch: Scaled::from_raw(0),
+        looseness: 0,
+        last_line_fit: 0,
+        pdf_adjust_spacing: 0,
+        expansion_steps: None,
+        pdf_protrude_chars: 0,
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
+        par_fill_skip: GlueSpec::ZERO,
+        shape: LineShape::natural(Scaled::from_raw(width)),
+    }
+}
+
+fn test_post_line_break_params(width: i32) -> PostLineBreakParams {
+    PostLineBreakParams {
+        empty_list: tex_state::node_arena::PageListId::empty(),
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
+        interline_penalty: 0,
+        club_penalty: 0,
+        widow_penalties: tex_typeset::linebreak::WidowPenalties {
+            selector: tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
+            ordinary: tex_typeset::linebreak::PenaltySequence {
+                fallback: 0,
+                values: Vec::new(),
+            },
+            display: tex_typeset::linebreak::PenaltySequence {
+                fallback: 0,
+                values: Vec::new(),
+            },
+        },
+        broken_penalty: 0,
+        prev_graf: 0,
+        interline_penalties: Vec::new(),
+        club_penalties: Vec::new(),
+        shape: LineShape::natural(Scaled::from_raw(width)),
+    }
+}
+
 fn traversal_delta(
     after: tex_state::node_arena::NodeTraversalCounters,
     before: tex_state::node_arena::NodeTraversalCounters,
@@ -169,26 +218,7 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
         ]);
         let source_addresses = node_addresses(&stores, source);
         let before = stores.page_material_counters();
-        let line_params = LineBreakParams {
-            pretolerance: 10_000,
-            tolerance: 10_000,
-            line_penalty: 0,
-            hyphen_penalty: 0,
-            ex_hyphen_penalty: 0,
-            adj_demerits: 0,
-            double_hyphen_demerits: 0,
-            final_hyphen_demerits: 0,
-            emergency_stretch: Scaled::from_raw(0),
-            looseness: 0,
-            last_line_fit: 0,
-            pdf_adjust_spacing: 0,
-            expansion_steps: None,
-            pdf_protrude_chars: 0,
-            left_skip: GlueSpec::ZERO,
-            right_skip: GlueSpec::ZERO,
-            par_fill_skip: GlueSpec::ZERO,
-            shape: LineShape::natural(Scaled::from_raw(1_000)),
-        };
+        let line_params = test_line_break_params(1_000);
         let tape = ParagraphTape::analyze_arena_id(
             &crate::typeset_context::TypesetContext::new(&stores),
             source,
@@ -202,29 +232,7 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
                 penalty: -10_000,
                 hyphenated: false,
             }],
-            PostLineBreakParams {
-                empty_list: tex_state::node_arena::PageListId::empty(),
-                left_skip: GlueSpec::ZERO,
-                right_skip: GlueSpec::ZERO,
-                interline_penalty: 0,
-                club_penalty: 0,
-                widow_penalties: tex_typeset::linebreak::WidowPenalties {
-                    selector: tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
-                    ordinary: tex_typeset::linebreak::PenaltySequence {
-                        fallback: 0,
-                        values: Vec::new(),
-                    },
-                    display: tex_typeset::linebreak::PenaltySequence {
-                        fallback: 0,
-                        values: Vec::new(),
-                    },
-                },
-                broken_penalty: 0,
-                prev_graf: 0,
-                interline_penalties: Vec::new(),
-                club_penalties: Vec::new(),
-                shape: LineShape::natural(Scaled::from_raw(1_000)),
-            },
+            test_post_line_break_params(1_000),
         );
 
         let line = materializer
@@ -244,6 +252,99 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
             1,
             "only the generated right skip is appended"
         );
+        assert!(materializer.materialize_next(&mut stores).is_none());
+    });
+}
+
+#[test]
+fn production_post_line_discards_an_explicit_kern_chosen_as_a_break() {
+    // TeX82 §§822/866 chooses the breakpoint before an explicit kern and
+    // discards both that kern and the following glue during post-line breakup.
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let rule = || Node::Rule {
+            width: Some(Scaled::from_raw(10)),
+            height: Some(Scaled::from_raw(1)),
+            depth: Some(Scaled::from_raw(0)),
+        };
+        let source = stores.publish_page_nodes(vec![
+            rule(),
+            Node::Kern {
+                amount: Scaled::from_raw(5),
+                kind: KernKind::Explicit,
+            },
+            Node::Glue {
+                spec: GlueSpec::ZERO,
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            rule(),
+        ]);
+        let line_params = test_line_break_params(10);
+        let tape = ParagraphTape::analyze_arena_id(
+            &crate::typeset_context::TypesetContext::new(&stores),
+            source,
+            &line_params,
+        );
+        let mut materializer = ArenaPostLineMaterializer::new(
+            &stores,
+            tape,
+            vec![
+                tex_typeset::linebreak::BreakDecision {
+                    position: 2,
+                    penalty: 0,
+                    hyphenated: false,
+                },
+                tex_typeset::linebreak::BreakDecision {
+                    position: source.len(),
+                    penalty: -10_000,
+                    hyphenated: false,
+                },
+            ],
+            test_post_line_break_params(10),
+        );
+
+        let first = materializer
+            .materialize_next(&mut stores)
+            .expect("the first line materializes");
+        let first_nodes = stores
+            .page_node_list(first.nodes)
+            .expect("the first line remains live")
+            .nodes()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            first_nodes.as_slice(),
+            [
+                Node::Rule { .. },
+                Node::Glue {
+                    kind: GlueKind::RightSkip,
+                    ..
+                }
+            ]
+        ));
+
+        let second = materializer
+            .materialize_next(&mut stores)
+            .expect("the second line materializes");
+        let second_nodes = stores
+            .page_node_list(second.nodes)
+            .expect("the second line remains live")
+            .nodes()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            second_nodes.as_slice(),
+            [
+                Node::Rule { .. },
+                Node::Glue {
+                    kind: GlueKind::RightSkip,
+                    ..
+                }
+            ]
+        ));
         assert!(materializer.materialize_next(&mut stores).is_none());
     });
 }

@@ -173,16 +173,19 @@ impl ArenaPostLineChannel {
                     .nodes();
                 nodes
                     .try_for_each_range(self.position..end, |absolute, node| {
-                        if actions
-                            .and_then(|actions| actions.get(absolute))
-                            .is_none_or(|action| {
-                                *action == tex_typeset::linebreak::MaterializationAction::Copy
-                            })
-                            && matches!(classify_post_line_node_value(node), PostLineNode::Other)
-                        {
-                            core::ops::ControlFlow::Continue(())
-                        } else {
+                        let node_action = classify_post_line_node_value(node);
+                        let action = actions.and_then(|actions| actions.get(absolute)).copied();
+                        if post_line_event_is_exceptional(
+                            node_action,
+                            absolute,
+                            end,
+                            self.source.len(),
+                            action,
+                            par_fill_override.is_some(),
+                        ) {
                             core::ops::ControlFlow::Break(())
+                        } else {
+                            core::ops::ControlFlow::Continue(())
                         }
                     })
                     .is_continue()
@@ -322,7 +325,7 @@ impl ArenaPostLineChannel {
                         });
                     });
                 }
-                PostLineNode::DiscardableGlue
+                PostLineNode::BreakDiscardable
                     if absolute + 1 == end
                         && end < self.source.len()
                         && action.is_none_or(|action| {
@@ -374,7 +377,7 @@ enum PostLineNode {
         physical_replace_count: u8,
     },
     ParFillGlue,
-    DiscardableGlue,
+    BreakDiscardable,
     MathOff,
     Direction(Direction),
     Other,
@@ -401,27 +404,14 @@ fn next_post_line_event<G>(
         .try_for_each_range(selected, |absolute, node| {
             let node_action = classify_post_line_node_value(node);
             let action = actions.and_then(|actions| actions.get(absolute)).copied();
-            let exceptional = match node_action {
-                PostLineNode::Discretionary { .. } | PostLineNode::Direction(_) => true,
-                PostLineNode::ParFillGlue => has_par_fill_override,
-                PostLineNode::DiscardableGlue => {
-                    absolute + 1 == end
-                        && end < source_len
-                        && action.is_none_or(|action| {
-                            action
-                                == tex_typeset::linebreak::MaterializationAction::BreakDiscardable
-                        })
-                }
-                PostLineNode::MathOff => {
-                    absolute + 1 == end
-                        && end < source_len
-                        && action.is_none_or(|action| {
-                            action == tex_typeset::linebreak::MaterializationAction::BreakMath
-                        })
-                }
-                PostLineNode::Other => false,
-            };
-            if exceptional {
+            if post_line_event_is_exceptional(
+                node_action,
+                absolute,
+                end,
+                source_len,
+                action,
+                has_par_fill_override,
+            ) {
                 event = Some((absolute, node_action, action));
                 core::ops::ControlFlow::Break(())
             } else {
@@ -429,6 +419,35 @@ fn next_post_line_event<G>(
             }
         });
     event
+}
+
+fn post_line_event_is_exceptional(
+    node_action: PostLineNode,
+    absolute: usize,
+    end: usize,
+    source_len: usize,
+    action: Option<tex_typeset::linebreak::MaterializationAction>,
+    has_par_fill_override: bool,
+) -> bool {
+    match node_action {
+        PostLineNode::Discretionary { .. } | PostLineNode::Direction(_) => true,
+        PostLineNode::ParFillGlue => has_par_fill_override,
+        PostLineNode::BreakDiscardable => {
+            absolute + 1 == end
+                && end < source_len
+                && action.is_none_or(|action| {
+                    action == tex_typeset::linebreak::MaterializationAction::BreakDiscardable
+                })
+        }
+        PostLineNode::MathOff => {
+            absolute + 1 == end
+                && end < source_len
+                && action.is_none_or(|action| {
+                    action == tex_typeset::linebreak::MaterializationAction::BreakMath
+                })
+        }
+        PostLineNode::Other => false,
+    }
 }
 
 fn classify_post_line_node_value(node: &Node) -> PostLineNode {
@@ -450,7 +469,11 @@ fn classify_post_line_node_value(node: &Node) -> PostLineNode {
             kind: GlueKind::ParFillSkip,
             ..
         } => PostLineNode::ParFillGlue,
-        Node::Glue { .. } => PostLineNode::DiscardableGlue,
+        Node::Glue { .. }
+        | Node::Kern {
+            kind: KernKind::Explicit,
+            ..
+        } => PostLineNode::BreakDiscardable,
         Node::MathOff(_) => PostLineNode::MathOff,
         Node::Direction(direction) => PostLineNode::Direction(*direction),
         _ => PostLineNode::Other,
