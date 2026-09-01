@@ -289,6 +289,59 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
     ));
 }
 
+/// pdftex.web §1061 finds the left edge character before `\leftskip` becomes
+/// the finalized line boundary. A nonzero centering skip must therefore remain
+/// outside production's coordinate-only left-edge search.
+#[test]
+fn finalized_nonzero_leftskip_does_not_block_margin_kern_planning() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
+    state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 700);
+    let centered = GlueSpec {
+        stretch: sp(65_536),
+        stretch_order: Order::Fil,
+        ..GlueSpec::ZERO
+    };
+    let empty = state.publish_page_nodes(&[]);
+    let nodes = [
+        Node::Glue {
+            spec: centered,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        },
+        hlist(empty, sp(0), sp(0), sp(0)),
+        character(font, 'A'),
+        character(font, '.'),
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+        Node::Glue {
+            spec: centered,
+            kind: GlueKind::RightSkip,
+            leader: None,
+        },
+    ];
+
+    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes));
+
+    assert!(matches!(
+        plan.left,
+        Some((
+            1,
+            Node::MarginKern {
+                amount,
+                side: MarginKernSide::Left,
+                font: source_font,
+                ch: b'A',
+            }
+        )) if amount == sp(-5 * 65_536) && source_font == font
+    ));
+}
+
 #[test]
 fn nonzero_material_blocks_edge_search() {
     let mut state = TestState::new();

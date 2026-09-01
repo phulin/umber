@@ -99,7 +99,7 @@ fn margin_kern_variation(state: &impl TypesetState, glyph: Glyph) -> (Scaled, Sc
 /// already present. Margin kerns sit inside those skips, exactly as in
 /// pdfTeX's `post_line_break`.
 pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
-    let right = edge_glyph(state, nodes, Edge::Right);
+    let right = edge_glyph_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), Edge::Right);
     if let Some(glyph) = right.filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Right);
         let at = right_margin_position(nodes);
@@ -115,7 +115,7 @@ pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
             },
         );
     }
-    let left = edge_glyph(state, nodes, Edge::Left);
+    let left = finalized_left_edge_glyph_cursor(state, NodeCursor::owned(nodes));
     if let Some(glyph) = left.filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Left);
         let at =
@@ -161,7 +161,11 @@ pub fn plan_margin_kerns(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Ma
                 },
             )
         });
-    let left = edge_glyph_cursor(state, nodes, 0, nodes.len(), Edge::Left);
+    // pdftex.web §1061 discovers the left marginal character before
+    // prepending `\leftskip`. This planner receives an already finalized
+    // line, so exclude that synthetic boundary node while retaining every
+    // blocker inside the actual line material.
+    let left = finalized_left_edge_glyph_cursor(state, nodes);
     let left = left
         .filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0)
         .map(|glyph| {
@@ -343,8 +347,27 @@ enum Search {
     Block,
 }
 
-fn edge_glyph(state: &impl TypesetState, nodes: &[Node], edge: Edge) -> Option<Glyph> {
-    edge_glyph_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), edge)
+fn finalized_left_edge_glyph_cursor(
+    state: &impl TypesetState,
+    nodes: NodeCursor<'_>,
+) -> Option<Glyph> {
+    for node in nodes.iter() {
+        if matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::LeftSkip,
+                ..
+            }
+        ) {
+            continue;
+        }
+        match search_node(state, node, Edge::Left) {
+            Search::Glyph(glyph) => return Some(glyph),
+            Search::Skip => {}
+            Search::Block => return None,
+        }
+    }
+    None
 }
 
 fn edge_glyph_cursor(
