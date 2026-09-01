@@ -2418,6 +2418,35 @@ mod tests {
     }
 
     #[test]
+    fn pdf_margin_kern_queries_skip_finalized_line_skips() {
+        // pdftex.web's `left_margin_kern_code`/`right_margin_kern_code`
+        // loops skip `cp_skipable` nodes plus the corresponding finalized
+        // left/right skip before inspecting the edge margin-kern node.
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        with_pdftex_oracle_stores(|stores| {
+            stores
+                .world_mut()
+                .set_memory_file("cmr10.tfm", CMR10.to_vec())
+                .expect("seed cmr10");
+            prepare_pdftex_run_stores(stores);
+            let output = run_pdf_memory(
+                r"\catcode`\{=1 \catcode`\}=2
+                   \font\f=cmr10 \lpcode\f`A=100 \rpcode\f`.=200
+                   \pdfprotrudechars=1
+                   \setbox0=\vbox{\hsize=20pt
+                     \leftskip=0pt plus1fil \rightskip=0pt plus1fil
+                     \noindent\f A.\par}
+                   \setbox1=\vbox{\unvbox0\global\setbox2=\lastbox}
+                   \immediate\write16{margins=\leftmarginkern2/\rightmarginkern2}
+                   \end",
+                stores,
+            )
+            .expect("pdfTeX finalized-skip margin-kern query fixture");
+            assert!(output.contains("margins=-1.0pt/-2.0pt"), "{output}");
+        });
+    }
+
+    #[test]
     fn pdf_font_codes_size_and_ligature_suppression_match_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_font_codes", "ref");
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

@@ -1855,9 +1855,43 @@ impl<'a, G> CommandContext<'a, G> {
                 .ok()?,
             _ => return None,
         };
+        let skippable = |node: &crate::node::Node| match node {
+            // pdftex.web's `left_margin_kern_code` and
+            // `right_margin_kern_code` walk past `cp_skipable` nodes and the
+            // finalized skip on the queried side before testing the margin
+            // kern. In particular, post-line-break boxes put `\leftskip`
+            // before the left margin kern and `\rightskip` after the right
+            // one.
+            crate::node::Node::Glue { spec, kind, .. } => {
+                *spec == crate::glue::GlueSpec::ZERO
+                    || matches!(
+                        (side, kind),
+                        (
+                            crate::node::MarginKernSide::Left,
+                            crate::node::GlueKind::LeftSkip
+                        ) | (
+                            crate::node::MarginKernSide::Right,
+                            crate::node::GlueKind::RightSkip
+                        )
+                    )
+            }
+            crate::node::Node::Kern { amount, .. }
+            | crate::node::Node::MathOn(amount)
+            | crate::node::Node::MathOff(amount) => amount.raw() == 0,
+            crate::node::Node::Penalty(_)
+            | crate::node::Node::Mark { .. }
+            | crate::node::Node::Ins { .. }
+            | crate::node::Node::Whatsit(_)
+            | crate::node::Node::Direction(_)
+            | crate::node::Node::Adjust(_)
+            | crate::node::Node::Nonscript => true,
+            _ => false,
+        };
         let candidate = match side {
-            crate::node::MarginKernSide::Left => children.get(0),
-            crate::node::MarginKernSide::Right => children.get(children.len().saturating_sub(1)),
+            crate::node::MarginKernSide::Left => children.iter().find(|node| !skippable(node)),
+            crate::node::MarginKernSide::Right => {
+                children.iter().rev().find(|node| !skippable(node))
+            }
         };
         Some(match candidate {
             Some(crate::node::Node::MarginKern {
