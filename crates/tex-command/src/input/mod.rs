@@ -19,13 +19,13 @@ pub(crate) use history::{
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
-    MacroArgumentCursor, MacroBodyCursor, PackedInputFrame, PackedTokenOwnership,
-    PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId,
-    ReplayLane, ReplayPayloadId, ReplayTrace, ReplayTransientMark, ResidentReplayCursor,
-    ResidentSpanCursor, RetirementBehavior, SourceLevel, SourceLevelExecutionState,
-    SourceLexExecutionState, SourceOpenDepths, SourceRetirement, SourceSlot, SourceSlotKey,
-    StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    AttemptTokenCursor, BackedUpToken, BackupTreatment, DurableTokenCursor, InputLevel,
+    InputLevelId, InputLevelInlineState, MacroArgumentCursor, MacroBodyCursor, PackedInputFrame,
+    PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
+    ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTokenCursor, ReplayTrace,
+    ReplayTransientMark, ResidentReplayCursor, ResidentSpanCursor, RetirementBehavior, SourceLevel,
+    SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
+    SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -166,11 +166,8 @@ impl<G> InputState<G> {
     ) -> Result<(), ()> {
         self.replay.rollback_transient(mark);
         for level in self.levels.iter() {
-            let InputLevel::Tokens(cursor) = level else {
-                continue;
-            };
-            if let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span {
-                self.replay.reactivate(replay);
+            if let InputLevel::ReplayTokens(cursor) = level {
+                self.replay.reactivate(cursor.replay);
             }
         }
         self.replay.end_transient().map_err(|_| ())
@@ -379,7 +376,10 @@ pub(crate) fn tracked_input_projection<G>(
                     project_line(&mut line, &slot.cursor, current);
                 }
             }
-            InputLevel::Tokens(cursor) => {
+            level @ (InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)) => {
+                let cursor = level.stored_common().expect("stored row");
                 stack.byte(1);
                 // Macro-activation and alignment identities need stack-relative
                 // translation, which is deliberately fail-closed for now.
@@ -389,7 +389,7 @@ pub(crate) fn tracked_input_projection<G>(
                 ) {
                     return None;
                 }
-                project_token_cursor(&mut stack, cursor, &input.replay, state)?;
+                project_token_cursor(&mut stack, level, &input.replay, state)?;
             }
             InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => return None,
         }
@@ -494,10 +494,11 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
 
 fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
-    cursor: &TokenCursor<G>,
+    level: &InputLevel<G>,
     replay_lane: &ReplayLane<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
+    let cursor = level.stored_common()?;
     hash.u64(u64::from(cursor.frame.position()));
     hash.byte(match cursor.retirement {
         RetirementBehavior::Pop => 0,
@@ -515,27 +516,22 @@ fn project_token_cursor<G>(
             return None;
         }
     });
-    if matches!(cursor.span, PackedTokenSpanHandle::AttemptList { .. }) {
-        return None;
-    }
-    match &cursor.span {
+    match level.stored_span_cold()? {
         PackedTokenSpanHandle::Replay { replay, len } => {
-            for index in 0..*len as usize {
+            for index in 0..len as usize {
                 project_token(
                     hash,
-                    replay_lane.indexed_get_cold(*replay, index)?.token()?,
+                    replay_lane.indexed_get_cold(replay, index)?.token()?,
                     state,
                 )?;
             }
         }
         PackedTokenSpanHandle::DurableList { list, .. } => {
-            for word in state.token_list(list.clone()) {
+            for word in state.token_list(list) {
                 project_token(hash, word.semantic_token(), state)?;
             }
         }
-        PackedTokenSpanHandle::AttemptList { .. } => {
-            unreachable!("packed macro payloads fail closed above")
-        }
+        PackedTokenSpanHandle::AttemptList { .. } => return None,
     }
     Some(())
 }
@@ -660,7 +656,10 @@ impl<G> InputState<G> {
                         return false;
                     }
                 }
-                InputLevel::Tokens(tokens) => {
+                level @ (InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)) => {
+                    let tokens = level.stored_common().expect("stored row");
                     if Self::token_context_level(
                         TokenContextStorage {
                             stores,
@@ -668,7 +667,7 @@ impl<G> InputState<G> {
                             attempt,
                             scratch,
                         },
-                        tokens,
+                        level,
                         current,
                         widths,
                     )
@@ -718,10 +717,10 @@ impl<G> InputState<G> {
         let output_index = self.levels.iter().position(|level| {
             matches!(
                 level,
-                InputLevel::Tokens(TokenCursor {
-                    trace: ReplayTrace::Stored(StoredReplayReason::OutputRoutine),
-                    ..
-                })
+                level if matches!(
+                    level.stored_common().map(|cursor| &cursor.trace),
+                    Some(ReplayTrace::Stored(StoredReplayReason::OutputRoutine))
+                )
             )
         });
         let level_count = output_index.unwrap_or_else(|| self.levels.len());
@@ -769,14 +768,16 @@ impl<G> InputState<G> {
                     widths,
                 )
             }
-            InputLevel::Tokens(tokens) => Self::token_context_level(
+            level @ (InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)) => Self::token_context_level(
                 TokenContextStorage {
                     stores,
                     replay_lane: &self.replay,
                     attempt,
                     scratch,
                 },
-                tokens,
+                level,
                 index + 1 == input_levels.len(),
                 widths,
             ),
@@ -799,7 +800,11 @@ impl<G> InputState<G> {
                         .line
                         .is_some()
                 }
-                InputLevel::Tokens(_) => Self::context_level_is_visible(level, None, current),
+                level @ (InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)) => {
+                    Self::context_level_is_visible(level, None, current)
+                }
                 InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => true,
             };
             if let InputLevel::Source(source) = level {
@@ -861,9 +866,16 @@ impl<G> InputState<G> {
                 .cursor
                 .line
                 .is_some(),
-            InputLevel::Tokens(tokens) => {
+            level @ (InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)) => {
+                let tokens = level.stored_common().expect("stored row");
                 if matches!(tokens.trace, ReplayTrace::BackedUp)
-                    && tokens.position() >= tokens.span.frame_len()
+                    && tokens.position()
+                        >= level
+                            .stored_span_cold()
+                            .expect("stored row has span")
+                            .frame_len()
                     && !current
                 {
                     return false;
@@ -1161,10 +1173,12 @@ impl<G> InputState<G> {
     /// §314's `<Print type of token list>` and §315's pseudoprint.
     fn token_context_level(
         storage: TokenContextStorage<'_, '_, G>,
-        tokens: &TokenCursor<G>,
+        level: &InputLevel<G>,
         current: bool,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
+        let tokens = level.stored_common()?;
+        let span = level.stored_span_cold()?;
         let TokenContextStorage {
             stores,
             replay_lane,
@@ -1173,22 +1187,22 @@ impl<G> InputState<G> {
         } = storage;
         fn span_len<G>(
             _stores: &tex_state::CommandContext<'_, G>,
-            tokens: &TokenCursor<G>,
+            span: &PackedTokenSpanHandle<G>,
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> usize {
-            tokens.span.frame_len()
+            span.frame_len()
         }
 
         fn span_token<G>(
             _stores: &tex_state::CommandContext<'_, G>,
-            tokens: &TokenCursor<G>,
+            span: &PackedTokenSpanHandle<G>,
             replay_lane: &ReplayLane<G>,
             index: usize,
             attempt: &crate::attempt::AttemptArena<G>,
             _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             PackedTokenSources::new(replay_lane, attempt)
-                .indexed_token_at_cold(&tokens.span, index)
+                .indexed_token_at_cold(span, index)
                 .map(|(word, _)| word.semantic_token())
         }
 
@@ -1213,7 +1227,7 @@ impl<G> InputState<G> {
             stores.append_selector_string_text(text, rendered);
         }
 
-        let count = span_len(stores, tokens, scratch);
+        let count = span_len(stores, &span, scratch);
         let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
@@ -1245,7 +1259,7 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = span_token(stores, tokens, replay_lane, index, attempt, scratch) {
+            if let Some(token) = span_token(stores, &span, replay_lane, index, attempt, scratch) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -1299,7 +1313,7 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = span_token(stores, tokens, replay_lane, index, attempt, scratch) {
+            if let Some(token) = span_token(stores, &span, replay_lane, index, attempt, scratch) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

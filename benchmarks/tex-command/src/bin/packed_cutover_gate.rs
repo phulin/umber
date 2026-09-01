@@ -708,7 +708,7 @@ fn fused_raw_expanded_delivery() {
         let mut context = universe.command_context().expect("command context");
         let mut fuel = CommandFuelLedger::default();
         let mut destination = None;
-        command.profile_reset_stored_token_advance_counters();
+        command.profile_reset_input_cursor_mutation_counters();
         let copies_before = command
             .profile_timeline_counters()
             .full_frame_history_clones;
@@ -775,31 +775,25 @@ fn fused_raw_expanded_delivery() {
             work_after.meaning_lookups - work_before.meaning_lookups,
             (DELIVERIES * 2) as u64
         );
+        let domains = command.profile_resident_domain_dispatch_counters();
         assert_eq!(
-            command.profile_stored_token_advance_counters(),
+            domains,
             (
-                (DELIVERIES * 2 + 2) as u64,
-                (DELIVERIES * 2) as u64,
-                (DELIVERIES * 2) as u64,
-                (DELIVERIES * 2) as u64,
-                (DELIVERIES * 2) as u64,
                 0,
+                (REPLAY_WORDS + 1) as u64,
+                DURABLE_WORDS as u64,
+                (ATTEMPT_WORDS + 1) as u64,
                 0,
-                ((REPLAY_WORDS - 1) / 256) as u64,
                 0,
             )
         );
-        let counters = command.profile_stored_token_advance_counters();
         println!(
-            "fused_raw_expanded_delivery raw={} expanded={} stored_sources=3 loads={} advances={} writes={} lookups={} relays=0 copies=0 replay_segment_inspections={} replay_run_transitions={} raw_ns_per_delivery={:.2} expanded_ns_per_delivery={:.2}",
+            "fused_raw_expanded_delivery raw={} expanded={} stored_sources=3 replay_dispatches={} attempt_dispatches={} durable_dispatches={} relays=0 copies=0 raw_ns_per_delivery={:.2} expanded_ns_per_delivery={:.2}",
             DELIVERIES,
             DELIVERIES,
-            DELIVERIES * 2,
-            DELIVERIES * 2,
-            DELIVERIES * 2,
-            DELIVERIES * 2,
-            counters.7,
-            counters.8,
+            domains.1,
+            domains.3,
+            domains.2,
             raw_elapsed.as_nanos() as f64 / DELIVERIES as f64,
             expanded_elapsed.as_nanos() as f64 / DELIVERIES as f64,
         );

@@ -175,7 +175,10 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert_eq!(input_history.matches("fn select_resident_top(").count(), 1);
     assert!(input_history.contains("enum ResidentInputTop<'a, G>"));
     assert!(input_history.contains("ResidentInputTop::Source(ResidentSourceTop"));
-    assert!(input_history.contains("ResidentInputTop::StoredToken(cursor)"));
+    assert!(input_history.contains("ResidentInputTop::ReplayToken(cursor)"));
+    assert!(input_history.contains("ResidentInputTop::DurableToken(cursor)"));
+    assert!(input_history.contains("ResidentInputTop::AttemptToken(cursor)"));
+    assert!(!input_history.contains("match &cursor.span"));
     assert!(!input_history.contains("ResidentStoredTokenTop"));
     assert!(!format!("{input_history}\n{levels}").contains("StoredTokenAdvance"));
     assert!(input_history.contains("ResidentInputTop::MacroBody(cursor)"));
@@ -215,7 +218,10 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert_eq!(resident_front.matches(".select_resident_top()").count(), 1);
     for branch in [
         "ResidentInputTop::Source(top)",
-        "ResidentInputTop::StoredToken(cursor)",
+        "ResidentInputTop::ReplayToken(cursor)",
+        "ResidentInputTop::DurableToken(cursor)",
+        "ResidentInputTop::AttemptToken(cursor)",
+        "ResidentInputTop::MacroBody(top)",
         "ResidentInputTop::MacroArgument(top)",
     ] {
         assert_eq!(

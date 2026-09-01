@@ -5,7 +5,8 @@ use tex_state::measurement::HotCoreAllocationOwner;
 
 use crate::input::{
     InputLevel, InputLevelId, MacroArgumentCursor, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor, packed_token_frame,
+    ReplayTokenCursor, ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor,
+    packed_token_frame,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -50,6 +51,8 @@ fn assert_exact_direct_transition<G>(
             macro_argument_branch_entries: expected_branches.2,
             first_touch_transitions: 1,
             closure_dispatches: 0,
+            replay_domain_dispatches: expected_branches.1,
+            ..super::InputCursorMutationCounters::default()
         }
     );
     assert_eq!(after_history.undo_records - before_history.undo_records, 1);
@@ -97,7 +100,9 @@ fn assert_exact_direct_transition<G>(
 
 fn cursor_position<G>(level: &InputLevel<G>) -> usize {
     match level {
-        InputLevel::Tokens(cursor) => cursor.position(),
+        InputLevel::ReplayTokens(cursor) => cursor.position(),
+        InputLevel::DurableTokens(cursor) => cursor.position(),
+        InputLevel::AttemptTokens(cursor) => cursor.position(),
         InputLevel::MacroArgument(cursor) => cursor.position(),
         InputLevel::Source(_) | InputLevel::MacroBody(_) => {
             panic!("fixture admits a stored-token cursor")
@@ -116,19 +121,25 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
         let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
             .admit(&mut state.input.replay)
             .expect("token span admits");
-        let PackedTokenSpanHandle::Replay { replay, .. } = &span else {
+        let PackedTokenSpanHandle::Replay { replay, len } = span else {
             unreachable!("transient span is replay-owned")
         };
-        let replay_cursor = state.input.replay.resident_cursor(*replay);
+        let resident = state
+            .input
+            .replay
+            .resident_cursor(replay)
+            .expect("resident cursor");
         let mut fuel = crate::CommandFuelLedger::default();
-        state.input.levels.push(InputLevel::Tokens(TokenCursor {
-            span,
-            replay_cursor,
-            frame: packed_token_frame(InputLevelId(1), 2, &behavior, retirement, &trace),
-            behavior,
-            retirement,
-            trace,
-        }));
+        let frame = packed_token_frame(InputLevelId(1), 2, &behavior, retirement, &trace);
+        state
+            .input
+            .levels
+            .push(InputLevel::ReplayTokens(ReplayTokenCursor {
+                replay,
+                len,
+                resident,
+                common: TokenCursor::new(behavior, retirement, trace, frame),
+            }));
 
         assert_exact_direct_transition(&mut state, (0, 2, 0), |state| {
             let mut command = crate::command::CurrentCommand::empty();
@@ -211,7 +222,17 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
             assert_eq!(command.origin(), OriginId::UNKNOWN);
             assert_eq!(
                 state.profile_stored_token_advance_counters(),
-                (1, 1, 1, 1, 1, 0, 0, 0, 0)
+                (
+                    u64::from(matches!(storage, Storage::Replay)),
+                    1,
+                    1,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0
+                )
             );
         }
     });
@@ -227,18 +248,24 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
         let span = PackedTokenSpanHandle::transient([word('a'), word('b')])
             .admit(&mut state.input.replay)
             .expect("token span admits");
-        let PackedTokenSpanHandle::Replay { replay, .. } = &span else {
+        let PackedTokenSpanHandle::Replay { replay, len } = span else {
             unreachable!("transient span is replay-owned")
         };
-        let replay_cursor = state.input.replay.resident_cursor(*replay);
-        state.input.levels.push(InputLevel::Tokens(TokenCursor {
-            span,
-            replay_cursor,
-            frame: packed_token_frame(InputLevelId(7), 2, &behavior, retirement, &trace),
-            behavior,
-            retirement,
-            trace,
-        }));
+        let resident = state
+            .input
+            .replay
+            .resident_cursor(replay)
+            .expect("resident cursor");
+        let frame = packed_token_frame(InputLevelId(7), 2, &behavior, retirement, &trace);
+        state
+            .input
+            .levels
+            .push(InputLevel::ReplayTokens(ReplayTokenCursor {
+                replay,
+                len,
+                resident,
+                common: TokenCursor::new(behavior, retirement, trace, frame),
+            }));
         let checkpoint = state.input.levels.mark().expect("input checkpoint");
         let before = state.input.levels.counters();
         let mut context = universe.command_context().expect("command context");
@@ -259,13 +286,15 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
         assert_eq!(after.undo_records - before.undo_records, 2);
 
         state.input.levels.begin_checkpoint_candidate(checkpoint);
-        let InputLevel::Tokens(cursor) = state.input.levels.last().expect("restored cursor") else {
+        let InputLevel::ReplayTokens(cursor) = state.input.levels.last().expect("restored cursor")
+        else {
             panic!("restored row is a token cursor")
         };
         assert_eq!(cursor.position(), 0);
         assert_eq!(cursor.retirement, RetirementBehavior::Pop);
         state.input.levels.reject_checkpoint_candidate();
-        let InputLevel::Tokens(cursor) = state.input.levels.last().expect("redone cursor") else {
+        let InputLevel::ReplayTokens(cursor) = state.input.levels.last().expect("redone cursor")
+        else {
             panic!("redone row is a token cursor")
         };
         assert_eq!(cursor.position(), 1);
@@ -298,11 +327,12 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
                 .expect("forward replay delivery");
             first.push(command.spelling());
         }
-        let InputLevel::Tokens(accepted) = state.input.levels.last().expect("accepted replay")
+        let InputLevel::ReplayTokens(accepted) =
+            state.input.levels.last().expect("accepted replay")
         else {
             unreachable!("fixture keeps replay resident")
         };
-        let accepted_state = (accepted.position(), accepted.replay_cursor);
+        let accepted_state = (accepted.position(), accepted.resident);
 
         state.input.levels.begin_checkpoint_candidate(mark);
         let mut replayed = Vec::new();
@@ -320,20 +350,19 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             replayed.push(command.spelling());
         }
         assert_eq!(replayed, first);
-        let InputLevel::Tokens(candidate) = state.input.levels.last().expect("candidate replay")
+        let InputLevel::ReplayTokens(candidate) =
+            state.input.levels.last().expect("candidate replay")
         else {
             unreachable!("fixture keeps replay resident")
         };
-        assert_eq!(
-            (candidate.position(), candidate.replay_cursor),
-            accepted_state
-        );
+        assert_eq!((candidate.position(), candidate.resident), accepted_state);
 
         state.input.levels.reject_checkpoint_candidate();
-        let InputLevel::Tokens(redone) = state.input.levels.last().expect("redone replay") else {
+        let InputLevel::ReplayTokens(redone) = state.input.levels.last().expect("redone replay")
+        else {
             unreachable!("fixture keeps replay resident")
         };
-        assert_eq!((redone.position(), redone.replay_cursor), accepted_state);
+        assert_eq!((redone.position(), redone.resident), accepted_state);
 
         state.input.levels.begin_checkpoint_candidate(mark);
         for _ in 0..301 {
@@ -349,7 +378,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
                 .expect("accepted candidate replay delivery");
         }
         state.input.levels.accept_checkpoint_candidate();
-        let InputLevel::Tokens(accepted_candidate) =
+        let InputLevel::ReplayTokens(accepted_candidate) =
             state.input.levels.last().expect("accepted candidate")
         else {
             unreachable!("fixture keeps replay resident")

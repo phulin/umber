@@ -210,13 +210,15 @@ The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor, and rollback
 authority. A replay completion fence separately names the exact input level
 whose retirement owns publication; ordinary resident delivery never polls it.
-Its storage-lifetime tag
-was selected when the level was created; delivery borrows that domain, writes
+Its storage-lifetime tag becomes the input row's concrete replay, durable, or
+attempt variant when the level is created; delivery dispatches directly from
+that top-row tag, borrows the already-known domain, writes
 the spelling, raw delivery coordinate, only-present provenance, and input
 flags directly into `CurrentCommand`, and advances the fixed frame in place.
 Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
-whole packed frame before that advance.
+whole packed frame before that advance. The warm loop neither matches a
+storage handle nor constructs a storage-domain wrapper per word.
 The frame also carries the active external-source identity inherited when the
 row is pushed, paired with the host/VFS-selected source role in one compact
 source context. An explicit nested role overrides the enclosing role; an

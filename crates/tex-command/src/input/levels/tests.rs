@@ -2,8 +2,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
     BackedUpToken, BackupTreatment, InputLevelId, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayLane, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor,
-    packed_token_frame,
+    ReplayLane, ReplayTokenCursor, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior, TokenCursor, packed_token_frame,
 };
 
 fn traced(ch: char) -> TracedTokenWord {
@@ -150,17 +150,16 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     let payload = PackedTokenSpanHandle::transient([traced('x')])
         .admit(&mut lane)
         .expect("replay admission");
-    let cursor: TokenCursor<()> = TokenCursor {
-        replay_cursor: match &payload {
-            PackedTokenSpanHandle::Replay { replay, .. } => lane.resident_cursor(*replay),
-            PackedTokenSpanHandle::DurableList { .. }
-            | PackedTokenSpanHandle::AttemptList { .. } => None,
-        },
-        span: payload,
-        behavior,
-        retirement,
-        trace,
-        frame,
+    let PackedTokenSpanHandle::Replay { replay, len } = payload else {
+        unreachable!("transient input is replay-owned")
+    };
+    let cursor: ReplayTokenCursor<()> = ReplayTokenCursor {
+        replay,
+        len,
+        resident: lane
+            .resident_cursor(replay)
+            .expect("resident replay cursor"),
+        common: TokenCursor::new(behavior, retirement, trace, frame),
     };
 
     assert_eq!(cursor.frame.position(), 1);
@@ -213,11 +212,11 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 96);
+    assert!(std::mem::size_of::<TokenCursor<()>>() <= 56);
     assert_eq!(std::mem::size_of::<super::ResidentSpanCursor>(), 24);
     assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 48);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 96);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert!(std::mem::size_of::<super::SourceLevel<()>>() <= 48);
     assert!(

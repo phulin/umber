@@ -860,13 +860,14 @@ the input rows and no prefix ledger or shadow stack is retained.
 The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
 resident transition borrows the `InputStack` and looks up and discriminates the
 semantic top once. Its source branch lends the row and resident slot together,
-while its stored and macro-argument branches borrow the admitted span directly;
+while its concrete replay, durable, attempt, and macro-argument branches borrow
+the admitted span directly;
 each writes the caller's final command and advances the compact position before
 that top borrow ends. The same transition settles fuel, suppression, alignment,
 or parameter replay and returns only its final status. No cursor/token carrier,
 intermediate delivery result, second top lookup, or diagnostic revision write
-crosses that boundary. The stored branch has no wrapper or status of its own:
-it selects the replay, attempt, or durable owner once, performs one packed load
+crosses that boundary. The stored branches have no wrapper or status of their
+own: admission chooses the exact top-row tag once, and the warm branch performs one packed load
 and scalar advance, intercepts a parameter in place, or performs one final
 write with at most one dense meaning lookup. Replay words advance from the
 resident physical coordinate: segment metadata is inspected only at crossed
@@ -922,8 +923,9 @@ The input-stack vector may keep capacity for reuse, but it must not keep the
 popped source backing.
 
 Raw delivery writes directly into the active request's caller-owned
-`CurrentCommand`. Stored levels route through the `PackedTokenSpanHandle`
-variant chosen at admission, project the resident packed word into final
+`CurrentCommand`. Admission consumes the `PackedTokenSpanHandle` into a
+concrete replay, attempt, or durable input-row variant; stored delivery
+dispatches from that top-row tag and projects the resident packed word into final
 meaning and spelling fields, and advance their packed frame in place. Source
 levels write the same destination after tokenization. Parameter interception
 remains a local status before resolution and may push a literal argument level

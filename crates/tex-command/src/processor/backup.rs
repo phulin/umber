@@ -202,7 +202,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
             }
-            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
+            let Some(InputLevel::ReplayTokens(cursor)) = self.command.input.levels.last() else {
                 unreachable!("back_input above installed a token-list level");
             };
             assert_eq!(
@@ -210,9 +210,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
-            let PackedTokenSpanHandle::Replay { replay, .. } = cursor.span else {
-                unreachable!("back_input above installed a replay payload");
-            };
+            let replay = cursor.replay;
             let admitted = self
                 .command
                 .input

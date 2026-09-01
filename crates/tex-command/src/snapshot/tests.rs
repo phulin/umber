@@ -1219,9 +1219,12 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
         command
             .rollback(&checkpoint, universe)
             .expect("token frame cursor restores exactly");
-        let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last() else {
+        let Some(level) = command.input.levels.last() else {
             panic!("restored token frame remains live");
         };
+        let cursor = level
+            .stored_common()
+            .expect("restored token frame remains live");
         assert_eq!(cursor.retirement, crate::input::RetirementBehavior::Pop);
     });
 }

@@ -711,7 +711,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .empty_for_raw_delivery(),
                     (&mut self.observer, &mut self.immediate_write_retirement),
                 );
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 if transition.is_ok() {
                     self.command.delivery_loop_counters.warm_scalar_returns = self
                         .command
@@ -1017,8 +1017,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .levels
                         .last()
                         .and_then(|level| match level {
-                            InputLevel::Tokens(cursor) if cursor.identity() == identity => {
-                                Some((cursor.frame.position(), cursor.frame.source_context()))
+                            level
+                                if level
+                                    .stored_common()
+                                    .is_some_and(|cursor| cursor.identity() == identity) =>
+                            {
+                                level.stored_common().map(|cursor| {
+                                    (cursor.frame.position(), cursor.frame.source_context())
+                                })
                             }
                             InputLevel::MacroArgument(cursor) if cursor.identity() == identity => {
                                 Some((
@@ -1132,7 +1138,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .empty_for_raw_delivery(),
                         (&mut self.observer, &mut self.immediate_write_retirement),
                     );
-                    #[cfg(any(test, feature = "profiling"))]
+                    #[cfg(test)]
                     if transition.is_ok() {
                         self.command.delivery_loop_counters.warm_scalar_returns = self
                             .command

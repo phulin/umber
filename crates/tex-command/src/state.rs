@@ -163,19 +163,19 @@ pub struct CommandState<G> {
     pub(crate) token_collector_path_counters: TokenCollectorPathCounters,
     /// Operational proof for the singular resident macro-delivery kernel.
     /// Shipping builds contain neither the counters nor their updates.
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) macro_kernel_counters: MacroKernelCounters,
     /// Focused proof that resident success is a scalar return and status
     /// materialization is confined to cold transitions.
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) delivery_loop_counters: DeliveryLoopCounters,
     /// Exact operation census for the singular inline stored-token advance.
     /// Shipping builds contain neither the counters nor their updates.
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) stored_token_advance_counters: StoredTokenAdvanceCounters,
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct MacroKernelCounters {
     pub(crate) body_words: u64,
@@ -187,7 +187,7 @@ pub(crate) struct MacroKernelCounters {
     pub(crate) argument_command_writes: u64,
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DeliveryLoopCounters {
     pub(crate) warm_scalar_returns: u64,
@@ -195,7 +195,7 @@ pub(crate) struct DeliveryLoopCounters {
     pub(crate) intermediate_status_relays: u64,
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct StoredTokenAdvanceCounters {
     pub(crate) span_selections: u64,
@@ -428,11 +428,11 @@ impl<G> Default for CommandState<G> {
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
             #[cfg(test)]
             token_collector_path_counters: TokenCollectorPathCounters::default(),
-            #[cfg(any(test, feature = "profiling"))]
+            #[cfg(test)]
             macro_kernel_counters: MacroKernelCounters::default(),
-            #[cfg(any(test, feature = "profiling"))]
+            #[cfg(test)]
             delivery_loop_counters: DeliveryLoopCounters::default(),
-            #[cfg(any(test, feature = "profiling"))]
+            #[cfg(test)]
             stored_token_advance_counters: StoredTokenAdvanceCounters::default(),
         }
     }
@@ -874,16 +874,22 @@ impl<G> CommandState<G> {
             .take(limit)
             .map(|level| match level {
                 InputLevel::Source(_) => "source",
-                InputLevel::Tokens(cursor) => match &cursor.trace {
-                    ReplayTrace::MacroReplacement => "macro-body",
-                    ReplayTrace::MacroParameter { .. } => "macro-argument",
-                    ReplayTrace::BackedUp => "backed-up",
-                    ReplayTrace::Inserted => "inserted",
-                    ReplayTrace::UTemplate => "alignment-u-template",
-                    ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => "alignment-v-template",
-                    ReplayTrace::Stored(_) => "stored-token-list",
-                    ReplayTrace::Transient(_) => "transient-token-list",
-                },
+                level @ (InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)) => {
+                    match &level.stored_common().expect("stored row").trace {
+                        ReplayTrace::MacroReplacement => "macro-body",
+                        ReplayTrace::MacroParameter { .. } => "macro-argument",
+                        ReplayTrace::BackedUp => "backed-up",
+                        ReplayTrace::Inserted => "inserted",
+                        ReplayTrace::UTemplate => "alignment-u-template",
+                        ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
+                            "alignment-v-template"
+                        }
+                        ReplayTrace::Stored(_) => "stored-token-list",
+                        ReplayTrace::Transient(_) => "transient-token-list",
+                    }
+                }
                 InputLevel::MacroBody(_) => "macro-body",
                 InputLevel::MacroArgument(_) => "macro-argument",
             })
@@ -1253,6 +1259,23 @@ impl<G> CommandState<G> {
         )
     }
 
+    /// Returns exact resident dispatches for source, replay, durable, attempt,
+    /// macro-body, and macro-argument top-row domains.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_resident_domain_dispatch_counters(&self) -> (u64, u64, u64, u64, u64, u64) {
+        let counters = self.input.levels.cursor_mutation_counters();
+        (
+            counters.source_branch_entries,
+            counters.replay_domain_dispatches,
+            counters.durable_domain_dispatches,
+            counters.attempt_domain_dispatches,
+            counters.macro_body_domain_dispatches,
+            counters.macro_argument_branch_entries,
+        )
+    }
+
     /// Resets the focused ordinary raw-delivery path counters.
     #[doc(hidden)]
     #[cfg(test)]
@@ -1277,7 +1300,7 @@ impl<G> CommandState<G> {
 
     /// Resets the resident macro word/advance/write evidence.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub fn profile_reset_macro_kernel_counters(&mut self) {
         self.macro_kernel_counters = MacroKernelCounters::default();
     }
@@ -1285,7 +1308,7 @@ impl<G> CommandState<G> {
     /// Returns body `(words, advances, parameter pushes, command writes)` and
     /// argument `(words, advances, command writes)` for the singular kernel.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_macro_kernel_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
         let counters = self.macro_kernel_counters;
@@ -1302,7 +1325,7 @@ impl<G> CommandState<G> {
 
     /// Resets the concrete delivery-loop status evidence.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub fn profile_reset_delivery_loop_counters(&mut self) {
         self.delivery_loop_counters = DeliveryLoopCounters::default();
     }
@@ -1310,7 +1333,7 @@ impl<G> CommandState<G> {
     /// Returns `(warm scalar returns, cold status materializations,
     /// intermediate status relays)` for the concrete raw/expanded loops.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_delivery_loop_counters(&self) -> (u64, u64, u64) {
         let counters = self.delivery_loop_counters;
@@ -1323,7 +1346,7 @@ impl<G> CommandState<G> {
 
     /// Resets exact operation evidence for inline stored-token advancement.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub fn profile_reset_stored_token_advance_counters(&mut self) {
         self.stored_token_advance_counters = StoredTokenAdvanceCounters::default();
     }
@@ -1372,7 +1395,7 @@ impl<G> CommandState<G> {
     /// writes, meaning lookups, parameter interceptions, intermediate relays,
     /// replay segment inspections, replay run transitions)`.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_stored_token_advance_counters(
         &self,
@@ -1564,8 +1587,10 @@ impl<G> CommandState<G> {
         self.input.levels.iter().any(|level| {
             matches!(
                 level,
-                InputLevel::Tokens(cursor)
-                    if cursor.trace == ReplayTrace::Stored(StoredReplayReason::Write)
+                level
+                    if level.stored_common().is_some_and(|cursor| {
+                        cursor.trace == ReplayTrace::Stored(StoredReplayReason::Write)
+                    })
             )
         })
     }
@@ -2004,12 +2029,14 @@ impl<G> CommandState<G> {
     /// store capability.
     fn prove_endv_input_shape(&self, v_level: InputLevelId) -> Result<(), AlignmentLifecycleError> {
         let retained_v_template = |level: &InputLevel<G>| {
-            matches!(level,
-                InputLevel::Tokens(cursor)
-                    if cursor.identity() == v_level
-                        && matches!(cursor.behavior, TokenBehavior::VTemplate)
-                        && matches!(cursor.retirement, RetirementBehavior::AwaitingVTemplateRetirement)
-            )
+            level.stored_common().is_some_and(|cursor| {
+                cursor.identity() == v_level
+                    && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                    && matches!(
+                        cursor.retirement,
+                        RetirementBehavior::AwaitingVTemplateRetirement
+                    )
+            })
         };
         let Some(top) = self.input.levels.last() else {
             return Err(AlignmentLifecycleError::VTemplateNotExhausted);
@@ -2017,15 +2044,15 @@ impl<G> CommandState<G> {
         if retained_v_template(top) {
             return Ok(());
         }
-        let exhausted_backed_up_endv = matches!(top,
-            InputLevel::Tokens(cursor)
-                if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && matches!(cursor.span,
-                        PackedTokenSpanHandle::Replay { replay, len }
-                            if self.input.replay.ownership(replay)
-                                == Some(crate::input::PackedTokenOwnership::BackedUp)
-                                && cursor.position() >= len as usize)
-        );
+        let exhausted_backed_up_endv = match top {
+            InputLevel::ReplayTokens(cursor) => {
+                matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && self.input.replay.ownership(cursor.replay)
+                        == Some(crate::input::PackedTokenOwnership::BackedUp)
+                    && cursor.position() >= cursor.len as usize
+            }
+            _ => false,
+        };
         if exhausted_backed_up_endv
             && self
                 .input
@@ -2518,7 +2545,9 @@ impl<G> CommandState<G> {
                 .open_depths
                 .as_ref(),
             InputLevel::Source(_)
-            | InputLevel::Tokens(_)
+            | InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)
             | InputLevel::MacroBody(_)
             | InputLevel::MacroArgument(_) => None,
         })
@@ -2535,9 +2564,11 @@ impl<G> CommandState<G> {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(level) => Some(level),
-                InputLevel::Tokens(_) | InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => {
-                    None
-                }
+                InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)
+                | InputLevel::MacroBody(_)
+                | InputLevel::MacroArgument(_) => None,
             })
             .is_some();
         if has_source {
@@ -2761,7 +2792,9 @@ impl<G> CommandState<G> {
                         self.input.levels.source_level_slot(source).name_class
                             == SourceNameClass::File,
                     ),
-                    InputLevel::Tokens(_)
+                    InputLevel::ReplayTokens(_)
+                    | InputLevel::DurableTokens(_)
+                    | InputLevel::AttemptTokens(_)
                     | InputLevel::MacroBody(_)
                     | InputLevel::MacroArgument(_) => None,
                 })

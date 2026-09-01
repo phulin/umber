@@ -248,8 +248,9 @@ collector (see `src/conditionals.rs`).
   consequently carries the active source to main control with one top-row read
   and no ancestry or source-slot lookup. Resident source tokens and literal
   macro arguments return directly; stored-token access projects its optional
-  packed out-parameter slot while the word is resident. It selects the
-  admitted replay, attempt, or durable span once, loads one word, advances one
+  packed out-parameter slot while the word is resident. Admission consumes the
+  storage handle into an exact replay, attempt, or durable top-row variant;
+  the warm loop dispatches directly from that tag, loads one word, advances one
   scalar, and otherwise writes the reused destination with at most one meaning
   lookup; only the parameter branch enters replay. A parameter candidate overwrites the same
   unresolved value before meaning resolution; there is no raw command envelope
@@ -287,9 +288,10 @@ collector (see `src/conditionals.rs`).
   generic logical-stack adapter or second input representation.
   Typed cold source operations and one `CommandState`-owned resident front
   are the only mutable access. That front selects the semantic top once into
-  a source, stored-token, or macro-argument view; each view borrows only its
+  a source, replay-token, durable-token, attempt-token, macro-body, or
+  macro-argument view; each view borrows only its
   cursor and matching first-touch journal fields. Stored rows lend their
-  cursor directly: no stored-top wrapper, advance result, or redispatch
+  cursor directly: no storage-handle match, stored-top wrapper, advance result, or redispatch
   survives selection. Their first warm checkpoint touch journals the scalar
   word position and replay run/segment coordinate; a later cold retirement,
   limit, or flag mutation records

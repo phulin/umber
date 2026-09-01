@@ -8,8 +8,7 @@ use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
     InputLevel, InputLevelId, InputRetirementAction, PackedTokenSources, PackedTokenSpanHandle,
-    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenCursor,
-    observed_retirement_reason,
+    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, observed_retirement_reason,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 
@@ -142,10 +141,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .levels
                 .last()
                 .and_then(|level| match level {
-                    InputLevel::Tokens(cursor) => {
+                    level @ (InputLevel::ReplayTokens(_)
+                    | InputLevel::DurableTokens(_)
+                    | InputLevel::AttemptTokens(_)) => {
+                        let cursor = level.stored_common().expect("stored row");
                         (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                            && cursor
-                                .indexed_token_at_cold(
+                            && level
+                                .stored_indexed_token_at_cold(
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
@@ -223,10 +225,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         let Some(output_index) = self.command.input.levels.iter().rposition(|level| {
             matches!(
                 level,
-                InputLevel::Tokens(TokenCursor {
-                    trace: ReplayTrace::Stored(StoredReplayReason::OutputRoutine),
-                    ..
-                })
+                level if matches!(
+                    level.stored_common().map(|cursor| &cursor.trace),
+                    Some(ReplayTrace::Stored(StoredReplayReason::OutputRoutine))
+                )
             )
         }) else {
             // Ordinary expanded delivery can retire a depleted output level
@@ -236,8 +238,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => cursor
-                .indexed_token_at_cold(
+            level @ (InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)) => level
+                .stored_indexed_token_at_cold(
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
@@ -254,10 +258,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .all(|level| {
                 matches!(
                     level,
-                    InputLevel::Tokens(cursor)
-                        if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && cursor
-                                .indexed_token_at_cold(PackedTokenSources::new(
+                    level
+                        if matches!(
+                            level.stored_common().map(|cursor| &cursor.behavior),
+                            Some(TokenBehavior::BackedUp(_))
+                        )
+                            && level
+                                .stored_indexed_token_at_cold(PackedTokenSources::new(
                                     &self.command.input.replay,
                                     self.command.attempt.arena(),
                                 ), self.state)
@@ -274,22 +281,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .levels
                 .iter()
                 .find_map(|level| match level {
-                    InputLevel::Tokens(cursor)
-                        if cursor.identity()
-                            == match &self.command.input.levels[output_index] {
-                                InputLevel::Tokens(output) => output.identity(),
-                                InputLevel::Source(_) => unreachable!("output token level"),
-                                InputLevel::MacroBody(_) => {
-                                    unreachable!("output token level is not a macro body")
-                                }
-                                InputLevel::MacroArgument(_) => {
-                                    unreachable!("output token level is not an argument")
-                                }
-                            } =>
+                    level
+                        if level.stored_common().is_some()
+                            && level.stored_common().expect("stored row").identity()
+                                == match &self.command.input.levels[output_index] {
+                                    output if output.stored_common().is_some() => {
+                                        output.stored_common().expect("stored row").identity()
+                                    }
+                                    InputLevel::Source(_) => unreachable!("output token level"),
+                                    InputLevel::MacroBody(_) => {
+                                        unreachable!("output token level is not a macro body")
+                                    }
+                                    InputLevel::MacroArgument(_) => {
+                                        unreachable!("output token level is not an argument")
+                                    }
+                                    _ => unreachable!("output token level remains stored"),
+                                } =>
                     {
                         Some(
-                            cursor
-                                .indexed_token_at_cold(
+                            level
+                                .stored_indexed_token_at_cold(
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
                                         self.command.attempt.arena(),
@@ -300,7 +311,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         )
                     }
                     InputLevel::Source(_)
-                    | InputLevel::Tokens(_)
+                    | InputLevel::ReplayTokens(_)
+                    | InputLevel::DurableTokens(_)
+                    | InputLevel::AttemptTokens(_)
                     | InputLevel::MacroBody(_)
                     | InputLevel::MacroArgument(_) => None,
                 })
@@ -328,12 +341,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// one-token backup has ended before that hand-off and must be retired
     /// without fetching whatever lies beneath it.
     pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
-        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
+        let Some(level @ InputLevel::ReplayTokens(cursor)) = self.command.input.levels.last()
+        else {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || cursor
-                .indexed_token_at_cold(
+            || level
+                .stored_indexed_token_at_cold(
                     PackedTokenSources::new(
                         &self.command.input.replay,
                         self.command.attempt.arena(),
@@ -342,15 +356,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
                 .is_some()
             || !matches!(
-                match cursor.span {
-                    PackedTokenSpanHandle::Replay { replay, .. } => self
-                        .command
-                        .input
-                        .replay
-                        .indexed_get_cold(replay, 0)
-                        .map(|spelling| spelling.semantic_token()),
-                    _ => None,
-                },
+                self.command
+                    .input
+                    .replay
+                    .indexed_get_cold(cursor.replay, 0)
+                    .map(|spelling| spelling.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
                     ..
@@ -548,19 +558,23 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         loop {
             let depleted = match self.command.input.levels.last() {
-                Some(InputLevel::Tokens(cursor))
-                    if drains_for_stack_conservation(&cursor.behavior)
-                        && cursor
-                            .indexed_token_at_cold(
-                                PackedTokenSources::new(
-                                    &self.command.input.replay,
-                                    self.command.attempt.arena(),
-                                ),
-                                self.state,
-                            )
-                            .is_none() =>
+                Some(
+                    level @ (InputLevel::ReplayTokens(_)
+                    | InputLevel::DurableTokens(_)
+                    | InputLevel::AttemptTokens(_)),
+                ) if drains_for_stack_conservation(
+                    &level.stored_common().expect("stored row").behavior,
+                ) && level
+                    .stored_indexed_token_at_cold(
+                        PackedTokenSources::new(
+                            &self.command.input.replay,
+                            self.command.attempt.arena(),
+                        ),
+                        self.state,
+                    )
+                    .is_none() =>
                 {
-                    Some(cursor.identity())
+                    Some(level.stored_common().expect("stored row").identity())
                 }
                 Some(InputLevel::MacroArgument(cursor)) if cursor.is_exhausted() => {
                     Some(cursor.identity())
@@ -568,7 +582,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(InputLevel::MacroBody(cursor)) if cursor.token_at(self.state).is_none() => {
                     Some(cursor.identity())
                 }
-                Some(InputLevel::Tokens(_))
+                Some(InputLevel::ReplayTokens(_))
+                | Some(InputLevel::DurableTokens(_))
+                | Some(InputLevel::AttemptTokens(_))
                 | Some(InputLevel::MacroBody(_))
                 | Some(InputLevel::MacroArgument(_))
                 | Some(InputLevel::Source(_))

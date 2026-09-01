@@ -7,9 +7,10 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use crate::execution_scratch::ArgumentSetId;
 
 use super::{
-    CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
-    RetirementBehavior, SourceControlSequenceKind, SourceNameClass, SourceToken,
-    StoredReplayReason, TokenBehavior, TokenCursor,
+    AttemptTokenCursor, CompactSourceStepQueries, DurableTokenCursor, InputLevel, InputLevelId,
+    PackedTokenSpanHandle, ReplayTokenCursor, ReplayTrace, RetirementBehavior,
+    SourceControlSequenceKind, SourceNameClass, SourceToken, StoredReplayReason, TokenBehavior,
+    TokenCursor,
 };
 
 /// Completed command-state outcome of one resident input transition.
@@ -174,14 +175,23 @@ impl<G> RetiredInputLevel<G> {
                     source_slot.expect("source retirement projection receives its live slot"),
                 ),
             },
-            InputLevel::Tokens(cursor) => Self::Tokens {
+            InputLevel::ReplayTokens(cursor) => Self::Tokens {
                 identity: cursor.identity(),
                 retirement: cursor.retirement,
                 reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
-                replay: match &cursor.span {
-                    PackedTokenSpanHandle::Replay { replay, .. } => Some(*replay),
-                    _ => None,
-                },
+                replay: Some(cursor.replay),
+            },
+            InputLevel::DurableTokens(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                retirement: cursor.retirement,
+                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+                replay: None,
+            },
+            InputLevel::AttemptTokens(cursor) => Self::Tokens {
+                identity: cursor.identity(),
+                retirement: cursor.retirement,
+                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+                replay: None,
             },
             InputLevel::MacroBody(cursor) => Self::MacroBody {
                 identity: cursor.identity(),
@@ -413,8 +423,10 @@ impl<G> CommandState<G> {
         let ordinary = match level {
             InputLevel::MacroArgument(_) => true,
             InputLevel::MacroBody(_) => true,
-            InputLevel::Tokens(cursor) => matches!(
-                cursor.retirement,
+            level @ (InputLevel::ReplayTokens(_)
+            | InputLevel::DurableTokens(_)
+            | InputLevel::AttemptTokens(_)) => matches!(
+                level.stored_common().expect("stored row").retirement,
                 RetirementBehavior::Pop | RetirementBehavior::AwaitingVTemplateRetirement
             ),
             InputLevel::Source(_) => false,
@@ -503,22 +515,18 @@ impl<G> CommandState<G> {
     pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self.scratch.argument_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
-            let InputLevel::Tokens(cursor) = level else {
+            let InputLevel::ReplayTokens(cursor) = level else {
                 return words;
             };
-            let owned = match cursor.span {
-                PackedTokenSpanHandle::Replay { replay, len }
-                    if matches!(
-                        self.input.replay.ownership(replay),
-                        Some(
-                            super::PackedTokenOwnership::Transient
-                                | super::PackedTokenOwnership::BackedUp
-                        )
-                    ) =>
-                {
-                    len as usize
-                }
-                _ => 0,
+            let owned = if matches!(
+                self.input.replay.ownership(cursor.replay),
+                Some(
+                    super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp
+                )
+            ) {
+                cursor.len as usize
+            } else {
+                0
             };
             words.saturating_add(owned)
         })
@@ -577,28 +585,33 @@ impl<G> CommandState<G> {
         let span = source
             .admit(&mut self.input.replay)
             .expect("generation replay lane admission");
-        let replay_cursor = match &span {
-            PackedTokenSpanHandle::Replay { replay, .. } => Some(
-                self.input
-                    .replay
-                    .resident_cursor(*replay)
-                    .expect("admitted replay span has a resident coordinate"),
-            ),
-            PackedTokenSpanHandle::DurableList { .. }
-            | PackedTokenSpanHandle::AttemptList { .. } => None,
-        };
         let identity = self.allocate_input_level_identity();
         let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
         frame.set_source_context(self.input.levels.current_source_context());
-        self.push_input_level(InputLevel::Tokens(TokenCursor {
-            span,
-            replay_cursor,
-            behavior,
-            retirement,
-            trace,
-            frame,
-        }));
+        let common = TokenCursor::new(behavior, retirement, trace, frame);
+        let level = match span {
+            PackedTokenSpanHandle::Replay { replay, len } => {
+                let resident = self
+                    .input
+                    .replay
+                    .resident_cursor(replay)
+                    .expect("admitted replay span has a resident coordinate");
+                InputLevel::ReplayTokens(ReplayTokenCursor {
+                    replay,
+                    len,
+                    resident,
+                    common,
+                })
+            }
+            PackedTokenSpanHandle::DurableList { list, len } => {
+                InputLevel::DurableTokens(DurableTokenCursor { list, len, common })
+            }
+            PackedTokenSpanHandle::AttemptList { list, len } => {
+                InputLevel::AttemptTokens(AttemptTokenCursor { list, len, common })
+            }
+        };
+        self.push_input_level(level);
         identity
     }
 
@@ -714,7 +727,7 @@ impl<G> CommandState<G> {
             });
         }
 
-        let InputLevel::Tokens(cursor) = level else {
+        let Some(cursor) = level.stored_common() else {
             let RetiredInputLevel::Source {
                 name_class,
                 source: source_id,
@@ -934,9 +947,11 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|level| match level {
-                InputLevel::Tokens(_) | InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => {
-                    None
-                }
+                InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)
+                | InputLevel::MacroBody(_)
+                | InputLevel::MacroArgument(_) => None,
                 InputLevel::Source(source) => {
                     let slot = self.input.levels.source_level_slot(source);
                     Some(match slot.name_class {
@@ -1125,7 +1140,9 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
 pub(crate) fn input_level_identity<G>(level: &InputLevel<G>) -> InputLevelId {
     match level {
         InputLevel::Source(level) => level.identity(),
-        InputLevel::Tokens(level) => level.identity(),
+        InputLevel::ReplayTokens(level) => level.identity(),
+        InputLevel::DurableTokens(level) => level.identity(),
+        InputLevel::AttemptTokens(level) => level.identity(),
         InputLevel::MacroBody(level) => level.identity(),
         InputLevel::MacroArgument(level) => level.identity(),
     }

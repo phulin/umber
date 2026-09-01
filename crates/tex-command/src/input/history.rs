@@ -43,13 +43,19 @@ pub(crate) struct InputCursorMutationCounters {
     pub(crate) source_branch_entries: u64,
     pub(crate) stored_token_branch_entries: u64,
     pub(crate) macro_argument_branch_entries: u64,
+    pub(crate) replay_domain_dispatches: u64,
+    pub(crate) durable_domain_dispatches: u64,
+    pub(crate) attempt_domain_dispatches: u64,
+    pub(crate) macro_body_domain_dispatches: u64,
     pub(crate) first_touch_transitions: u64,
     pub(crate) closure_dispatches: u64,
 }
 
 enum ResidentInputTop<'a, G> {
     Source(ResidentSourceTop<'a, G>),
-    StoredToken(&'a mut super::TokenCursor<G>),
+    ReplayToken(&'a mut super::ReplayTokenCursor<G>),
+    DurableToken(&'a mut super::DurableTokenCursor<G>),
+    AttemptToken(&'a mut super::AttemptTokenCursor<G>),
     MacroBody(&'a mut super::MacroBodyCursor<G>),
     MacroArgument(&'a mut super::MacroArgumentCursor<G>),
 }
@@ -65,7 +71,7 @@ struct ResidentSourceTop<'a, G> {
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
     source_lex_captures: &'a mut u64,
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     counters: &'a mut InputCursorMutationCounters,
 }
 
@@ -99,7 +105,7 @@ impl<G> ResidentSourceTop<'_, G> {
             });
             *self.touched = self.interval;
             *self.partially_captured = self.interval;
-            #[cfg(any(test, feature = "profiling"))]
+            #[cfg(test)]
             {
                 self.counters.first_touch_transitions =
                     self.counters.first_touch_transitions.saturating_add(1);
@@ -481,7 +487,15 @@ impl<G: PartialEq> PartialEq for InputStack<G> {
                         left == right
                             && self.source_level_slot(left) == other.source_level_slot(right)
                     }
-                    (InputLevel::Tokens(left), InputLevel::Tokens(right)) => left == right,
+                    (InputLevel::ReplayTokens(left), InputLevel::ReplayTokens(right)) => {
+                        left == right
+                    }
+                    (InputLevel::DurableTokens(left), InputLevel::DurableTokens(right)) => {
+                        left == right
+                    }
+                    (InputLevel::AttemptTokens(left), InputLevel::AttemptTokens(right)) => {
+                        left == right
+                    }
                     (InputLevel::MacroBody(left), InputLevel::MacroBody(right)) => left == right,
                     (InputLevel::MacroArgument(left), InputLevel::MacroArgument(right)) => {
                         left == right
@@ -578,9 +592,13 @@ impl<G> InputStack<G> {
                     cursor: DiagnosticSourceCursor::capture(&slot.cursor),
                 }
             }
-            Some(InputLevel::Tokens(cursor)) => DiagnosticInputTop::Stored {
-                frame: cursor.frame,
-                retirement: cursor.retirement,
+            Some(
+                level @ (InputLevel::ReplayTokens(_)
+                | InputLevel::DurableTokens(_)
+                | InputLevel::AttemptTokens(_)),
+            ) => DiagnosticInputTop::Stored {
+                frame: level.stored_common().expect("stored row").frame,
+                retirement: level.stored_common().expect("stored row").retirement,
             },
             Some(InputLevel::MacroBody(cursor)) => DiagnosticInputTop::MacroBody {
                 identity: cursor.identity(),
@@ -612,16 +630,24 @@ impl<G> InputStack<G> {
     #[inline(always)]
     fn select_resident_top(&mut self) -> Option<(usize, ResidentInputTop<'_, G>)> {
         let index = self.top.checked_sub(1)?;
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         {
             self.cursor_mutations.typed_top_accesses =
                 self.cursor_mutations.typed_top_accesses.saturating_add(1);
         }
         if self.recording && self.touched[index] != self.interval {
             let inline_state = match &self.rows[index] {
-                InputLevel::Tokens(cursor) => Some(InputLevelInlineState::token_position(
+                InputLevel::ReplayTokens(cursor) => Some(InputLevelInlineState::token_position(
                     cursor.frame.position(),
-                    cursor.replay_cursor,
+                    Some(cursor.resident),
+                )),
+                InputLevel::DurableTokens(cursor) => Some(InputLevelInlineState::token_position(
+                    cursor.frame.position(),
+                    None,
+                )),
+                InputLevel::AttemptTokens(cursor) => Some(InputLevelInlineState::token_position(
+                    cursor.frame.position(),
+                    None,
                 )),
                 InputLevel::MacroBody(cursor) => {
                     Some(InputLevelInlineState::macro_span(cursor.position()))
@@ -634,7 +660,7 @@ impl<G> InputStack<G> {
             };
             if let Some(state) = inline_state {
                 self.record_inline(index, state);
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.first_touch_transitions = self
                         .cursor_mutations
@@ -668,22 +694,72 @@ impl<G> InputStack<G> {
                         undo: &mut self.undo,
                         source_lex_states: &mut self.source_lex_states,
                         source_lex_captures: &mut self.source_lex_captures,
-                        #[cfg(any(test, feature = "profiling"))]
+                        #[cfg(test)]
                         counters: &mut self.cursor_mutations,
                     }),
                 ))
             }
-            InputLevel::Tokens(cursor) => {
-                #[cfg(any(test, feature = "profiling"))]
+            InputLevel::ReplayTokens(cursor) => {
+                #[cfg(test)]
                 {
                     self.cursor_mutations.stored_token_branch_entries = self
                         .cursor_mutations
                         .stored_token_branch_entries
                         .saturating_add(1);
                 }
-                Some((index, ResidentInputTop::StoredToken(cursor)))
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.replay_domain_dispatches = self
+                        .cursor_mutations
+                        .replay_domain_dispatches
+                        .saturating_add(1);
+                }
+                Some((index, ResidentInputTop::ReplayToken(cursor)))
             }
-            InputLevel::MacroBody(cursor) => Some((index, ResidentInputTop::MacroBody(cursor))),
+            InputLevel::DurableTokens(cursor) => {
+                #[cfg(test)]
+                {
+                    self.cursor_mutations.stored_token_branch_entries = self
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.durable_domain_dispatches = self
+                        .cursor_mutations
+                        .durable_domain_dispatches
+                        .saturating_add(1);
+                }
+                Some((index, ResidentInputTop::DurableToken(cursor)))
+            }
+            InputLevel::AttemptTokens(cursor) => {
+                #[cfg(test)]
+                {
+                    self.cursor_mutations.stored_token_branch_entries = self
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.attempt_domain_dispatches = self
+                        .cursor_mutations
+                        .attempt_domain_dispatches
+                        .saturating_add(1);
+                }
+                Some((index, ResidentInputTop::AttemptToken(cursor)))
+            }
+            InputLevel::MacroBody(cursor) => {
+                #[cfg(any(test, feature = "profiling"))]
+                {
+                    self.cursor_mutations.macro_body_domain_dispatches = self
+                        .cursor_mutations
+                        .macro_body_domain_dispatches
+                        .saturating_add(1);
+                }
+                Some((index, ResidentInputTop::MacroBody(cursor)))
+            }
             InputLevel::MacroArgument(cursor) => {
                 #[cfg(any(test, feature = "profiling"))]
                 {
@@ -931,6 +1007,95 @@ impl<G> crate::CommandState<G> {
         ),
     ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
         let (observer, immediate_write_retirement) = retirement_publication;
+        macro_rules! deliver_stored_word {
+            ($cursor:expr, $resident_index:expr, $position:expr, $identity:expr,
+             $active_source:expr, $suppress_expandable:expr, $spelling:expr) => {{
+                if let Some((word, origin)) = $spelling {
+                    #[cfg(test)]
+                    {
+                        self.stored_token_advance_counters.packed_loads = self
+                            .stored_token_advance_counters
+                            .packed_loads
+                            .saturating_add(1);
+                    }
+                    if $cursor.frame.advance() != Some($position) {
+                        return Err(super::ResidentCommandColdTransition::Failure);
+                    }
+                    #[cfg(test)]
+                    {
+                        self.stored_token_advance_counters.cursor_advances = self
+                            .stored_token_advance_counters
+                            .cursor_advances
+                            .saturating_add(1);
+                    }
+                    if !matches!($cursor.behavior, super::TokenBehavior::Parameter)
+                        && let Some(slot) = word.out_parameter_slot()
+                    {
+                        #[cfg(test)]
+                        {
+                            self.stored_token_advance_counters.parameter_interceptions = self
+                                .stored_token_advance_counters
+                                .parameter_interceptions
+                                .saturating_add(1);
+                        }
+                        #[cfg(test)]
+                        {
+                            self.raw_delivery_path_counters.out_parameter_interceptions = self
+                                .raw_delivery_path_counters
+                                .out_parameter_interceptions
+                                .saturating_add(1);
+                        }
+                        self.push_resident_parameter_cursor(slot, None, $active_source, observer)
+                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
+                        continue;
+                    }
+                    #[cfg(test)]
+                    {
+                        self.stored_token_advance_counters.command_writes = self
+                            .stored_token_advance_counters
+                            .command_writes
+                            .saturating_add(1);
+                    }
+                    let resolution = destination.reborrow().write_resolved_delivery(
+                        word,
+                        origin,
+                        $identity.0,
+                        u64::from($position),
+                        $active_source,
+                        false,
+                        None,
+                        $suppress_expandable,
+                        state,
+                    );
+                    #[cfg(test)]
+                    {
+                        self.stored_token_advance_counters.meaning_lookups = self
+                            .stored_token_advance_counters
+                            .meaning_lookups
+                            .saturating_add(u64::from(resolution.meaning_lookup()));
+                    }
+                    #[cfg(test)]
+                    {
+                        self.raw_delivery_path_counters.stored_direct = self
+                            .raw_delivery_path_counters
+                            .stored_direct
+                            .saturating_add(1);
+                    }
+                    self.settle_resident_delivery(
+                        fuel,
+                        destination.reborrow(),
+                        resolution,
+                        #[cfg(feature = "profiling")]
+                        crate::fuel::RawDeliveryKind::StoredToken,
+                    )
+                } else {
+                    Err(super::ResidentCommandColdTransition::TokenExhausted {
+                        identity: $identity,
+                        resident_index: $resident_index,
+                    })
+                }
+            }};
+        }
         loop {
             let Some((resident_index, top)) = self.roots.input.levels.select_resident_top() else {
                 return Err(super::ResidentCommandColdTransition::Empty);
@@ -983,8 +1148,8 @@ impl<G> crate::CommandState<G> {
                         ),
                     }
                 }
-                ResidentInputTop::StoredToken(cursor) => {
-                    #[cfg(any(test, feature = "profiling"))]
+                ResidentInputTop::ReplayToken(cursor) => {
+                    #[cfg(test)]
                     {
                         self.stored_token_advance_counters.span_selections = self
                             .stored_token_advance_counters
@@ -997,128 +1162,68 @@ impl<G> crate::CommandState<G> {
                     let suppress_expandable = cursor.frame.flags().contains(
                         tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
                     );
-                    let spelling = match &cursor.span {
-                        super::PackedTokenSpanHandle::Replay { replay, .. } => {
-                            let replay_cursor = cursor
-                                .replay_cursor
-                                .as_mut()
-                                .ok_or(super::ResidentCommandColdTransition::Failure)?;
-                            self.roots.input.replay.advance_sequential(
-                                *replay,
-                                replay_cursor,
-                                #[cfg(any(test, feature = "profiling"))]
-                                &mut self
-                                    .stored_token_advance_counters
-                                    .replay_segment_inspections,
-                                #[cfg(any(test, feature = "profiling"))]
-                                &mut self.stored_token_advance_counters.replay_run_transitions,
-                            )
-                        }
-                        super::PackedTokenSpanHandle::AttemptList { list, .. } => self
-                            .attempt
-                            .arena()
-                            .token_word(*list, position as usize)
-                            .ok(),
-                        super::PackedTokenSpanHandle::DurableList { list, .. } => {
-                            list.word_at(position as usize).map(|word| {
-                                tex_state::token::TracedTokenWord::from_parts(
-                                    word,
-                                    tex_state::token::OriginId::UNKNOWN,
-                                )
-                            })
-                        }
-                    };
-                    if let Some(spelling) = spelling {
-                        let word = spelling.token_word();
-                        let origin = spelling.origin();
-                        #[cfg(any(test, feature = "profiling"))]
-                        {
-                            self.stored_token_advance_counters.packed_loads = self
-                                .stored_token_advance_counters
-                                .packed_loads
-                                .saturating_add(1);
-                        }
-                        if cursor.frame.advance() != Some(position) {
-                            return Err(super::ResidentCommandColdTransition::Failure);
-                        }
-                        #[cfg(any(test, feature = "profiling"))]
-                        {
-                            self.stored_token_advance_counters.cursor_advances = self
-                                .stored_token_advance_counters
-                                .cursor_advances
-                                .saturating_add(1);
-                        }
-                        if !matches!(cursor.behavior, super::TokenBehavior::Parameter)
-                            && let Some(slot) = word.out_parameter_slot()
-                        {
-                            #[cfg(any(test, feature = "profiling"))]
-                            {
-                                self.stored_token_advance_counters.parameter_interceptions = self
-                                    .stored_token_advance_counters
-                                    .parameter_interceptions
-                                    .saturating_add(1);
-                            }
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.out_parameter_interceptions = self
-                                    .raw_delivery_path_counters
-                                    .out_parameter_interceptions
-                                    .saturating_add(1);
-                            }
-                            self.push_resident_parameter_cursor(
-                                slot,
-                                None,
-                                active_source,
-                                observer,
-                            )
-                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
-                            continue;
-                        }
-                        #[cfg(any(test, feature = "profiling"))]
-                        {
-                            self.stored_token_advance_counters.command_writes = self
-                                .stored_token_advance_counters
-                                .command_writes
-                                .saturating_add(1);
-                        }
-                        let resolution = destination.reborrow().write_resolved_delivery(
-                            word,
-                            origin,
-                            identity.0,
-                            u64::from(position),
-                            active_source,
-                            false,
-                            None,
-                            suppress_expandable,
-                            state,
-                        );
-                        #[cfg(any(test, feature = "profiling"))]
-                        {
-                            self.stored_token_advance_counters.meaning_lookups = self
-                                .stored_token_advance_counters
-                                .meaning_lookups
-                                .saturating_add(u64::from(resolution.meaning_lookup()));
-                        }
+                    let spelling = self.roots.input.replay.advance_sequential(
+                        cursor.replay,
+                        &mut cursor.resident,
                         #[cfg(test)]
-                        {
-                            self.raw_delivery_path_counters.stored_direct = self
-                                .raw_delivery_path_counters
-                                .stored_direct
-                                .saturating_add(1);
-                        }
-                        self.settle_resident_delivery(
-                            fuel,
-                            destination.reborrow(),
-                            resolution,
-                            #[cfg(feature = "profiling")]
-                            crate::fuel::RawDeliveryKind::StoredToken,
-                        )
-                    } else {
-                        Err(super::ResidentCommandColdTransition::TokenExhausted {
-                            identity,
-                            resident_index,
-                        })
-                    }
+                        &mut self
+                            .stored_token_advance_counters
+                            .replay_segment_inspections,
+                        #[cfg(test)]
+                        &mut self.stored_token_advance_counters.replay_run_transitions,
+                    );
+                    deliver_stored_word!(
+                        cursor,
+                        resident_index,
+                        position,
+                        identity,
+                        active_source,
+                        suppress_expandable,
+                        spelling.map(|spelling| (spelling.token_word(), spelling.origin()))
+                    )
+                }
+                ResidentInputTop::AttemptToken(cursor) => {
+                    let position = cursor.frame.position();
+                    let identity = super::InputLevelId(cursor.frame.identity());
+                    let active_source = cursor.frame.source_context();
+                    let suppress_expandable = cursor.frame.flags().contains(
+                        tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+                    );
+                    let spelling = self
+                        .attempt
+                        .arena()
+                        .token_word(cursor.list, position as usize)
+                        .ok();
+                    deliver_stored_word!(
+                        cursor,
+                        resident_index,
+                        position,
+                        identity,
+                        active_source,
+                        suppress_expandable,
+                        spelling.map(|word| (word.token_word(), word.origin()))
+                    )
+                }
+                ResidentInputTop::DurableToken(cursor) => {
+                    let position = cursor.frame.position();
+                    let identity = super::InputLevelId(cursor.frame.identity());
+                    let active_source = cursor.frame.source_context();
+                    let suppress_expandable = cursor.frame.flags().contains(
+                        tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+                    );
+                    let spelling = cursor
+                        .list
+                        .word_at(position as usize)
+                        .map(|word| (word, tex_state::token::OriginId::UNKNOWN));
+                    deliver_stored_word!(
+                        cursor,
+                        resident_index,
+                        position,
+                        identity,
+                        active_source,
+                        suppress_expandable,
+                        spelling
+                    )
                 }
                 ResidentInputTop::MacroBody(top) => {
                     let exhausted_identity = top.identity();
@@ -1143,7 +1248,7 @@ impl<G> crate::CommandState<G> {
                         }
                         continue;
                     };
-                    #[cfg(any(test, feature = "profiling"))]
+                    #[cfg(test)]
                     {
                         self.macro_kernel_counters.body_words =
                             self.macro_kernel_counters.body_words.saturating_add(1);
@@ -1153,7 +1258,7 @@ impl<G> crate::CommandState<G> {
                             .saturating_add(1);
                     }
                     if let Some(slot) = word.out_parameter_slot() {
-                        #[cfg(any(test, feature = "profiling"))]
+                        #[cfg(test)]
                         {
                             self.macro_kernel_counters.body_parameter_pushes = self
                                 .macro_kernel_counters
@@ -1176,7 +1281,7 @@ impl<G> crate::CommandState<G> {
                         .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
                         continue;
                     }
-                    #[cfg(any(test, feature = "profiling"))]
+                    #[cfg(test)]
                     {
                         self.macro_kernel_counters.body_command_writes = self
                             .macro_kernel_counters
@@ -1224,7 +1329,7 @@ impl<G> crate::CommandState<G> {
                         }
                         continue;
                     };
-                    #[cfg(any(test, feature = "profiling"))]
+                    #[cfg(test)]
                     {
                         self.macro_kernel_counters.argument_words =
                             self.macro_kernel_counters.argument_words.saturating_add(1);
@@ -1547,13 +1652,11 @@ impl<G> InputStack<G> {
             Some(index) => index,
             None => return false,
         };
-        let InputLevel::Tokens(_) = &self.rows[index] else {
+        if self.rows[index].stored_common().is_none() {
             return false;
-        };
+        }
         self.record_token_state(index);
-        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
-            unreachable!()
-        };
+        let cursor = self.rows[index].stored_common_mut().expect("stored row");
         cursor.retirement = retirement;
         true
     }
@@ -1563,13 +1666,11 @@ impl<G> InputStack<G> {
             Some(index) => index,
             None => return false,
         };
-        let InputLevel::Tokens(_) = &self.rows[index] else {
+        if self.rows[index].stored_common().is_none() {
             return false;
-        };
+        }
         self.record_token_state(index);
-        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
-            unreachable!()
-        };
+        let cursor = self.rows[index].stored_common_mut().expect("stored row");
         cursor.retirement = super::RetirementBehavior::AwaitingVTemplateRetirement;
         cursor
             .frame
@@ -1583,38 +1684,38 @@ impl<G> InputStack<G> {
         replay_cursor: super::ResidentReplayCursor,
     ) -> Option<bool> {
         let index = self.top.checked_sub(1)?;
-        let InputLevel::Tokens(_) = &self.rows[index] else {
+        let InputLevel::ReplayTokens(_) = &self.rows[index] else {
             return None;
         };
         if self.recording && self.touched[index] != self.interval {
-            let InputLevel::Tokens(cursor) = &self.rows[index] else {
+            let InputLevel::ReplayTokens(cursor) = &self.rows[index] else {
                 unreachable!()
             };
             self.record_inline(
                 index,
                 InputLevelInlineState::token_position(
                     cursor.frame.position(),
-                    cursor.replay_cursor,
+                    Some(cursor.resident),
                 ),
             );
         }
         self.record_token_state(index);
-        let InputLevel::Tokens(cursor) = &mut self.rows[index] else {
+        let InputLevel::ReplayTokens(cursor) = &mut self.rows[index] else {
             unreachable!()
         };
-        cursor.replay_cursor = Some(replay_cursor);
+        cursor.resident = replay_cursor;
+        cursor.len = cursor.len.checked_add(additional)?;
         let extended = cursor.frame.extend_limit(additional).is_some();
         Some(extended)
     }
 
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn toggle_top_token_retirement(&mut self) -> bool {
-        let Some(current) = self.rows.get(self.top.saturating_sub(1)).and_then(|row| {
-            let InputLevel::Tokens(cursor) = row else {
-                return None;
-            };
-            Some(cursor.retirement)
-        }) else {
+        let Some(current) = self
+            .rows
+            .get(self.top.saturating_sub(1))
+            .and_then(|row| row.stored_common().map(|cursor| cursor.retirement))
+        else {
             return false;
         };
         let retirement = match current {
@@ -2058,9 +2159,9 @@ impl<G> InputStack<G> {
         if !self.recording || self.cold_state_captured[index] == self.interval {
             return;
         }
-        let InputLevel::Tokens(cursor) = &self.rows[index] else {
-            unreachable!("cold token capture names a token row")
-        };
+        let cursor = self.rows[index]
+            .stored_common()
+            .expect("cold token capture names a token row");
         let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
         self.touched[index] = self.interval;
         self.partially_captured[index] = self.interval;
