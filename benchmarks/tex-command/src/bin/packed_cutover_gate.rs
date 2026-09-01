@@ -103,6 +103,11 @@ fn main() {
     );
     run_row(
         only,
+        "mixed_macro_resident_pipeline",
+        mixed_macro_resident_pipeline,
+    );
+    run_row(
+        only,
         "stationary_scan_toks_progress",
         stationary_scan_toks_progress,
     );
@@ -135,6 +140,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "destination_directed_warm_delivery",
     "fused_raw_expanded_delivery",
     "destination_owned_macro_expansion",
+    "mixed_macro_resident_pipeline",
     "stationary_scan_toks_progress",
 ];
 
@@ -894,6 +900,195 @@ fn destination_owned_macro_expansion() {
             elapsed.as_nanos() as f64 / EXPANSIONS as f64,
         );
     });
+}
+
+fn mixed_macro_resident_pipeline() {
+    const EMPTY_EXPANSIONS: usize = 1_000_000;
+    const PARAMETER_DELIVERIES: usize = 1_000_000;
+    const WARMUPS: usize = 64;
+    with_universe(|universe| {
+        let empty_name = universe.intern("mixedempty").expect("empty macro name");
+        let empty_definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty macro definition");
+        universe
+            .assign_meaning(
+                empty_name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, empty_definition),
+                AssignmentScope::Global,
+            )
+            .expect("empty macro meaning");
+
+        let warm_name = universe.intern("mixedwarm").expect("warm macro name");
+        let warm_parameter = TokenWord::pack(Token::param(1));
+        let warm_definition = universe
+            .allocate_definition(&[warm_parameter], &vec![warm_parameter; WARMUPS])
+            .expect("warm parameter macro definition");
+        universe
+            .assign_meaning(
+                warm_name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, warm_definition),
+                AssignmentScope::Global,
+            )
+            .expect("warm parameter macro meaning");
+
+        let parameter_name = universe
+            .intern("mixedparameter")
+            .expect("parameter macro name");
+        let parameter_definition = universe
+            .allocate_definition(
+                &[warm_parameter],
+                &vec![warm_parameter; PARAMETER_DELIVERIES],
+            )
+            .expect("measured parameter macro definition");
+        universe
+            .assign_meaning(
+                parameter_name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, parameter_definition),
+                AssignmentScope::Global,
+            )
+            .expect("measured parameter macro meaning");
+
+        let argument = TokenWord::pack(Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        });
+        let begin_group = TokenWord::pack(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        });
+        let end_group = TokenWord::pack(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        });
+        let traced =
+            |word: TokenWord| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN);
+
+        let mut command = CommandState::default();
+        let warm_input = [
+            traced(TokenWord::pack(Token::Cs(warm_name.symbol()))),
+            traced(begin_group),
+            traced(argument),
+            traced(end_group),
+        ];
+        command.profile_push_replay_stored_tokens(warm_input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut fuel = CommandFuelLedger::default();
+        let mut destination = None;
+        {
+            let mut delivery_processor = processor(
+                &mut context,
+                &mut command,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            for _ in 0..WARMUPS {
+                assert_eq!(
+                    delivery_processor
+                        .get_x_token_into(&mut destination)
+                        .expect("warm mixed macro delivery"),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("warm parameter"), 'a');
+                destination = None;
+            }
+            assert_eq!(
+                delivery_processor
+                    .get_x_token_into(&mut destination)
+                    .expect("warm mixed macro retirement"),
+                DeliveryStatus::End
+            );
+        }
+
+        let empty = traced(TokenWord::pack(Token::Cs(empty_name.symbol())));
+        let parameter = traced(TokenWord::pack(Token::Cs(parameter_name.symbol())));
+        command.profile_push_replay_stored_tokens(
+            std::iter::repeat_n(empty, EMPTY_EXPANSIONS).chain([
+                parameter,
+                traced(begin_group),
+                traced(argument),
+                traced(end_group),
+            ]),
+        );
+        command.profile_reset_input_cursor_mutation_counters();
+        let work_before = fuel.work();
+        let ownership_before = command.profile_command_ownership_counters();
+        let census_before = hot_core_census();
+        let mut delivery_processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut elapsed = Duration::ZERO;
+        measure_zero("mixed_macro_resident_2000000", || {
+            let start = Instant::now();
+            for _ in 0..PARAMETER_DELIVERIES {
+                assert_eq!(
+                    delivery_processor
+                        .get_x_token_into(&mut destination)
+                        .expect("measured mixed macro delivery"),
+                    DeliveryStatus::Command
+                );
+                assert_char_ref(destination.as_ref().expect("measured parameter"), 'a');
+                destination = None;
+            }
+            elapsed = start.elapsed();
+        });
+        drop(delivery_processor);
+        let census = hot_core_census().saturating_sub(census_before);
+        let ownership_after = command.profile_command_ownership_counters();
+        let work_after = fuel.work();
+        let domains = command.profile_resident_domain_dispatch_counters();
+        let work = CommandWorkDelta::new(work_before, work_after);
+        assert_eq!(domains.1, (EMPTY_EXPANSIONS + 4) as u64);
+        assert_eq!(domains.4, (EMPTY_EXPANSIONS + PARAMETER_DELIVERIES) as u64);
+        assert_eq!(domains.5, (PARAMETER_DELIVERIES * 2 - 1) as u64);
+        assert_eq!(
+            work.token_frame_steps,
+            (EMPTY_EXPANSIONS + PARAMETER_DELIVERIES + 4) as u64
+        );
+        assert_eq!(work.expanded_deliveries, PARAMETER_DELIVERIES as u64);
+        assert_eq!(census.macro_expansions, (EMPTY_EXPANSIONS + 1) as u64);
+        assert_eq!(ownership_after.2 - ownership_before.2, 0);
+        assert_eq!(ownership_after.3 - ownership_before.3, 0);
+        assert_eq!(ownership_after.0 - ownership_before.0, 0);
+        assert_eq!(ownership_after.1 - ownership_before.1, 0);
+        println!(
+            "mixed_macro_resident_pipeline macro_body={} parameters={} replay={} raw={} expanded={} macro_expansions={} suspension_in={} suspension_out={} command_copies=0 elapsed_ns={} ns_per_macro_body={:.2}",
+            domains.4,
+            PARAMETER_DELIVERIES,
+            domains.1,
+            work.token_frame_steps,
+            work.expanded_deliveries,
+            census.macro_expansions,
+            ownership_after.2 - ownership_before.2,
+            ownership_after.3 - ownership_before.3,
+            elapsed.as_nanos(),
+            elapsed.as_nanos() as f64 / domains.4 as f64,
+        );
+    });
+}
+
+struct CommandWorkDelta {
+    token_frame_steps: u64,
+    expanded_deliveries: u64,
+}
+
+impl CommandWorkDelta {
+    fn new(
+        before: tex_command::CommandWorkCounters,
+        after: tex_command::CommandWorkCounters,
+    ) -> Self {
+        Self {
+            token_frame_steps: after.token_frame_steps - before.token_frame_steps,
+            expanded_deliveries: after.expanded_deliveries - before.expanded_deliveries,
+        }
+    }
 }
 
 fn ordinary_source_delivery() {

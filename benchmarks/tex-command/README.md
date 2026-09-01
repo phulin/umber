@@ -81,6 +81,16 @@ through one expanded request and its one reusable command destination. It
 requires one expansion per macro, one final expanded delivery, and zero warmed
 allocation, and reports time per expansion for before/after hardware-counter
 comparison of the expansion result carrier.
+The mixed macro/resident row then expands one million empty macros before one
+parameterized macro replays its one-token argument one million times. Its
+exact two million macro-body transitions cover both depleted-body retirement
+and parameter words, while the same receipt reports parameter pushes, replay,
+raw and expanded deliveries, macro expansions, suspension moves, command
+copies, allocation, and elapsed time. Run it under the profiling-only public-
+copy interposer in `scripts/copy-attribution/` to append exact `memcpy` and
+`memmove` calls and bytes from that same focused process; unlike the broad
+corpus profiles, this gate intentionally stops at the two-million-transition
+pipeline.
 The stationary `scan_toks` row performs one million complete warmed balanced-
 text scans and commits each attempt before starting the next. It requires zero
 warmed allocation and prints the exact scan count for normalized

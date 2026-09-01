@@ -1276,6 +1276,25 @@ impl<G> CommandState<G> {
         )
     }
 
+    /// Returns exact current-command ownership transitions in field order:
+    /// clones, backup copies, suspension moves in, suspension moves out, slot
+    /// initializations, resolved writes, and delivery-stamp writes.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "profiling"))]
+    #[must_use]
+    pub fn profile_command_ownership_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+        let counters = crate::command::command_ownership_counters();
+        (
+            counters.clones,
+            counters.backup_copies,
+            counters.expansion_moves_in,
+            counters.expansion_moves_out,
+            counters.slot_initializations,
+            counters.resolved_writes,
+            counters.delivery_stamp_writes,
+        )
+    }
+
     /// Resets the focused ordinary raw-delivery path counters.
     #[doc(hidden)]
     #[cfg(test)]
