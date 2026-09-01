@@ -306,7 +306,8 @@ collector (see `src/conditionals.rs`).
   alignment work, and returned no command reference. The files also own the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
   update, centralized replay-lane admission, retained v-template lifecycle,
-  macro-activation cleanup, borrowed source-ancestry comparison with copy-only
+  scalar active macro-body/parameter accounting, macro-activation cleanup,
+  borrowed source-ancestry comparison with copy-only
   retirement facts, `param_start` parameter replay ownership, and
   trace-independence tests.
 - `src/input/mod.rs` and `src/input/tests.rs`: tex.web §§310--318's live error-

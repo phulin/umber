@@ -203,7 +203,7 @@ fn replay_coordinates_keep_input_frames_compact() {
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
     assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 80);
     assert_eq!(std::mem::size_of::<super::ResidentSpanCursor>(), 24);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 56);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 48);
     assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 80);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);

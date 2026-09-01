@@ -434,12 +434,13 @@ impl<G> CommandState<G> {
             arguments,
         } = retired
         {
-            if let Some(arguments) = arguments {
-                let parameter_count = self
-                    .scratch
+            let parameter_count = arguments.map_or(0, |arguments| {
+                self.scratch
                     .argument_count(arguments.frame())
-                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-                self.input.levels.retire_macro_parameters(parameter_count);
+                    .expect("live macro argument set")
+            });
+            self.input.levels.retire_macro_body(parameter_count);
+            if let Some(arguments) = arguments {
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
@@ -686,12 +687,13 @@ impl<G> CommandState<G> {
             else {
                 unreachable!("macro-body retirement is specialized retirement");
             };
-            if let Some(arguments) = arguments {
-                let parameter_count = self
-                    .scratch
+            let parameter_count = arguments.map_or(0, |arguments| {
+                self.scratch
                     .argument_count(arguments.frame())
-                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-                self.input.levels.retire_macro_parameters(parameter_count);
+                    .expect("live macro argument set")
+            });
+            self.input.levels.retire_macro_body(parameter_count);
+            if let Some(arguments) = arguments {
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
@@ -830,12 +832,13 @@ impl<G> CommandState<G> {
             arguments,
         } = level
         {
-            if let Some(arguments) = arguments {
-                let parameter_count = self
-                    .scratch
+            let parameter_count = arguments.map_or(0, |arguments| {
+                self.scratch
                     .argument_count(arguments.frame())
-                    .expect("final cleanup owns the live argument set");
-                self.input.levels.retire_macro_parameters(parameter_count);
+                    .expect("final cleanup owns the live argument set")
+            });
+            self.input.levels.retire_macro_body(parameter_count);
+            if let Some(arguments) = arguments {
                 self.scratch
                     .release_argument_set(arguments.frame())
                     .expect("final cleanup retires the live argument set");

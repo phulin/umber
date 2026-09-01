@@ -131,7 +131,10 @@ impl<G> CommandState<G> {
 
     fn validate_summary_quiescence(&self) -> Result<(), CommandSummaryError> {
         self.validate_format_dump_quiescence()?;
-        if self.transient.active_expansion_depth != 0 || !self.replay_completions.is_empty() {
+        if self.transient.active_expansion_depth != 0
+            || self.input.levels.active_macro_bodies() != 0
+            || !self.replay_completions.is_empty()
+        {
             return Err(CommandSummaryError::ExpansionActive);
         }
         Ok(())

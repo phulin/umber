@@ -399,6 +399,7 @@ pub(crate) struct InputStackMark {
     pub(crate) top: u32,
     pub(crate) undo: PackedJournalMark,
     pub(crate) occupied_source_buffer_slots: usize,
+    pub(crate) active_macro_bodies: usize,
     pub(crate) active_macro_parameters: usize,
 }
 
@@ -499,6 +500,7 @@ impl DiagnosticSourceCursor {
 struct InputStackFork {
     accepted_top: usize,
     accepted_occupied_source_buffer_slots: usize,
+    accepted_active_macro_bodies: usize,
     accepted_active_macro_parameters: usize,
 }
 
@@ -516,6 +518,7 @@ pub(crate) struct InputStack<G> {
     source_owner_states: PayloadSlab<SourceLevelExecutionState<G>>,
     source_slots: PayloadSlab<SourceSlot<G>>,
     occupied_source_buffer_slots: usize,
+    active_macro_bodies: usize,
     active_macro_parameters: usize,
     fork: Option<InputStackFork>,
     recording: bool,
@@ -541,6 +544,7 @@ impl<G> Default for InputStack<G> {
             source_owner_states: PayloadSlab::default(),
             source_slots: PayloadSlab::default(),
             occupied_source_buffer_slots: 0,
+            active_macro_bodies: 0,
             active_macro_parameters: 0,
             fork: None,
             recording: false,
@@ -636,8 +640,16 @@ impl<G> InputStack<G> {
         self.active_macro_parameters
     }
 
+    pub(crate) const fn active_macro_bodies(&self) -> usize {
+        self.active_macro_bodies
+    }
+
     pub(crate) fn push_macro_body(&mut self, value: InputLevel<G>, parameter_count: usize) {
         assert!(matches!(value, InputLevel::MacroBody(_)));
+        self.active_macro_bodies = self
+            .active_macro_bodies
+            .checked_add(1)
+            .expect("macro body stack fits usize");
         self.active_macro_parameters = self
             .active_macro_parameters
             .checked_add(parameter_count)
@@ -645,7 +657,11 @@ impl<G> InputStack<G> {
         self.push_row(value);
     }
 
-    pub(crate) fn retire_macro_parameters(&mut self, parameter_count: usize) {
+    pub(crate) fn retire_macro_body(&mut self, parameter_count: usize) {
+        self.active_macro_bodies = self
+            .active_macro_bodies
+            .checked_sub(1)
+            .expect("input macro body count matches live macro rows");
         self.active_macro_parameters = self
             .active_macro_parameters
             .checked_sub(parameter_count)
@@ -1700,6 +1716,7 @@ impl<G> InputStack<G> {
             top: u32::try_from(self.top).ok()?,
             undo: self.undo.mark(),
             occupied_source_buffer_slots: self.occupied_source_buffer_slots,
+            active_macro_bodies: self.active_macro_bodies,
             active_macro_parameters: self.active_macro_parameters,
         };
         self.next_interval();
@@ -1732,6 +1749,7 @@ impl<G> InputStack<G> {
         if restored {
             self.top = mark.top as usize;
             self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
+            self.active_macro_bodies = mark.active_macro_bodies;
             self.active_macro_parameters = mark.active_macro_parameters;
             self.next_interval();
         }
@@ -1764,6 +1782,7 @@ impl<G> InputStack<G> {
         );
         let accepted_top = self.top;
         let accepted_occupied_source_buffer_slots = self.occupied_source_buffer_slots;
+        let accepted_active_macro_bodies = self.active_macro_bodies;
         let accepted_active_macro_parameters = self.active_macro_parameters;
         let (rows, displaced, source_lex, source_owners, source_slots) = (
             &mut self.rows,
@@ -1777,10 +1796,12 @@ impl<G> InputStack<G> {
         });
         self.top = mark.top as usize;
         self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
+        self.active_macro_bodies = mark.active_macro_bodies;
         self.active_macro_parameters = mark.active_macro_parameters;
         self.fork = Some(InputStackFork {
             accepted_top,
             accepted_occupied_source_buffer_slots,
+            accepted_active_macro_bodies,
             accepted_active_macro_parameters,
         });
         self.next_interval();
@@ -1807,6 +1828,7 @@ impl<G> InputStack<G> {
         );
         self.top = fork.accepted_top;
         self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
+        self.active_macro_bodies = fork.accepted_active_macro_bodies;
         self.active_macro_parameters = fork.accepted_active_macro_parameters;
         self.next_interval();
     }
