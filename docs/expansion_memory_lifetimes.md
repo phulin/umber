@@ -288,9 +288,14 @@ an opaque copy-only `DefinitionRef`; the arena alone decodes its region and row.
 Each nonempty semantic region has one `Rc<DefinitionRegionOwner>` containing
 append-only fixed word chunks and retained header/provenance records. Chunks
 have neither `Rc` nor an independent pool/lifetime. Macro admission resolves
-the ref/header/start once and clones that exact owner into a
-`ResidentMacroBody`; every delivered token after that is a direct stable cell
-load and scalar increment, including explicit chunk-boundary crossings.
+the ref/header/start and validates the initial chunk once, then clones that
+exact owner into a `ResidentMacroBody`. Its flat append-only chunk directory
+replaces the former linked directory pages and `OnceCell` probes. Safe Rust
+cannot cache a direct chunk borrow beside its owning `Rc` without a
+self-reference, raw pointer, or independent chunk owner, so each delivered word
+performs one constant-time region-local directory slot access. The input row's
+existing scalar cursor remains the complete rollback coordinate, and its
+derived chunk changes only at explicit 4,096-word crossings.
 
 Each TeX group owns exactly one directly keyed local region. `begin_group`
 claims one direct slot from stable 64-slot chunks and replaces one current-key

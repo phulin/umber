@@ -467,65 +467,46 @@ impl DefinitionWordChunk {
     }
 }
 
-const DEFINITION_WORD_DIRECTORY_PAGE_LEN: usize = 64;
-
-struct DefinitionWordDirectoryPage {
-    chunks: Box<[std::cell::OnceCell<DefinitionWordChunk>; DEFINITION_WORD_DIRECTORY_PAGE_LEN]>,
-    next: std::cell::OnceCell<Box<DefinitionWordDirectoryPage>>,
-}
-
-impl DefinitionWordDirectoryPage {
-    fn new() -> Self {
-        Self {
-            chunks: Box::new(core::array::from_fn(|_| std::cell::OnceCell::new())),
-            next: std::cell::OnceCell::new(),
-        }
-    }
-
-    fn page(&self, index: usize) -> &Self {
-        let mut page = self;
-        for _ in 0..index {
-            page = page.next.get_or_init(|| Box::new(Self::new()));
-        }
-        page
-    }
-
-    fn existing_page(&self, index: usize) -> Option<&Self> {
-        let mut page = self;
-        for _ in 0..index {
-            page = page.next.get()?;
-        }
-        Some(page)
-    }
-}
-
 struct DefinitionRegionOwner {
-    words: DefinitionWordDirectoryPage,
+    /// Flat append-only directory of stable coarse word allocations.
+    ///
+    /// A resident cursor cannot safely retain a borrow into the same `Rc`
+    /// that owns this directory without becoming self-referential. Keeping
+    /// the directory flat makes the required short reborrow one checked,
+    /// constant-time slot access instead of a linked-page walk. The boxed word
+    /// arrays never move and have no owner or lifetime independent of this
+    /// region.
+    words: RefCell<Vec<DefinitionWordChunk>>,
     headers: RefCell<Vec<DefinitionHeader>>,
 }
 
 impl DefinitionRegionOwner {
     fn new() -> Self {
         Self {
-            words: DefinitionWordDirectoryPage::new(),
+            words: RefCell::new(Vec::new()),
             headers: RefCell::new(Vec::new()),
         }
     }
 
     fn push_word(&self, index: u32, word: TokenWord) -> Result<(), DefinitionBuildError> {
-        let chunk = self.ensure_chunk(index as usize / DEFINITION_WORD_CHUNK_CAPACITY)?;
-        chunk.words[index as usize % DEFINITION_WORD_CHUNK_CAPACITY].set(word);
+        let chunk = index as usize / DEFINITION_WORD_CHUNK_CAPACITY;
+        self.ensure_chunk(chunk)?;
+        self.words.borrow()[chunk].words[index as usize % DEFINITION_WORD_CHUNK_CAPACITY].set(word);
         Ok(())
     }
 
-    fn ensure_chunk(&self, chunk: usize) -> Result<&DefinitionWordChunk, DefinitionBuildError> {
-        let page = self.words.page(chunk / DEFINITION_WORD_DIRECTORY_PAGE_LEN);
-        let slot = &page.chunks[chunk % DEFINITION_WORD_DIRECTORY_PAGE_LEN];
-        if slot.get().is_none() {
-            let new_chunk = DefinitionWordChunk::new()?;
-            let _ = slot.set(new_chunk);
+    fn ensure_chunk(&self, chunk: usize) -> Result<(), DefinitionBuildError> {
+        let mut words = self.words.borrow_mut();
+        if chunk >= words.len() {
+            let additional = chunk + 1 - words.len();
+            words
+                .try_reserve_exact(additional)
+                .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+            while words.len() <= chunk {
+                words.push(DefinitionWordChunk::new()?);
+            }
         }
-        Ok(slot.get().expect("definition word chunk was initialized"))
+        Ok(())
     }
 
     fn reserve_word_span(&self, start: u32, end: u32) -> Result<(), DefinitionBuildError> {
@@ -543,11 +524,24 @@ impl DefinitionRegionOwner {
     #[inline(always)]
     fn word(&self, index: u32) -> Option<TokenWord> {
         let chunk = index as usize / DEFINITION_WORD_CHUNK_CAPACITY;
-        let page = self
+        self.word_in_chunk(
+            chunk as u32,
+            index as usize % DEFINITION_WORD_CHUNK_CAPACITY,
+        )
+    }
+
+    #[inline(always)]
+    fn word_in_chunk(&self, chunk: u32, offset: usize) -> Option<TokenWord> {
+        self.words
+            .borrow()
+            .get(chunk as usize)?
             .words
-            .existing_page(chunk / DEFINITION_WORD_DIRECTORY_PAGE_LEN)?;
-        let chunk = page.chunks[chunk % DEFINITION_WORD_DIRECTORY_PAGE_LEN].get()?;
-        Some(chunk.words[index as usize % DEFINITION_WORD_CHUNK_CAPACITY].get())
+            .get(offset)
+            .map(Cell::get)
+    }
+
+    fn has_chunk(&self, chunk: u32) -> bool {
+        (chunk as usize) < self.words.borrow().len()
     }
 }
 
@@ -993,12 +987,53 @@ struct LocalRegionPin<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
+/// Exact structural work performed by one resident replacement cursor.
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ResidentMacroBodyReadCounters {
+    pub admission_chunk_lookups: u64,
+    pub region_owner_acquisitions: u64,
+    pub direct_chunk_slot_reads: u64,
+    pub chunk_boundary_transitions: u64,
+    pub whole_body_copies: u64,
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+thread_local! {
+    static RESIDENT_MACRO_BODY_READ_COUNTERS: Cell<ResidentMacroBodyReadCounters> =
+        Cell::new(ResidentMacroBodyReadCounters {
+            admission_chunk_lookups: 0,
+            region_owner_acquisitions: 0,
+            direct_chunk_slot_reads: 0,
+            chunk_boundary_transitions: 0,
+            whole_body_copies: 0,
+        });
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[doc(hidden)]
+pub fn reset_resident_macro_body_read_counters() {
+    RESIDENT_MACRO_BODY_READ_COUNTERS.set(ResidentMacroBodyReadCounters::default());
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[doc(hidden)]
+#[must_use]
+pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
+    RESIDENT_MACRO_BODY_READ_COUNTERS.get()
+}
+
 /// Store-minted resident cursor for one executing macro replacement body.
 ///
 /// The definition store resolves the opaque reference and immutable header
-/// once at admission. The cursor then retains the exact replacement extent
-/// and the exact region owner; downstream command
-/// code can neither inspect nor manufacture its storage coordinates.
+/// once at admission, including validation of the initial coarse chunk. The
+/// cursor then retains the exact replacement extent and the exact region owner;
+/// downstream command code can neither inspect nor manufacture its storage
+/// coordinates. Safe Rust requires a short constant-time borrow of the
+/// region's flat chunk directory for each word: caching a direct chunk borrow
+/// beside its owning `Rc` would be self-referential. The ordinary input row's
+/// existing scalar position is therefore the smallest rollback-complete path;
+/// only a 4,096-word crossing changes its derived chunk coordinate.
 pub struct ResidentMacroBody<G> {
     definition: DefinitionRef<G>,
     owner: Rc<DefinitionRegionOwner>,
@@ -1025,8 +1060,29 @@ impl<G> ResidentMacroBody<G> {
     #[must_use]
     #[inline(always)]
     pub fn word(&self, position: usize) -> Option<TokenWord> {
-        (position < self.replacement_len as usize)
-            .then(|| self.owner.word(self.start + position as u32))?
+        (position < self.replacement_len as usize).then_some(())?;
+        let absolute = self.start + position as u32;
+        #[cfg(any(test, feature = "profiling", feature = "testing"))]
+        RESIDENT_MACRO_BODY_READ_COUNTERS.set({
+            let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
+            counters.direct_chunk_slot_reads = counters.direct_chunk_slot_reads.saturating_add(1);
+            if position != 0
+                && absolute / DEFINITION_WORD_CHUNK_CAPACITY as u32
+                    != (absolute - 1) / DEFINITION_WORD_CHUNK_CAPACITY as u32
+            {
+                counters.chunk_boundary_transitions =
+                    counters.chunk_boundary_transitions.saturating_add(1);
+            }
+            counters
+        });
+        self.owner.word(absolute)
+    }
+
+    #[cfg(any(test, feature = "profiling", feature = "testing"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn profile_region_owner_count(&self) -> usize {
+        Rc::strong_count(&self.owner)
     }
 }
 
@@ -1240,7 +1296,22 @@ impl<G> DefinitionArena<G> {
         let header = *region.headers.get(id.row_index() as usize)?;
         let replacement_start = header.start.checked_add(header.parameter_len)?;
         let replacement_len = header.end.checked_sub(replacement_start)?;
-        let owner = Rc::clone(region.owner.as_ref()?);
+        let owner = region.owner.as_ref()?;
+        let initial_chunk = replacement_start / DEFINITION_WORD_CHUNK_CAPACITY as u32;
+        if replacement_len != 0 && !owner.has_chunk(initial_chunk) {
+            return None;
+        }
+        #[cfg(any(test, feature = "profiling", feature = "testing"))]
+        RESIDENT_MACRO_BODY_READ_COUNTERS.set({
+            let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
+            counters.admission_chunk_lookups = counters
+                .admission_chunk_lookups
+                .saturating_add(u64::from(replacement_len != 0));
+            counters.region_owner_acquisitions =
+                counters.region_owner_acquisitions.saturating_add(1);
+            counters
+        });
+        let owner = Rc::clone(owner);
         let parameter_len = header.parameter_len as usize;
         let pattern = header.pattern;
         drop(region);

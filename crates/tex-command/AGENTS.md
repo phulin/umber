@@ -248,7 +248,10 @@ collector (see `src/conditionals.rs`).
   packed out-parameter slot while the word is resident, and only that branch
   enters parameter replay. A parameter candidate overwrites the same
   unresolved value before meaning resolution; there is no raw command envelope
-  or second delivery slot. A
+  or second delivery slot. The macro-body row keeps only its existing scalar
+  rollback position beside the store-minted resident body; that position
+  derives a flat region-local chunk slot in constant time and changes chunks
+  only at a 4,096-word boundary. A
   source row contains only its common frame and one eight-byte ABA-checked key
   into the `InputStack`'s fixed reusable source-slot pages. The slot solely
   owns backing, replacement, `everyeof`, ancestry, source classification, and

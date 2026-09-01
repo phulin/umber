@@ -346,6 +346,17 @@ encounters a resource suspension. Detached `DefinitionBuilder` staging remains
 only for cold format/memo/import batches whose source is already outside the
 live scanner.
 
+Each region owner keeps one flat append-only directory of stable 4,096-word
+allocations. Admission validates the replacement's initial chunk once and
+retains the one exact region owner. The input row continues to journal only its
+existing scalar body position; a read derives the chunk/offset pair and performs
+one constant-time flat-directory slot access, while the derived chunk changes
+only at a 4,096-word crossing. This is the smallest safe-Rust representation:
+retaining a direct chunk borrow beside the `Rc` which owns it would be
+self-referential, and giving the chunk an `Rc`, raw pointer, or independent
+lifetime would violate whole-region ownership. There is no linked directory
+page traversal or per-word `OnceCell` probe.
+
 ```rust
 pub struct DefinitionRef<G> {
     packed: NonZeroU64,

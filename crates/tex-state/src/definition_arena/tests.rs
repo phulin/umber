@@ -1291,6 +1291,43 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
 }
 
 #[test]
+fn resident_format_global_and_local_bodies_share_the_same_direct_read_contract() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let format_word = TokenWord::from_raw(31);
+        let global_word = TokenWord::from_raw(37);
+        let local_word = TokenWord::from_raw(41);
+        let format = direct_definition(
+            arena,
+            super::DefinitionDestination::Format,
+            &[],
+            &[format_word],
+        );
+        let global = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[],
+            &[global_word],
+        );
+        arena.begin_group().expect("local definition group");
+        let local = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[local_word],
+        );
+        let (_, _, format_body) = arena.admit_macro_body(format).expect("format body");
+        let (_, _, global_body) = arena.admit_macro_body(global).expect("global body");
+        let (_, _, local_body) = arena.admit_macro_body(local).expect("local body");
+        arena.end_group();
+
+        assert_eq!(format_body.word(0), Some(format_word));
+        assert_eq!(global_body.word(0), Some(global_word));
+        assert_eq!(local_body.word(0), Some(local_word));
+    });
+}
+
+#[test]
 fn resident_body_walks_chunk_boundary_and_large_definition_directly() {
     with_generation(|mut generation| {
         let replacement = (0..super::DEFINITION_WORD_CHUNK_CAPACITY + 19)
@@ -1309,6 +1346,77 @@ fn resident_body_walks_chunk_boundary_and_large_definition_directly() {
             assert_eq!(body.word(position), Some(expected));
         }
         assert_eq!(body.word(replacement.len()), None);
+    });
+}
+
+#[test]
+fn resident_body_read_work_is_exact_for_one_full_and_multiple_chunks() {
+    for (words, expected_transitions) in [
+        (1_usize, 0_u64),
+        (super::DEFINITION_WORD_CHUNK_CAPACITY, 0),
+        (super::DEFINITION_WORD_CHUNK_CAPACITY * 2 + 1, 2),
+    ] {
+        with_generation(|mut generation| {
+            let replacement = (0..words)
+                .map(|index| TokenWord::from_raw(index as u32 + 1))
+                .collect::<Vec<_>>();
+            let definition = generation
+                .definitions_mut()
+                .allocate(&[], &replacement)
+                .expect("resident read fixture");
+            super::reset_resident_macro_body_read_counters();
+            let (_, _, body) = generation
+                .definitions()
+                .admit_macro_body(definition)
+                .expect("resident body admission");
+            let owner_count = body.profile_region_owner_count();
+            for (position, expected) in replacement.iter().copied().enumerate() {
+                assert_eq!(body.word(position), Some(expected));
+            }
+            assert_eq!(body.word(words), None);
+            assert_eq!(body.profile_region_owner_count(), owner_count);
+            assert_eq!(
+                super::resident_macro_body_read_counters(),
+                super::ResidentMacroBodyReadCounters {
+                    admission_chunk_lookups: 1,
+                    region_owner_acquisitions: 1,
+                    direct_chunk_slot_reads: words as u64,
+                    chunk_boundary_transitions: expected_transitions,
+                    whole_body_copies: 0,
+                }
+            );
+        });
+    }
+}
+
+#[test]
+fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
+    with_generation(|mut generation| {
+        let words = super::DEFINITION_WORD_CHUNK_CAPACITY + 3;
+        let replacement = (0..words)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("rollback fixture");
+        let (_, _, body) = generation
+            .definitions()
+            .admit_macro_body(definition)
+            .expect("resident body");
+        let checkpoint_position = super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
+        let before = body
+            .word(checkpoint_position)
+            .expect("word before boundary");
+        let across = body
+            .word(checkpoint_position + 1)
+            .expect("word across boundary");
+        assert_ne!(before, across);
+        assert_eq!(
+            body.word(checkpoint_position),
+            Some(before),
+            "restoring the journaled scalar position restores the same chunk-local read"
+        );
     });
 }
 
