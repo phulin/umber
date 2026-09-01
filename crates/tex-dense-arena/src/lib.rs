@@ -8,8 +8,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use tex_dense_prefix::{CapacityError, LayoutError, Superblock, VacantSlot};
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests;
 
 static NEXT_ARENA_ID: AtomicU32 = AtomicU32::new(1);
 

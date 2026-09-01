@@ -10,5 +10,8 @@ tex-dense-prefix = { path = "../tex-dense-prefix" }
 [dev-dependencies]
 umber-hot-core-allocator = { path = "../tex-state/profiling-allocator" }
 
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [lints]
 workspace = true

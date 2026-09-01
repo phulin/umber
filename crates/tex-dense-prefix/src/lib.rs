@@ -13,8 +13,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::alloc::{Layout, alloc, dealloc};
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests;
 
 /// The exact requested allocation size of every [`Superblock`].
 pub const SUPERBLOCK_BYTES: usize = 65_536;

@@ -1289,11 +1289,15 @@ version = "0.1.0"
 dependencies = [
  "tex-dense-prefix",
  "umber-hot-core-allocator",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
 name = "tex-dense-prefix"
 version = "0.1.0"
+dependencies = [
+ "wasm-bindgen-test",
+]
 
 [[package]]
 name = "tex-exec"

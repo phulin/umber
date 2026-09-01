@@ -263,6 +263,35 @@ because it uses the same physical allocator. It also preserves the move versus
 copy rules in [Node-region ownership](node_region_ownership.md) and the exact
 lifetime owners in [Expansion memory lifetimes](expansion_memory_lifetimes.md).
 
+### Current payload eligibility audit
+
+The first isolated implementation audited every current production
+`ForkArena<T, _>` payload on the supported 64-bit host layout. The sizes come
+from compiler layout output for the concrete monomorphizations; `needs_drop`
+and owned fields come from the current definitions. `Clone` is deliberately
+not evidence of fork-copy eligibility.
+
+| Current payload                    | Size / alignment | `needs_drop` | Ownership evidence                                                         | Actual lifetime requirement                                    | Classification                                                        |
+| ---------------------------------- | ---------------: | :----------: | -------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `Node<PageListId>`                 |          168 / 8 |     yes      | `Vec` fields in ligatures and other owned node variants                    | Node-region generation fork and TeX semantic move/copy rules   | Not eligible; representation or explicit semantic-copy decision first |
+| `PageInverse`                      |          184 / 8 |     yes      | `Vec<PageInsertion>`, optional owned insertion state, and owned mark state | Reversible page journal; cursor capture and suffix retirement  | Nonforking/truncating journal storage                                 |
+| `CheckpointDelta<GenerationBrand>` |           64 / 8 |      no      | Scalar cell coordinate plus generation coordinates; not currently `Copy`   | Ordered alternate journal; no copy merely to save a checkpoint | Nonforking/truncating journal storage                                 |
+| `PreparedDviPage`                  |          296 / 8 |     yes      | Owned `DviPagePlan`, boxed effect slice, and publication records           | Candidate-private output moved on commit or dropped on reject  | Move-only speculative-output storage                                  |
+
+The current physical allocator gives these payloads 512-byte logical chunks
+and groups sixteen chunks in an allocation page. That is baseline evidence,
+not a geometry to preserve: the dense design replaces it with direct flat
+64 KiB blocks and cursor-only logical boundaries. The only authenticated
+payload-copy row available before this handoff remains the node-release row:
+3,143,705 calls of 168 bytes, or 528,142,440 bytes. No per-type public-copy row
+was published for the other three payloads, so their baseline is _unattributed_,
+not zero.
+
+This audit authorizes no production fork-copy payload. The isolated generation
+proof therefore uses a synthetic `Copy` record only. In particular, the
+current `Node` must not enter that path until a later representation or
+node-specific semantic-copy proposal is measured and approved.
+
 ## `push_with` and placement limits
 
 `VacantSlot` makes the initialization transaction safe:
