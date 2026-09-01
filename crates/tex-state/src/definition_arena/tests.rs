@@ -26,6 +26,10 @@ fn direct_definition<G>(
     arena.seal_build(build).expect("sealed definition")
 }
 
+fn origin(raw: u32) -> crate::token::OriginId {
+    crate::token::OriginId::from_raw(raw)
+}
+
 fn checked_builder(
     policy: DefinitionIdentityPolicy,
     parameter_text: &[TokenWord],
@@ -736,6 +740,131 @@ fn checkpoint_acceptance_discards_only_detached_prior_promotion_mappings() {
             arena.promote_global(source).expect("reused candidate"),
             candidate
         );
+    });
+}
+
+#[test]
+fn checkpoint_acceptance_keeps_candidate_origin_edit_to_existing_row() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let definition = direct_definition(arena, super::DefinitionDestination::Global, &[], &[]);
+        arena
+            .set_origin(definition, origin(11))
+            .expect("initial origin");
+        let checkpoint = arena.cursor();
+        arena
+            .set_origin(definition, origin(22))
+            .expect("accepted origin");
+
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        assert_eq!(arena.get(definition).definition_origin(), origin(11));
+        arena
+            .set_origin(definition, origin(33))
+            .expect("candidate origin");
+        arena.accept_checkpoint_candidate(tail);
+
+        assert_eq!(arena.get(definition).definition_origin(), origin(33));
+    });
+}
+
+#[test]
+fn checkpoint_rejection_replays_prior_origin_edit_to_existing_row() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let definition = direct_definition(arena, super::DefinitionDestination::Global, &[], &[]);
+        arena
+            .set_origin(definition, origin(41))
+            .expect("initial origin");
+        let checkpoint = arena.cursor();
+        arena
+            .set_origin(definition, origin(42))
+            .expect("accepted origin");
+
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        arena
+            .set_origin(definition, origin(43))
+            .expect("rejected origin");
+        arena.reject_checkpoint_candidate(checkpoint, tail);
+
+        assert_eq!(arena.get(definition).definition_origin(), origin(42));
+    });
+}
+
+#[test]
+fn explicit_rollback_restores_existing_definition_origin() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let definition = direct_definition(arena, super::DefinitionDestination::Global, &[], &[]);
+        arena
+            .set_origin(definition, origin(51))
+            .expect("initial origin");
+        let checkpoint = arena.cursor();
+        arena
+            .set_origin(definition, origin(52))
+            .expect("temporary origin");
+
+        arena.restore_cursor(checkpoint);
+
+        assert_eq!(arena.get(definition).definition_origin(), origin(51));
+    });
+}
+
+#[test]
+fn repeated_existing_origin_changes_record_one_inverse() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let definition = direct_definition(arena, super::DefinitionDestination::Global, &[], &[]);
+        arena
+            .set_origin(definition, origin(61))
+            .expect("initial origin");
+        let checkpoint = arena.cursor();
+        for changed in [62, 63, 64] {
+            arena
+                .set_origin(definition, origin(changed))
+                .expect("repeated origin change");
+        }
+        let super::DefinitionRegionMutation::Existing { origin_edits, .. } = arena
+            .mutations
+            .last()
+            .expect("changed global region is journaled")
+        else {
+            panic!("global region mutation is existing");
+        };
+        assert_eq!(origin_edits.len(), 1);
+
+        arena.restore_cursor(checkpoint);
+
+        assert_eq!(arena.get(definition).definition_origin(), origin(61));
+    });
+}
+
+#[test]
+fn checkpoint_rejection_replays_shared_ancestor_origin_after_child_exit() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("parent A");
+        let parent = direct_definition(arena, super::DefinitionDestination::Local, &[], &[]);
+        arena
+            .set_origin(parent, origin(71))
+            .expect("initial parent origin");
+        arena.begin_group().expect("checkpoint child B");
+        let checkpoint = arena.cursor();
+        let checkpoint_lease = arena.checkpoint_lease();
+
+        arena.end_group();
+        arena
+            .set_origin(parent, origin(72))
+            .expect("accepted parent origin");
+        let tail = arena.begin_checkpoint_candidate(checkpoint);
+        assert_eq!(arena.get(parent).definition_origin(), origin(71));
+        arena
+            .set_origin(parent, origin(73))
+            .expect("rejected parent origin");
+        arena.reject_checkpoint_candidate(checkpoint, tail);
+
+        assert_eq!(arena.get(parent).definition_origin(), origin(72));
+        drop(checkpoint_lease);
+        arena.end_group();
     });
 }
 

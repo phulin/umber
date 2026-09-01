@@ -55,8 +55,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   chunks supply direct reusable group slots without a per-group shell
   allocation; address incarnations reject stale keys after exact reuse.
   Candidate settlement resolves and visits only the exact first-write region
-  journal since the checkpoint, including ancestor writes after a child exit
-  and unequal group depths. Exceptional local-to-global
+  journal since the checkpoint. Existing-row origin changes add one compact
+  inverse field edit to that region record; repeated changes coalesce there,
+  while origins on newly appended rows leave with the ordinary suffix. This
+  includes ancestor writes after a child exit and unequal group depths.
+  Exceptional local-to-global
   `let` promotion copies one span once and caches the mapped global key in its
   source region, so no global promotion sweep exists. Detached builders remain
   only for cold format/memo/import batches.

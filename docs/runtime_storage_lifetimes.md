@@ -377,9 +377,13 @@ journal mark. On the first definition or lifecycle write to a region in the
 new checkpoint epoch, the generation journal records that exact region's
 pre-write header, word, promotion, and retirement marks. Candidate selection,
 acceptance, rejection, and direct cursor restore traverse only this journal
-suffix. This includes an ancestor first written after its checkpoint child was
-ended; no active-chain or historical-region scan is needed. Detached accepted
-suffixes remain source-region-owned until rejection reattaches them or
+suffix. An existing header's first origin change adds one compact inverse field
+edit to its region record; repeated changes coalesce, while a newly appended
+header is already covered by the row suffix. Detachment and replay swap those
+field alternates without copying whole headers or regions. This includes an
+ancestor first written after its checkpoint child was ended; no active-chain or
+historical-region scan is needed. Detached accepted suffixes and origin
+alternates remain source-region-owned until rejection reattaches them or
 acceptance releases them.
 
 The four-byte region coordinate reserves all of its bits for addressing:
@@ -391,6 +395,11 @@ reinterpreting a flag bit. Reuse stops permanently when one slot reaches
 incarnation 65,535; allocation then consumes another address, and exhaustion
 returns `CapacityOverflow`. Incarnations never wrap, so an ABA-stale key cannot
 silently become valid.
+
+The macro integration branch must remove its bit-63 identity flag: all 32
+coordinate bits are address/incarnation state, and semantic identity is
+resolved from the admitted definition header rather than encoded in the
+carrier.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final
