@@ -1058,11 +1058,14 @@ fn append_hyphenated_word<G>(
             let replacement = boundary_kern.then_some(node.clone());
             let disc = discretionary_hyphen(
                 stores,
-                word[char_start - 1].font,
+                diagnostic_effects,
+                &word[char_start - 1],
+                out.last(),
                 replacement,
                 *output_len,
+                fuel,
                 projection.missing_hyphens,
-            );
+            )?;
             out.push(disc);
             *output_len += 1;
             position_index += 1;
@@ -1112,11 +1115,14 @@ fn append_hyphenated_word<G>(
         debug_assert_eq!(position, char_start);
         let disc = discretionary_hyphen(
             stores,
-            word[position - 1].font,
+            diagnostic_effects,
+            &word[position - 1],
+            out.last(),
             None,
             *output_len,
+            fuel,
             projection.missing_hyphens,
-        );
+        )?;
         out.push(disc);
         *output_len += 1;
         position_index += 1;
@@ -1336,29 +1342,69 @@ fn node_original_len(node: &Node) -> usize {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // TeX's discretionary carries reconstruction and diagnostic state.
 fn discretionary_hyphen<G>(
     stores: &mut CommandContext<'_, G>,
-    font: tex_state::ids::FontId,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    previous_word_char: &WordChar,
+    previous_node: Option<&Node>,
     replacement: Option<Node>,
     node_index: usize,
+    fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Node {
+) -> Result<Node, ExecError> {
+    let font = previous_word_char.font;
     let empty = tex_state::node_arena::PageListId::empty();
-    let pre = automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or_else(
-        || empty,
-        |ch| {
+    let pre = if let Some(ch) = automatic_hyphen_char(stores, font, node_index, missing_hyphens) {
+        let mut pending = vec![previous_word_char.pending()];
+        pending.push(PendingHChar {
+            font,
+            ch,
+            origin: previous_word_char.origin,
+        });
+        let reconstructed = crate::box_runtime::hmode::reconstitute_with_fuel(
+            stores,
+            diagnostic_effects,
+            &pending,
+            true,
+            false,
+            fuel,
+        )
+        .map_err(ExecError::Command)?;
+        let keeps_previous_character = matches!(
+            (previous_node, reconstructed.first()),
+            (
+                Some(Node::Char {
+                    font: previous_font,
+                    ch: previous_ch,
+                    origin: previous_origin,
+                }),
+                Some(Node::Char {
+                    font: reconstructed_font,
+                    ch: reconstructed_ch,
+                    origin: reconstructed_origin,
+                }),
+            ) if previous_font == reconstructed_font
+                && previous_ch == reconstructed_ch
+                && previous_origin == reconstructed_origin
+        );
+        if keeps_previous_character {
+            stores.publish_page_nodes(reconstructed[1..].to_vec())
+        } else {
             stores.publish_page_nodes(vec![Node::Char {
                 font,
                 ch,
                 origin: OriginId::UNKNOWN,
             }])
-        },
-    );
+        }
+    } else {
+        empty
+    };
     let replace = replacement.as_ref().map_or_else(
         || empty,
         |node| stores.publish_page_nodes(vec![node.clone()]),
     );
-    Node::Disc {
+    Ok(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre,
         post: empty,
@@ -1367,7 +1413,7 @@ fn discretionary_hyphen<G>(
             automatic_physical_replace_count(std::slice::from_ref(node))
                 .expect("one reconstituted node fits TeX82's replacement count")
         }),
-    }
+    })
 }
 
 fn usable_hyphen_char<G>(
@@ -1474,20 +1520,36 @@ mod tests {
                 tag: tex_state::font::CharTag::None,
             });
         }
-        characters[usize::from(b'd')]
+        characters[usize::from(b'c')]
             .as_mut()
             .expect("test letter exists")
             .tag = tex_state::font::CharTag::LigKern {
             program_index: 0,
             start_index: 0,
         };
-        let program = vec![tex_fonts::LigKernInstruction {
-            skip_byte: 128,
-            next_char: b'.',
-            command: Some(tex_fonts::LigKernCommand::Kern(
-                tex_state::scaled::Scaled::from_raw(-1_234),
-            )),
-        }];
+        characters[usize::from(b'd')]
+            .as_mut()
+            .expect("test letter exists")
+            .tag = tex_state::font::CharTag::LigKern {
+            program_index: 1,
+            start_index: 1,
+        };
+        let program = vec![
+            tex_fonts::LigKernInstruction {
+                skip_byte: 128,
+                next_char: b'-',
+                command: Some(tex_fonts::LigKernCommand::Kern(
+                    tex_state::scaled::Scaled::from_raw(-2_345),
+                )),
+            },
+            tex_fonts::LigKernInstruction {
+                skip_byte: 128,
+                next_char: b'.',
+                command: Some(tex_fonts::LigKernCommand::Kern(
+                    tex_state::scaled::Scaled::from_raw(-1_234),
+                )),
+            },
+        ];
         let size = tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY);
         stores.intern_font(tex_state::font::LoadedFont::new(
             "hyphenation-test",
@@ -1628,6 +1690,73 @@ mod tests {
                 1,
                 "no active builder escapes paragraph end"
             );
+        });
+    }
+
+    #[test]
+    fn automatic_hyphen_retains_preceding_font_kern_in_pre_break_branch() {
+        // TeX82 §§903--918 reconstitutes the preceding character together
+        // with the optional hyphen because the pair can introduce a font
+        // ligature or kern. The compact semantic list already retains the
+        // preceding character, so its pre-break branch retains the suffix.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "abcd".to_owned(),
+                    positions: vec![3],
+                },
+            );
+            stores
+                .assign_int_param(
+                    IntParam::LEFT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("left minimum");
+            stores
+                .assign_int_param(
+                    IntParam::RIGHT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("right minimum");
+            let source = hyphenation_source(&mut stores, font);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+
+            let hyphenated =
+                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
+                    .expect("automatic discretionary construction succeeds");
+            let semantic = stores
+                .page_nodes(hyphenated.semantic)
+                .expect("semantic list");
+            let disc = semantic
+                .iter()
+                .find(|node| matches!(node, Node::Disc { .. }))
+                .expect("exception inserts a discretionary");
+            let Node::Disc { pre, .. } = disc else {
+                unreachable!()
+            };
+            let pre = stores
+                .page_node_list(*pre)
+                .expect("pre-break branch")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(matches!(
+                pre.as_slice(),
+                [
+                    Node::Kern {
+                        amount,
+                        kind: KernKind::Font,
+                    },
+                    Node::Char { ch: '-', .. },
+                ] if amount.raw() == -2_345
+            ));
         });
     }
 
