@@ -1023,7 +1023,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     .is_some_and(|cursor| cursor.identity() == identity) =>
                             {
                                 level.stored_common().map(|cursor| {
-                                    (cursor.frame.position(), cursor.frame.source_context())
+                                    (
+                                        u32::try_from(
+                                            level.stored_position().expect("stored row position"),
+                                        )
+                                        .expect("stored row position fits u32"),
+                                        cursor.frame.source_context(),
+                                    )
                                 })
                             }
                             InputLevel::MacroArgument(cursor) if cursor.identity() == identity => {

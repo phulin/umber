@@ -430,16 +430,11 @@ impl<G> TokenCursor<G> {
     pub(crate) fn position(&self) -> usize {
         self.frame.position() as usize
     }
+}
 
-    /// Peeks without advancing for stack-conservation and lifecycle checks.
-    #[cold]
-    pub(crate) fn indexed_token_at_cold(
-        &self,
-        span: &PackedTokenSpanHandle<G>,
-        sources: PackedTokenSources<'_, G>,
-        _state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<PackedTokenAt> {
-        sources.indexed_token_at_cold(span, self.position())
+impl<G> ReplayTokenCursor<G> {
+    pub(crate) const fn position(&self) -> usize {
+        self.resident.position() as usize
     }
 }
 
@@ -462,11 +457,20 @@ impl<G> InputLevel<G> {
         }
     }
 
+    pub(crate) fn stored_position(&self) -> Option<usize> {
+        match self {
+            Self::ReplayTokens(cursor) => Some(cursor.position()),
+            Self::DurableTokens(cursor) => Some(cursor.position()),
+            Self::AttemptTokens(cursor) => Some(cursor.position()),
+            Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
+        }
+    }
+
     /// Tests a generic stored-token row's `loc=null` condition without
     /// reclassifying or loading its already-admitted storage domain.
     pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
         match self {
-            Self::ReplayTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
+            Self::ReplayTokens(cursor) => Some(cursor.position() >= cursor.len as usize),
             Self::DurableTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
             Self::AttemptTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
             Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
@@ -496,11 +500,10 @@ impl<G> InputLevel<G> {
     pub(crate) fn stored_indexed_token_at_cold(
         &self,
         sources: PackedTokenSources<'_, G>,
-        state: &tex_state::CommandContext<'_, G>,
+        _state: &tex_state::CommandContext<'_, G>,
     ) -> Option<PackedTokenAt> {
-        let common = self.stored_common()?;
         let span = self.stored_span_cold()?;
-        common.indexed_token_at_cold(&span, sources, state)
+        sources.indexed_token_at_cold(&span, self.stored_position()?)
     }
 }
 
@@ -637,7 +640,9 @@ impl<'a, G> PackedTokenSources<'a, G> {
 pub(crate) enum InputLevelInlineState {
     TokenPosition {
         position: u32,
-        replay_cursor: Option<ResidentReplayCursor>,
+    },
+    ReplayCursor {
+        cursor: ResidentReplayCursor,
     },
     Tokens {
         frame: PackedInputFrame,
@@ -653,14 +658,12 @@ pub(crate) enum InputLevelInlineState {
 }
 
 impl InputLevelInlineState {
-    pub(crate) const fn token_position(
-        position: u32,
-        replay_cursor: Option<ResidentReplayCursor>,
-    ) -> Self {
-        Self::TokenPosition {
-            position,
-            replay_cursor,
-        }
+    pub(crate) const fn token_position(position: u32) -> Self {
+        Self::TokenPosition { position }
+    }
+
+    pub(crate) const fn replay_cursor(cursor: ResidentReplayCursor) -> Self {
+        Self::ReplayCursor { cursor }
     }
 
     pub(crate) const fn new(frame: PackedInputFrame, retirement: RetirementBehavior) -> Self {
@@ -861,55 +864,43 @@ impl<G> InputLevel<G> {
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
             Self::ReplayTokens(tokens) => match state {
-                InputLevelInlineState::TokenPosition {
-                    position,
-                    replay_cursor,
-                } => {
-                    tokens.frame.swap_position(position);
-                    let restored = replay_cursor
-                        .replace(tokens.resident)
-                        .expect("replay row inverse retains replay coordinate");
-                    tokens.resident = restored;
+                InputLevelInlineState::ReplayCursor { cursor } => {
+                    core::mem::swap(&mut tokens.resident, cursor);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
                     std::mem::swap(&mut tokens.frame, frame);
                     std::mem::swap(&mut tokens.retirement, retirement);
                 }
-                InputLevelInlineState::MacroBody { .. }
+                InputLevelInlineState::TokenPosition { .. }
+                | InputLevelInlineState::MacroBody { .. }
                 | InputLevelInlineState::MacroArgument { .. } => {
                     unreachable!("token row inverse kind changed")
                 }
             },
             Self::DurableTokens(tokens) => match state {
-                InputLevelInlineState::TokenPosition {
-                    position,
-                    replay_cursor,
-                } => {
-                    debug_assert!(replay_cursor.is_none());
+                InputLevelInlineState::TokenPosition { position } => {
                     tokens.frame.swap_position(position);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
                     std::mem::swap(&mut tokens.frame, frame);
                     std::mem::swap(&mut tokens.retirement, retirement);
                 }
-                InputLevelInlineState::MacroBody { .. }
+                InputLevelInlineState::ReplayCursor { .. }
+                | InputLevelInlineState::MacroBody { .. }
                 | InputLevelInlineState::MacroArgument { .. } => {
                     unreachable!("token row inverse kind changed")
                 }
             },
             Self::AttemptTokens(tokens) => match state {
-                InputLevelInlineState::TokenPosition {
-                    position,
-                    replay_cursor,
-                } => {
-                    debug_assert!(replay_cursor.is_none());
+                InputLevelInlineState::TokenPosition { position } => {
                     tokens.frame.swap_position(position);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
                     std::mem::swap(&mut tokens.frame, frame);
                     std::mem::swap(&mut tokens.retirement, retirement);
                 }
-                InputLevelInlineState::MacroBody { .. }
+                InputLevelInlineState::ReplayCursor { .. }
+                | InputLevelInlineState::MacroBody { .. }
                 | InputLevelInlineState::MacroArgument { .. } => {
                     unreachable!("token row inverse kind changed")
                 }
@@ -1045,6 +1036,7 @@ struct ReplayLaneCursor {
 pub(crate) struct ResidentReplayCursor {
     run: ResidentReplayRun,
     segment: u32,
+    position: u32,
     remaining: u32,
     offset: u16,
     segment_end: u16,
@@ -1062,10 +1054,22 @@ impl ResidentReplayCursor {
     pub(crate) const EMPTY: Self = Self {
         run: ResidentReplayRun::Empty,
         segment: 0,
+        position: 0,
         remaining: 0,
         offset: 0,
         segment_end: 0,
     };
+
+    pub(crate) const fn position(self) -> u32 {
+        self.position
+    }
+
+    const fn empty_at(position: u32) -> Self {
+        Self {
+            position,
+            ..Self::EMPTY
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1233,14 +1237,16 @@ impl<T> SegmentedReplayLane<T> {
         start: ReplayLaneCursor,
         len: u32,
         run: ResidentReplayRun,
+        position: u32,
     ) -> Option<ResidentReplayCursor> {
         if len == 0 {
-            return Some(ResidentReplayCursor::EMPTY);
+            return Some(ResidentReplayCursor::empty_at(position));
         }
         let segment = self.active.get(start.segment as usize)?;
         (start.offset < segment.used).then_some(ResidentReplayCursor {
             run,
             segment: start.segment,
+            position,
             remaining: len,
             offset: start.offset,
             segment_end: segment.used,
@@ -1266,6 +1272,7 @@ impl<T> SegmentedReplayLane<T> {
                 *segment_inspections = segment_inspections.saturating_add(1);
             }
         }
+        let next_position = cursor.position.checked_add(1)?;
         let value = self
             .active
             .get(cursor.segment as usize)?
@@ -1273,6 +1280,7 @@ impl<T> SegmentedReplayLane<T> {
             .values
             .get(usize::from(cursor.offset))?;
         cursor.offset = cursor.offset.checked_add(1)?;
+        cursor.position = next_position;
         cursor.remaining -= 1;
         Some(value)
     }
@@ -1721,19 +1729,28 @@ impl<G> ReplayLane<G> {
             return None;
         }
         if let Some(prefix) = entry.prefix_words.filter(|prefix| prefix.len != 0) {
-            return self
-                .words
-                .resident_cursor(prefix.start, prefix.len, ResidentReplayRun::Prefix);
+            return self.words.resident_cursor(
+                prefix.start,
+                prefix.len,
+                ResidentReplayRun::Prefix,
+                0,
+            );
         }
-        self.body_resident_cursor(entry)
+        self.body_resident_cursor(entry, 0)
     }
 
-    fn body_resident_cursor(&self, entry: &ReplayEntry) -> Option<ResidentReplayCursor> {
+    fn body_resident_cursor(
+        &self,
+        entry: &ReplayEntry,
+        position: u32,
+    ) -> Option<ResidentReplayCursor> {
         match &entry.body_words {
-            ReplayBodyWords::Segmented(words) => {
-                self.words
-                    .resident_cursor(words.start, words.len, ResidentReplayRun::SegmentedBody)
-            }
+            ReplayBodyWords::Segmented(words) => self.words.resident_cursor(
+                words.start,
+                words.len,
+                ResidentReplayRun::SegmentedBody,
+                position,
+            ),
             ReplayBodyWords::Owned(words) => words.lane.resident_cursor(
                 ReplayLaneCursor {
                     segment: 0,
@@ -1741,6 +1758,7 @@ impl<G> ReplayLane<G> {
                 },
                 words.len,
                 ResidentReplayRun::OwnedBody,
+                position,
             ),
         }
     }
@@ -1758,7 +1776,7 @@ impl<G> ReplayLane<G> {
             if entry.released {
                 return None;
             }
-            *cursor = self.body_resident_cursor(entry)?;
+            *cursor = self.body_resident_cursor(entry, cursor.position)?;
             #[cfg(test)]
             {
                 *run_transitions = run_transitions.saturating_add(1);

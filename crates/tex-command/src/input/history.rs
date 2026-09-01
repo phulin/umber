@@ -373,6 +373,7 @@ enum DiagnosticInputTop {
     Stored {
         frame: super::PackedInputFrame,
         retirement: super::RetirementBehavior,
+        position: u32,
     },
     MacroBody {
         identity: super::InputLevelId,
@@ -638,6 +639,8 @@ impl<G> InputStack<G> {
             ) => DiagnosticInputTop::Stored {
                 frame: level.stored_common().expect("stored row").frame,
                 retirement: level.stored_common().expect("stored row").retirement,
+                position: u32::try_from(level.stored_position().expect("stored row"))
+                    .expect("stored token position fits u32"),
             },
             Some(InputLevel::MacroBody(cursor)) => DiagnosticInputTop::MacroBody {
                 identity: cursor.identity(),
@@ -676,17 +679,14 @@ impl<G> InputStack<G> {
         }
         if self.recording && self.touched[index] != self.interval {
             let inline_state = match &self.rows[index] {
-                InputLevel::ReplayTokens(cursor) => Some(InputLevelInlineState::token_position(
-                    cursor.frame.position(),
-                    Some(cursor.resident),
-                )),
+                InputLevel::ReplayTokens(cursor) => {
+                    Some(InputLevelInlineState::replay_cursor(cursor.resident))
+                }
                 InputLevel::DurableTokens(cursor) => Some(InputLevelInlineState::token_position(
                     cursor.frame.position(),
-                    None,
                 )),
                 InputLevel::AttemptTokens(cursor) => Some(InputLevelInlineState::token_position(
                     cursor.frame.position(),
-                    None,
                 )),
                 InputLevel::MacroBody(cursor) => {
                     Some(InputLevelInlineState::macro_span(cursor.body.cursor()))
@@ -1048,6 +1048,7 @@ impl<G> crate::CommandState<G> {
         let (observer, immediate_write_retirement) = retirement_publication;
         macro_rules! deliver_stored_word {
             ($cursor:expr, $resident_index:expr, $position:expr, $identity:expr,
+             $advance_frame:expr,
              $active_source:expr, $suppress_expandable:expr, $spelling:expr) => {{
                 if let Some((word, origin)) = $spelling {
                     #[cfg(test)]
@@ -1057,7 +1058,7 @@ impl<G> crate::CommandState<G> {
                             .packed_loads
                             .saturating_add(1);
                     }
-                    if $cursor.frame.advance() != Some($position) {
+                    if $advance_frame && $cursor.frame.advance() != Some($position) {
                         return Err(super::ResidentCommandColdTransition::Failure);
                     }
                     #[cfg(test)]
@@ -1195,7 +1196,7 @@ impl<G> crate::CommandState<G> {
                             .span_selections
                             .saturating_add(1);
                     }
-                    let position = cursor.frame.position();
+                    let position = cursor.resident.position();
                     let identity = super::InputLevelId(cursor.frame.identity());
                     let active_source = cursor.frame.source_context();
                     let suppress_expandable = cursor.frame.flags().contains(
@@ -1216,6 +1217,7 @@ impl<G> crate::CommandState<G> {
                         resident_index,
                         position,
                         identity,
+                        false,
                         active_source,
                         suppress_expandable,
                         spelling.map(|spelling| (spelling.token_word(), spelling.origin()))
@@ -1238,6 +1240,7 @@ impl<G> crate::CommandState<G> {
                         resident_index,
                         position,
                         identity,
+                        true,
                         active_source,
                         suppress_expandable,
                         spelling.map(|word| (word.token_word(), word.origin()))
@@ -1259,6 +1262,7 @@ impl<G> crate::CommandState<G> {
                         resident_index,
                         position,
                         identity,
+                        true,
                         active_source,
                         suppress_expandable,
                         spelling
@@ -1725,13 +1729,7 @@ impl<G> InputStack<G> {
             let InputLevel::ReplayTokens(cursor) = &self.rows[index] else {
                 unreachable!()
             };
-            self.record_inline(
-                index,
-                InputLevelInlineState::token_position(
-                    cursor.frame.position(),
-                    Some(cursor.resident),
-                ),
-            );
+            self.record_inline(index, InputLevelInlineState::replay_cursor(cursor.resident));
         }
         self.record_token_state(index);
         let InputLevel::ReplayTokens(cursor) = &mut self.rows[index] else {

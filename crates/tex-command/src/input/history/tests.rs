@@ -333,6 +333,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             unreachable!("fixture keeps replay resident")
         };
         let accepted_state = (accepted.position(), accepted.resident);
+        assert_eq!(accepted.frame.position(), 0);
 
         state.input.levels.begin_checkpoint_candidate(mark);
         let mut replayed = Vec::new();
@@ -356,6 +357,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             unreachable!("fixture keeps replay resident")
         };
         assert_eq!((candidate.position(), candidate.resident), accepted_state);
+        assert_eq!(candidate.frame.position(), 0);
 
         state.input.levels.reject_checkpoint_candidate();
         let InputLevel::ReplayTokens(redone) = state.input.levels.last().expect("redone replay")
@@ -363,6 +365,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             unreachable!("fixture keeps replay resident")
         };
         assert_eq!((redone.position(), redone.resident), accepted_state);
+        assert_eq!(redone.frame.position(), 0);
 
         state.input.levels.begin_checkpoint_candidate(mark);
         for _ in 0..301 {
@@ -384,6 +387,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             unreachable!("fixture keeps replay resident")
         };
         assert_eq!(accepted_candidate.position(), 301);
+        assert_eq!(accepted_candidate.frame.position(), 0);
     });
 }
 

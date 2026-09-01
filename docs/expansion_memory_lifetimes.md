@@ -856,9 +856,11 @@ input representation or the generic logical-stack stored-state machinery.
 Each source slot caches its current line's contribution to TeX's `buffer`, and
 the input stack owns one scalar sum across live slots. Cold line/backing owner
 and row transitions update those values; byte/scalar cursor advancement does
-not inspect or recount the line. Stored-token advancement journals its logical
-word position plus replay run/segment/in-segment coordinate on the first warm
-touch in a checkpoint interval. If the
+not inspect or recount the line. Replay-backed stored-token advancement
+journals its one resident cursor, which owns the logical word position together
+with the replay run/segment/in-segment coordinate, on the first warm touch in a
+checkpoint interval; it does not also mutate or journal a packed-frame
+position. Durable and attempt rows retain their packed-frame position. If the
 same row later takes a cold retirement, limit, or flag transition, a separately
 ordered cold-state inverse captures that state once; rollback and candidate
 redo preserve both transitions without constructing a complete token frame on
@@ -878,8 +880,9 @@ crosses that boundary. The stored branches have no wrapper or status of their
 own: admission chooses the exact top-row tag once, and the warm branch performs one packed load
 and scalar advance, intercepts a parameter in place, or performs one final
 write with at most one dense meaning lookup. Replay words advance from the
-resident physical coordinate: segment metadata is inspected only at crossed
-boundaries, and an e-TeX prefix changes runs only once before its body. Lazy
+sole resident logical/physical coordinate: segment metadata is inspected only
+at crossed boundaries, and an e-TeX prefix changes runs only once before its
+body. Lazy
 diagnostic invalidation reads the advanced frame
 or source lexer coordinate only if a cold publication coordinate is captured
 or validated; resident source, stored-token, and macro-argument delivery carry

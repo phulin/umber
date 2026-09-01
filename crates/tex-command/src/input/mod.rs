@@ -499,7 +499,7 @@ fn project_token_cursor<G>(
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
     let cursor = level.stored_common()?;
-    hash.u64(u64::from(cursor.frame.position()));
+    hash.u64(level.stored_position()? as u64);
     hash.byte(match cursor.retirement {
         RetirementBehavior::Pop => 0,
         RetirementBehavior::StopAtEnd => 1,
@@ -871,7 +871,7 @@ impl<G> InputState<G> {
             | InputLevel::AttemptTokens(_)) => {
                 let tokens = level.stored_common().expect("stored row");
                 if matches!(tokens.trace, ReplayTrace::BackedUp)
-                    && tokens.position()
+                    && level.stored_position().expect("stored row")
                         >= level
                             .stored_span_cold()
                             .expect("stored row has span")
@@ -1228,7 +1228,7 @@ impl<G> InputState<G> {
         }
 
         let count = span_len(stores, &span, scratch);
-        let split = tokens.position().min(count);
+        let split = level.stored_position()?.min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
             TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)

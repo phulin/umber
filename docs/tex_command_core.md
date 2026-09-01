@@ -1907,7 +1907,7 @@ boundaries; source EOF remains the cold file-warning/framing boundary. The sourc
 together, tokenizes into the caller's final command slot, and advances the
 row's compact position before ending that borrow. The stored-token branch lends
 its cursor directly, selects its admitted replay, attempt, or durable span,
-loads one packed word, advances one scalar, intercepts `OutParameter` in place,
+loads one packed word, advances its one owning cursor, intercepts `OutParameter` in place,
 and otherwise resolves into that same slot before the top borrow ends. It
 returns no stored-top wrapper or stored-advance result to redispatch. Macro-
 argument branches likewise project their resident packed word and meaning into
@@ -2081,15 +2081,17 @@ replay uses its sealed fixed-block range. The semantic lane stores four-byte
 the lane, not a twelve-byte value for every captured token.
 
 A replay-backed token row also admits one sequential resident coordinate: its
-current prefix/body run, physical segment, in-segment offset, cached segment
-end, and remaining words in that run. An ordinary replay word performs one
-packed load and advances those scalars. Only an actual segment boundary
+logical word position, current prefix/body run, physical segment, in-segment
+offset, cached segment end, and remaining words in that run. Its common packed
+frame retains immutable identity, source, and delivery flags but owns no second
+warm position. An ordinary replay word performs one packed load and advances
+the resident coordinate once. Only an actual segment boundary
 inspects the next segment header, and only the e-TeX prepended-prefix boundary
 selects the body run. Cold diagnostic and semantic-projection consumers retain
 an explicitly indexed lookup; command delivery cannot call it. The input
-first-touch journal swaps the logical word position and this physical replay
-coordinate together, so rollback, retry, rejection, and acceptance resume the
-identical word without a prefix rescan.
+first-touch journal swaps this one resident coordinate, so rollback, retry,
+rejection, and acceptance resume the identical logical and physical word
+without a prefix rescan or a second frame-position mutation.
 
 `CommandState::push_input_level` is the single live source/token frame
 transition. It updates TeX82's `max_in_stack` scalar on the singular live

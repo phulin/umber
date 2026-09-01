@@ -244,10 +244,11 @@ collector (see `src/conditionals.rs`).
   reborrow, resolves the resident packed word directly, returns only the
   scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
-  and advances only the packed frame scalar. Replay-backed rows additionally
-  retain the current replay run, physical segment, and in-segment offset;
-  ordinary words load from that coordinate directly and inspect segment
-  metadata only at a boundary. A
+  and advances only the owning cursor scalar. Replay-backed rows keep their
+  logical word position in the same resident coordinate as the current replay
+  run, physical segment, and in-segment offset; their common packed frame is
+  immutable during warm delivery. Ordinary words load from that sole cursor
+  directly and inspect segment metadata only at a boundary. A
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
@@ -310,8 +311,9 @@ collector (see `src/conditionals.rs`).
   cursor and matching first-touch journal fields. Stored rows lend their
   cursor directly: no storage-handle match, stored-top wrapper, advance result, or redispatch
   survives selection. Their first warm checkpoint touch journals the scalar
-  word position and replay run/segment coordinate; a later cold retirement,
-  limit, or flag mutation records
+  resident replay cursor, including its logical position and run/segment
+  coordinate; durable and attempt rows journal their packed-frame position. A
+  later cold retirement, limit, or flag mutation records
   the remaining token state separately in the same ordered history. The three branches share
   direct final-command writing and common post-borrow settlement, while
   preserving their distinct storage owners. Source, token-list, and macro-
