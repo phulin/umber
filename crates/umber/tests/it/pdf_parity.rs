@@ -537,7 +537,7 @@ fn check_embedded_font_case(case: &str) {
 
     let actual = fs::read(actual_path).expect("read embedded-font PDF");
     let expected_umber = read_binary_fixture("pdf", case, "umber.pdf");
-    assert_eq!(actual, expected_umber, "deterministic {case} bytes changed");
+    assert_pdf_bytes_eq(case, &actual, &expected_umber);
     assert_eq!(
         normalize_structure(&actual).expect("normalize embedded-font PDF"),
         read_fixture("pdf", case, "umber.structure")
@@ -551,6 +551,18 @@ fn check_embedded_font_case(case: &str) {
     let reference_structure =
         normalize_structure(&reference).expect("normalize reference font PDF");
     match case {
+        "embedded_type1" => {
+            // pdftex.web §690: mapped scalable widths share the one-decimal
+            // text-space raster used for character-advance accounting.
+            assert!(
+                actual_structure.contains("/Widths [625 833.3 777.8 694.4"),
+                "Umber Type1 widths lost the pdfTeX one-decimal raster"
+            );
+            assert!(
+                reference_structure.contains("/Widths [750 708.3 722.2]"),
+                "pinned pdfTeX Type1 width witness changed"
+            );
+        }
         "embedded_subset_type1" => {
             assert!(actual_structure.contains("/ToUnicode"));
             assert!(actual_structure.contains("/CharSet"));
@@ -606,6 +618,24 @@ fn check_embedded_font_case(case: &str) {
         digest(&expected_extract),
     );
     assert_eq!(read_fixture("pdf", case, "render"), expected_attestation);
+}
+
+fn assert_pdf_bytes_eq(case: &str, actual: &[u8], expected: &[u8]) {
+    if actual == expected {
+        return;
+    }
+    let first_difference = actual
+        .iter()
+        .zip(expected)
+        .position(|(actual, expected)| actual != expected)
+        .unwrap_or_else(|| actual.len().min(expected.len()));
+    panic!(
+        "deterministic {case} bytes changed at offset {first_difference}: actual {} bytes sha256 {}, expected {} bytes sha256 {}",
+        actual.len(),
+        digest(actual),
+        expected.len(),
+        digest(expected),
+    );
 }
 
 #[allow(clippy::disallowed_methods)] // Hermetic host-side distribution fixture.
