@@ -316,10 +316,9 @@ impl<G> CommandState<G> {
         let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
-            let Some(result) = input.levels.mutate_top_source(|source, slot| {
+            let Some(result) = input.levels.mutate_top_source_cursor(|source, slot| {
                 let identity = source.identity();
                 let name_class = slot.name_class;
-                let stored = super::SourceLevelExecutionState::cursor(source, slot);
                 if pending_acquired_line {
                     slot.cursor.pending_acquired_line = true;
                 }
@@ -330,8 +329,7 @@ impl<G> CommandState<G> {
                     buffer_start,
                     name_class: Some(name_class),
                 };
-                let result = slot
-                    .cursor
+                slot.cursor
                     .load_next_line(endlinechar)
                     .map(|line| line.physical)
                     .map(|physical| {
@@ -352,8 +350,7 @@ impl<G> CommandState<G> {
                         };
                         debug_assert_eq!(source.identity(), identity);
                         (physical, retained_line)
-                    });
-                (stored, result)
+                    })
             }) else {
                 return Err(());
             };

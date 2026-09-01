@@ -60,6 +60,45 @@ enum ResidentInputTop<'a, G> {
     MacroArgument(&'a mut super::MacroArgumentCursor<G>),
 }
 
+enum SourceOwnerTransition {
+    Cursor,
+    EveryEof,
+    Backing(super::RegisteredSource),
+}
+
+impl SourceOwnerTransition {
+    fn apply<G>(
+        self,
+        source: &SourceLevel<G>,
+        slot: &mut SourceSlot<G>,
+        retain_inverse: bool,
+    ) -> Option<SourceLevelExecutionState<G>> {
+        match (self, retain_inverse) {
+            (Self::Cursor, true) => Some(SourceLevelExecutionState::cursor(source, slot)),
+            (Self::EveryEof, true) => Some(SourceLevelExecutionState::every_eof(source, slot)),
+            (Self::Backing(replacement), true) => Some(SourceLevelExecutionState::backing(
+                source,
+                slot,
+                replacement,
+            )),
+            (Self::Cursor, false) => {
+                slot.cursor.release_execution_owners();
+                None
+            }
+            (Self::EveryEof, false) => {
+                slot.cursor.release_execution_owners();
+                slot.every_eof = None;
+                None
+            }
+            (Self::Backing(replacement), false) => {
+                slot.cursor.backing = replacement;
+                slot.cursor.release_execution_owners();
+                None
+            }
+        }
+    }
+}
+
 struct ResidentSourceTop<'a, G> {
     index: usize,
     source: &'a mut SourceLevel<G>,
@@ -1827,35 +1866,44 @@ impl<G> InputStack<G> {
         &self.rows[index]
     }
 
+    pub(crate) fn mutate_top_source_cursor<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+    ) -> Option<R> {
+        self.mutate_top_source(SourceOwnerTransition::Cursor, mutate)
+    }
+
+    pub(crate) fn mutate_top_source_every_eof<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+    ) -> Option<R> {
+        self.mutate_top_source(SourceOwnerTransition::EveryEof, mutate)
+    }
+
+    pub(crate) fn mutate_top_source_backing<R>(
+        &mut self,
+        replacement: super::RegisteredSource,
+        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+    ) -> Option<R> {
+        self.mutate_top_source(SourceOwnerTransition::Backing(replacement), mutate)
+    }
+
     /// Moves the first source-owner inverse in an interval into the same
     /// ordered history as row advances and replacements.
     ///
-    /// Later owner transitions of that row can drop their displaced owner:
-    /// rollback needs the interval's initial owner and candidate redo obtains
-    /// the final owner by swapping that one inverse a second time. A row
-    /// admitted during the interval needs no inverse until it is displaced.
-    pub(crate) fn mutate_top_source<R>(
+    /// Later owner transitions of that row release their displaced owner in
+    /// place: rollback needs only the interval's initial owner, and candidate
+    /// redo obtains the final owner by swapping that one inverse a second
+    /// time. A row admitted during the interval likewise releases directly.
+    fn mutate_top_source<R>(
         &mut self,
-        mutate: impl FnOnce(
-            &mut SourceLevel<G>,
-            &mut SourceSlot<G>,
-        ) -> (SourceLevelExecutionState<G>, R),
+        transition: SourceOwnerTransition,
+        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         let index = self.top.checked_sub(1)?;
         if !matches!(self.rows[index], InputLevel::Source(_)) {
             return None;
         }
-        Some(self.mutate_source(index, mutate))
-    }
-
-    fn mutate_source<R>(
-        &mut self,
-        index: usize,
-        mutate: impl FnOnce(
-            &mut SourceLevel<G>,
-            &mut SourceSlot<G>,
-        ) -> (SourceLevelExecutionState<G>, R),
-    ) -> R {
         let key = match &self.rows[index] {
             InputLevel::Source(source) => source.slot,
             _ => unreachable!("source mutation names a source row"),
@@ -1865,56 +1913,44 @@ impl<G> InputStack<G> {
             .value(key.0)
             .expect("source slot remains live")
             .occupied_buffer_slots;
-        if !self.recording {
-            let (rows, slots) = (&mut self.rows, &mut self.source_slots);
+        let retain_inverse = self.recording
+            && (self.touched[index] != self.interval
+                || (self.partially_captured[index] == self.interval
+                    && self.cold_state_captured[index] != self.interval));
+        if retain_inverse {
+            self.source_owner_states.warm_first_page();
+        }
+        let (payload, result, current_buffer_slots) = {
+            let (rows, slots, owner_states) = (
+                &mut self.rows,
+                &mut self.source_slots,
+                &mut self.source_owner_states,
+            );
             let InputLevel::Source(source) = &mut rows[index] else {
                 unreachable!()
             };
             let slot = slots.value_mut(key.0).expect("source slot remains live");
-            let (state, result) = mutate(source, slot);
-            drop(state);
+            let payload = transition
+                .apply(source, slot, retain_inverse)
+                .map(|state| owner_states.insert(state));
+            let result = mutate(source, slot);
             let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
             slot.occupied_buffer_slots = current_buffer_slots;
-            self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
-            return result;
-        }
-        let row_needs_inverse = self.touched[index] != self.interval
-            || (self.partially_captured[index] == self.interval
-                && self.cold_state_captured[index] != self.interval);
-        if !row_needs_inverse {
-            let (rows, slots) = (&mut self.rows, &mut self.source_slots);
-            let InputLevel::Source(source) = &mut rows[index] else {
-                unreachable!()
-            };
-            let slot = slots.value_mut(key.0).expect("source slot remains live");
-            let (state, result) = mutate(source, slot);
-            drop(state);
-            let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
-            slot.occupied_buffer_slots = current_buffer_slots;
-            self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
-            return result;
-        }
-        self.source_owner_states.warm_first_page();
-        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
-        let InputLevel::Source(source) = &mut rows[index] else {
-            unreachable!()
+            (payload, result, current_buffer_slots)
         };
-        let slot = slots.value_mut(key.0).expect("source slot remains live");
-        let (state, result) = mutate(source, slot);
-        let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
-        slot.occupied_buffer_slots = current_buffer_slots;
-        let payload = self.source_owner_states.insert(state);
-        self.undo.append(InputUndo::SourceOwner {
-            index: u32::try_from(index).expect("input row index fits u32"),
-            payload,
-            generation: core::marker::PhantomData,
-        });
-        self.touched[index] = self.interval;
-        self.partially_captured[index] = self.interval;
-        self.cold_state_captured[index] = self.interval;
-        self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        if let Some(payload) = payload {
+            self.undo.append(InputUndo::SourceOwner {
+                index: u32::try_from(index).expect("input row index fits u32"),
+                payload,
+                generation: core::marker::PhantomData,
+            });
+            self.touched[index] = self.interval;
+            self.partially_captured[index] = self.interval;
+            self.cold_state_captured[index] = self.interval;
+            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        }
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
-        result
+        Some(result)
     }
 
     pub(crate) fn mark(&mut self) -> Option<InputStackMark> {

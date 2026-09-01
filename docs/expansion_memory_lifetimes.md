@@ -844,7 +844,12 @@ reuse, retirement, rollback/redo, candidate settlement, and prefix release.
 Only the first owner-changing transition of a checkpoint-visible source row is
 retained in an interval; later transitions drop their displaced intermediate
 owners, because rollback needs the initial owner and redo recovers the final
-owner from that same swap. An interval-local row retains no owner inverse.
+owner from that same swap. The input history selects cursor, everyeof, or
+backing ownership before mutation: when no inverse is reachable, it releases
+the displaced line/replacement owner directly and never constructs a
+`SourceLevelExecutionState` merely to drop it. An interval-local row follows
+the same direct release. The first reachable transition still moves the exact
+cold execution state into the checked inverse slab.
 Alternate owners exist only as generation-checked inverse payloads, so
 candidate redo restores the exact authoritative row without a second live
 input representation or the generic logical-stack stored-state machinery.

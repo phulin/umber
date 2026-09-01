@@ -9,10 +9,8 @@ fn load_top_source_line<G>(state: &mut CommandState<G>) {
     state
         .input
         .levels
-        .mutate_top_source(|source, slot| {
-            let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+        .mutate_top_source_cursor(|_, slot| {
             slot.cursor.load_next_line(13).expect("source line loads");
-            (stored, ())
         })
         .expect("source remains on top");
 }

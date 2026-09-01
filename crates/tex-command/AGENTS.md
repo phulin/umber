@@ -291,9 +291,11 @@ collector (see `src/conditionals.rs`).
   `InputUndo` journal for first-touch advances, cold source-owner swaps,
   replacement/reuse, retirement, rollback/redo, candidate settlement, and
   prefix release. Repeated source-owner changes coalesce to the first inverse
-  per checkpoint-visible row and interval; rows admitted in the interval need
-  no inverse. Alternate owners live only in checked reusable slabs; there is no
-  generic logical-stack adapter or second input representation.
+  per checkpoint-visible row and interval. Later cursor, everyeof, and backing
+  transitions release displaced owners directly without materializing a cold
+  execution-state carrier; rows admitted in the interval do the same. Alternate
+  owners live only in checked reusable slabs; there is no generic logical-stack
+  adapter or second input representation.
   Typed cold source operations and one `CommandState`-owned resident front
   are the only mutable access. That front selects the semantic top once into
   a source, replay-token, durable-token, attempt-token, macro-body, or

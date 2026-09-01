@@ -743,6 +743,18 @@ impl SourceCursor {
         }
     }
 
+    /// Releases the displaced current-line owners when no rollback interval
+    /// can reach them.
+    ///
+    /// The scalar cursor state remains resident and is advanced by the
+    /// immediately following source transition. Unlike
+    /// [`Self::take_execution_state`], this path does not materialize a cold
+    /// transport value merely to drop it.
+    pub(crate) fn release_execution_owners(&mut self) {
+        self.line_backing = None;
+        self.line = None;
+    }
+
     pub(crate) fn swap_execution_state(&mut self, state: &mut SourceCursorExecutionState) {
         std::mem::swap(&mut self.backing_registered, &mut state.backing_registered);
         std::mem::swap(&mut self.line_backing, &mut state.line_backing);

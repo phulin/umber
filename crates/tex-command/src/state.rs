@@ -970,12 +970,10 @@ impl<G> CommandState<G> {
     pub fn profile_prepare_source_line(&mut self, endlinechar: i32) {
         self.input
             .levels
-            .mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            .mutate_top_source_cursor(|_, slot| {
                 slot.cursor
                     .load_next_line(endlinechar)
                     .expect("profiling source has a first line");
-                (stored, ())
             })
             .expect("profiling fixture keeps a source frame on top");
     }
@@ -1013,11 +1011,7 @@ impl<G> CommandState<G> {
         let loaded = self
             .input
             .levels
-            .mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
-                let loaded = slot.cursor.load_next_line(endlinechar).is_some();
-                (stored, loaded)
-            })
+            .mutate_top_source_cursor(|_, slot| slot.cursor.load_next_line(endlinechar).is_some())
             .expect("profiling fixture keeps a source frame on top");
         assert!(loaded, "profiling source has a second line");
     }
@@ -2350,11 +2344,9 @@ impl<G> CommandState<G> {
         );
         self.input
             .levels
-            .mutate_top_source(|active, slot| {
+            .mutate_top_source_cursor(|active, slot| {
                 assert_eq!(active.identity(), identity);
-                let stored = crate::input::SourceLevelExecutionState::cursor(active, slot);
                 slot.cursor.pending_acquired_line = true;
-                (stored, ())
             })
             .expect("the inserted replacement source was just pushed");
         Ok(())
@@ -2402,17 +2394,14 @@ impl<G> CommandState<G> {
             .expect("a source registered above is present");
         self.input
             .levels
-            .mutate_top_source(|active, slot| {
+            .mutate_top_source_backing(registered, |active, slot| {
                 assert_eq!(
                     active.identity(),
                     level,
                     "begin_read_line keeps the exact source level active during acquisition"
                 );
-                let stored =
-                    crate::input::SourceLevelExecutionState::backing(active, slot, registered);
                 slot.name_class = name_class;
                 slot.cursor.pending_acquired_line = true;
-                (stored, ())
             })
             .expect("begin_read_line keeps its source level active during acquisition");
         Ok(())
@@ -2464,17 +2453,14 @@ impl<G> CommandState<G> {
         let retained_line = self
             .input
             .levels
-            .mutate_top_source(|level, slot| {
-                let stored = crate::input::SourceLevelExecutionState::every_eof(level, slot);
+            .mutate_top_source_every_eof(|_, slot| {
                 if matches!(slot.name_class, SourceNameClass::Scantokens(_)) {
                     slot.cursor.install_scantokens_eof_context_line();
                 }
-                let retained_line = slot
-                    .cursor
+                slot.cursor
                     .line
                     .as_ref()
-                    .map(|line| line.physical.number().min(i32::MAX as u64) as i32);
-                (stored, retained_line)
+                    .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
             })
             .expect("the checked everyeof source remains on top");
         if let Some(retained_line) = retained_line {
@@ -2665,10 +2651,8 @@ impl<G> CommandState<G> {
 
     /// Retires the active normalized line so the next physical line may load.
     pub fn finish_source_line(&mut self) {
-        let _ = self.input.levels.mutate_top_source(|level, slot| {
-            let stored = crate::input::SourceLevelExecutionState::cursor(level, slot);
+        let _ = self.input.levels.mutate_top_source_cursor(|_, slot| {
             slot.cursor.finish_line();
-            (stored, ())
         });
     }
 

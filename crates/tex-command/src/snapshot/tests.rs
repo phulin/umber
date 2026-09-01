@@ -834,11 +834,9 @@ fn repeated_source_owner_swaps_coalesce_and_candidate_reject_redoes_the_final_ow
             command
                 .input
                 .levels
-                .mutate_top_source(|source, slot| {
-                    let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+                .mutate_top_source_cursor(|_, slot| {
                     let line = slot.cursor.load_next_line(13).expect("next line loads");
                     assert_eq!(line.physical.number(), expected_line);
-                    (stored, ())
                 })
                 .expect("source owner transition records");
         }
@@ -879,10 +877,8 @@ fn source_owner_swaps_on_an_interval_local_row_need_no_inverse() {
         let before = command.input.levels.counters();
 
         for _ in 0..2 {
-            command.input.levels.mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            command.input.levels.mutate_top_source_cursor(|_, slot| {
                 slot.cursor.load_next_line(13).expect("next line loads");
-                (stored, ())
             });
         }
         let after = command.input.levels.counters();
@@ -912,10 +908,8 @@ fn compact_source_touch_then_token_row_reuse_restores_the_source_incarnation() {
         command
             .input
             .levels
-            .mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            .mutate_top_source_cursor(|_, slot| {
                 slot.cursor.load_next_line(13).expect("fixture line loads");
-                (stored, ())
             })
             .expect("source row is live");
         let source_slot = top_source_key(&command);
@@ -995,10 +989,8 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .input
             .levels
-            .mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            .mutate_top_source_cursor(|_, slot| {
                 slot.cursor.load_next_line(13).expect("first line loads");
-                (stored, ())
             })
             .expect("original source is live");
         let original_slot = top_source_key(&command);
@@ -1007,10 +999,8 @@ fn cold_source_owner_swap_then_source_row_reuse_restores_in_order() {
         command
             .input
             .levels
-            .mutate_top_source(|source, slot| {
-                let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+            .mutate_top_source_cursor(|_, slot| {
                 slot.cursor.load_next_line(13).expect("second line loads");
-                (stored, ())
             })
             .expect("cold owner swap records");
         command
@@ -1076,10 +1066,8 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("prior source is live"),
         };
-        command.input.levels.mutate_top_source(|source, slot| {
-            let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+        command.input.levels.mutate_top_source_cursor(|_, slot| {
             slot.cursor.load_next_line(13).expect("prior line loads");
-            (stored, ())
         });
         let prior_slot = top_source_key(&command);
 
@@ -1093,12 +1081,10 @@ fn candidate_source_reuse_with_the_same_input_id_rejects_and_redoes_by_incarnati
             Some(crate::input::InputLevel::Source(source)) => source.identity(),
             _ => panic!("candidate source is live"),
         };
-        candidate.input.levels.mutate_top_source(|source, slot| {
-            let stored = crate::input::SourceLevelExecutionState::cursor(source, slot);
+        candidate.input.levels.mutate_top_source_cursor(|_, slot| {
             slot.cursor
                 .load_next_line(13)
                 .expect("candidate line loads");
-            (stored, ())
         });
         let candidate_slot = top_source_key(&candidate);
         assert_eq!(candidate_identity, prior_identity);
