@@ -318,17 +318,18 @@ collector (see `src/conditionals.rs`).
   `\errorcontextlines`-budgeted, and bottom levels before pseudoprinting; it
   retains only one deferred bottom coordinate and never materializes omitted
   level strings.
-- `src/processor/`: public borrow-only processor facade with const-specialized
-  raw and expanded entries into one destination-directed state machine,
+- `src/processor/`: public borrow-only processor facade with separate concrete
+  raw and expanded destination loops,
   expansion, scanner-status, and alignment orchestration. The fused
   destination pipeline advances resident input and inspects the command
-  in place; its sole delivery settlement applies noexpand, outer
+  in place; resident success returns only a ready/outer scalar, while its sole
+  delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
-  has ended. The two specializations share canonical
+  has ended. The two loops share canonical
   token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
-  delivery policy. The loops do not test a raw-versus-expanded mode on every
-  token. Internal steps return a compact status or zero-sized failure marker;
+  delivery controls. The loops do not test a raw-versus-expanded mode on every
+  token. Only cold resident transitions return a status or zero-sized failure marker;
   one request-local cold error slot carries a real error to the public boundary.
   Expanded delivery classifies each resolved meaning once as return,
   end-template handling, macro activation, undefined recovery, or one exact
@@ -336,11 +337,11 @@ collector (see `src/conditionals.rs`).
   expansion does not match the resident meaning or primitive opcode again.
   The facade also resumes an executor-retained settled delivery. Main-control
   preflight performs raw fetch, expansion classification, and any required
-  expansion in one driver entry without backing up or redelivering the command.
+  expansion in one expanded-loop entry without backing up or redelivering the command.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
-- `src/processor/next.rs`: public raw-delivery policy entry points plus
+- `src/processor/next.rs`: public raw-delivery entry points plus
   demand-only resident-command observation after all dense borrows end. The
   fused state machine in `expand.rs` delegates cold source retirement, outer
   recovery, and alignment interception directly to their private semantic
@@ -354,7 +355,7 @@ collector (see `src/conditionals.rs`).
   executor-facing recovery operations, and scanner-status outer/runaway
   interception respectively. They share the live processor directly and add
   no recovery queue, command slot, or runtime dispatch layer.
-- `src/processor/alignment_interception.rs`: alignment-aware delivery policy,
+- `src/processor/alignment_interception.rs`: alignment-aware delivery entry,
   typed delimiter/v-template handoff, and active-cell input proofs over the
   canonical alignment state; it never reclassifies input in the executor.
 - `src/processor/tests.rs`: tracked command-root publication and fail-closed

@@ -996,11 +996,11 @@ impl<G> crate::CommandState<G> {
             &mut Option<&mut dyn CommandObserver>,
             &mut Option<super::InputLevelId>,
         ),
-    ) -> Result<super::ResidentCommandTransition, ()> {
+    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
         let (observer, immediate_write_retirement) = retirement_publication;
         loop {
             let Some((resident_index, top)) = self.roots.input.levels.select_resident_top() else {
-                return Ok(super::ResidentCommandTransition::Empty);
+                return Err(super::ResidentCommandColdTransition::Empty);
             };
             #[cfg(test)]
             {
@@ -1012,13 +1012,16 @@ impl<G> crate::CommandState<G> {
             let transition = match top {
                 ResidentInputTop::Source(top) => {
                     let force_eof = top.force_eof(self.roots.input.force_eof);
-                    match top.advance_into(
-                        self.roots.expansion.profile,
-                        force_eof,
-                        state,
-                        create_control_sequences,
-                        destination.reborrow(),
-                    )? {
+                    match top
+                        .advance_into(
+                            self.roots.expansion.profile,
+                            force_eof,
+                            state,
+                            create_control_sequences,
+                            destination.reborrow(),
+                        )
+                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                    {
                         ResidentSourceAdvance::Delivered(resolution, location) => {
                             #[cfg(test)]
                             {
@@ -1037,14 +1040,14 @@ impl<G> crate::CommandState<G> {
                             )
                         }
                         ResidentSourceAdvance::InvalidCharacter => {
-                            super::ResidentCommandTransition::InvalidCharacter
+                            Err(super::ResidentCommandColdTransition::InvalidCharacter)
                         }
                         ResidentSourceAdvance::NeedLine(identity) => {
-                            super::ResidentCommandTransition::NeedLine(identity)
+                            Err(super::ResidentCommandColdTransition::NeedLine(identity))
                         }
-                        ResidentSourceAdvance::Exhausted(identity) => {
-                            super::ResidentCommandTransition::SourceExhausted(identity)
-                        }
+                        ResidentSourceAdvance::Exhausted(identity) => Err(
+                            super::ResidentCommandColdTransition::SourceExhausted(identity),
+                        ),
                     }
                 }
                 ResidentInputTop::StoredToken(top) => {
@@ -1052,7 +1055,10 @@ impl<G> crate::CommandState<G> {
                         &self.roots.input.replay,
                         self.attempt.arena(),
                     );
-                    match top.advance_into(sources, destination.reborrow(), state)? {
+                    match top
+                        .advance_into(sources, destination.reborrow(), state)
+                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                    {
                         super::levels::StoredTokenAdvance::Delivered(resolution) => {
                             #[cfg(test)]
                             {
@@ -1086,14 +1092,15 @@ impl<G> crate::CommandState<G> {
                                 arguments,
                                 active_source,
                                 observer,
-                            )?;
+                            )
+                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
                             continue;
                         }
                         super::levels::StoredTokenAdvance::Exhausted(identity) => {
-                            super::ResidentCommandTransition::TokenExhausted {
+                            Err(super::ResidentCommandColdTransition::TokenExhausted {
                                 identity,
                                 resident_index,
-                            }
+                            })
                         }
                     }
                 }
@@ -1103,14 +1110,20 @@ impl<G> crate::CommandState<G> {
                     let identity = exhausted_identity.0;
                     let active_source = top.active_source();
                     let arguments = top.arguments;
-                    let Some(word) = top.advance_word(state)? else {
-                        if let Some(transition) = self.finish_resident_exhaustion(
-                            resident_index,
-                            exhausted_identity,
-                            observer,
-                            immediate_write_retirement,
-                        )? {
-                            return Ok(transition);
+                    let Some(word) = top
+                        .advance_word(state)
+                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                    else {
+                        if let Some(transition) = self
+                            .finish_resident_exhaustion(
+                                resident_index,
+                                exhausted_identity,
+                                observer,
+                                immediate_write_retirement,
+                            )
+                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                        {
+                            return Err(transition);
                         }
                         continue;
                     };
@@ -1143,7 +1156,8 @@ impl<G> crate::CommandState<G> {
                             arguments,
                             active_source,
                             observer,
-                        )?;
+                        )
+                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
                         continue;
                     }
                     #[cfg(any(test, feature = "profiling"))]
@@ -1177,14 +1191,20 @@ impl<G> crate::CommandState<G> {
                     let position = top.position() as u32;
                     let identity = exhausted_identity.0;
                     let active_source = top.active_source();
-                    let Some(word) = top.advance_word(&self.scratch)? else {
-                        if let Some(transition) = self.finish_resident_exhaustion(
-                            resident_index,
-                            exhausted_identity,
-                            observer,
-                            immediate_write_retirement,
-                        )? {
-                            return Ok(transition);
+                    let Some(word) = top
+                        .advance_word(&self.scratch)
+                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                    else {
+                        if let Some(transition) = self
+                            .finish_resident_exhaustion(
+                                resident_index,
+                                exhausted_identity,
+                                observer,
+                                immediate_write_retirement,
+                            )
+                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                        {
+                            return Err(transition);
                         }
                         continue;
                     };
@@ -1228,22 +1248,23 @@ impl<G> crate::CommandState<G> {
                     )
                 }
             };
-            let super::ResidentCommandTransition::TokenExhausted {
-                identity,
-                resident_index,
-            } = transition
-            else {
-                return Ok(transition);
+            let (identity, resident_index) = match transition {
+                Ok(interception) => return Ok(interception),
+                Err(super::ResidentCommandColdTransition::TokenExhausted {
+                    identity,
+                    resident_index,
+                }) => (identity, resident_index),
+                Err(cold) => return Err(cold),
             };
             let Some(retirement) = self
                 .retire_resident_ordinary_input(resident_index)
-                .map_err(|_| ())?
+                .map_err(|_| super::ResidentCommandColdTransition::Failure)?
             else {
                 // Terminal token input and v-templates still waiting for
                 // `do_endv` are explicit cold boundaries and still carry
                 // their identity outward. An awaiting post-`do_endv`
                 // v-template is popped above as a resident §357 restart.
-                return Ok(super::ResidentCommandTransition::TokenExhausted {
+                return Err(super::ResidentCommandColdTransition::TokenExhausted {
                     identity,
                     resident_index,
                 });
@@ -1253,7 +1274,9 @@ impl<G> crate::CommandState<G> {
                 observer,
                 immediate_write_retirement,
             ) {
-                return Ok(super::ResidentCommandTransition::ReplayCompleted(episode));
+                return Err(super::ResidentCommandColdTransition::ReplayCompleted(
+                    episode,
+                ));
             }
         }
     }
@@ -1269,7 +1292,7 @@ impl<G> crate::CommandState<G> {
         destination: crate::command::EmptyCommand<'_, G>,
         resolution: tex_state::token::PackedMeaningResolution,
         #[cfg(feature = "profiling")] kind: crate::fuel::RawDeliveryKind,
-    ) -> super::ResidentCommandTransition {
+    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
         let scanner_active = !matches!(
             self.roots.scanner.status(),
             crate::processor::ScannerStatus::Normal
@@ -1290,7 +1313,7 @@ impl<G> crate::CommandState<G> {
             );
             super::ResidentCommandInterception::Ready
         };
-        super::ResidentCommandTransition::Delivered { interception }
+        Ok(interception)
     }
 
     #[cold]
@@ -1353,19 +1376,19 @@ impl<G> crate::CommandState<G> {
         identity: super::InputLevelId,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> Result<Option<super::ResidentCommandTransition>, ()> {
+    ) -> Result<Option<super::ResidentCommandColdTransition>, ()> {
         let Some(retirement) = self
             .retire_resident_ordinary_input(resident_index)
             .map_err(|_| ())?
         else {
-            return Ok(Some(super::ResidentCommandTransition::TokenExhausted {
+            return Ok(Some(super::ResidentCommandColdTransition::TokenExhausted {
                 identity,
                 resident_index,
             }));
         };
         Ok(self
             .settle_resident_ordinary_retirement(retirement, observer, immediate_write_retirement)
-            .map(super::ResidentCommandTransition::ReplayCompleted))
+            .map(super::ResidentCommandColdTransition::ReplayCompleted))
     }
 
     #[inline(always)]

@@ -133,13 +133,12 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         !next.contains("fn next_command_into("),
         "raw entry points must not own a second next-command pipeline"
     );
+    assert_eq!(expansion.matches("fn raw_destination_loop(").count(), 1);
     assert_eq!(
-        expansion
-            .matches("fn delivery_state_machine<const EXPANDED: bool>(")
-            .count(),
-        1,
-        "raw and expanded requests must share one destination-directed state machine"
+        expansion.matches("fn expanded_destination_loop(").count(),
+        1
     );
+    assert!(!expansion.contains("fn delivery_state_machine<"));
     assert_eq!(
         input_history
             .matches("fn advance_resident_command_into(")
@@ -259,9 +258,9 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "canonical command delivery must not carry source-name creation policy"
     );
     assert!(!expansion.contains("self.next_command_into("));
-    assert!(expansion.contains("self.delivery_state_machine::<false>("));
-    assert!(expansion.contains("self.delivery_state_machine::<true>("));
-    assert!(expansion.contains("Some(expanded)"));
+    assert!(expansion.contains("self.raw_destination_loop("));
+    assert!(expansion.contains("self.expanded_destination_loop("));
+    assert!(!expansion.contains("delivery_state_machine::<"));
     assert!(next.contains("create_source_control_sequences"));
     assert!(input_stack.contains("CompactSourceStepQueries for LiveSourceQueries"));
     assert!(
@@ -393,7 +392,8 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
         expansion
             .matches("self.check_outer_validity_entry(")
             .count(),
-        1
+        2,
+        "the two concrete destination loops must share one cold recovery owner"
     );
 }
 
@@ -504,13 +504,17 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     let command_state = fs::read_to_string(manifest_dir.join("src/state.rs"))
         .expect("read command-state ownership");
 
+    assert_eq!(expansion.matches("fn raw_destination_loop(").count(), 1);
     assert_eq!(
-        expansion
-            .matches("fn delivery_state_machine<const EXPANDED: bool>(")
-            .count(),
-        1,
-        "resident advancement and raw/expanded inspection must share one policy loop"
+        expansion.matches("fn expanded_destination_loop(").count(),
+        1
     );
+    for deleted in ["DeliveryMode", "DeliveryPolicy", "ExpandedDeliveryPolicy"] {
+        assert!(
+            !format!("{expansion}\n{policies}").contains(deleted),
+            "generic delivery shell {deleted} must stay deleted"
+        );
+    }
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
     assert!(!input_history.contains("take_ready_replay_completion"));
@@ -530,7 +534,7 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     ] {
         assert!(
             policies.contains(&format!("enum {policy_axis}")),
-            "typed delivery must select the {policy_axis} axis explicitly"
+            "concrete delivery entries must select the {policy_axis} semantic axis explicitly"
         );
         for variant in variants {
             assert!(

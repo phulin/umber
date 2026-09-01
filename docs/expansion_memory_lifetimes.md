@@ -355,7 +355,8 @@ coarse region lease until that row drains. A global `\let` of a local source is
 the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
-Raw and expanded command delivery is destination-directed. Each active request
+Raw and expanded command delivery uses separate concrete destination loops.
+Each active request
 owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
 `EmptyCommand` reborrows prove that resident input writes only that slot. Each
 source returns only the scalar packed-resolution fact, so no command reference
@@ -364,13 +365,16 @@ destination, consumes the resolver's already-decoded literal catcode for
 required brace handling, applies one-delivery suppression, and returns only a
 copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
-final meaning and control-sequence fields before returning; no semantic-token
-value or raw-command phase crosses from resident advancement to a second
-delivery driver. Nested delivery has its own slot. One fetch/inspect state loop
+final meaning and control-sequence fields before returning; warm resident
+delivery returns only its final ready/outer scalar. A macro `Param` pushes its
+admitted argument and continues inside the resident loop. Only EOF, line,
+retirement, replay, diagnostic, checkpoint, or failure paths materialize a cold
+status; no semantic-token value or raw-command phase crosses into a result
+relay. Nested delivery has its own slot. The expanded fetch/inspect loop
 keeps the initialized value in place while synchronous expansion mutates input, then raw delivery
 overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between
-expansions. The driver returns only a compact status, and moves the command
+expansions. Each concrete loop returns only its final compact status and moves the command
 only to its final consumer or the exact typed expansion suspension slot. The
 request also owns one stack-local cold error slot. Internal delivery transitions
 return a zero-sized failure marker; a real failure moves its `CommandError` into

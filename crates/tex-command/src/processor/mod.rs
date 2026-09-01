@@ -38,7 +38,6 @@ pub use alignment::{
     AlignmentRequestResult, FinishedAlignmentCell, PreparedAlignmentCellTemplates,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
-use expand::ExpandedFetch;
 pub(crate) use expand::ExpansionState;
 pub use expand_render::{
     PrintCommand, append_character_command_text, append_command_token_text,
@@ -98,28 +97,6 @@ pub(super) enum AlignmentInterceptionPolicy {
     None,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ExpandedDeliveryPolicy {
-    fetch: ExpandedFetch,
-    protected_macros: expand::ProtectedMacroHandling,
-    undefined: expand::UndefinedHandling,
-    observation: ExpandedObservationPolicy,
-    first_command: FirstCommandPolicy,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum DeliveryMode {
-    Raw,
-    Expanded(ExpandedDeliveryPolicy),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct DeliveryPolicy {
-    mode: DeliveryMode,
-    replay_completion: ReplayCompletionPolicy,
-    alignment_interception: AlignmentInterceptionPolicy,
-}
-
 /// Compact outcome from a destination-directed command delivery request.
 ///
 /// Command-bearing variants initialize the caller's command destination;
@@ -135,13 +112,7 @@ pub enum DeliveryStatus {
     AlignmentClosingBrace,
 }
 
-/// Cold error owner for the destination-directed delivery loop.
-///
-/// [`CommandError`] is deliberately rich and therefore much larger than the
-/// hot [`DeliveryStatus`].  Internal raw/expanded steps return only a compact
-/// failure marker and move an actual error into this caller-owned slot.  The
-/// public boundary reconstructs `Result` once, after the delivery loop has
-/// finished, rather than copying its large error envelope once per token.
+/// Cold error owner shared by the concrete destination loops.
 pub(super) struct DeliveryErrorSlot(Option<CommandError>);
 
 #[derive(Clone, Copy, Debug)]
@@ -164,6 +135,7 @@ impl DeliveryErrorSlot {
             .expect("delivery failure marker owns a command error")
     }
 }
+
 pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Borrow-only capability facade for one bounded executor operation.

@@ -175,37 +175,32 @@ belong in Beads epic `umber2-johp`; this file is not a task checklist.
 
 ### 1.1 Typed command delivery
 
-Raw `get_next`/`get_token`, expanded `get_x_token`/`x_token`, replay-aware
-fetches, main-loop lookahead, protected and undefined-preserving fetches, and
-alignment delivery are policies over one private command-delivery driver.
-The policy names replay-completion handling, expansion and its depth, terminal
-observation ownership, first-command handling, protected and undefined
-meanings, and alignment `end_template` interception independently. It does not
-name control-sequence creation: every token reaching the driver is already a
-character or a packed stable control-sequence identity. Canonically named
-methods remain as thin entry points; they do not own alternate fetch loops.
+Raw `get_next`/`get_token` and expanded `get_x_token`/`x_token` enter separate
+concrete destination loops. Replay-aware, main-loop, protected,
+undefined-preserving, and alignment entries select their semantic branches
+before entering the expanded loop; there is no raw-versus-expanded policy
+object, const-generic mode, or generic delivery driver in the resident path.
+Control-sequence creation remains a source-tokenization fact: every token
+reaching either loop is already a character or a packed stable
+control-sequence identity.
 
-The driver is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. The private
-`next_command_into` pipeline lends that value through one reference-only
-`EmptyCommand`: the resident input row passes its packed word directly to the
+Each loop is destination-directed. Its caller provides the one final
+`Option<CurrentCommand<G>>` slot for that active request. A reference-only
+`EmptyCommand` lends that slot to the resident input row, which passes its packed word directly to the
 dense meaning lookup, which writes spelling, resolved meaning, and delivery
 facts into the same address and returns only the scalar packed-resolution fact.
 The authoritative `CommandState` resident transition then reclaims its
 original destination: it applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
-can require it. That transition borrows the semantic top, discriminates its
-level kind once, advances the resident cursor, and settles fuel, alignment, or
-parameter replay before returning one final status. No intermediate delivery
-result, semantic-token value, unresolved command, or command reference crosses
-that ownership boundary. The processor receives a copy-small
-ready/outer result, and its public return is only a compact `DeliveryStatus` naming end of input,
-command completion, replay completion, pending observation, or an alignment
-boundary. Internal delivery steps pair that status with a zero-sized failure
-marker and move a real `CommandError` into one caller-owned cold slot. Only the
-public boundary constructs the rich `Result`, once per request; the successful
-per-token loop never reconstructs or copies its error envelope. A command moves
+can require it. That transition selects the semantic top once, advances the
+resident cursor once, and handles a macro `Param` by pushing the admitted
+argument and continuing internally. An ordinary body or argument word writes
+the reusable destination through at most one dense meaning lookup and returns
+only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
+replay completion, diagnostics, and invariant failure alone construct a cold
+resident status; focused counters keep intermediate status relays at zero.
+The public boundary returns the compact final `DeliveryStatus`. A command moves
 out of its destination slot only into its final consumer or the one typed
 expansion suspension slot at a real resource barrier. There is no process-global
 slot, mailbox, destination inference, nested-request reuse, or second raw
@@ -287,14 +282,14 @@ not probe the delivery-owned scalar journal; backup later consumes the recorded
 adjustment rather than reclassifying the spelling. Expanded delivery then
 matches the resolved meaning once to choose return, `end_template` handling,
 macro activation, undefined recovery, or one exact primitive dispatch;
-protected and undefined policies are branches of that same classification.
+protected and undefined handling are branches of that same classification.
 The borrowed decision drives tracing, work accounting, and expansion without
 another meaning or opcode match. Internal ErrorStop deletion, math-shift
 lookahead, and recovery-list draining likewise provide their discard-or-backup
-slot directly to the driver.
+slot directly to the applicable concrete loop.
 
-The value-returning entry points are conveniences over the same destination
-driver; the executor hot loop and destination-aware callers use
+The value-returning entry points are conveniences over the concrete destination
+loops; the executor hot loop and destination-aware callers use
 `get_next_into`, `get_token_into`, `get_x_token_into`, and the replay/alignment
 counterparts. In particular, alignment lookahead carries either `Committed` or
 `PendingExpanded`; no boolean can silently invert who must commit the expanded

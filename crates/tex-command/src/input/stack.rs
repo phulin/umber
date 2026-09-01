@@ -18,10 +18,8 @@ use super::{
 /// their one-delivery suppression, and received alignment treatment. Only a
 /// forbidden outer command crosses back to the processor, whose cold recovery
 /// path owns diagnostics and input insertion.
-pub(crate) enum ResidentCommandTransition {
-    Delivered {
-        interception: ResidentCommandInterception,
-    },
+#[derive(Debug)]
+pub(crate) enum ResidentCommandColdTransition {
     InvalidCharacter,
     NeedLine(InputLevelId),
     SourceExhausted(InputLevelId),
@@ -31,6 +29,7 @@ pub(crate) enum ResidentCommandTransition {
     },
     ReplayCompleted(crate::CommandReplayEpisode),
     Empty,
+    Failure,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

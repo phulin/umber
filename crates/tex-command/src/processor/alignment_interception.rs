@@ -11,8 +11,8 @@ use crate::{AlignmentDelivery, AlignmentDeliveryEvent};
 use super::alignment::CELL_ALIGN_STATE;
 use super::expand::{ExpandedFetch, ProtectedMacroHandling, UndefinedHandling};
 use super::{
-    AlignmentInterceptionPolicy, CommandProcessor, DeliveryMode, DeliveryPolicy,
-    ExpandedDeliveryPolicy, ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, CommandProcessor, ExpandedObservationPolicy, FirstCommandPolicy,
+    ReplayCompletionPolicy,
 };
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -84,22 +84,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             ExpandedFetch::GetXToken
         };
-        let delivery = self.delivery_driver(
-            DeliveryPolicy {
-                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
-                    fetch,
-                    protected_macros: ProtectedMacroHandling::Expand,
-                    undefined: UndefinedHandling::Diagnose,
-                    observation: ExpandedObservationPolicy::Commit,
-                    first_command: if main_loop_active {
-                        FirstCommandPolicy::MainLoopCharacter
-                    } else {
-                        FirstCommandPolicy::Ordinary
-                    },
-                }),
-                replay_completion: ReplayCompletionPolicy::Surface,
-                alignment_interception: AlignmentInterceptionPolicy::Surface,
+        let delivery = self.expanded_delivery_entry(
+            fetch,
+            ProtectedMacroHandling::Expand,
+            UndefinedHandling::Diagnose,
+            ExpandedObservationPolicy::Commit,
+            if main_loop_active {
+                FirstCommandPolicy::MainLoopCharacter
+            } else {
+                FirstCommandPolicy::Ordinary
             },
+            ReplayCompletionPolicy::Surface,
+            AlignmentInterceptionPolicy::Surface,
             destination,
         )?;
         Ok(delivery)

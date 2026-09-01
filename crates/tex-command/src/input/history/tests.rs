@@ -136,10 +136,7 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
                     (&mut None, &mut None),
                 )
                 .expect("token delivery succeeds");
-            assert!(matches!(
-                delivery,
-                crate::input::ResidentCommandTransition::Delivered { .. }
-            ));
+            assert_eq!(delivery, crate::input::ResidentCommandInterception::Ready);
         });
     });
 }
@@ -203,10 +200,7 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
                     (&mut None, &mut None),
                 )
                 .expect("macro-argument delivery succeeds");
-            assert!(matches!(
-                delivery,
-                crate::input::ResidentCommandTransition::Delivered { .. }
-            ));
+            assert_eq!(delivery, crate::input::ResidentCommandInterception::Ready);
         });
     });
 }
@@ -410,10 +404,7 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                             (&mut None, &mut None),
                         )
                         .expect("resident delivery succeeds");
-                    assert!(matches!(
-                        transition,
-                        crate::input::ResidentCommandTransition::Delivered { .. }
-                    ));
+                    assert_eq!(transition, crate::input::ResidentCommandInterception::Ready);
                 }
             }
             let allocations_after =

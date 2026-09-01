@@ -12,7 +12,7 @@ use crate::command::CurrentCommand;
 use crate::error::CommandError;
 
 use super::CommandProcessor;
-use super::{AlignmentInterceptionPolicy, DeliveryMode, DeliveryPolicy, ReplayCompletionPolicy};
+use super::{AlignmentInterceptionPolicy, ReplayCompletionPolicy};
 
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
@@ -34,12 +34,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.delivery_driver(
-            DeliveryPolicy {
-                mode: DeliveryMode::Raw,
-                replay_completion: ReplayCompletionPolicy::Consume,
-                alignment_interception: AlignmentInterceptionPolicy::Scalar,
-            },
+        let delivery = self.raw_delivery_entry(
+            ReplayCompletionPolicy::Consume,
+            AlignmentInterceptionPolicy::Scalar,
             destination,
         )?;
         debug_assert!(matches!(
@@ -72,12 +69,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.delivery_driver(
-            DeliveryPolicy {
-                mode: DeliveryMode::Raw,
-                replay_completion: ReplayCompletionPolicy::Surface,
-                alignment_interception: AlignmentInterceptionPolicy::None,
-            },
+        let delivery = self.raw_delivery_entry(
+            ReplayCompletionPolicy::Surface,
+            AlignmentInterceptionPolicy::None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -150,12 +144,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
-        let delivery = self.delivery_driver(
-            DeliveryPolicy {
-                mode: DeliveryMode::Raw,
-                replay_completion: ReplayCompletionPolicy::Consume,
-                alignment_interception: AlignmentInterceptionPolicy::Scalar,
-            },
+        let delivery = self.raw_delivery_entry(
+            ReplayCompletionPolicy::Consume,
+            AlignmentInterceptionPolicy::Scalar,
             destination,
         );
         self.create_source_control_sequences = false;

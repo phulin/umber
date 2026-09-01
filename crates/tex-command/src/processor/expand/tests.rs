@@ -509,6 +509,8 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 })),
         );
         let snapshot = command.snapshot(universe).expect("input prefix snapshots");
+        #[cfg(feature = "profiling")]
+        command.profile_reset_delivery_loop_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -653,6 +655,15 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 cat: Catcode::Letter,
             }
         );
+        #[cfg(feature = "profiling")]
+        {
+            let (warm, _cold, intermediate) = processor.command.profile_delivery_loop_counters();
+            assert!(
+                warm > 0,
+                "suspend/resume/rollback must retain scalar delivery"
+            );
+            assert_eq!(intermediate, 0);
+        }
     });
 }
 
