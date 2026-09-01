@@ -3494,7 +3494,11 @@ share that node. Span operations allocate or intern origins in batches.
 ### 26.4 Backup identity
 
 `DeliveryStamp` is not provenance. It proves an execution-local delivery and
-is invalid after unrelated input movement or snapshot restoration.
+is invalid after unrelated input movement or snapshot restoration. The
+processor temporarily mirrors that required coordinate to reject a stale
+move-only backup. Neither ordinary nor profiling delivery updates a parallel
+freshness-publication census; focused fixtures derive exact delivery volume at
+their measurement boundary.
 
 ### 26.5 Rollback and incremental history
 

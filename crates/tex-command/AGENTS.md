@@ -170,8 +170,11 @@ collector (see `src/conditionals.rs`).
   restores observation ordering but owns no command/input semantics. The
   processor's immediate-delivery freshness proof compares the resident
   command's stable input-level/position coordinate, while its sequence scalar
-  remains observation-only. `CurrentCommand` owns no observation sequence; a
-  genuine suspension retains the opaque cursor in its typed frame.
+  remains observation-only. Neither ordinary nor profiling delivery updates a
+  parallel freshness-publication census; focused fixtures derive their known
+  delivery volume at the measurement boundary. `CurrentCommand` owns no
+  observation sequence; a genuine suspension retains the opaque cursor in its
+  typed frame.
   Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no

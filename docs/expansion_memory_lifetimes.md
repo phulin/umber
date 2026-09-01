@@ -395,7 +395,10 @@ executor keeps the compact source role only because operand scanning may
 retire the originating input frame before application. `CommandProcessor`
 derives observation order from its next-delivery cursor and temporarily
 mirrors only the current command's compact coordinate to reject a stale
-move-only backup. A genuine typed retry readmits its command/cursor explicitly.
+move-only backup. Neither the ordinary nor profiling path updates a parallel
+freshness-publication census; focused fixtures derive their exact admitted
+delivery volume at the measurement boundary. A genuine typed retry readmits
+its command/cursor explicitly.
 No decoded provenance copy, command projection, or delivery owner is stored in
 executor preparation.
 

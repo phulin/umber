@@ -162,8 +162,6 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// preceding raw delivery. Observation order is `next_delivery_sequence -
     /// 1`; it has no second per-delivery storage.
     immediate_delivery_stamp: Option<crate::DeliveryStamp>,
-    #[cfg(feature = "profiling")]
-    delivery_freshness_writes: u64,
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
@@ -241,16 +239,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.scratch.match_word_reads()
     }
 
-    /// Number of compact immediate-delivery freshness publications.
-    ///
-    /// This profiling-only census proves that command delivery publishes only
-    /// the coordinate needed to reject a stale move-only command. Observation
-    /// order is derived from the cursor and has no second publication.
-    #[cfg(feature = "profiling")]
-    pub const fn delivery_freshness_writes(&self) -> u64 {
-        self.delivery_freshness_writes
-    }
-
     /// Captures the next observation delivery sequence for a typed retry.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
@@ -289,10 +277,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     pub(super) fn publish_delivery_freshness(&mut self, stamp: crate::DeliveryStamp) {
         self.immediate_delivery_stamp = Some(stamp);
-        #[cfg(feature = "profiling")]
-        {
-            self.delivery_freshness_writes = self.delivery_freshness_writes.saturating_add(1);
-        }
     }
 
     #[inline(always)]
@@ -605,8 +589,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             immediate_write_retirement: None,
             pending_file_warning_context: None,
             immediate_delivery_stamp: None,
-            #[cfg(feature = "profiling")]
-            delivery_freshness_writes: 0,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             scanner_resume: None,

@@ -685,12 +685,11 @@ fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_allocations() {
+fn one_and_4096_deliveries_have_one_compact_freshness_owner_and_zero_allocations() {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct Evidence {
         freshness_coordinate_fields: usize,
         command_coordinate_writes: u64,
-        freshness_coordinate_writes: u64,
         resolved_command_writes: u64,
         work: crate::CommandWorkCounters,
         allocation_calls: u64,
@@ -713,7 +712,7 @@ fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_a
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let allocations_before =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let freshness_coordinate_writes = {
+            {
                 let mut processor = crate::test_harness::processor(
                     &mut command,
                     &mut context,
@@ -741,8 +740,7 @@ fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_a
                         );
                     }
                 }
-                processor.delivery_freshness_writes()
-            };
+            }
             let allocations_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             let commands_after = crate::command::command_ownership_counters();
@@ -753,7 +751,6 @@ fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_a
                 freshness_coordinate_fields,
                 command_coordinate_writes: commands_after.delivery_stamp_writes
                     - commands_before.delivery_stamp_writes,
-                freshness_coordinate_writes,
                 resolved_command_writes: commands_after.resolved_writes
                     - commands_before.resolved_writes,
                 work: fuel.work(),
@@ -771,7 +768,6 @@ fn one_and_4096_delivery_census_has_one_compact_freshness_publication_and_zero_a
             Evidence {
                 freshness_coordinate_fields: 1,
                 command_coordinate_writes: count,
-                freshness_coordinate_writes: count,
                 resolved_command_writes: count,
                 work: crate::CommandWorkCounters {
                     fuel_charges: count,
