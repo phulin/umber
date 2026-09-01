@@ -1001,13 +1001,13 @@ pub struct ResidentMacroBodyReadCounters {
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
 thread_local! {
     static RESIDENT_MACRO_BODY_READ_COUNTERS: Cell<ResidentMacroBodyReadCounters> =
-        Cell::new(ResidentMacroBodyReadCounters {
+        const { Cell::new(ResidentMacroBodyReadCounters {
             admission_chunk_lookups: 0,
             region_owner_acquisitions: 0,
             direct_chunk_slot_reads: 0,
             chunk_boundary_transitions: 0,
             whole_body_copies: 0,
-        });
+        }) };
 }
 
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
