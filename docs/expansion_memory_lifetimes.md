@@ -1114,6 +1114,14 @@ forwarding. Current capture enumerates every interner entry and every durable
 definition/token/glue row, including rows no live cell reaches; the retention
 and format-size consequence is audited below.
 
+Macro scratch has one narrower pre-seal rule. A live `MacroArgumentWriter`
+keeps its exact append coordinates, and sealed arguments never move. Once a
+pending child's writer has published and its last active ancestor retires,
+however, no input cursor can yet name that child: its unpublished word suffix,
+argument ranges, and provenance runs rebase together into the newly dead
+prefix. This bounded copy is what keeps same-depth tail replacement at the
+concurrent high water instead of retaining document-linear scratch.
+
 ## Worked nested example
 
 Suppose macro `\outer` calls `\inner`. While matching `\inner`'s second

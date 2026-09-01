@@ -771,6 +771,81 @@ impl MacroWordLane {
         Some(TracedTokenWord::from_parts(word, origin))
     }
 
+    /// Moves one unpublished pending-frame suffix into the dead prefix left by
+    /// its last active ancestor. No admitted argument cursor can name the
+    /// pending frame yet, so its compact ranges and provenance runs may move
+    /// together before the frame is sealed.
+    fn rebase_unpublished_suffix(
+        &mut self,
+        start: u32,
+        destination: u32,
+    ) -> Result<(u32, u32), ScratchError> {
+        if destination > start || start > self.len {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let shift = start - destination;
+        let suffix_len = self.len - start;
+        if shift == 0 {
+            return Ok((0, 0));
+        }
+        if suffix_len == 0 {
+            self.truncate(destination)?;
+            return Ok((shift, 0));
+        }
+
+        let first_run = self
+            .origins
+            .partition_point(|run| run.start <= start)
+            .checked_sub(1)
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        let first_origin = self.origins[first_run].origin;
+        for offset in 0..suffix_len {
+            let source = (start + offset) as usize;
+            let word = *self
+                .active
+                .get(source / MACRO_WORD_RESERVE)
+                .and_then(|chunk| chunk.words.get(source % MACRO_WORD_RESERVE))
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            let target = (destination + offset) as usize;
+            let target = self
+                .active
+                .get_mut(target / MACRO_WORD_RESERVE)
+                .and_then(|chunk| chunk.words.get_mut(target % MACRO_WORD_RESERVE))
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            *target = word;
+        }
+
+        let original_run_len = self.origins.len();
+        let mut write = self.origins.partition_point(|run| run.start < destination);
+        if write == 0 || self.origins[write - 1].origin != first_origin {
+            let run = self
+                .origins
+                .get_mut(write)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            *run = MacroOriginRun {
+                start: destination,
+                origin: first_origin,
+            };
+            write += 1;
+        }
+        for read in first_run + 1..original_run_len {
+            let mut run = self.origins[read];
+            run.start = run
+                .start
+                .checked_sub(shift)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            self.origins[write] = run;
+            write += 1;
+        }
+        self.origins.truncate(write);
+
+        let end = destination
+            .checked_add(suffix_len)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        self.truncate(end)?;
+        Ok((shift, suffix_len))
+    }
+
     fn truncate(&mut self, mark: u32) -> Result<(), ScratchError> {
         if mark > self.len {
             return Err(ScratchError::InvalidCoordinate);
@@ -2066,6 +2141,9 @@ impl<G> ExecutionScratch<G> {
         self.release_macro_slot(frame.slot());
         self.macro_depth -= 1;
         self.active_macro_slot = parent_slot;
+        if pending_slot != NO_MACRO_SLOT && self.active_macro_slot == NO_MACRO_SLOT {
+            self.rebase_pending_macro_suffix(pending_slot)?;
+        }
         Ok(())
     }
 
@@ -2078,6 +2156,44 @@ impl<G> ExecutionScratch<G> {
         slot.clear();
         slot.parent_slot = self.free_macro_slot;
         self.free_macro_slot = slot_index;
+    }
+
+    fn rebase_pending_macro_suffix(&mut self, pending_slot: u32) -> Result<(), ScratchError> {
+        let slot = self
+            .macro_slots
+            .get(pending_slot as usize)
+            .filter(|slot| slot.live && !slot.sealed)
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        // A live writer owns its append coordinates until publication. The
+        // completed arguments of an unsealed frame have no external cursor and
+        // are the only pending suffix that may be rebased.
+        if slot.current_argument.is_some() {
+            return Ok(());
+        }
+        let start = slot.lane_mark;
+        let destination = slot.reclaim_mark;
+        let (shift, physical_copies) = self
+            .macro_words
+            .rebase_unpublished_suffix(start, destination)?;
+        #[cfg(test)]
+        {
+            self.physical_macro_word_copies = self
+                .physical_macro_word_copies
+                .checked_add(u64::from(physical_copies))
+                .expect("test copy accounting exceeds u64");
+        }
+        #[cfg(not(test))]
+        let _ = physical_copies;
+        if shift == 0 {
+            return Ok(());
+        }
+        let slot = &mut self.macro_slots[pending_slot as usize];
+        slot.lane_mark -= shift;
+        slot.reclaim_mark = slot.lane_mark;
+        for argument in &mut slot.arguments[..usize::from(slot.argument_count)] {
+            argument.range.start -= shift;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2538,7 +2654,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_same_depth_replacement_never_copies_pending_child_arguments() {
+    fn repeated_same_depth_replacement_rebases_only_unpublished_child_arguments() {
         let mut scratch = ExecutionScratch::<()>::default();
         let mut frame = seal_argument(&mut scratch, [word('a')]);
         for index in 0..8_192 {
@@ -2563,8 +2679,8 @@ mod tests {
         }
         assert_eq!(scratch.frame_len(), 1);
         assert_eq!(scratch.retained_slot_len(), 2);
-        assert_eq!(scratch.retained_word_capacity(), MACRO_WORD_RESERVE * 3);
-        assert_eq!(scratch.physical_macro_word_copies(), 0);
+        assert_eq!(scratch.retained_word_capacity(), MACRO_WORD_RESERVE);
+        assert_eq!(scratch.physical_macro_word_copies(), 8_192);
         scratch
             .release_argument_set(frame)
             .expect("final retirement");
@@ -2757,7 +2873,7 @@ mod tests {
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
         assert_eq!(scratch.retained_slot_len(), 2);
         assert_eq!(scratch.retained_word_capacity(), MACRO_WORD_RESERVE);
-        assert_eq!(scratch.physical_macro_word_copies(), 0);
+        assert_eq!(scratch.physical_macro_word_copies(), 64 + 8_192);
         scratch
             .release_argument_set(frame)
             .expect("final retirement");

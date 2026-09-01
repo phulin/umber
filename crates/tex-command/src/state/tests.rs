@@ -782,8 +782,8 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
     assert_eq!(one_allocations.calls, 0);
     assert_eq!(one_allocations.requested_bytes, 0);
     assert_eq!(
-        many_allocations.calls, 3,
-        "one word chunk and the live/owner header directories grow"
+        many_allocations.calls, 4,
+        "one word chunk, its flat directory, and the live/owner header directories grow"
     );
     assert!(many_allocations.requested_bytes > 0);
     assert_eq!(one_address_changes, 0);

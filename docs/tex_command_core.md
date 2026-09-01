@@ -2285,7 +2285,10 @@ admission resolves `(argument set, slot)` once into a first-class
 searches the input stack, or walks chunk links. Macro-body and argument rows
 both use specialized compact span cursors rather than `PackedInputFrame`.
 If an older body retires beneath a pending tail child, the child keeps its
-original sealed coordinates; pending arguments are never rebased or copied.
+coordinates while its writer is live. After publication, if the last active
+ancestor retires before the pending child is sealed, that still-unadmitted
+suffix rebases into the dead prefix together with its provenance runs. No
+sealed argument or admitted input cursor moves.
 Quiescent top-level calls clear lengths but retain every
 warmed allocation. Node, diagnostic, and continuation boundaries materialize
 structural provenance only on demand.
