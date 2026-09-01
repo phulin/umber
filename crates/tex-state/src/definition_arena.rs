@@ -988,7 +988,7 @@ struct LocalRegionPin<G> {
 }
 
 /// Exact structural work performed by one resident replacement cursor.
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[cfg(any(test, feature = "testing"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ResidentMacroBodyReadCounters {
     pub admission_chunk_lookups: u64,
@@ -998,7 +998,7 @@ pub struct ResidentMacroBodyReadCounters {
     pub whole_body_copies: u64,
 }
 
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
     static RESIDENT_MACRO_BODY_READ_COUNTERS: Cell<ResidentMacroBodyReadCounters> =
         const { Cell::new(ResidentMacroBodyReadCounters {
@@ -1010,13 +1010,13 @@ thread_local! {
         }) };
 }
 
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[cfg(any(test, feature = "testing"))]
 #[doc(hidden)]
 pub fn reset_resident_macro_body_read_counters() {
     RESIDENT_MACRO_BODY_READ_COUNTERS.set(ResidentMacroBodyReadCounters::default());
 }
 
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[cfg(any(test, feature = "testing"))]
 #[doc(hidden)]
 #[must_use]
 pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
@@ -1031,14 +1031,16 @@ pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
 /// downstream command code can neither inspect nor manufacture its storage
 /// coordinates. Safe Rust requires a short constant-time borrow of the
 /// region's flat chunk directory for each word: caching a direct chunk borrow
-/// beside its owning `Rc` would be self-referential. The ordinary input row's
-/// existing scalar position is therefore the smallest rollback-complete path;
-/// only a 4,096-word crossing changes its derived chunk coordinate.
+/// beside its owning `Rc` would be self-referential. This store owner therefore
+/// keeps the absolute cursor and exposes only its relative semantic position;
+/// rollback swaps one opaque coordinate, and only a 4,096-word crossing changes
+/// the derived chunk coordinate.
 pub struct ResidentMacroBody<G> {
     definition: DefinitionRef<G>,
     owner: Rc<DefinitionRegionOwner>,
     start: u32,
-    replacement_len: u32,
+    position: u32,
+    end: u32,
 }
 
 impl<G> ResidentMacroBody<G> {
@@ -1049,33 +1051,66 @@ impl<G> ResidentMacroBody<G> {
 
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.replacement_len as usize
+        (self.end - self.start) as usize
     }
 
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.replacement_len == 0
+        self.start == self.end
+    }
+
+    /// Current replacement-relative delivery position.
+    #[must_use]
+    pub const fn position(&self) -> usize {
+        (self.position - self.start) as usize
+    }
+
+    /// Advances the store-owned absolute cursor and returns its relative
+    /// semantic position with the resident word.
+    #[must_use]
+    #[inline(always)]
+    pub fn advance_word(&mut self) -> Option<(u32, TokenWord)> {
+        let absolute = self.position;
+        (absolute < self.end).then_some(())?;
+        let word = self.owner.word(absolute)?;
+        self.record_word_read(absolute);
+        self.position = absolute + 1;
+        Some((absolute - self.start, word))
+    }
+
+    #[must_use]
+    pub const fn cursor(&self) -> ResidentMacroBodyCursor {
+        ResidentMacroBodyCursor(self.position)
+    }
+
+    pub fn swap_cursor(&mut self, cursor: &mut ResidentMacroBodyCursor) {
+        core::mem::swap(&mut self.position, &mut cursor.0);
     }
 
     #[must_use]
     #[inline(always)]
     pub fn word(&self, position: usize) -> Option<TokenWord> {
-        (position < self.replacement_len as usize).then_some(())?;
+        (position < self.len()).then_some(())?;
         let absolute = self.start + position as u32;
-        #[cfg(any(test, feature = "profiling", feature = "testing"))]
+        self.record_word_read(absolute);
+        self.owner.word(absolute)
+    }
+
+    #[inline(always)]
+    fn record_word_read(&self, _absolute: u32) {
+        #[cfg(any(test, feature = "testing"))]
         RESIDENT_MACRO_BODY_READ_COUNTERS.set({
             let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
             counters.direct_chunk_slot_reads = counters.direct_chunk_slot_reads.saturating_add(1);
-            if position != 0
-                && absolute / DEFINITION_WORD_CHUNK_CAPACITY as u32
-                    != (absolute - 1) / DEFINITION_WORD_CHUNK_CAPACITY as u32
+            if _absolute != self.start
+                && _absolute / DEFINITION_WORD_CHUNK_CAPACITY as u32
+                    != (_absolute - 1) / DEFINITION_WORD_CHUNK_CAPACITY as u32
             {
                 counters.chunk_boundary_transitions =
                     counters.chunk_boundary_transitions.saturating_add(1);
             }
             counters
         });
-        self.owner.word(absolute)
     }
 
     #[cfg(any(test, feature = "profiling", feature = "testing"))]
@@ -1096,7 +1131,8 @@ impl<G> PartialEq for ResidentMacroBody<G> {
     fn eq(&self, other: &Self) -> bool {
         self.definition == other.definition
             && self.start == other.start
-            && self.replacement_len == other.replacement_len
+            && self.position == other.position
+            && self.end == other.end
             && Rc::ptr_eq(&self.owner, &other.owner)
     }
 }
@@ -1107,10 +1143,15 @@ impl<G> core::hash::Hash for ResidentMacroBody<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.definition.hash(state);
         self.start.hash(state);
-        self.replacement_len.hash(state);
+        self.position.hash(state);
+        self.end.hash(state);
         (Rc::as_ptr(&self.owner) as usize).hash(state);
     }
 }
+
+/// Opaque rollback coordinate for one store-owned resident replacement cursor.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ResidentMacroBodyCursor(u32);
 
 struct LocalDefinitionRegionLease {
     slots: Rc<LocalDefinitionSlots>,
@@ -1301,7 +1342,7 @@ impl<G> DefinitionArena<G> {
         if replacement_len != 0 && !owner.has_chunk(initial_chunk) {
             return None;
         }
-        #[cfg(any(test, feature = "profiling", feature = "testing"))]
+        #[cfg(any(test, feature = "testing"))]
         RESIDENT_MACRO_BODY_READ_COUNTERS.set({
             let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
             counters.admission_chunk_lookups = counters
@@ -1322,7 +1363,8 @@ impl<G> DefinitionArena<G> {
                 definition: id,
                 owner,
                 start: replacement_start,
-                replacement_len,
+                position: replacement_start,
+                end: header.end,
             },
         ))
     }

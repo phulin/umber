@@ -2001,7 +2001,8 @@ struct MacroBodyCursor {
     arguments: Option<ArgumentSetId>,
     name: Symbol,
     invocation: OriginId,
-    frame: ResidentSpanCursor,
+    identity: InputLevelId,
+    source: Option<SourceContext>,
 }
 
 struct MacroArgumentCursor {
@@ -2031,9 +2032,12 @@ enum RetirementBehavior {
 ```
 
 The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
-for generic token lists. `MacroBodyCursor` does not wrap it: it stores a
-24-byte `ResidentSpanCursor` with only identity, bounds, position, and optional
-source coordinates. `MacroArgumentCursor` is specialized further. Its admitted
+for generic token lists. `MacroBodyCursor` does not wrap it or another span
+frame: its store-minted `ResidentMacroBody` owns the sole absolute replacement
+cursor, while the command row adds only input identity and optional source
+coordinates. Delivery advances the store cursor once and returns the relative
+semantic position with the word; rollback swaps one opaque four-byte store
+coordinate. `MacroArgumentCursor` is specialized independently. Its admitted
 range already contains absolute scratch-lane bounds, so the row owns one
 absolute coordinate plus identity and optional source context directly. Warm
 delivery checks that coordinate against the range, performs the fixed-chunk
@@ -2045,7 +2049,7 @@ On the supported 64-bit host the body row is the macro call. Eqtb stores the
 eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
 owns the exact format, revision-global, or local-group semantic region plus an
-opaque replacement span and scalar position. Only parameterized macros store
+opaque replacement span and absolute cursor. Only parameterized macros store
 an `ArgumentSetId`; parameterless macros allocate and push only the body row.
 
 The argument cursor locates its opening provenance run once at admission and
@@ -2063,7 +2067,9 @@ instead borrows a `DefinitionView` synchronously, records its compact
 `DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
 then pushes the specialized body row. Resident selection yields that bare
 cursor, creates checkpoint state only on a real first touch, reads one packed
-word, and increments one scalar position. It tests `Token::Param` before the
+word, and increments the store-owned cursor. Exact per-word structural counters
+exist only in test builds; profiling fixtures derive known sequential reads and
+chunk crossings at their boundary. It tests `Token::Param` before the
 final `CurrentCommand` write; a parameter pushes its already-admitted argument
 cursor and continues in the same loop. Otherwise the sole packed resolver
 writes the reusable destination with at most one dense control-sequence

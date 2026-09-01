@@ -557,16 +557,11 @@ impl<G> CommandState<G> {
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
         let identity = self.allocate_input_level_identity();
-        let mut frame = super::ResidentSpanCursor::new(identity, body.len());
-        frame.set_source_context(self.input.levels.current_source_context());
+        let source = self.input.levels.current_source_context();
         self.input.levels.push_macro_body(
-            InputLevel::MacroBody(super::MacroBodyCursor {
-                body,
-                arguments,
-                name,
-                invocation,
-                frame,
-            }),
+            InputLevel::MacroBody(super::MacroBodyCursor::new(
+                identity, body, arguments, name, invocation, source,
+            )),
             parameter_count,
         );
         identity

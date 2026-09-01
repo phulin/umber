@@ -93,65 +93,6 @@ pub(crate) enum InputLevel<G> {
     MacroArgument(MacroArgumentCursor<G>),
 }
 
-/// Compact cursor scalars shared by the two specialized macro span rows.
-///
-/// This deliberately is not `PackedInputFrame`: macro delivery has no
-/// storage-kind or retirement dispatch, and therefore does not pay for the
-/// generic token-list wrapper.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ResidentSpanCursor {
-    identity: u64,
-    position: u32,
-    limit: u32,
-    source: Option<tex_state::packed_input::SourceContext>,
-}
-
-impl ResidentSpanCursor {
-    pub(crate) fn new(identity: InputLevelId, len: usize) -> Self {
-        Self {
-            identity: identity.0,
-            position: 0,
-            limit: u32::try_from(len).expect("macro span exceeds u32"),
-            source: None,
-        }
-    }
-
-    pub(crate) const fn identity(self) -> InputLevelId {
-        InputLevelId(self.identity)
-    }
-
-    pub(crate) const fn position(self) -> usize {
-        self.position as usize
-    }
-
-    pub(crate) const fn len(self) -> usize {
-        self.limit as usize
-    }
-
-    pub(crate) const fn source_context(self) -> Option<tex_state::packed_input::SourceContext> {
-        self.source
-    }
-
-    pub(crate) fn set_source_context(
-        &mut self,
-        source: Option<tex_state::packed_input::SourceContext>,
-    ) {
-        self.source = source;
-    }
-
-    fn advance(&mut self) -> Option<u32> {
-        let position = self.position;
-        (position < self.limit).then(|| {
-            self.position += 1;
-            position
-        })
-    }
-
-    fn swap_position(&mut self, position: &mut u32) {
-        core::mem::swap(&mut self.position, position);
-    }
-}
-
 /// Specialized resident cursor over a definition arena replacement span.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroBodyCursor<G> {
@@ -159,25 +100,51 @@ pub(crate) struct MacroBodyCursor<G> {
     pub(crate) arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
     pub(crate) name: tex_state::interner::Symbol,
     pub(crate) invocation: OriginId,
-    pub(crate) frame: ResidentSpanCursor,
+    identity: u64,
+    source: Option<tex_state::packed_input::SourceContext>,
 }
 
 impl<G> MacroBodyCursor<G> {
+    pub(crate) fn new(
+        identity: InputLevelId,
+        body: tex_state::ResidentMacroBody<G>,
+        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
+        name: tex_state::interner::Symbol,
+        invocation: OriginId,
+        source: Option<tex_state::packed_input::SourceContext>,
+    ) -> Self {
+        Self {
+            body,
+            arguments,
+            name,
+            invocation,
+            identity: identity.0,
+            source,
+        }
+    }
+
     pub(crate) fn identity(&self) -> InputLevelId {
-        self.frame.identity()
+        InputLevelId(self.identity)
     }
 
     pub(crate) fn position(&self) -> usize {
-        self.frame.position()
+        self.body.position()
     }
 
     pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
-        self.frame.source_context()
+        self.source
+    }
+
+    pub(crate) fn set_active_source(
+        &mut self,
+        source: Option<tex_state::packed_input::SourceContext>,
+    ) {
+        self.source = source;
     }
 
     /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
     pub(crate) const fn is_exhausted(&self) -> bool {
-        self.frame.position() >= self.frame.len()
+        self.body.position() >= self.body.len()
     }
 
     /// Advances the opaque resident replacement cursor by one packed word.
@@ -190,15 +157,8 @@ impl<G> MacroBodyCursor<G> {
     pub(super) fn advance_word(
         &mut self,
         _state: &tex_state::CommandContext<'_, G>,
-    ) -> Result<Option<TokenWord>, ()> {
-        let position = self.frame.position as usize;
-        let Some(word) = self.body.word(position) else {
-            return Ok(None);
-        };
-        if self.frame.advance() != Some(position as u32) {
-            return Err(());
-        }
-        Ok(Some(word))
+    ) -> Option<(u32, TokenWord)> {
+        self.body.advance_word()
     }
 }
 
@@ -684,7 +644,7 @@ pub(crate) enum InputLevelInlineState {
         retirement: RetirementBehavior,
     },
     MacroBody {
-        position: u32,
+        cursor: tex_state::ResidentMacroBodyCursor,
     },
     MacroArgument {
         absolute_position: u32,
@@ -707,10 +667,8 @@ impl InputLevelInlineState {
         Self::Tokens { frame, retirement }
     }
 
-    pub(crate) const fn macro_span(position: usize) -> Self {
-        Self::MacroBody {
-            position: position as u32,
-        }
+    pub(crate) const fn macro_span(cursor: tex_state::ResidentMacroBodyCursor) -> Self {
+        Self::MacroBody { cursor }
     }
 
     pub(crate) const fn macro_argument(absolute_position: u32, origin_run: u32) -> Self {
@@ -881,7 +839,7 @@ impl<G> InputLevel<G> {
             Self::ReplayTokens(tokens) => tokens.common.frame.source_context(),
             Self::DurableTokens(tokens) => tokens.common.frame.source_context(),
             Self::AttemptTokens(tokens) => tokens.common.frame.source_context(),
-            Self::MacroBody(body) => body.frame.source_context(),
+            Self::MacroBody(body) => body.active_source(),
             Self::MacroArgument(argument) => argument.active_source(),
         }
     }
@@ -895,7 +853,7 @@ impl<G> InputLevel<G> {
             Self::ReplayTokens(tokens) => tokens.frame.set_source_context(source),
             Self::DurableTokens(tokens) => tokens.frame.set_source_context(source),
             Self::AttemptTokens(tokens) => tokens.frame.set_source_context(source),
-            Self::MacroBody(body) => body.frame.set_source_context(source),
+            Self::MacroBody(body) => body.set_active_source(source),
             Self::MacroArgument(argument) => argument.set_active_source(source),
         }
     }
@@ -957,10 +915,10 @@ impl<G> InputLevel<G> {
                 }
             },
             Self::MacroBody(body) => {
-                let InputLevelInlineState::MacroBody { position } = state else {
+                let InputLevelInlineState::MacroBody { cursor } = state else {
                     unreachable!("macro body inverse kind changed")
                 };
-                body.frame.swap_position(position);
+                body.body.swap_cursor(cursor);
             }
             Self::MacroArgument(argument) => {
                 let InputLevelInlineState::MacroArgument {

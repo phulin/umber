@@ -86,7 +86,9 @@ parameterized macro replays its one-token argument one million times. Its
 exact two million macro-body transitions cover both depleted-body retirement
 and parameter words, while the same receipt reports parameter pushes, replay,
 raw and expanded deliveries, macro expansions, suspension moves, command
-copies, allocation, and elapsed time. Run it under the profiling-only public-
+copies, allocation, and elapsed time. The fixture derives those known domain
+volumes at its boundary: ordinary profiling code carries no per-word resident-
+body census. Run it under the profiling-only public-
 copy interposer in `scripts/copy-attribution/` to append exact `memcpy` and
 `memmove` calls and bytes from that same focused process; unlike the broad
 corpus profiles, this gate intentionally stops at the two-million-transition

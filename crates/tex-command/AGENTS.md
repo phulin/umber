@@ -262,8 +262,10 @@ collector (see `src/conditionals.rs`).
   scalar, and otherwise writes the reused destination with at most one meaning
   lookup; only the parameter branch enters replay. A parameter candidate overwrites the same
   unresolved value before meaning resolution; there is no raw command envelope
-  or second delivery slot. The macro-body row keeps only its existing scalar
-  rollback position beside the store-minted resident body; that position
+  or second delivery slot. The store-minted resident macro body owns its
+  absolute replacement cursor; the command row adds no second bounds or
+  position carrier. Delivery returns the relative semantic position with the
+  word, while rollback swaps one opaque store coordinate. That coordinate
   derives a flat region-local chunk slot in constant time and changes chunks
   only at a 4,096-word boundary. The macro-argument row likewise owns the
   admitted range's absolute scratch-lane coordinate directly. Warm delivery

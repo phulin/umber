@@ -1400,22 +1400,31 @@ fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
             .definitions_mut()
             .allocate(&[], &replacement)
             .expect("rollback fixture");
-        let (_, _, body) = generation
+        let (_, _, mut body) = generation
             .definitions()
             .admit_macro_body(definition)
             .expect("resident body");
         let checkpoint_position = super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
-        let before = body
-            .word(checkpoint_position)
-            .expect("word before boundary");
-        let across = body
-            .word(checkpoint_position + 1)
-            .expect("word across boundary");
+        for (expected_position, expected) in replacement
+            .iter()
+            .copied()
+            .enumerate()
+            .take(checkpoint_position)
+        {
+            assert_eq!(
+                body.advance_word(),
+                Some((expected_position as u32, expected))
+            );
+        }
+        let mut checkpoint = body.cursor();
+        let before = body.advance_word().expect("word before boundary");
+        let across = body.advance_word().expect("word across boundary");
         assert_ne!(before, across);
+        body.swap_cursor(&mut checkpoint);
         assert_eq!(
-            body.word(checkpoint_position),
+            body.advance_word(),
             Some(before),
-            "restoring the journaled scalar position restores the same chunk-local read"
+            "restoring the opaque absolute cursor restores the same chunk-local read"
         );
     });
 }

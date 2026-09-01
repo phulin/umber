@@ -174,15 +174,17 @@ pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
     FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
 };
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
     DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey, DefinitionBuildPhase,
     DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView, DefinitionWords,
-    ResidentMacroBody,
+    ResidentMacroBody, ResidentMacroBodyCursor,
 };
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[cfg(any(test, feature = "testing"))]
 pub use definition_arena::{
-    ResidentMacroBodyReadCounters, definition_retain_count,
-    reset_resident_macro_body_read_counters, resident_macro_body_read_counters,
+    ResidentMacroBodyReadCounters, reset_resident_macro_body_read_counters,
+    resident_macro_body_read_counters,
 };
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,

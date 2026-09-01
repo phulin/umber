@@ -23,7 +23,7 @@ pub(crate) use levels::{
     InputLevelId, InputLevelInlineState, MacroArgumentCursor, MacroBodyCursor, PackedInputFrame,
     PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
     ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTokenCursor, ReplayTrace,
-    ReplayTransientMark, ResidentReplayCursor, ResidentSpanCursor, RetirementBehavior, SourceLevel,
+    ReplayTransientMark, ResidentReplayCursor, RetirementBehavior, SourceLevel,
     SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
     SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
 };

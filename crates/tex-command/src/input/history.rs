@@ -689,7 +689,7 @@ impl<G> InputStack<G> {
                     None,
                 )),
                 InputLevel::MacroBody(cursor) => {
-                    Some(InputLevelInlineState::macro_span(cursor.position()))
+                    Some(InputLevelInlineState::macro_span(cursor.body.cursor()))
                 }
                 InputLevel::MacroArgument(cursor) => Some(InputLevelInlineState::macro_argument(
                     cursor.absolute_position(),
@@ -1266,14 +1266,10 @@ impl<G> crate::CommandState<G> {
                 }
                 ResidentInputTop::MacroBody(top) => {
                     let exhausted_identity = top.identity();
-                    let position = top.position() as u32;
                     let identity = exhausted_identity.0;
                     let active_source = top.active_source();
                     let arguments = top.arguments;
-                    let Some(word) = top
-                        .advance_word(state)
-                        .map_err(|()| super::ResidentCommandColdTransition::Failure)?
-                    else {
+                    let Some((position, word)) = top.advance_word(state) else {
                         if let Some(transition) = self
                             .finish_resident_exhaustion(
                                 resident_index,

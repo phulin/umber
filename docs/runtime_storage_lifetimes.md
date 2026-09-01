@@ -481,10 +481,10 @@ integer cursors:
 
 ```rust
 struct MacroBodyCursor<G> {
-    definition: DefinitionRef<G>,
-    definition_region: DefinitionRegionLease<G>,
+    body: ResidentMacroBody<G>,
     arguments: Option<ArgumentSet<G>>,
-    frame: ResidentSpanCursor,
+    identity: InputLevelId,
+    source: Option<SourceContext>,
 }
 
 struct SuspendedExecution<G> {
@@ -494,8 +494,9 @@ struct SuspendedExecution<G> {
 }
 ```
 
-Resume retains the admitted input row and continues at its stored scalar
-cursor. A local-definition row retains the one direct region lease admitted at
+Resume retains the admitted input row and continues at the resident body's
+store-owned absolute cursor. Rollback swaps one opaque coordinate rather than
+maintaining parallel command- and store-side positions. A local-definition row retains the one direct region lease admitted at
 the push boundary; a format or revision-global row has no lifetime operation.
 The continuation never contains a Rust reference into an arena, no runtime
 type is self-referential, and suspension never admits a second current

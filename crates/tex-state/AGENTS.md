@@ -67,8 +67,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   source region, so no global promotion sweep exists. Detached builders remain
   only for cold format/memo/import batches. Each semantic region owns one flat
   append-only directory of stable 4,096-word chunks; resident body admission
-  validates the initial chunk once, and ordinary safe-Rust reads use one direct
-  constant-time slot access with derived chunk changes only at boundaries.
+  validates the initial chunk once and mints the sole absolute replacement
+  cursor. Ordinary safe-Rust delivery returns the relative semantic position
+  with one direct constant-time slot access, advances that cursor once, and
+  changes its derived chunk only at boundaries. Rollback swaps an opaque
+  store coordinate. Exact per-word structural counters are test-only;
+  profiling gates derive their known sequential volumes at the boundary.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and
