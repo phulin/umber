@@ -249,6 +249,108 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
 }
 
 #[test]
+fn final_font_expansion_includes_the_preceding_margin_kern_width() {
+    // pdftex.web §1061 inserts marginal kerns before §822's final
+    // `hpack(..., cal_expand_ratio)`, so their negative width participates in
+    // the ratio that §823 uses to select expanded fonts.
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let mut characters = vec![None; 256];
+        for code in [b'A', b'.'] {
+            characters[usize::from(code)] = Some(tex_fonts::CharMetrics {
+                width: Scaled::from_raw(1_000),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                italic_correction: Scaled::from_raw(0),
+                tag: tex_fonts::metrics::CharTag::None,
+            });
+        }
+        let mut parameters = vec![Scaled::from_raw(0); 7];
+        parameters[5] = Scaled::from_raw(1_000);
+        let font = stores.intern_font(tex_fonts::LoadedFont::new(
+            "post-line-expansion",
+            "post-line-expansion.tfm",
+            [17; 8],
+            0,
+            Scaled::from_raw(1_000),
+            Scaled::from_raw(1_000),
+            parameters,
+            tex_fonts::FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+        ));
+        stores
+            .configure_font_expansion(
+                font,
+                tex_state::font::FontExpansion {
+                    stretch: 20,
+                    shrink: 20,
+                    step: 1,
+                    auto_expand: true,
+                },
+            )
+            .expect("font expansion configuration is valid");
+        for code in [b'A', b'.'] {
+            stores.set_pdf_font_code(PdfFontCode::Ef, font, code, 1_000);
+        }
+        stores.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 100);
+
+        let mut source_nodes = vec![
+            Node::Char {
+                font,
+                ch: 'A',
+                origin: tex_state::token::OriginId::UNKNOWN,
+            };
+            99
+        ];
+        source_nodes.push(Node::Char {
+            font,
+            ch: '.',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        });
+        let source = stores.publish_page_nodes(source_nodes);
+        let target = Scaled::from_raw(100_108);
+
+        let without_protrusion =
+            materialize_pdf_line_list(&mut stores, source, 0, target, true, false)
+                .expect("ordinary expansion materializes");
+        let without_font = match stores
+            .page_node_list(without_protrusion)
+            .expect("ordinary expanded line remains live")
+            .nodes()
+            .owned_node(0)
+            .expect("ordinary expanded line has a first glyph")
+        {
+            Node::Char { font, .. } => *font,
+            node => panic!("expected a character, got {node:?}"),
+        };
+        assert!(matches!(
+            stores.font_construction(without_font),
+            tex_fonts::FontConstruction::Expanded { ratio: 1, .. }
+        ));
+
+        let protruded = materialize_pdf_line_list(&mut stores, source, 0, target, true, true)
+            .expect("protruded expansion materializes");
+        let protruded_nodes = stores
+            .page_node_list(protruded)
+            .expect("protruded expanded line remains live")
+            .nodes()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(protruded_nodes.len(), 101);
+        for node in protruded_nodes {
+            let expanded = match node {
+                Node::Char { font, .. } | Node::MarginKern { font, .. } => font,
+                node => panic!("expected character or margin kern, got {node:?}"),
+            };
+            assert!(matches!(
+                stores.font_construction(expanded),
+                tex_fonts::FontConstruction::Expanded { ratio: 2, .. }
+            ));
+        }
+    });
+}
+
+#[test]
 fn paragraph_glue_normalization_walks_large_unchanged_lists_by_direct_chunks() {
     for values in [1_usize, 4_096] {
         crate::test_harness::with_nonstop_plain_universe(|universe| {

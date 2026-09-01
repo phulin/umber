@@ -1042,9 +1042,6 @@ fn materialize_pdf_line_list<G>(
     adjusts_spacing: bool,
     protrudes_chars: bool,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-    if adjusts_spacing {
-        nodes = apply_line_expansion_list(stores, nodes, target)?;
-    }
     if protrudes_chars {
         let plan = tex_typeset::protrusion::plan_margin_kerns(
             &crate::typeset_context::TypesetContext::new(stores),
@@ -1074,6 +1071,9 @@ fn materialize_pdf_line_list<G>(
             }
             nodes = stores.finalize_page_active_list(&mut output);
         }
+    }
+    if adjusts_spacing {
+        nodes = apply_line_expansion_list(stores, nodes, target)?;
     }
     Ok(nodes)
 }
@@ -1113,18 +1113,19 @@ fn expanded_line_node<G>(
     index: usize,
     line_ratio: i32,
 ) -> Result<Option<Node>, ExecError> {
-    let glyph = stores
+    let expandable = stores
         .page_node_list(nodes)
         .expect("line expansion source belongs to the live page arena")
         .nodes()
         .owned_node(index)
         .and_then(|node| match node {
-            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => Some((*font, *ch)),
+            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
+                u8::try_from(u32::from(*ch)).ok().map(|code| (*font, code))
+            }
+            Node::MarginKern { font, ch, .. } => Some((*font, *ch)),
             _ => None,
         });
-    if let Some((font, ch)) = glyph {
-        let code = u8::try_from(u32::from(ch)).ok();
-        let Some(code) = code else { return Ok(None) };
+    if let Some((font, code)) = expandable {
         let Some(configured) = stores.font_expansion(font) else {
             return Ok(None);
         };
@@ -1170,7 +1171,15 @@ fn expanded_line_node<G>(
                 right_hit: *right_hit,
                 origins: origins.clone(),
             },
-            _ => unreachable!("glyph expansion plan targets a glyph"),
+            Node::MarginKern {
+                amount, side, ch, ..
+            } => Node::MarginKern {
+                amount: *amount,
+                side: *side,
+                font: expanded,
+                ch: *ch,
+            },
+            _ => unreachable!("font expansion plan targets a glyph or marginal character"),
         };
         return Ok(Some(replacement));
     }
