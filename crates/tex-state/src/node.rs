@@ -93,6 +93,10 @@ impl NodeTokenKey {
             self.publication_serial,
         ]
     }
+
+    pub(crate) const fn from_coordinates(words: [u32; 6]) -> Self {
+        Self::new(words[0], words[1], words[2], words[3], words[4], words[5])
+    }
 }
 
 /// Stable logical node kinds shared by owned and compact node views.
