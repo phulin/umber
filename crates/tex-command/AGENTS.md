@@ -197,7 +197,8 @@ collector (see `src/conditionals.rs`).
   and canonical scanner paths.
 - `src/fuel.rs` and `src/fuel/tests.rs`: checked finite command-work limits,
   one exact remaining-budget countdown, profiling-only non-fuel work
-  counters, terminal/publication-time consumed-fuel derivation, the
+  counters, terminal/publication-time consumed-fuel and raw-frame derivation
+  (the latter is the sum of the exhaustive raw-owner vector), the
   constructor-free borrow-only `CommandFuel` capability used by leaf
   operations, and the top-level `CommandFuelLedger` session owner shared by
   every canonical processor episode. Default production delivery stores and

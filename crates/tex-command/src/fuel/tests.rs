@@ -47,6 +47,10 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
 #[test]
 #[cfg(feature = "profiling")]
 fn published_work_derives_fuel_without_mutating_detail_counters() {
+    assert_eq!(
+        std::mem::size_of::<CommandFuel>(),
+        10 * std::mem::size_of::<u64>()
+    );
     let mut fuel = CommandFuel::new(2).expect("valid test limit");
     fuel.record_raw_delivery(true, true, RawDeliveryKind::StoredToken);
     fuel.record_expanded_delivery();

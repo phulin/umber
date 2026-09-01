@@ -248,8 +248,10 @@ are `#[cfg(feature = "profiling")]`, so the production feature resolution
 contains no additional hot-path field, branch, call, allocation hook, or
 reference-count operation. The command-work detail fields follow the same
 axis: production `CommandFuel` stores only its limit and remaining countdown,
-while profiling adds the exact token-frame, expanded-delivery, meaning-lookup,
-scanner-token, and write-expansion census.
+while profiling adds the exact raw-owner, expanded-delivery, meaning-lookup,
+scanner-token, and write-expansion census. Publication derives token-frame
+steps from the exhaustive raw-owner vector rather than storing a parallel hot
+counter.
 
 The pinned integrated authority for later HotCore work is
 [`writeback/umber2-awgc.1.3.md`](writeback/umber2-awgc.1.3.md), with its exact

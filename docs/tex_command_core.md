@@ -232,9 +232,10 @@ The resident row's concrete variant is already the domain proof. Test builds
 retain counters for structural assertions, but an ordinary profiling build
 does not update a second per-domain census after making that required variant
 dispatch. Focused profiling fixtures instead publish their exact admitted span
-volumes beside the semantic fuel, frame-step, lookup, and expanded-delivery
-census. Thus profiling observes canonical work without adding a parallel hot
-classification transition.
+volumes beside the semantic fuel, raw-owner, lookup, and expanded-delivery
+census. The published frame-step total is the sum of that exhaustive raw-owner
+vector rather than a second per-delivery counter. Thus profiling observes
+canonical work without adding a parallel hot classification transition.
 The frame also carries the active external-source identity inherited when the
 row is pushed, paired with the host/VFS-selected source role in one compact
 source context. An explicit nested role overrides the enclosing role; an
@@ -3725,12 +3726,14 @@ monotonic run owner and lends its singular `CommandFuel` directly to every
 has no owned-ledger alternative or per-charge ownership dispatch. The ledger charges
 before each central raw-delivery attempt, including attempts nested beneath
 expanded delivery, macro matching, and scanners. The same ledger counts raw
-token-frame steps, completed expanded deliveries, live meaning lookups,
-non-normal scanner-status tokens, and expandable commands executed inside a
-deferred write only in the existing `profiling` feature resolution. Those
-detailed fields and their update call sites are absent from the production
-resolution; production publication retains the stable counter vocabulary but
-reports its five detail fields as zero. Its one mutable production fuel value
+deliveries by their exhaustive owner, completed expanded deliveries, live
+meaning lookups, non-normal scanner-status tokens, and expandable commands
+executed inside a deferred write only in the existing `profiling` feature
+resolution. Publication derives raw token-frame steps by summing that owner
+vector instead of updating a second total on every delivery. Those detailed
+fields and their update call sites are absent from the production resolution;
+production publication retains the stable counter vocabulary but reports its
+five detail fields as zero. Its one mutable production fuel value
 is the exact remaining budget: an ordinary charge performs one exhaustion
 check and one decrement. The admitted limit is immutable, and consumed fuel is
 derived from it only when the host requests telemetry or constructs terminal

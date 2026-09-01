@@ -38,9 +38,10 @@ pub struct CommandWorkCounters {
 impl CommandWorkCounters {
     #[cfg(feature = "profiling")]
     const fn with_fuel_charges(fuel_charges: u64, detail: CommandWorkDetail) -> Self {
+        let [source, stored, argument, synthetic_end_v] = detail.raw_delivery_kinds;
         Self {
             fuel_charges,
-            token_frame_steps: detail.token_frame_steps,
+            token_frame_steps: source + stored + argument + synthetic_end_v,
             expanded_deliveries: detail.expanded_deliveries,
             meaning_lookups: detail.meaning_lookups,
             scanner_tokens: detail.scanner_tokens,
@@ -70,7 +71,6 @@ impl CommandWorkCounters {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[cfg(feature = "profiling")]
 struct CommandWorkDetail {
-    token_frame_steps: u64,
     expanded_deliveries: u64,
     meaning_lookups: u64,
     scanner_tokens: u64,
@@ -91,7 +91,6 @@ pub(crate) enum RawDeliveryKind {
 #[cfg(feature = "profiling")]
 impl CommandWorkDetail {
     const ZERO: Self = Self {
-        token_frame_steps: 0,
         expanded_deliveries: 0,
         meaning_lookups: 0,
         scanner_tokens: 0,
@@ -199,8 +198,10 @@ impl CommandFuel {
     /// Commits the exact work produced by one resolved raw delivery.
     ///
     /// Resolution knows all three facts at once, so the hot pipeline updates
-    /// the singular ledger once instead of repeatedly reborrowing it. The
-    /// preceding fuel charge remains separate and happens before input work.
+    /// the singular ledger once instead of repeatedly reborrowing it. The raw
+    /// owner vector is also the complete token-frame census; publication sums
+    /// it instead of storing another per-delivery total. The preceding fuel
+    /// charge remains separate and happens before input work.
     #[cfg(feature = "profiling")]
     pub(crate) fn record_raw_delivery(
         &mut self,
@@ -208,7 +209,6 @@ impl CommandFuel {
         meaning_lookup: bool,
         kind: RawDeliveryKind,
     ) {
-        self.work.token_frame_steps = self.work.token_frame_steps.saturating_add(1);
         self.work.raw_delivery_kinds[kind as usize] =
             self.work.raw_delivery_kinds[kind as usize].saturating_add(1);
         if scanner {
