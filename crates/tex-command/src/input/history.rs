@@ -36,7 +36,7 @@ pub(crate) struct InputSourceContextCounters {
 /// One call performs one typed top-row access. The first call in a checkpoint
 /// interval appends the row's matching inverse; later calls coalesce against
 /// it. The resident transition has no callback dispatch to increment.
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct InputCursorMutationCounters {
     pub(crate) typed_top_accesses: u64,
@@ -433,7 +433,7 @@ pub(crate) struct InputStack<G> {
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     cursor_mutations: InputCursorMutationCounters,
 }
 
@@ -459,7 +459,7 @@ impl<G> Default for InputStack<G> {
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
-            #[cfg(any(test, feature = "profiling"))]
+            #[cfg(test)]
             cursor_mutations: InputCursorMutationCounters::default(),
         }
     }
@@ -673,7 +673,7 @@ impl<G> InputStack<G> {
         let interval = self.interval;
         match &mut self.rows[index] {
             InputLevel::Source(source) => {
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.source_branch_entries = self
                         .cursor_mutations
@@ -707,7 +707,7 @@ impl<G> InputStack<G> {
                         .stored_token_branch_entries
                         .saturating_add(1);
                 }
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.replay_domain_dispatches = self
                         .cursor_mutations
@@ -724,7 +724,7 @@ impl<G> InputStack<G> {
                         .stored_token_branch_entries
                         .saturating_add(1);
                 }
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.durable_domain_dispatches = self
                         .cursor_mutations
@@ -741,7 +741,7 @@ impl<G> InputStack<G> {
                         .stored_token_branch_entries
                         .saturating_add(1);
                 }
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.attempt_domain_dispatches = self
                         .cursor_mutations
@@ -751,7 +751,7 @@ impl<G> InputStack<G> {
                 Some((index, ResidentInputTop::AttemptToken(cursor)))
             }
             InputLevel::MacroBody(cursor) => {
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.macro_body_domain_dispatches = self
                         .cursor_mutations
@@ -761,7 +761,7 @@ impl<G> InputStack<G> {
                 Some((index, ResidentInputTop::MacroBody(cursor)))
             }
             InputLevel::MacroArgument(cursor) => {
-                #[cfg(any(test, feature = "profiling"))]
+                #[cfg(test)]
                 {
                     self.cursor_mutations.macro_argument_branch_entries = self
                         .cursor_mutations
@@ -2129,12 +2129,12 @@ impl<G> InputStack<G> {
         }
     }
 
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) const fn cursor_mutation_counters(&self) -> InputCursorMutationCounters {
         self.cursor_mutations
     }
 
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) fn reset_cursor_mutation_counters(&mut self) {
         self.cursor_mutations = InputCursorMutationCounters::default();
     }

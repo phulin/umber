@@ -219,6 +219,13 @@ Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
 whole packed frame before that advance. The warm loop neither matches a
 storage handle nor constructs a storage-domain wrapper per word.
+The resident row's concrete variant is already the domain proof. Test builds
+retain counters for structural assertions, but an ordinary profiling build
+does not update a second per-domain census after making that required variant
+dispatch. Focused profiling fixtures instead publish their exact admitted span
+volumes beside the semantic fuel, frame-step, lookup, and expanded-delivery
+census. Thus profiling observes canonical work without adding a parallel hot
+classification transition.
 The frame also carries the active external-source identity inherited when the
 row is pushed, paired with the host/VFS-selected source role in one compact
 source context. An explicit nested role overrides the enclosing role; an

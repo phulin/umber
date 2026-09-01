@@ -248,7 +248,10 @@ collector (see `src/conditionals.rs`).
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
-  and no ancestry or source-slot lookup. Resident source tokens and literal
+  and no ancestry or source-slot lookup. Test builds retain exact structural
+  domain-dispatch counters, while ordinary profiling builds derive known
+  fixture volumes at the benchmark boundary and update no counter merely to
+  classify the resident row. Resident source tokens and literal
   macro arguments return directly; stored-token access projects its optional
   packed out-parameter slot while the word is resident. Admission consumes the
   storage handle into an exact replay, attempt, or durable top-row variant;

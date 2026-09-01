@@ -69,12 +69,12 @@ The destination-directed row warms and then measures 8,192 calls apiece to raw
 non-creating, raw creating, and expanded delivery, reusing one caller-owned
 command slot throughout. All three policies must remain allocation-free.
 The fused raw/expanded row then measures one million stored control-sequence
-deliveries through each policy across replay, attempt-local, and durable spans.
-It requires exact top-row domain dispatch counts across the two million mixed
-deliveries (including the replay and attempt exhaustion transitions), zero
-intermediate stored-advance relays, two million
-resident-frame steps, one million expanded completions, and zero warmed
-allocation; its separate raw and expanded timings are sized for direct
+deliveries through each policy across exact known replay, attempt-local, and
+durable spans. The fixture shape proves the admitted domain volumes without a
+per-token profiling counter in the production transition. It requires zero
+intermediate stored-advance relays, two million fuel charges and resident-frame
+steps, two million meaning lookups, one million expanded completions, and zero
+warmed allocation; its separate raw and expanded timings are sized for direct
 `cycles:u`/`instructions:u` and public `memcpy`/`memmove` comparison.
 The destination-owned macro-expansion row drives one million empty macro calls
 through one expanded request and its one reusable command destination. It

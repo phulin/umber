@@ -1225,7 +1225,7 @@ impl<G> CommandState<G> {
 
     /// Resets the focused resident-input cursor mutation counters.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub fn profile_reset_input_cursor_mutation_counters(&mut self) {
         self.input.levels.reset_cursor_mutation_counters();
     }
@@ -1233,7 +1233,7 @@ impl<G> CommandState<G> {
     /// Returns `(typed top accesses, first touches, closure dispatches)` for
     /// the direct resident-input mutation boundary.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_input_cursor_mutation_counters(&self) -> (u64, u64, u64) {
         let counters = self.input.levels.cursor_mutation_counters();
@@ -1247,7 +1247,7 @@ impl<G> CommandState<G> {
     /// Returns `(top selections, source entries, stored-token entries,
     /// macro-argument entries)` for the typed resident-input front.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_resident_input_branch_counters(&self) -> (u64, u64, u64, u64) {
         let counters = self.input.levels.cursor_mutation_counters();
@@ -1262,7 +1262,7 @@ impl<G> CommandState<G> {
     /// Returns exact resident dispatches for source, replay, durable, attempt,
     /// macro-body, and macro-argument top-row domains.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[must_use]
     pub fn profile_resident_domain_dispatch_counters(&self) -> (u64, u64, u64, u64, u64, u64) {
         let counters = self.input.levels.cursor_mutation_counters();
