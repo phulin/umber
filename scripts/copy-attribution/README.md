@@ -31,7 +31,8 @@ The symbolizer independently reconciles parsed bins with both totals, ranks
 each API by bytes, records the exact binary SHA-256, and uses `addr2line -i` to
 publish the source and inline chain for every ranked application bin. It fails
 if a ranked application address does not resolve completely against that
-binary. Run the hermetic scalar, `Vec`, and external-ancestor gate with:
+binary. Run the hermetic scalar, `Vec`, external-ancestor, and external-only
+gate with:
 
 ```bash
 scripts/check-tools.sh copy-attribution

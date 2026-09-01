@@ -8,6 +8,7 @@ unsafe extern "C" {
         source: *const c_void,
         size: usize,
     ) -> *mut c_void;
+    fn external_only_thread_gate() -> u8;
 }
 
 #[inline(never)]
@@ -52,5 +53,6 @@ fn main() {
     for seed in 0..7 {
         result ^= u64::from(external_memmove_ancestor_gate(seed));
     }
+    result ^= u64::from(unsafe { external_only_thread_gate() });
     println!("{result}");
 }
