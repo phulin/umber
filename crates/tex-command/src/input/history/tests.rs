@@ -562,33 +562,10 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     state.profile_prepare_source_line(1);
                 }
                 Branch::StoredToken => {
-                    let span = PackedTokenSpanHandle::transient(std::iter::repeat_n(
+                    state.profile_push_replay_stored_tokens(std::iter::repeat_n(
                         word('x'),
                         operations,
-                    ))
-                    .admit(&mut state.input.replay)
-                    .expect("stored fixture admits");
-                    let PackedTokenSpanHandle::Replay { replay, .. } = &span else {
-                        unreachable!("transient span is replay-owned")
-                    };
-                    let replay_cursor = state.input.replay.resident_cursor(*replay);
-                    let behavior = TokenBehavior::Ordinary;
-                    let retirement = RetirementBehavior::Pop;
-                    let trace = ReplayTrace::Inserted;
-                    state.input.levels.push(InputLevel::Tokens(TokenCursor {
-                        span,
-                        replay_cursor,
-                        frame: packed_token_frame(
-                            InputLevelId(1),
-                            operations,
-                            &behavior,
-                            retirement,
-                            &trace,
-                        ),
-                        behavior,
-                        retirement,
-                        trace,
-                    }));
+                    ));
                 }
                 Branch::MacroArgument => {
                     let matching = state.scratch.begin_macro_match().expect("macro match");

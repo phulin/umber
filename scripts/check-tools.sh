@@ -22,7 +22,7 @@ source "$repo_root/scripts/optional-check-runner.sh"
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-tools.sh \
   arxiv-corpus arxiv-census oracle-regeneration \
   parity-harness fixturegen texlive-wasm-publish \
-  profiling-cli copy-attribution clippy-reference-tools \
+  profiling-command-tests profiling-cli copy-attribution clippy-reference-tools \
   clippy-profiling-runner clippy-dvi-tools
 
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
@@ -48,6 +48,16 @@ check_fixturegen() {
 optional_check_step fixturegen check_fixturegen
 optional_check_step texlive-wasm-publish \
   cargo test -q --tests --manifest-path tools/texlive-wasm-publish/Cargo.toml
+
+# A dependent Umber target enables tex-command's profiling library resolution,
+# but Cargo does not compile that dependency's feature-only unit-test bodies.
+# Keep the command core's profiling test target current with its production
+# input owners before testing the user-facing binary. Selecting the focused
+# resident fixture still compiles the complete unit-test target without running
+# unrelated allocation-budget tests.
+optional_check_step profiling-command-tests \
+  cargo test -q --tests -p tex-command --features profiling \
+  one_and_4096_typed_resident_branches_select_and_write_exactly_once
 
 # Build the user-facing binary in its real profiling profile and prove that
 # the feature-only flag publishes a non-empty command census.

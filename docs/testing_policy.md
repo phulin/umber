@@ -93,6 +93,10 @@ runs them for real under `wasm-pack test --headless --firefox`. Host-side
 regeneration, profiling, and triage entry points run through
 `scripts/check-tools.sh`, which also covers `parity-harness` in its
 `reference-tools` resolution.
+Its `profiling-command-tests` step compiles `tex-command`'s complete unit-test
+target with the `profiling` feature enabled and runs the focused resident-input
+fixture. Building a profiling-enabled Umber target alone compiles only the
+dependency library, not `tex-command`'s feature-only test bodies.
 
 These checks stay outside the routine tier so it does not depend on wasm-pack,
 a browser, ripgrep, HarfBuzz, pinned distributions, or additional dependency

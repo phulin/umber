@@ -184,14 +184,14 @@ Six checks stay outside the routine gate because they require wasm-pack, a
 headless browser, ripgrep, HarfBuzz, pinned distributions, or dependency trees
 the workspace lockfile does not cover:
 
-| Check                                | Covers                                                                                                                            |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-tools.sh`             | the three `[workspace] exclude` directories, `parity-harness` in its `reference-tools` resolution, and the opt-in clippy features |
-| `scripts/check-wasm.sh`              | `umber-wasm`'s `#[wasm_bindgen_test]` suite and the authored browser package                                                      |
-| `scripts/check-hb-shape-fixtures.sh` | the rustybuzz cross-check against C HarfBuzz                                                                                      |
-| `scripts/check-latex-corpus.sh`      | the pinned native LaTeX base-class corpus and runtime closure                                                                     |
-| `scripts/check-latex-wasm.sh`        | the pinned LaTeX native/WASM article parity build                                                                                 |
-| `scripts/check-latex-parity.sh`      | the pinned upstream LaTeX2e DVI parity cohort                                                                                     |
+| Check                                | Covers                                                                                                                                                               |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-tools.sh`             | the three `[workspace] exclude` directories, `parity-harness` in its `reference-tools` resolution, the profiling command test target, and the opt-in clippy features |
+| `scripts/check-wasm.sh`              | `umber-wasm`'s `#[wasm_bindgen_test]` suite and the authored browser package                                                                                         |
+| `scripts/check-hb-shape-fixtures.sh` | the rustybuzz cross-check against C HarfBuzz                                                                                                                         |
+| `scripts/check-latex-corpus.sh`      | the pinned native LaTeX base-class corpus and runtime closure                                                                                                        |
+| `scripts/check-latex-wasm.sh`        | the pinned LaTeX native/WASM article parity build                                                                                                                    |
+| `scripts/check-latex-parity.sh`      | the pinned upstream LaTeX2e DVI parity cohort                                                                                                                        |
 
 They share `scripts/optional-check-runner.sh`, which gives each check named
 steps and ends the run in a verdict line:
