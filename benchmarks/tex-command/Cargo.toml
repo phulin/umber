@@ -23,3 +23,7 @@ path = "src/bin/packed_cutover_gate.rs"
 [[bin]]
 name = "command_checkpoint_gate"
 path = "src/bin/command_checkpoint_gate.rs"
+
+[[bin]]
+name = "resident_macro_body_gate"
+path = "src/bin/resident_macro_body_gate.rs"

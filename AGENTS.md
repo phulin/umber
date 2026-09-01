@@ -69,7 +69,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/edit-restart`: paired Plain TeX edit workloads for incremental restart measurement.
 - `benchmarks/format-restore`: focused schema-11 loaded-format decode work and allocation benchmark.
-- `benchmarks/tex-command`: command-core allocation and packed-cutover gates.
+- `benchmarks/tex-command`: command-core allocation, packed-cutover, and exact
+  resident-macro-body chunk-read gates.
 - `benchmarks/tex-exec`: focused shipout-lowering diagnostic.
 - `benchmarks/tex-incr`: accepted-edit diagnostic and production candidate-settlement allocation/page-copy gate.
 - `benchmarks/tex-state`: snapshot/state performance gates, focused PDF and
