@@ -208,7 +208,7 @@ fn materialize_local_instance(
         tex_fonts::font_content_hash(&cached.bytes),
     );
     let identity = loaded.source_identity();
-    if let std::collections::btree_map::Entry::Vacant(e) = fonts.entry(identity) {
+    if !fonts.contains_key(&identity) {
         let recipe = FontArtifactRecipe {
             name: name.clone(),
             tfm_content_hash: loaded.content_hash(),
@@ -262,54 +262,73 @@ fn materialize_local_instance(
                 .character(code as u8)
                 .map_or(Scaled::from_raw(0), |metric| metric.depth)
         });
-        let resource_number = *next_resource;
-        *next_resource = next_resource
-            .checked_add(1)
-            .ok_or(PdfBuildError::ObjectCapacity)?;
-        let object_number = (*next_object <= i32::MAX as u32)
-            .then_some(*next_object)
-            .ok_or(PdfBuildError::ObjectCapacity)?;
-        *next_object = next_object
-            .checked_add(1)
-            .ok_or(PdfBuildError::ObjectCapacity)?;
-        let configuration = pdf.font_configuration();
-        e.insert(PdfFontInput {
-            artifact_resource: FontResource {
-                font_id: 0,
-                name: name.clone(),
-                tfm_content_hash: loaded.content_hash(),
-                tfm_checksum: loaded.checksum(),
-                design_size: loaded.design_size(),
-                at_size: loaded.size(),
-                layout_policy: loaded.layout_policy(),
-                mapping_fallback: loaded.mapping_fallback(),
-                opentype: None,
-                semantic_identity: identity,
-                construction: FontResourceConstruction::Loaded,
-            },
-            resource_number,
-            object_number,
-            metrics: PdfFontMetricsInput {
-                widths,
-                heights,
-                depths,
-                x_height: loaded
-                    .parameters()
-                    .get(4)
-                    .copied()
-                    .unwrap_or_else(|| Scaled::from_raw(0)),
-            },
-            included_codes: BTreeSet::new(),
-            descriptor_entries: Vec::new(),
-            generate_to_unicode: configuration.generates_to_unicode(),
-            disable_builtin_to_unicode: false,
-            infer_builtin_glyph_unicode: !glyph_mappings.is_empty(),
-            omit_charset: configuration.omits_charset(),
-            glyph_to_unicode,
-            map_entry,
-            encoding,
-            program,
+        // pdftex.web §32e's `pdf_init_font` shares one scalable font
+        // dictionary when the TFM name and resolved map entry are equal,
+        // even when the same VF leaf was selected at different sizes. Keep
+        // the size-specific realized identity for positioning and metrics,
+        // but point every such instance at the first destination resource.
+        let shared_resource = map_entry.as_ref().and_then(|_| {
+            fonts.values().find_map(|font| {
+                (font.artifact_resource.name == name && font.map_entry == map_entry)
+                    .then_some((font.resource_number, font.object_number))
+            })
         });
+        let (resource_number, object_number) = if let Some(shared) = shared_resource {
+            shared
+        } else {
+            let resource_number = *next_resource;
+            *next_resource = next_resource
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            let object_number = (*next_object <= i32::MAX as u32)
+                .then_some(*next_object)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            *next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            (resource_number, object_number)
+        };
+        let configuration = pdf.font_configuration();
+        fonts.insert(
+            identity,
+            PdfFontInput {
+                artifact_resource: FontResource {
+                    font_id: 0,
+                    name: name.clone(),
+                    tfm_content_hash: loaded.content_hash(),
+                    tfm_checksum: loaded.checksum(),
+                    design_size: loaded.design_size(),
+                    at_size: loaded.size(),
+                    layout_policy: loaded.layout_policy(),
+                    mapping_fallback: loaded.mapping_fallback(),
+                    opentype: None,
+                    semantic_identity: identity,
+                    construction: FontResourceConstruction::Loaded,
+                },
+                resource_number,
+                object_number,
+                metrics: PdfFontMetricsInput {
+                    widths,
+                    heights,
+                    depths,
+                    x_height: loaded
+                        .parameters()
+                        .get(4)
+                        .copied()
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                },
+                included_codes: BTreeSet::new(),
+                descriptor_entries: Vec::new(),
+                generate_to_unicode: configuration.generates_to_unicode(),
+                disable_builtin_to_unicode: false,
+                infer_builtin_glyph_unicode: !glyph_mappings.is_empty(),
+                omit_charset: configuration.omits_charset(),
+                glyph_to_unicode,
+                map_entry,
+                encoding,
+                program,
+            },
+        );
     }
     Ok(LocalInstance {
         identity,

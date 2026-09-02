@@ -309,7 +309,9 @@ one participates in layout. Selected size and generated ancestry remain in
 `RealizedFontIdentity` and committed artifacts but intentionally do not split
 pdfTeX's subset object. Effective Type 1, TrueType, resident, or PK program and
 VF-leaf selection remain finalization inputs and preserve their existing
-typed identities.
+typed identities. Destination-local VF leaves apply the same rule: equal TFM
+names with the same resolved scalable map entry keep size-specific realized
+identities and metrics while sharing the first font dictionary and subset.
 
 Font-dictionary identity follows the subtype split in pdftex.web §32e and
 its pinned `writefont.c`/`writet3.c` delegates. Scalable Type-1 and TrueType

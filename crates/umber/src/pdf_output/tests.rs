@@ -386,7 +386,9 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
                     "\\pdfmapline{=cmsy10 CMR10 <cmr10.pfb}",
                     "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
                     "\\font\\f=cmr10 at 12pt ",
-                    "\\shipout\\hbox{\\f A}\\end",
+                    "\\font\\g=cmr10 at 10pt ",
+                    "\\shipout\\hbox{\\f A}",
+                    "\\shipout\\hbox{\\g A}\\end",
                 )
                 .as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -452,6 +454,19 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         assert!(
             !materialized_names.contains("unused10"),
             "an unselected VF definition has no destination identity"
+        );
+        let cmex_instances = input
+            .fonts
+            .values()
+            .filter(|font| font.artifact_resource.name == "cmex10")
+            .collect::<Vec<_>>();
+        assert_eq!(cmex_instances.len(), 2, "both selected sizes stay realized");
+        assert!(
+            cmex_instances
+                .windows(2)
+                .all(|pair| pair[0].resource_number == pair[1].resource_number
+                    && pair[0].object_number == pair[1].object_number),
+            "pdftex.web §32e shares one mapped VF-leaf resource across sizes"
         );
 
         let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
