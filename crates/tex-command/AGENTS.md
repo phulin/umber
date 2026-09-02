@@ -239,7 +239,11 @@ collector (see `src/conditionals.rs`).
   owns no framing-event queue or snapshot cursor.
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
-  and focused line-contract tests.
+  and focused line-contract tests. TeX82 §363 lends a valid normalized UTF-8
+  slice from the resident backing directly through `firm_up_the_line`; only an
+  invalid exact-byte display projection or a genuine terminal replacement
+  materializes ownership, and the latter remains the source slot's sole
+  `line_backing` owner.
 - `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
   token-at-a-time exact-byte and separately identified UnicodeExtended M/N/S
   tokenization, semantic control-sequence spelling, direct production

@@ -227,6 +227,63 @@ fn source_line_replacement_and_candidate_settlement_restore_buffer_slots() {
 }
 
 #[test]
+fn firmed_line_replacement_owner_survives_candidate_rollback() {
+    struct ReplaceLine;
+
+    impl crate::SourceStepQueries for ReplaceLine {
+        fn catcode(&mut self, _code: crate::CharacterCode) -> tex_state::token::Catcode {
+            unreachable!("firm-up probe never tokenizes")
+        }
+
+        fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+            assert_eq!(line, "a");
+            Some(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                &b"xy"[..],
+            ))
+        }
+    }
+
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let root = state
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                &b"a"[..],
+            ))
+            .expect("root source registers");
+        state
+            .open_registered_source(root)
+            .expect("root source opens");
+        let checkpoint = state.publish_summary(universe).expect("source checkpoint");
+
+        state
+            .acquire_input_top_line_with_queries(13, true, false, &mut ReplaceLine)
+            .expect("source transition")
+            .expect("physical line");
+        assert_eq!(state.input.levels.occupied_source_buffer_slots(), 4);
+        let (_, slot) = state
+            .input
+            .levels
+            .top_source()
+            .expect("source remains live");
+        assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
+
+        let mut candidate = CommandState::fork_summary(state, &checkpoint, universe, universe)
+            .expect("checkpoint candidate opens");
+        assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 0);
+        candidate.reject_checkpoint_candidate();
+        assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 4);
+        let (_, slot) = candidate
+            .input
+            .levels
+            .top_source()
+            .expect("replacement owner is restored");
+        assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
+    });
+}
+
+#[test]
 fn source_retirement_returns_only_the_prepared_copy_boundary() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

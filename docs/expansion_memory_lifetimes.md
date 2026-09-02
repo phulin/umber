@@ -861,7 +861,12 @@ fixed reusable pages; opening a source consumes the pending backing into one
 slot without allocating a per-source box. The source slot owns its move-only
 `SourceCursor`, registered/replacement backing, reduced-spelling arena,
 `everyeof`, opening ancestry, name classification, and retirement rule until
-EOF retirement. The key's runtime-only slot generation is independent of
+EOF retirement. During TeX82 §363 firming, a valid normalized UTF-8 line stays
+a borrowed slice of that backing through the interaction hook. Only malformed
+exact-byte display text materializes a transient lossy string; only a returned
+terminal replacement becomes the slot's existing `line_backing` owner. A bare
+return and batch/nonstop execution therefore add no line owner or allocation.
+The key's runtime-only slot generation is independent of
 rollback-reused semantic `InputLevelId`; every compact and cold inverse
 validates it before mutation. If a partially captured source occupant is
 popped and its physical row reused in the same interval, the ordered history preserves a row

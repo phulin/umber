@@ -639,7 +639,12 @@ impl SourceCursor {
         let Some(text) = backing.bytes.get(start..end) else {
             return;
         };
-        let text = String::from_utf8_lossy(text).into_owned();
+        // Unicode source backing is validated at registration, while exact-
+        // byte input may contain arbitrary TeX bytes. Keep the ordinary valid
+        // slice borrowed; `from_utf8_lossy` materializes only the exact-byte
+        // case that genuinely needs replacement characters for the terminal
+        // display boundary.
+        let text = String::from_utf8_lossy(text);
         let Some(replacement) = queries.firm_up_the_line(&text) else {
             return;
         };

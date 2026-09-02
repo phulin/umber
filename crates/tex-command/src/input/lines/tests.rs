@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use tex_state::SourceId;
+use tex_state::token::Catcode;
 
 use super::{LineTerminator, SourceLineState, SourceLocation, SourceProvenance, SourceRange};
 use crate::input::source::{
-    RegisteredSource, RegisteredSourceKind, SourceCursor, SourceRegistration,
+    LineBackingRegistry, RegisteredSource, RegisteredSourceKind, SourceCursor, SourceNameClass,
+    SourceRegistration,
 };
 use crate::profile::{CharacterCode, CharacterMode, CommandProfile};
+use crate::{CommandStackUsage, SourceStepQueries};
 
 fn cursor(mode: CharacterMode, bytes: &[u8]) -> SourceCursor {
     let profile = match mode {
@@ -176,4 +179,170 @@ fn endlinechar_validation_is_profile_specific() {
         let line = cursor.load_next_line(endlinechar).expect("final line");
         assert_eq!(line.endline.is_some(), expected);
     }
+}
+
+struct BorrowedLineProbe {
+    backing_start: usize,
+    backing_end: usize,
+    calls: usize,
+    borrowed_calls: usize,
+}
+
+impl SourceStepQueries for BorrowedLineProbe {
+    fn catcode(&mut self, _code: CharacterCode) -> Catcode {
+        unreachable!("firm-up probe never tokenizes")
+    }
+
+    fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+        if !line.is_empty() {
+            let start = line.as_ptr() as usize;
+            if start >= self.backing_start && start.saturating_add(line.len()) <= self.backing_end {
+                self.borrowed_calls += 1;
+            }
+        }
+        self.calls += 1;
+        None
+    }
+}
+
+fn firm_loaded_line(
+    cursor: &mut SourceCursor,
+    profile: CommandProfile,
+    name_class: SourceNameClass,
+    queries: &mut dyn SourceStepQueries,
+) {
+    let mut next_identity = 20_u64;
+    let mut usage = CommandStackUsage::default();
+    let mut lines = LineBackingRegistry {
+        profile,
+        next_identity: &mut next_identity,
+        usage: &mut usage,
+        buffer_start: 1,
+        name_class: Some(name_class),
+    };
+    cursor.firm_up_the_line(13, queries, &mut lines);
+}
+
+#[test]
+fn valid_non_ascii_and_empty_firmed_lines_borrow_the_registered_backing() {
+    for (profile, bytes, name_class) in [
+        (
+            CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
+            "é𐐀\n".as_bytes(),
+            SourceNameClass::File,
+        ),
+        (
+            CommandProfile::TEX82,
+            &b"x\n"[..],
+            SourceNameClass::Terminal,
+        ),
+        (
+            CommandProfile::TEX82,
+            &b"\n"[..],
+            SourceNameClass::Scantokens(18),
+        ),
+    ] {
+        let mut cursor = cursor(profile.character_mode(), bytes);
+        let backing_start = cursor.backing.bytes.as_ptr() as usize;
+        let backing_end = backing_start + cursor.backing.bytes.len();
+        cursor.load_next_line(13).expect("physical line");
+        let mut queries = BorrowedLineProbe {
+            backing_start,
+            backing_end,
+            calls: 0,
+            borrowed_calls: 0,
+        };
+
+        firm_loaded_line(&mut cursor, profile, name_class, &mut queries);
+
+        assert_eq!(queries.calls, 1);
+        assert_eq!(
+            queries.borrowed_calls,
+            usize::from(!bytes.starts_with(b"\n"))
+        );
+        assert!(cursor.line_backing.is_none());
+    }
+}
+
+struct InvalidExactByteProbe {
+    calls: usize,
+}
+
+impl SourceStepQueries for InvalidExactByteProbe {
+    fn catcode(&mut self, _code: CharacterCode) -> Catcode {
+        unreachable!("firm-up probe never tokenizes")
+    }
+
+    fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+        assert_eq!(line, "\u{fffd}");
+        self.calls += 1;
+        None
+    }
+}
+
+#[test]
+fn invalid_exact_byte_firming_keeps_the_existing_lossy_display_contract() {
+    let mut cursor = cursor(CharacterMode::EightBitExact, b"\xff\n");
+    cursor.load_next_line(13).expect("physical line");
+    let mut queries = InvalidExactByteProbe { calls: 0 };
+
+    firm_loaded_line(
+        &mut cursor,
+        CommandProfile::TEX82,
+        SourceNameClass::File,
+        &mut queries,
+    );
+
+    assert_eq!(queries.calls, 1);
+    assert!(cursor.line_backing.is_none());
+}
+
+#[test]
+#[cfg(feature = "profiling")]
+fn one_and_4096_valid_firmed_lines_borrow_with_zero_allocations() {
+    use tex_state::measurement::HotCoreAllocationOwner;
+
+    fn run(lines: usize) -> (usize, usize, u64, u64) {
+        let mut bytes = Vec::with_capacity(lines.saturating_mul(2));
+        for _ in 0..lines {
+            bytes.extend_from_slice(b"x\n");
+        }
+        let mut cursor = cursor(CharacterMode::EightBitExact, &bytes);
+        let backing_start = cursor.backing.bytes.as_ptr() as usize;
+        let backing_end = backing_start + cursor.backing.bytes.len();
+        let mut queries = BorrowedLineProbe {
+            backing_start,
+            backing_end,
+            calls: 0,
+            borrowed_calls: 0,
+        };
+        let mut next_identity = 20_u64;
+        let mut usage = CommandStackUsage::default();
+        let mut registry = LineBackingRegistry {
+            profile: CommandProfile::TEX82,
+            next_identity: &mut next_identity,
+            usage: &mut usage,
+            buffer_start: 1,
+            name_class: None,
+        };
+        let owner = HotCoreAllocationOwner::DeliveryAndScan;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 0..lines {
+                cursor.load_next_line(13).expect("physical line");
+                cursor.firm_up_the_line(13, &mut queries, &mut registry);
+                cursor.finish_line();
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        (
+            queries.calls,
+            queries.borrowed_calls,
+            after.calls - before.calls,
+            after.requested_bytes - before.requested_bytes,
+        )
+    }
+
+    assert_eq!((run(1), run(4_096)), ((1, 1, 0, 0), (4_096, 4_096, 0, 0)));
 }
