@@ -1050,24 +1050,23 @@ pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
     RESIDENT_MACRO_BODY_READ_COUNTERS.get()
 }
 
-/// Store-minted resident cursor for one executing macro replacement body.
+/// Store-minted resident coordinate for one executing macro replacement body.
 ///
 /// The definition store resolves the opaque reference and immutable header
 /// once at admission, including validation of the initial coarse chunk. The
-/// cursor then retains the exact replacement extent and the exact region owner;
+/// coordinate retains the exact replacement extent and the exact region owner;
 /// downstream command code can neither inspect nor manufacture its storage
 /// coordinates. Safe Rust requires a short constant-time borrow of the
 /// region's inline prefix or flat overflow directory for each word: caching a direct chunk borrow
-/// beside its owning `Rc` would be self-referential. This store owner therefore
-/// keeps the absolute cursor and exposes only its relative semantic position;
-/// rollback swaps one opaque coordinate, and only an inline/overflow or
-/// 4,096-word overflow crossing changes the derived storage coordinate.
+/// beside its owning `Rc` would be self-referential. The command input row owns
+/// the sole logical position and lends it for each indexed read; only an
+/// inline/overflow or 4,096-word overflow crossing changes the derived storage
+/// coordinate.
 pub struct ResidentMacroBody<G> {
     definition: DefinitionRef<G>,
     owner: Rc<DefinitionRegionOwner>,
     parameter_start: u32,
     start: u32,
-    position: u32,
     end: u32,
 }
 
@@ -1099,34 +1098,6 @@ impl<G> ResidentMacroBody<G> {
     pub fn parameter_word(&self, position: usize) -> Option<TokenWord> {
         (position < self.parameter_len()).then_some(())?;
         self.owner.word(self.parameter_start + position as u32)
-    }
-
-    /// Current replacement-relative delivery position.
-    #[must_use]
-    pub const fn position(&self) -> usize {
-        (self.position - self.start) as usize
-    }
-
-    /// Advances the store-owned absolute cursor and returns its relative
-    /// semantic position with the resident word.
-    #[must_use]
-    #[inline(always)]
-    pub fn advance_word(&mut self) -> Option<(u32, TokenWord)> {
-        let absolute = self.position;
-        (absolute < self.end).then_some(())?;
-        let word = self.owner.word(absolute)?;
-        self.record_word_read(absolute);
-        self.position = absolute + 1;
-        Some((absolute - self.start, word))
-    }
-
-    #[must_use]
-    pub const fn cursor(&self) -> ResidentMacroBodyCursor {
-        ResidentMacroBodyCursor(self.position)
-    }
-
-    pub fn swap_cursor(&mut self, cursor: &mut ResidentMacroBodyCursor) {
-        core::mem::swap(&mut self.position, &mut cursor.0);
     }
 
     #[must_use]
@@ -1173,7 +1144,6 @@ impl<G> PartialEq for ResidentMacroBody<G> {
     fn eq(&self, other: &Self) -> bool {
         self.definition == other.definition
             && self.start == other.start
-            && self.position == other.position
             && self.end == other.end
             && Rc::ptr_eq(&self.owner, &other.owner)
     }
@@ -1185,15 +1155,10 @@ impl<G> core::hash::Hash for ResidentMacroBody<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.definition.hash(state);
         self.start.hash(state);
-        self.position.hash(state);
         self.end.hash(state);
         (Rc::as_ptr(&self.owner) as usize).hash(state);
     }
 }
-
-/// Opaque rollback coordinate for one store-owned resident replacement cursor.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ResidentMacroBodyCursor(u32);
 
 struct LocalDefinitionRegionLease {
     slots: Rc<LocalDefinitionSlots>,
@@ -1398,7 +1363,6 @@ impl<G> DefinitionArena<G> {
                 owner,
                 parameter_start: header.start,
                 start: replacement_start,
-                position: replacement_start,
                 end: header.end,
             },
         ))

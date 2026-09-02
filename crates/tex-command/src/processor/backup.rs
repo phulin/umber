@@ -202,15 +202,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
             }
-            let Some(InputLevel::ReplayTokens(row)) = self.command.input.levels.last() else {
+            let Some(InputLevel::Resident(crate::input::ResidentTokenRow {
+                header,
+                storage: crate::input::ResidentTokenStorage::Replay { replay, .. },
+            })) = self.command.input.levels.last()
+            else {
                 unreachable!("back_input above installed a token-list level");
             };
             assert_eq!(
-                row.header.position(),
+                header.position(),
                 0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
-            let replay = row.replay;
+            let replay = *replay;
             let admitted = self
                 .command
                 .input

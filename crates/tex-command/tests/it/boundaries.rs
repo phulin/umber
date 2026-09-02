@@ -111,7 +111,7 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
         levels
             .matches("pub(super) rollback: RowRollbackMarker")
             .count(),
-        4
+        2
     );
     assert!(!history.contains("rollback_markers"));
     for retired_lane in [
@@ -257,11 +257,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     );
     for branch in [
         "InputLevel::Source(source) =>",
-        "InputLevel::ReplayTokens(row) =>",
-        "InputLevel::AttemptTokens(row) =>",
-        "InputLevel::DurableTokens(row) =>",
-        "InputLevel::MacroBody(top) =>",
-        "InputLevel::MacroArgument(top) =>",
+        "InputLevel::Resident(row) =>",
     ] {
         assert_eq!(
             resident_front.matches(branch).count(),
@@ -269,18 +265,13 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "resident front must enter {branch} exactly once"
         );
     }
-    assert_eq!(
-        resident_front.matches("advance_stored_token_row!").count(),
-        3,
-        "all admitted stored domains must use the compact stored-row adapter"
-    );
-    assert_eq!(
-        resident_front
-            .matches("advance_resident_token_row!")
-            .count(),
-        3,
-        "the stored adapter and both specialized owners must use one resident-token state machine"
-    );
+    assert_eq!(resident_front.matches("match &mut row.storage").count(), 1);
+    for storage in ["Replay", "Attempt", "Durable", "MacroBody", "MacroArgument"] {
+        assert!(
+            resident_front.contains(&format!("ResidentTokenStorage::{storage}")),
+            "resident storage choice must include {storage}"
+        );
+    }
     for retired in [
         "advance_resident_top_into",
         "ResidentInputTop",
@@ -307,14 +298,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "all resident variants must share one settlement tail"
     );
-    let macro_argument_arm = resident_front
-        .split("InputLevel::MacroArgument(top) =>")
-        .nth(1)
-        .expect("locate direct macro-argument arm");
-    assert!(macro_argument_arm.contains(".advance_delivery(&self.scratch)"));
-    assert!(!macro_argument_arm.contains("top.position()"));
-    assert!(!macro_argument_arm.contains("word.token_word()"));
-    assert!(!macro_argument_arm.contains("word.origin()"));
+    assert!(resident_front.contains("argument.advance_delivery(position, &self.scratch)"));
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")
         .nth(1)
@@ -569,7 +553,7 @@ fn macro_stack_conservation_reads_only_admitted_cursor_bounds() {
         .expect("locate stack-conservation transition");
 
     assert!(conservation.contains("level.stored_is_exhausted()"));
-    assert_eq!(conservation.matches("cursor.is_exhausted()").count(), 2);
+    assert_eq!(conservation.matches("cursor.is_exhausted()").count(), 0);
     assert!(!conservation.contains("stored_indexed_token_at_cold"));
     assert!(!conservation.contains("cursor.token_at("));
 }

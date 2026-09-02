@@ -46,9 +46,12 @@ fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFram
         TokenBehavior::UTemplate => InputFrameKind::AlignmentUTemplate,
         TokenBehavior::VTemplate => InputFrameKind::AlignmentVTemplate,
         TokenBehavior::BackedUp(_) => InputFrameKind::BackedUp,
-        TokenBehavior::Recovery => InputFrameKind::Inserted,
+        TokenBehavior::Recovery => InputFrameKind::Recovery,
         TokenBehavior::Ordinary => match trace {
-            ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputFrameKind::Inserted,
+            ReplayTrace::Inserted => InputFrameKind::Inserted,
+            ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList) => {
+                InputFrameKind::ExpandedTokenList
+            }
             ReplayTrace::Stored(reason) => match reason {
                 StoredReplayReason::OutputRoutine => InputFrameKind::OutputRoutine,
                 StoredReplayReason::EveryPar => InputFrameKind::EveryPar,
@@ -67,9 +70,8 @@ fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFram
             ReplayTrace::MacroParameter { .. } => InputFrameKind::Parameter,
             ReplayTrace::BackedUp => InputFrameKind::BackedUp,
             ReplayTrace::UTemplate => InputFrameKind::AlignmentUTemplate,
-            ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
-                InputFrameKind::AlignmentVTemplate
-            }
+            ReplayTrace::VTemplate => InputFrameKind::AlignmentVTemplate,
+            ReplayTrace::OmitTemplate => InputFrameKind::OmitTemplate,
         },
     }
 }
@@ -89,8 +91,10 @@ pub(crate) fn packed_token_frame(
     };
     flags = flags.union(match retirement {
         RetirementBehavior::StopAtEnd => InputFrameFlags::STOP_AT_END,
-        RetirementBehavior::RetainExhaustedVTemplate
-        | RetirementBehavior::AwaitingVTemplateRetirement => InputFrameFlags::RETAIN_AT_END,
+        RetirementBehavior::RetainExhaustedVTemplate => InputFrameFlags::RETAIN_AT_END,
+        RetirementBehavior::AwaitingVTemplateRetirement => {
+            InputFrameFlags::RETAIN_AT_END.union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT)
+        }
         RetirementBehavior::Pop => InputFrameFlags::empty(),
     });
     PackedInputFrame::tokens(identity.0, len, packed_frame_kind(behavior, trace), flags)
@@ -104,15 +108,7 @@ pub(crate) fn packed_token_frame(
 #[repr(u8)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
-    ReplayTokens(ReplayTokenRow<G>),
-    DurableTokens(DurableTokenRow<G>),
-    AttemptTokens(AttemptTokenRow<G>),
-    /// Resident immutable replacement span. This row is the macro call: it
-    /// carries the non-owning definition coordinate, the optional local
-    /// region lease, and (only for parameterized macros) the argument set.
-    MacroBody(MacroBodyCursor<G>),
-    /// Literal replay of one directly indexed macro-argument lane range.
-    MacroArgument(MacroArgumentCursor<G>),
+    Resident(ResidentTokenRow<G>),
 }
 
 /// Specialized resident cursor over a definition arena replacement span.
@@ -122,64 +118,21 @@ pub(crate) struct MacroBodyCursor<G> {
     pub(crate) arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
     pub(crate) name: tex_state::interner::Symbol,
     pub(crate) invocation: OriginId,
-    identity: u64,
-    source: Option<tex_state::packed_input::SourceContext>,
-    pub(super) rollback: RowRollbackMarker,
 }
 
 impl<G> MacroBodyCursor<G> {
     pub(crate) fn new(
-        identity: InputLevelId,
         body: tex_state::ResidentMacroBody<G>,
         arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
         name: tex_state::interner::Symbol,
         invocation: OriginId,
-        source: Option<tex_state::packed_input::SourceContext>,
     ) -> Self {
         Self {
             body,
             arguments,
             name,
             invocation,
-            identity: identity.0,
-            source,
-            rollback: RowRollbackMarker::default(),
         }
-    }
-
-    pub(crate) fn identity(&self) -> InputLevelId {
-        InputLevelId(self.identity)
-    }
-
-    pub(crate) fn position(&self) -> usize {
-        self.body.position()
-    }
-
-    pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
-        self.source
-    }
-
-    pub(crate) fn set_active_source(
-        &mut self,
-        source: Option<tex_state::packed_input::SourceContext>,
-    ) {
-        self.source = source;
-    }
-
-    /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
-    pub(crate) const fn is_exhausted(&self) -> bool {
-        self.body.position() >= self.body.len()
-    }
-
-    /// Advances the opaque resident replacement cursor by one packed word.
-    ///
-    /// The current definition access is the narrow integration seam for
-    /// opaque stable definition spans. Delivery owns no view, decoded
-    /// coordinate, or result wrapper; the caller handles Param before lending
-    /// the returned word to its final command destination.
-    #[inline(always)]
-    pub(super) fn advance_word(&mut self) -> Option<(u32, TokenWord)> {
-        self.body.advance_word()
     }
 }
 
@@ -277,31 +230,27 @@ pub(crate) enum SourceRetirement {
 /// semantic word position lives here exactly once.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenRowHeader<G> {
-    pub(crate) behavior: TokenBehavior,
-    pub(crate) retirement: RetirementBehavior,
-    pub(crate) trace: ReplayTrace,
     pub(crate) frame: PackedInputFrame,
     generation: PhantomData<fn() -> G>,
     pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ReplayTokenRow<G> {
+pub(crate) struct ResidentTokenRow<G> {
     pub(crate) header: TokenRowHeader<G>,
-    pub(crate) replay: ReplayPayloadId<G>,
-    pub(crate) resident: ResidentReplayCursor,
+    pub(crate) storage: ResidentTokenStorage<G>,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct DurableTokenRow<G> {
-    pub(crate) header: TokenRowHeader<G>,
-    pub(crate) list: tex_state::TokenListId<G>,
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptTokenRow<G> {
-    pub(crate) header: TokenRowHeader<G>,
-    pub(crate) list: AttemptTokenListId,
+pub(crate) enum ResidentTokenStorage<G> {
+    Replay {
+        replay: ReplayPayloadId<G>,
+        cursor: ResidentReplayCursor,
+    },
+    Durable(tex_state::TokenListId<G>),
+    Attempt(AttemptTokenListId),
+    MacroBody(MacroBodyCursor<G>),
+    MacroArgument(MacroArgumentCursor<G>),
 }
 
 /// First-class input cursor over one admitted absolute macro-argument range.
@@ -318,53 +267,19 @@ pub(crate) struct MacroArgumentCursor<G> {
     /// Index of the provenance run containing the current absolute word.
     /// It advances only when sequential replay crosses a run boundary.
     pub(crate) origin_run: u32,
-    absolute: u32,
-    identity: u64,
-    source: Option<tex_state::packed_input::SourceContext>,
-    pub(super) rollback: RowRollbackMarker,
 }
 
 impl<G> MacroArgumentCursor<G> {
     pub(crate) fn new(
-        identity: InputLevelId,
         range: crate::execution_scratch::MacroArgumentRange<G>,
         slot: u8,
         origin_run: u32,
-        source: Option<tex_state::packed_input::SourceContext>,
     ) -> Self {
         Self {
             range,
             slot,
             origin_run,
-            absolute: range.start(),
-            identity: identity.0,
-            source,
-            rollback: RowRollbackMarker::default(),
         }
-    }
-
-    pub(crate) fn identity(&self) -> InputLevelId {
-        InputLevelId(self.identity)
-    }
-
-    pub(crate) fn position(&self) -> usize {
-        debug_assert!(self.absolute >= self.range.start());
-        (self.absolute - self.range.start()) as usize
-    }
-
-    pub(crate) const fn absolute_position(&self) -> u32 {
-        self.absolute
-    }
-
-    pub(crate) const fn active_source(&self) -> Option<tex_state::packed_input::SourceContext> {
-        self.source
-    }
-
-    pub(crate) fn set_active_source(
-        &mut self,
-        source: Option<tex_state::packed_input::SourceContext>,
-    ) {
-        self.source = source;
     }
 
     pub(crate) fn argument_set(&self) -> crate::execution_scratch::ArgumentSetId<G> {
@@ -373,52 +288,39 @@ impl<G> MacroArgumentCursor<G> {
 
     pub(crate) fn token_at(
         &self,
+        position: usize,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> Option<PackedTokenAt> {
         scratch
-            .admitted_argument_word(self.range, self.position())
+            .admitted_argument_word(self.range, position)
             .ok()
             .map(|word| (word.token_word(), word.origin()))
-    }
-
-    /// Tests TeX82's `loc=null` condition from the admitted scalar bounds.
-    pub(crate) fn is_exhausted(&self) -> bool {
-        self.absolute >= self.range.end()
     }
 
     #[inline(always)]
     pub(super) fn advance_delivery(
         &mut self,
+        position: u32,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<(u32, TokenWord, OriginId)> {
-        let absolute = self.absolute;
+    ) -> Option<(TokenWord, OriginId)> {
+        let absolute = self.range.start().checked_add(position)?;
         if absolute >= self.range.end() {
             return None;
         }
-        debug_assert!(absolute >= self.range.start());
         let (word, origin) =
             scratch.admitted_argument_parts_at_sequential(absolute, &mut self.origin_run)?;
-        let position = absolute - self.range.start();
-        self.absolute = absolute + 1;
-        Some((position, word, origin))
-    }
-
-    fn swap_absolute(&mut self, position: &mut u32) {
-        core::mem::swap(&mut self.absolute, position);
+        Some((word, origin))
     }
 }
 
 impl<G> TokenRowHeader<G> {
     pub(crate) fn new(
-        behavior: TokenBehavior,
-        retirement: RetirementBehavior,
-        trace: ReplayTrace,
+        _behavior: TokenBehavior,
+        _retirement: RetirementBehavior,
+        _trace: ReplayTrace,
         frame: PackedInputFrame,
     ) -> Self {
         Self {
-            behavior,
-            retirement,
-            trace,
             frame,
             generation: PhantomData,
             rollback: RowRollbackMarker::default(),
@@ -432,28 +334,156 @@ impl<G> TokenRowHeader<G> {
     pub(crate) fn position(&self) -> usize {
         self.frame.position() as usize
     }
+
+    pub(crate) fn behavior(&self) -> TokenBehavior {
+        match self.frame.kind() {
+            InputFrameKind::Parameter => TokenBehavior::Parameter,
+            InputFrameKind::AlignmentUTemplate => TokenBehavior::UTemplate,
+            InputFrameKind::AlignmentVTemplate | InputFrameKind::OmitTemplate => {
+                TokenBehavior::VTemplate
+            }
+            InputFrameKind::BackedUp => TokenBehavior::BackedUp(
+                if self
+                    .frame
+                    .flags()
+                    .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE)
+                {
+                    BackupTreatment::SuppressExpandableControlSequence
+                } else {
+                    BackupTreatment::Ordinary
+                },
+            ),
+            InputFrameKind::Recovery => TokenBehavior::Recovery,
+            InputFrameKind::Source => unreachable!("token header cannot be a source"),
+            InputFrameKind::Inserted
+            | InputFrameKind::ExpandedTokenList
+            | InputFrameKind::Macro
+            | InputFrameKind::OutputRoutine
+            | InputFrameKind::EveryPar
+            | InputFrameKind::EveryMath
+            | InputFrameKind::EveryDisplay
+            | InputFrameKind::EveryHBox
+            | InputFrameKind::EveryVBox
+            | InputFrameKind::EveryJob
+            | InputFrameKind::EveryCr
+            | InputFrameKind::EveryEof
+            | InputFrameKind::Mark
+            | InputFrameKind::Write
+            | InputFrameKind::UmberReplay => TokenBehavior::Ordinary,
+        }
+    }
+
+    pub(crate) fn retirement(&self) -> RetirementBehavior {
+        let flags = self.frame.flags();
+        if flags.contains(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT) {
+            RetirementBehavior::AwaitingVTemplateRetirement
+        } else if flags.contains(InputFrameFlags::RETAIN_AT_END) {
+            RetirementBehavior::RetainExhaustedVTemplate
+        } else if flags.contains(InputFrameFlags::STOP_AT_END) {
+            RetirementBehavior::StopAtEnd
+        } else {
+            RetirementBehavior::Pop
+        }
+    }
+
+    pub(crate) fn set_retirement(&mut self, retirement: RetirementBehavior) {
+        let retirement_flags = InputFrameFlags::STOP_AT_END
+            .union(InputFrameFlags::RETAIN_AT_END)
+            .union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT);
+        let mut flags = self.frame.flags().without(retirement_flags);
+        flags = flags.union(match retirement {
+            RetirementBehavior::Pop => InputFrameFlags::empty(),
+            RetirementBehavior::StopAtEnd => InputFrameFlags::STOP_AT_END,
+            RetirementBehavior::RetainExhaustedVTemplate => InputFrameFlags::RETAIN_AT_END,
+            RetirementBehavior::AwaitingVTemplateRetirement => InputFrameFlags::RETAIN_AT_END
+                .union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT),
+        });
+        self.frame.set_flags(flags);
+    }
+}
+
+impl<G> ResidentTokenRow<G> {
+    pub(crate) fn trace(&self) -> ReplayTrace {
+        match self.header.frame.kind() {
+            InputFrameKind::Parameter => ReplayTrace::MacroParameter {
+                slot: match &self.storage {
+                    ResidentTokenStorage::MacroArgument(argument) => argument.slot,
+                    _ => 0,
+                },
+            },
+            InputFrameKind::AlignmentUTemplate => ReplayTrace::UTemplate,
+            InputFrameKind::AlignmentVTemplate => ReplayTrace::VTemplate,
+            InputFrameKind::OmitTemplate => ReplayTrace::OmitTemplate,
+            InputFrameKind::BackedUp => ReplayTrace::BackedUp,
+            InputFrameKind::Inserted | InputFrameKind::Recovery => ReplayTrace::Inserted,
+            InputFrameKind::ExpandedTokenList => {
+                ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList)
+            }
+            InputFrameKind::Macro => ReplayTrace::MacroReplacement,
+            InputFrameKind::OutputRoutine => ReplayTrace::Stored(StoredReplayReason::OutputRoutine),
+            InputFrameKind::EveryPar => ReplayTrace::Stored(StoredReplayReason::EveryPar),
+            InputFrameKind::EveryMath => ReplayTrace::Stored(StoredReplayReason::EveryMath),
+            InputFrameKind::EveryDisplay => ReplayTrace::Stored(StoredReplayReason::EveryDisplay),
+            InputFrameKind::EveryHBox => ReplayTrace::Stored(StoredReplayReason::EveryHBox),
+            InputFrameKind::EveryVBox => ReplayTrace::Stored(StoredReplayReason::EveryVBox),
+            InputFrameKind::EveryJob => ReplayTrace::Stored(StoredReplayReason::EveryJob),
+            InputFrameKind::EveryCr => ReplayTrace::Stored(StoredReplayReason::EveryCr),
+            InputFrameKind::EveryEof => ReplayTrace::Stored(StoredReplayReason::EveryEof),
+            InputFrameKind::Mark => ReplayTrace::Stored(StoredReplayReason::Mark),
+            InputFrameKind::Write => ReplayTrace::Stored(StoredReplayReason::Write),
+            InputFrameKind::UmberReplay => ReplayTrace::Stored(StoredReplayReason::Discretionary),
+            InputFrameKind::Source => unreachable!("resident row cannot be a source"),
+        }
+    }
 }
 
 impl<G> InputLevel<G> {
+    pub(crate) fn trace(&self) -> Option<ReplayTrace> {
+        match self {
+            Self::Resident(row) => Some(row.trace()),
+            Self::Source(_) => None,
+        }
+    }
+
+    pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor<G>> {
+        match self {
+            Self::Resident(ResidentTokenRow {
+                storage: ResidentTokenStorage::MacroBody(body),
+                ..
+            }) => Some(body),
+            Self::Source(_)
+            | Self::Resident(ResidentTokenRow {
+                storage:
+                    ResidentTokenStorage::Replay { .. }
+                    | ResidentTokenStorage::Durable(_)
+                    | ResidentTokenStorage::Attempt(_)
+                    | ResidentTokenStorage::MacroArgument(_),
+                ..
+            }) => None,
+        }
+    }
+
+    pub(crate) fn macro_argument(&self) -> Option<&MacroArgumentCursor<G>> {
+        match self {
+            Self::Resident(ResidentTokenRow {
+                storage: ResidentTokenStorage::MacroArgument(argument),
+                ..
+            }) => Some(argument),
+            _ => None,
+        }
+    }
+
     pub(super) const fn rollback_marker(&self) -> RowRollbackMarker {
         match self {
             Self::Source(level) => level.rollback,
-            Self::ReplayTokens(row) => row.header.rollback,
-            Self::DurableTokens(row) => row.header.rollback,
-            Self::AttemptTokens(row) => row.header.rollback,
-            Self::MacroBody(cursor) => cursor.rollback,
-            Self::MacroArgument(cursor) => cursor.rollback,
+            Self::Resident(row) => row.header.rollback,
         }
     }
 
     pub(super) fn rollback_marker_mut(&mut self) -> &mut RowRollbackMarker {
         match self {
             Self::Source(level) => &mut level.rollback,
-            Self::ReplayTokens(row) => &mut row.header.rollback,
-            Self::DurableTokens(row) => &mut row.header.rollback,
-            Self::AttemptTokens(row) => &mut row.header.rollback,
-            Self::MacroBody(cursor) => &mut cursor.rollback,
-            Self::MacroArgument(cursor) => &mut cursor.rollback,
+            Self::Resident(row) => &mut row.header.rollback,
         }
     }
 
@@ -466,64 +496,58 @@ impl<G> InputLevel<G> {
 
     pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader<G>> {
         match self {
-            Self::ReplayTokens(row) => Some(&row.header),
-            Self::DurableTokens(row) => Some(&row.header),
-            Self::AttemptTokens(row) => Some(&row.header),
-            _ => None,
+            Self::Resident(row) => Some(&row.header),
+            Self::Source(_) => None,
         }
     }
 
     pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenRowHeader<G>> {
         match self {
-            Self::ReplayTokens(row) => Some(&mut row.header),
-            Self::DurableTokens(row) => Some(&mut row.header),
-            Self::AttemptTokens(row) => Some(&mut row.header),
-            _ => None,
+            Self::Resident(row) => Some(&mut row.header),
+            Self::Source(_) => None,
         }
     }
 
     pub(crate) fn stored_position(&self) -> Option<usize> {
-        match self {
-            Self::ReplayTokens(row) => Some(row.header.position()),
-            Self::DurableTokens(row) => Some(row.header.position()),
-            Self::AttemptTokens(row) => Some(row.header.position()),
-            Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
-        }
+        self.stored_common().map(TokenRowHeader::position)
     }
 
     /// Tests a generic stored-token row's `loc=null` condition without
     /// reclassifying or loading its already-admitted storage domain.
     pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
-        match self {
-            Self::ReplayTokens(row) => {
-                Some(row.header.frame.position() >= row.header.frame.limit())
-            }
-            Self::DurableTokens(row) => {
-                Some(row.header.frame.position() >= row.header.frame.limit())
-            }
-            Self::AttemptTokens(row) => {
-                Some(row.header.frame.position() >= row.header.frame.limit())
-            }
-            Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
-        }
+        self.stored_common()
+            .map(|header| header.frame.position() >= header.frame.limit())
     }
 
     #[cold]
     pub(crate) fn stored_span_cold(&self) -> Option<PackedTokenSpanHandle<G>> {
         match self {
-            Self::ReplayTokens(row) => Some(PackedTokenSpanHandle::Replay {
-                replay: row.replay,
-                len: row.header.frame.limit(),
+            Self::Resident(ResidentTokenRow {
+                header,
+                storage: ResidentTokenStorage::Replay { replay, .. },
+            }) => Some(PackedTokenSpanHandle::Replay {
+                replay: *replay,
+                len: header.frame.limit(),
             }),
-            Self::DurableTokens(row) => Some(PackedTokenSpanHandle::DurableList {
-                list: row.list.clone(),
-                len: row.header.frame.limit(),
+            Self::Resident(ResidentTokenRow {
+                header,
+                storage: ResidentTokenStorage::Durable(list),
+            }) => Some(PackedTokenSpanHandle::DurableList {
+                list: list.clone(),
+                len: header.frame.limit(),
             }),
-            Self::AttemptTokens(row) => Some(PackedTokenSpanHandle::AttemptList {
-                list: row.list,
-                len: row.header.frame.limit(),
+            Self::Resident(ResidentTokenRow {
+                header,
+                storage: ResidentTokenStorage::Attempt(list),
+            }) => Some(PackedTokenSpanHandle::AttemptList {
+                list: *list,
+                len: header.frame.limit(),
             }),
-            _ => None,
+            Self::Source(_)
+            | Self::Resident(ResidentTokenRow {
+                storage: ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_),
+                ..
+            }) => None,
         }
     }
 
@@ -678,13 +702,9 @@ pub(crate) enum InputLevelInlineState {
     },
     Tokens {
         frame: PackedInputFrame,
-        retirement: RetirementBehavior,
-    },
-    MacroBody {
-        cursor: tex_state::ResidentMacroBodyCursor,
     },
     MacroArgument {
-        absolute_position: u32,
+        position: u32,
         origin_run: u32,
     },
 }
@@ -698,17 +718,13 @@ impl InputLevelInlineState {
         Self::ReplayCursor { position, cursor }
     }
 
-    pub(crate) const fn new(frame: PackedInputFrame, retirement: RetirementBehavior) -> Self {
-        Self::Tokens { frame, retirement }
+    pub(crate) const fn new(frame: PackedInputFrame, _retirement: RetirementBehavior) -> Self {
+        Self::Tokens { frame }
     }
 
-    pub(crate) const fn macro_span(cursor: tex_state::ResidentMacroBodyCursor) -> Self {
-        Self::MacroBody { cursor }
-    }
-
-    pub(crate) const fn macro_argument(absolute_position: u32, origin_run: u32) -> Self {
+    pub(crate) const fn macro_argument(position: u32, origin_run: u32) -> Self {
         Self::MacroArgument {
-            absolute_position,
+            position,
             origin_run,
         }
     }
@@ -871,11 +887,7 @@ impl<G> InputLevel<G> {
     pub(crate) const fn source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         match self {
             Self::Source(source) => source.frame.source_context(),
-            Self::ReplayTokens(tokens) => tokens.header.frame.source_context(),
-            Self::DurableTokens(tokens) => tokens.header.frame.source_context(),
-            Self::AttemptTokens(tokens) => tokens.header.frame.source_context(),
-            Self::MacroBody(body) => body.active_source(),
-            Self::MacroArgument(argument) => argument.active_source(),
+            Self::Resident(tokens) => tokens.header.frame.source_context(),
         }
     }
 
@@ -885,76 +897,40 @@ impl<G> InputLevel<G> {
     ) {
         match self {
             Self::Source(level) => level.frame.set_source_context(source),
-            Self::ReplayTokens(tokens) => tokens.header.frame.set_source_context(source),
-            Self::DurableTokens(tokens) => tokens.header.frame.set_source_context(source),
-            Self::AttemptTokens(tokens) => tokens.header.frame.set_source_context(source),
-            Self::MacroBody(body) => body.set_active_source(source),
-            Self::MacroArgument(argument) => argument.set_active_source(source),
+            Self::Resident(tokens) => tokens.header.frame.set_source_context(source),
         }
     }
 
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
-            Self::ReplayTokens(tokens) => match state {
+            Self::Resident(tokens) => match state {
                 InputLevelInlineState::ReplayCursor { position, cursor } => {
+                    let ResidentTokenStorage::Replay {
+                        cursor: resident, ..
+                    } = &mut tokens.storage
+                    else {
+                        unreachable!("resident inverse kind changed")
+                    };
                     tokens.header.frame.swap_position(position);
-                    core::mem::swap(&mut tokens.resident, cursor);
+                    core::mem::swap(resident, cursor);
                 }
-                InputLevelInlineState::Tokens { frame, retirement } => {
-                    std::mem::swap(&mut tokens.header.frame, frame);
-                    std::mem::swap(&mut tokens.header.retirement, retirement);
-                }
-                InputLevelInlineState::TokenPosition { .. }
-                | InputLevelInlineState::MacroBody { .. }
-                | InputLevelInlineState::MacroArgument { .. } => {
-                    unreachable!("token row inverse kind changed")
-                }
-            },
-            Self::DurableTokens(tokens) => match state {
                 InputLevelInlineState::TokenPosition { position } => {
                     tokens.header.frame.swap_position(position);
                 }
-                InputLevelInlineState::Tokens { frame, retirement } => {
+                InputLevelInlineState::Tokens { frame } => {
                     std::mem::swap(&mut tokens.header.frame, frame);
-                    std::mem::swap(&mut tokens.header.retirement, retirement);
                 }
-                InputLevelInlineState::ReplayCursor { .. }
-                | InputLevelInlineState::MacroBody { .. }
-                | InputLevelInlineState::MacroArgument { .. } => {
-                    unreachable!("token row inverse kind changed")
-                }
-            },
-            Self::AttemptTokens(tokens) => match state {
-                InputLevelInlineState::TokenPosition { position } => {
-                    tokens.header.frame.swap_position(position);
-                }
-                InputLevelInlineState::Tokens { frame, retirement } => {
-                    std::mem::swap(&mut tokens.header.frame, frame);
-                    std::mem::swap(&mut tokens.header.retirement, retirement);
-                }
-                InputLevelInlineState::ReplayCursor { .. }
-                | InputLevelInlineState::MacroBody { .. }
-                | InputLevelInlineState::MacroArgument { .. } => {
-                    unreachable!("token row inverse kind changed")
-                }
-            },
-            Self::MacroBody(body) => {
-                let InputLevelInlineState::MacroBody { cursor } = state else {
-                    unreachable!("macro body inverse kind changed")
-                };
-                body.body.swap_cursor(cursor);
-            }
-            Self::MacroArgument(argument) => {
-                let InputLevelInlineState::MacroArgument {
-                    absolute_position,
+                InputLevelInlineState::MacroArgument {
+                    position,
                     origin_run,
-                } = state
-                else {
-                    unreachable!("macro argument inverse kind changed")
-                };
-                argument.swap_absolute(absolute_position);
-                std::mem::swap(&mut argument.origin_run, origin_run);
-            }
+                } => {
+                    let ResidentTokenStorage::MacroArgument(argument) = &mut tokens.storage else {
+                        unreachable!("resident inverse kind changed")
+                    };
+                    tokens.header.frame.swap_position(position);
+                    std::mem::swap(&mut argument.origin_run, origin_run);
+                }
+            },
             Self::Source(_) => unreachable!("a source frame uses the source lexer lane"),
         }
     }

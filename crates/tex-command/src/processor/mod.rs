@@ -273,11 +273,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let position = match level {
             InputLevel::Source(_) => return false,
-            InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_) => level.stored_position(),
-            InputLevel::MacroBody(body) => Some(body.position()),
-            InputLevel::MacroArgument(argument) => Some(argument.position()),
+            InputLevel::Resident(_) => level.stored_position(),
         };
         position
             .and_then(|position| u64::try_from(position).ok())
@@ -437,7 +433,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             .iter()
             .rev()
             .find_map(|level| match level {
-                crate::input::InputLevel::MacroBody(body) => Some(body.invocation),
+                crate::input::InputLevel::Resident(crate::input::ResidentTokenRow {
+                    storage: crate::input::ResidentTokenStorage::MacroBody(body),
+                    ..
+                }) => Some(body.invocation),
                 _ => None,
             })
     }

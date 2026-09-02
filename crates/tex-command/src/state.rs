@@ -875,10 +875,8 @@ impl<G> CommandState<G> {
             .take(limit)
             .map(|level| match level {
                 InputLevel::Source(_) => "source",
-                level @ (InputLevel::ReplayTokens(_)
-                | InputLevel::DurableTokens(_)
-                | InputLevel::AttemptTokens(_)) => {
-                    match &level.stored_common().expect("stored row").trace {
+                level @ InputLevel::Resident(_) => {
+                    match level.trace().expect("resident row trace") {
                         ReplayTrace::MacroReplacement => "macro-body",
                         ReplayTrace::MacroParameter { .. } => "macro-argument",
                         ReplayTrace::BackedUp => "backed-up",
@@ -891,8 +889,6 @@ impl<G> CommandState<G> {
                         ReplayTrace::Transient(_) => "transient-token-list",
                     }
                 }
-                InputLevel::MacroBody(_) => "macro-body",
-                InputLevel::MacroArgument(_) => "macro-argument",
             })
             .collect();
         (self.input.levels.len(), tail)
@@ -1601,8 +1597,8 @@ impl<G> CommandState<G> {
             matches!(
                 level,
                 level
-                    if level.stored_common().is_some_and(|cursor| {
-                        cursor.trace == ReplayTrace::Stored(StoredReplayReason::Write)
+                    if level.stored_common().is_some_and(|_| {
+                        level.trace() == Some(ReplayTrace::Stored(StoredReplayReason::Write))
                     })
             )
         })
@@ -2044,9 +2040,9 @@ impl<G> CommandState<G> {
         let retained_v_template = |level: &InputLevel<G>| {
             level.stored_common().is_some_and(|cursor| {
                 cursor.identity() == v_level
-                    && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                    && matches!(cursor.behavior(), TokenBehavior::VTemplate)
                     && matches!(
-                        cursor.retirement,
+                        cursor.retirement(),
                         RetirementBehavior::AwaitingVTemplateRetirement
                     )
             })
@@ -2058,11 +2054,14 @@ impl<G> CommandState<G> {
             return Ok(());
         }
         let exhausted_backed_up_endv = match top {
-            InputLevel::ReplayTokens(row) => {
-                matches!(row.header.behavior, TokenBehavior::BackedUp(_))
-                    && self.input.replay.ownership(row.replay)
+            InputLevel::Resident(crate::input::ResidentTokenRow {
+                header,
+                storage: crate::input::ResidentTokenStorage::Replay { replay, .. },
+            }) => {
+                matches!(header.behavior(), TokenBehavior::BackedUp(_))
+                    && self.input.replay.ownership(*replay)
                         == Some(crate::input::PackedTokenOwnership::BackedUp)
-                    && row.header.frame.position() >= row.header.frame.limit()
+                    && header.frame.position() >= header.frame.limit()
             }
             _ => false,
         };
@@ -2551,12 +2550,7 @@ impl<G> CommandState<G> {
                 .source_level_slot(source)
                 .open_depths
                 .as_ref(),
-            InputLevel::Source(_)
-            | InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_)
-            | InputLevel::MacroBody(_)
-            | InputLevel::MacroArgument(_) => None,
+            InputLevel::Source(_) | InputLevel::Resident(_) => None,
         })
     }
 
@@ -2571,11 +2565,7 @@ impl<G> CommandState<G> {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(level) => Some(level),
-                InputLevel::ReplayTokens(_)
-                | InputLevel::DurableTokens(_)
-                | InputLevel::AttemptTokens(_)
-                | InputLevel::MacroBody(_)
-                | InputLevel::MacroArgument(_) => None,
+                InputLevel::Resident(_) => None,
             })
             .is_some();
         if has_source {
@@ -2797,11 +2787,7 @@ impl<G> CommandState<G> {
                         self.input.levels.source_level_slot(source).name_class
                             == SourceNameClass::File,
                     ),
-                    InputLevel::ReplayTokens(_)
-                    | InputLevel::DurableTokens(_)
-                    | InputLevel::AttemptTokens(_)
-                    | InputLevel::MacroBody(_)
-                    | InputLevel::MacroArgument(_) => None,
+                    InputLevel::Resident(_) => None,
                 })
                 == Some(true)
     }

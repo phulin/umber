@@ -19,11 +19,11 @@ pub(crate) use history::{
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    AttemptTokenRow, BackedUpToken, BackupTreatment, DurableTokenRow, InputLevel, InputLevelId,
-    InputLevelInlineState, MacroArgumentCursor, MacroBodyCursor, PackedInputFrame,
-    PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTokenRow, ReplayTrace,
-    ReplayTransientMark, ResidentReplayCursor, RetirementBehavior, SourceLevel,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
+    MacroArgumentCursor, MacroBodyCursor, PackedInputFrame, PackedTokenOwnership,
+    PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId,
+    ReplayLane, ReplayPayloadId, ReplayTrace, ReplayTransientMark, ResidentReplayCursor,
+    ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel,
     SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
     SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenRowHeader,
     packed_token_frame,
@@ -167,8 +167,12 @@ impl<G> InputState<G> {
     ) -> Result<(), ()> {
         self.replay.rollback_transient(mark);
         for level in self.levels.iter() {
-            if let InputLevel::ReplayTokens(row) = level {
-                self.replay.reactivate(row.replay);
+            if let InputLevel::Resident(ResidentTokenRow {
+                storage: ResidentTokenStorage::Replay { replay, .. },
+                ..
+            }) = level
+            {
+                self.replay.reactivate(*replay);
             }
         }
         self.replay.end_transient().map_err(|_| ())
@@ -377,22 +381,25 @@ pub(crate) fn tracked_input_projection<G>(
                     project_line(&mut line, &slot.cursor, current);
                 }
             }
-            level @ (InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_)) => {
-                let cursor = level.stored_common().expect("stored row");
+            level @ InputLevel::Resident(row) => {
+                let cursor = &row.header;
                 stack.byte(1);
                 // Macro-activation and alignment identities need stack-relative
                 // translation, which is deliberately fail-closed for now.
                 if matches!(
-                    cursor.behavior,
+                    cursor.behavior(),
                     TokenBehavior::UTemplate | TokenBehavior::VTemplate
+                ) {
+                    return None;
+                }
+                if matches!(
+                    row.storage,
+                    ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_)
                 ) {
                     return None;
                 }
                 project_token_cursor(&mut stack, level, &input.replay, state)?;
             }
-            InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => return None,
         }
     }
     Some((line.finish(), stack.finish()))
@@ -501,13 +508,13 @@ fn project_token_cursor<G>(
 ) -> Option<()> {
     let cursor = level.stored_common()?;
     hash.u64(level.stored_position()? as u64);
-    hash.byte(match cursor.retirement {
+    hash.byte(match cursor.retirement() {
         RetirementBehavior::Pop => 0,
         RetirementBehavior::StopAtEnd => 1,
         RetirementBehavior::RetainExhaustedVTemplate => 2,
         RetirementBehavior::AwaitingVTemplateRetirement => 3,
     });
-    hash.byte(match cursor.behavior {
+    hash.byte(match cursor.behavior() {
         TokenBehavior::Ordinary => 0,
         TokenBehavior::Recovery => 1,
         TokenBehavior::Parameter => 2,
@@ -657,41 +664,50 @@ impl<G> InputState<G> {
                         return false;
                     }
                 }
-                level @ (InputLevel::ReplayTokens(_)
-                | InputLevel::DurableTokens(_)
-                | InputLevel::AttemptTokens(_)) => {
-                    let tokens = level.stored_common().expect("stored row");
-                    if Self::token_context_level(
-                        TokenContextStorage {
+                level @ InputLevel::Resident(row) => match &row.storage {
+                    ResidentTokenStorage::MacroBody(body) => {
+                        if Self::macro_body_context_level(
                             stores,
-                            replay_lane: &self.replay,
-                            attempt,
-                            scratch,
-                        },
-                        level,
-                        current,
-                        widths,
-                    )
-                    .is_some()
-                    {
-                        // §314's backed-up family uses `print_nl` for both
-                        // `<recently read>` and `<to be read again>`; every
-                        // other token-list kind begins with `print_ln`.
-                        return !matches!(tokens.trace, ReplayTrace::BackedUp);
-                    }
-                }
-                InputLevel::MacroBody(body) => {
-                    if Self::macro_body_context_level(stores, body, widths).is_some() {
-                        return true;
-                    }
-                }
-                InputLevel::MacroArgument(argument) => {
-                    if Self::macro_argument_context_level(stores, scratch, argument, widths)
+                            body,
+                            row.header.position(),
+                            widths,
+                        )
                         .is_some()
-                    {
-                        return true;
+                        {
+                            return true;
+                        }
                     }
-                }
+                    ResidentTokenStorage::MacroArgument(argument) => {
+                        if Self::macro_argument_context_level(
+                            stores,
+                            scratch,
+                            argument,
+                            row.header.position(),
+                            widths,
+                        )
+                        .is_some()
+                        {
+                            return true;
+                        }
+                    }
+                    _ => {
+                        if Self::token_context_level(
+                            TokenContextStorage {
+                                stores,
+                                replay_lane: &self.replay,
+                                attempt,
+                                scratch,
+                            },
+                            level,
+                            current,
+                            widths,
+                        )
+                        .is_some()
+                        {
+                            return !matches!(row.trace(), ReplayTrace::BackedUp);
+                        }
+                    }
+                },
             }
         }
         false
@@ -719,7 +735,7 @@ impl<G> InputState<G> {
             matches!(
                 level,
                 level if matches!(
-                    level.stored_common().map(|cursor| &cursor.trace),
+                    level.trace(),
                     Some(ReplayTrace::Stored(StoredReplayReason::OutputRoutine))
                 )
             )
@@ -769,23 +785,31 @@ impl<G> InputState<G> {
                     widths,
                 )
             }
-            level @ (InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_)) => Self::token_context_level(
-                TokenContextStorage {
-                    stores,
-                    replay_lane: &self.replay,
-                    attempt,
-                    scratch,
-                },
-                level,
-                index + 1 == input_levels.len(),
-                widths,
-            ),
-            InputLevel::MacroBody(body) => Self::macro_body_context_level(stores, body, widths),
-            InputLevel::MacroArgument(argument) => {
-                Self::macro_argument_context_level(stores, scratch, argument, widths)
-            }
+            level @ InputLevel::Resident(row) => match &row.storage {
+                ResidentTokenStorage::MacroBody(body) => {
+                    Self::macro_body_context_level(stores, body, row.header.position(), widths)
+                }
+                ResidentTokenStorage::MacroArgument(argument) => {
+                    Self::macro_argument_context_level(
+                        stores,
+                        scratch,
+                        argument,
+                        row.header.position(),
+                        widths,
+                    )
+                }
+                _ => Self::token_context_level(
+                    TokenContextStorage {
+                        stores,
+                        replay_lane: &self.replay,
+                        attempt,
+                        scratch,
+                    },
+                    level,
+                    index + 1 == input_levels.len(),
+                    widths,
+                ),
+            },
         };
         let mut reached_bottom_source = false;
         for (index, level) in input_levels.iter().enumerate().rev() {
@@ -801,12 +825,9 @@ impl<G> InputState<G> {
                         .line
                         .is_some()
                 }
-                level @ (InputLevel::ReplayTokens(_)
-                | InputLevel::DurableTokens(_)
-                | InputLevel::AttemptTokens(_)) => {
+                level @ InputLevel::Resident(_) => {
                     Self::context_level_is_visible(level, None, current)
                 }
-                InputLevel::MacroBody(_) | InputLevel::MacroArgument(_) => true,
             };
             if let InputLevel::Source(source) = level {
                 let source = retiring_source
@@ -867,11 +888,14 @@ impl<G> InputState<G> {
                 .cursor
                 .line
                 .is_some(),
-            level @ (InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_)) => {
-                let tokens = level.stored_common().expect("stored row");
-                if matches!(tokens.trace, ReplayTrace::BackedUp)
+            level @ InputLevel::Resident(row) => {
+                if matches!(
+                    row.storage,
+                    ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_)
+                ) {
+                    return true;
+                }
+                if matches!(row.trace(), ReplayTrace::BackedUp)
                     && level.stored_position().expect("stored row")
                         >= level
                             .stored_span_cold()
@@ -883,14 +907,13 @@ impl<G> InputState<G> {
                 }
                 true
             }
-            InputLevel::MacroBody(_) => true,
-            InputLevel::MacroArgument(_) => true,
         }
     }
 
     fn macro_body_context_level(
         stores: &tex_state::CommandContext<'_, G>,
         body: &MacroBodyCursor<G>,
+        position: usize,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         // TeX82 §§323/319 keep a macro's token-list reference on the
@@ -899,7 +922,7 @@ impl<G> InputState<G> {
         // diagnostic projection must use the resident body owner rather than
         // re-resolving its non-owning definition coordinate.
         let count = body.body.len();
-        let split = body.position().min(count);
+        let split = position.min(count);
         let render = |token: tex_state::token::Token| {
             let mut raw = String::new();
             crate::processor::expand_render::append_token_list_token_text(stores, token, &mut raw);
@@ -1177,6 +1200,7 @@ impl<G> InputState<G> {
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         let tokens = level.stored_common()?;
+        let trace = level.trace()?;
         let span = level.stored_span_cold()?;
         let TokenContextStorage {
             stores,
@@ -1229,7 +1253,7 @@ impl<G> InputState<G> {
         let count = span_len(stores, &span, scratch);
         let split = level.stored_position()?.min(count);
         let noexpand_marker = matches!(
-            tokens.behavior,
+            tokens.behavior(),
             TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
         )
         .then(|| {
@@ -1238,7 +1262,7 @@ impl<G> InputState<G> {
                 crate::processor::expand_render::print_esc_text(stores, "notexpanded:")
             )
         });
-        let v_sentinel = matches!(tokens.behavior, TokenBehavior::VTemplate).then(|| {
+        let v_sentinel = matches!(tokens.behavior(), TokenBehavior::VTemplate).then(|| {
             crate::processor::expand_render::token_list_token_text(
                 stores,
                 stores.frozen_end_template_token(),
@@ -1248,7 +1272,7 @@ impl<G> InputState<G> {
         let mut rendered = String::new();
         let mut before = ContextTail::new(widths.half_error_line());
         if matches!(
-            tokens.retirement,
+            tokens.retirement(),
             RetirementBehavior::AwaitingVTemplateRetirement
         ) && let Some(sentinel) = v_sentinel.as_deref()
         {
@@ -1271,7 +1295,7 @@ impl<G> InputState<G> {
             before.prepend_str(&rendered);
         }
         let (before, before_chars) = before.finish();
-        let label = match tokens.trace {
+        let label = match trace {
             ReplayTrace::MacroParameter { .. } => "<argument> ".to_owned(),
             ReplayTrace::MacroReplacement => unreachable!("macro replacements use MacroBody"),
             ReplayTrace::BackedUp => String::new(),
@@ -1319,7 +1343,7 @@ impl<G> InputState<G> {
         }
         if !after.is_complete()
             && matches!(
-                tokens.retirement,
+                tokens.retirement(),
                 RetirementBehavior::RetainExhaustedVTemplate
             )
             && let Some(sentinel) = v_sentinel.as_deref()
@@ -1327,10 +1351,10 @@ impl<G> InputState<G> {
             after.push_str(sentinel);
         }
         let (after, after_chars) = after.finish();
-        if matches!(tokens.trace, ReplayTrace::BackedUp) && after_chars == 0 && !current {
+        if matches!(trace, ReplayTrace::BackedUp) && after_chars == 0 && !current {
             return None;
         }
-        let label = if matches!(tokens.trace, ReplayTrace::BackedUp) {
+        let label = if matches!(trace, ReplayTrace::BackedUp) {
             if after_chars == 0 {
                 "<recently read> ".to_owned()
             } else {
@@ -1354,6 +1378,7 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
         argument: &MacroArgumentCursor<G>,
+        position: usize,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         fn render_token<G>(
@@ -1369,7 +1394,7 @@ impl<G> InputState<G> {
         }
 
         let count = argument.range.len() as usize;
-        let split = argument.position().min(count);
+        let split = position.min(count);
         let mut raw = String::new();
         let mut rendered = String::new();
         let mut before = ContextTail::new(widths.half_error_line());

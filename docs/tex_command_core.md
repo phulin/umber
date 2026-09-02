@@ -1861,7 +1861,7 @@ Input is one generation-owned semantic stack:
 ```rust
 enum InputLevel {
     Source(SourceLevel),
-    Tokens(TokenCursor),
+    Resident(ResidentTokenRow),
 }
 ```
 
@@ -2026,23 +2026,23 @@ the synthetic `endlinechar` does.
 
 ### 12.2 Token cursor
 
-Ordinary token-list storage keeps ownership, semantic delivery behavior,
-retirement, and trace explanation orthogonal. Macro spans instead use their
-own resident rows:
+Every non-source level uses one physical resident row. Its compact header owns
+the shared identity, source context, position, limit, semantic kind,
+delivery/retirement flags, and rollback marker; the storage tag owns only its
+lifetime-specific coordinate:
 
 ```rust
-struct TokenCursor {
-    span: PackedTokenSpanHandle,
-    behavior: TokenBehavior,
-    retirement: RetirementBehavior,
-    trace: ReplayTrace,
-    frame: PackedInputFrame,
+struct ResidentTokenRow {
+    header: TokenRowHeader,
+    storage: ResidentTokenStorage,
 }
 
-enum PackedTokenSpanHandle {
-    Replay { replay: ReplayPayloadId, len: u32 },
-    DurableList { cursor: TokenListCursor, len: u32 },
-    AttemptList { list: AttemptTokenListId, len: u32 },
+enum ResidentTokenStorage {
+    Replay { replay: ReplayPayloadId, cursor: ResidentReplayCursor },
+    Durable(TokenListId),
+    Attempt(AttemptTokenListId),
+    MacroBody(MacroBodyCursor),
+    MacroArgument(MacroArgumentCursor),
 }
 
 struct MacroBodyCursor {
@@ -2050,17 +2050,12 @@ struct MacroBodyCursor {
     arguments: Option<ArgumentSetId>,
     name: Symbol,
     invocation: OriginId,
-    identity: InputLevelId,
-    source: Option<SourceContext>,
 }
 
 struct MacroArgumentCursor {
     range: MacroArgumentRange,
     slot: u8,
     origin_run: u32,
-    absolute: u32,
-    identity: u64,
-    source: Option<SourceContext>,
 }
 
 enum TokenBehavior {
@@ -2080,36 +2075,26 @@ enum RetirementBehavior {
 }
 ```
 
-The implemented `PackedInputFrame` remains the canonical fixed 40-byte frame
-for generic token lists. `MacroBodyCursor` does not wrap it or another span
-frame: its store-minted `ResidentMacroBody` owns the sole absolute replacement
-cursor, while the command row adds only input identity and optional source
-coordinates. Delivery advances the store cursor once and returns the relative
-semantic position with the word; rollback swaps one opaque four-byte store
-coordinate. `MacroArgumentCursor` is specialized independently. Its admitted
-range already contains absolute scratch-lane bounds, so the row owns one
-absolute coordinate plus identity and optional source context directly. Warm
-delivery checks that coordinate against the range end, performs the
-fixed-chunk lookup, and advances it once. Admission already proved the lower
-bound and lane extent. The same operation returns the pre-advance relative
-position and separate packed word/origin parts, avoiding both a second bounds
-pass and construction then immediate splitting of a `TracedTokenWord`.
-Rollback journals and swaps the exact absolute coordinate and provenance-run
-index. This avoids maintaining a second relative cursor or rebuilding and
-revalidating an absolute scratch coordinate for every word.
+`PackedInputFrame` is the sole semantic cursor for every resident row.
+`MacroBodyCursor` retains only the store-minted immutable definition coordinate
+and activation metadata; delivery indexes it with the common frame position.
+`MacroArgumentCursor` retains only its admitted range, slot, and current
+provenance run; delivery derives the absolute scratch coordinate from the same
+common position. Rollback journals that position once and the provenance run
+only where required, so neither macro lifetime keeps a second cursor.
 On the supported 64-bit host the body row is the macro call. Eqtb stores the
 eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
 owns the exact format, revision-global, or local-group semantic region plus an
-opaque replacement span and absolute cursor. Only parameterized macros store
+opaque replacement span. Only parameterized macros store
 an `ArgumentSetId`; parameterless macros allocate and push only the body row.
 
 The argument cursor locates its opening provenance run once at admission and
 then advances that run index only when sequential replay crosses a provenance
 boundary. It does not binary-search the run table, repeat the already-proved
 run-start/range-lower checks, or reify a combined traced word for every token.
-Its absolute coordinate does not change the provenance, source, or relative
-delivery stamp visible outside the resident row. The input
+The derived absolute coordinate does not change the provenance, source, or
+relative delivery stamp visible outside the resident row. The input
 stack also maintains the live macro-parameter total on body push, body pop, and
 checkpoint restore; macro activation reads that scalar instead of walking all
 active input rows.
@@ -2171,8 +2156,8 @@ spans do not enter the replay lane, acquire a shared token buffer, or copy their
 packed words at admission.
 
 The generation-tied `InputStack` separates each stable row payload from its
-mutable execution phase. A token row owns its span, behavior, trace, and identity once;
-its packed frame and retirement phase form a fixed inline state record. Source
+mutable execution phase. Every token row owns one common packed frame and one
+tagged lifetime-specific storage coordinate. Source
 rows point to one stable, checked `SourceSlot`, which is the sole owner of
 backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
 authoritative slot receives a monotonic runtime incarnation which is never
@@ -2192,9 +2177,9 @@ captured state. An epoch mismatch directly means the row predates the current
 capture. The marker selects ordinary first touch, rare cold capture, and safe
 pop/push reuse in constant time from the same row lookup; no row-aligned side
 lane or former parallel touched, partial, and cold epoch vectors exist. Stored
-span length moved into the common token cursor's existing tail padding, and an
-explicit compact row tag keeps `InputLevel` at 88 bytes with direct variant
-dispatch.
+span length, position, identity, source context, behavior, and retirement
+remain encoded once in the common frame; the resident storage tag performs the
+single direct lifetime-specific read.
 The first mutation or owner transition of one row visible at a legal checkpoint
 or operation mark records the old state; later cursor and owner advances
 coalesce into that record and the live row holds the final state. Rollback

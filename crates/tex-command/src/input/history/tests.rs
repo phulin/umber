@@ -5,8 +5,8 @@ use tex_state::measurement::HotCoreAllocationOwner;
 
 use crate::input::{
     InputLevel, InputLevelId, MacroArgumentCursor, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayTokenRow, ReplayTrace, RetirementBehavior, TokenBehavior, TokenRowHeader,
-    packed_token_frame,
+    ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, TokenBehavior,
+    TokenRowHeader, packed_token_frame,
 };
 
 #[test]
@@ -132,11 +132,8 @@ fn assert_exact_direct_transition<G>(
 
 fn cursor_position<G>(level: &InputLevel<G>) -> usize {
     match level {
-        InputLevel::ReplayTokens(cursor) => cursor.header.position(),
-        InputLevel::DurableTokens(cursor) => cursor.header.position(),
-        InputLevel::AttemptTokens(cursor) => cursor.header.position(),
-        InputLevel::MacroArgument(cursor) => cursor.position(),
-        InputLevel::Source(_) | InputLevel::MacroBody(_) => {
+        InputLevel::Resident(cursor) => cursor.header.position(),
+        InputLevel::Source(_) => {
             panic!("fixture admits a stored-token cursor")
         }
     }
@@ -166,10 +163,12 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
         state
             .input
             .levels
-            .push(InputLevel::ReplayTokens(ReplayTokenRow {
-                replay,
-                resident,
+            .push(InputLevel::Resident(ResidentTokenRow {
                 header: TokenRowHeader::new(behavior, retirement, trace, frame),
+                storage: ResidentTokenStorage::Replay {
+                    replay,
+                    cursor: resident,
+                },
             }));
 
         assert_exact_direct_transition(&mut state, (0, 2, 0), |state| {
@@ -275,13 +274,13 @@ fn stored_token_position_transitions_are_present_in_every_build() {
     assert_eq!(source.matches(".frame.advance_resident();").count(), 1);
     assert_eq!(
         source
-            .matches("debug_assert_eq!(consumed, $position);")
+            .matches("debug_assert_eq!(consumed, position);")
             .count(),
         1
     );
     for transition in source.match_indices(".frame.advance_resident();") {
         let assertion = source[transition.0..]
-            .find("debug_assert_eq!(consumed, $position);")
+            .find("debug_assert_eq!(consumed, position);")
             .map(|offset| transition.0 + offset)
             .expect("the transition result is checked in debug builds");
         assert!(transition.0 < assertion);
@@ -317,10 +316,12 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
         state
             .input
             .levels
-            .push(InputLevel::ReplayTokens(ReplayTokenRow {
-                replay,
-                resident,
+            .push(InputLevel::Resident(ResidentTokenRow {
                 header: TokenRowHeader::new(behavior, retirement, trace, frame),
+                storage: ResidentTokenStorage::Replay {
+                    replay,
+                    cursor: resident,
+                },
             }));
         let checkpoint = state.input.levels.mark().expect("input checkpoint");
         let before = state.input.levels.counters();
@@ -342,19 +343,18 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
         assert_eq!(after.undo_records - before.undo_records, 2);
 
         state.input.levels.begin_checkpoint_candidate(checkpoint);
-        let InputLevel::ReplayTokens(cursor) = state.input.levels.last().expect("restored cursor")
+        let InputLevel::Resident(cursor) = state.input.levels.last().expect("restored cursor")
         else {
             panic!("restored row is a token cursor")
         };
         assert_eq!(cursor.header.position(), 0);
-        assert_eq!(cursor.header.retirement, RetirementBehavior::Pop);
+        assert_eq!(cursor.header.retirement(), RetirementBehavior::Pop);
         state.input.levels.reject_checkpoint_candidate();
-        let InputLevel::ReplayTokens(cursor) = state.input.levels.last().expect("redone cursor")
-        else {
+        let InputLevel::Resident(cursor) = state.input.levels.last().expect("redone cursor") else {
             panic!("redone row is a token cursor")
         };
         assert_eq!(cursor.header.position(), 1);
-        assert_eq!(cursor.header.retirement, RetirementBehavior::StopAtEnd);
+        assert_eq!(cursor.header.retirement(), RetirementBehavior::StopAtEnd);
     });
 }
 
@@ -383,12 +383,18 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
                 .expect("forward replay delivery");
             first.push(command.spelling());
         }
-        let InputLevel::ReplayTokens(accepted) =
-            state.input.levels.last().expect("accepted replay")
+        let InputLevel::Resident(accepted) = state.input.levels.last().expect("accepted replay")
         else {
             unreachable!("fixture keeps replay resident")
         };
-        let accepted_state = (accepted.header.position(), accepted.resident);
+        let ResidentTokenStorage::Replay {
+            cursor: accepted_cursor,
+            ..
+        } = accepted.storage
+        else {
+            unreachable!("fixture keeps replay storage")
+        };
+        let accepted_state = (accepted.header.position(), accepted_cursor);
         assert_eq!(accepted.header.frame.position(), 300);
 
         state.input.levels.begin_checkpoint_candidate(mark);
@@ -407,23 +413,35 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
             replayed.push(command.spelling());
         }
         assert_eq!(replayed, first);
-        let InputLevel::ReplayTokens(candidate) =
-            state.input.levels.last().expect("candidate replay")
+        let InputLevel::Resident(candidate) = state.input.levels.last().expect("candidate replay")
         else {
             unreachable!("fixture keeps replay resident")
         };
+        let ResidentTokenStorage::Replay {
+            cursor: candidate_cursor,
+            ..
+        } = candidate.storage
+        else {
+            unreachable!("fixture keeps replay storage")
+        };
         assert_eq!(
-            (candidate.header.position(), candidate.resident,),
+            (candidate.header.position(), candidate_cursor,),
             accepted_state
         );
         assert_eq!(candidate.header.frame.position(), 300);
 
         state.input.levels.reject_checkpoint_candidate();
-        let InputLevel::ReplayTokens(redone) = state.input.levels.last().expect("redone replay")
-        else {
+        let InputLevel::Resident(redone) = state.input.levels.last().expect("redone replay") else {
             unreachable!("fixture keeps replay resident")
         };
-        assert_eq!((redone.header.position(), redone.resident,), accepted_state);
+        let ResidentTokenStorage::Replay {
+            cursor: redone_cursor,
+            ..
+        } = redone.storage
+        else {
+            unreachable!("fixture keeps replay storage")
+        };
+        assert_eq!((redone.header.position(), redone_cursor,), accepted_state);
         assert_eq!(redone.header.frame.position(), 300);
 
         state.input.levels.begin_checkpoint_candidate(mark);
@@ -440,7 +458,7 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
                 .expect("accepted candidate replay delivery");
         }
         state.input.levels.accept_checkpoint_candidate();
-        let InputLevel::ReplayTokens(accepted_candidate) =
+        let InputLevel::Resident(accepted_candidate) =
             state.input.levels.last().expect("accepted candidate")
         else {
             unreachable!("fixture keeps replay resident")
@@ -490,13 +508,23 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         state
             .input
             .levels
-            .push(InputLevel::MacroArgument(MacroArgumentCursor::new(
-                InputLevelId(2),
-                range,
-                1,
-                origin_run,
-                None,
-            )));
+            .push(InputLevel::Resident(ResidentTokenRow {
+                header: TokenRowHeader::new(
+                    TokenBehavior::Parameter,
+                    RetirementBehavior::Pop,
+                    ReplayTrace::MacroParameter { slot: 1 },
+                    packed_token_frame(
+                        InputLevelId(2),
+                        range.len() as usize,
+                        &TokenBehavior::Parameter,
+                        RetirementBehavior::Pop,
+                        &ReplayTrace::MacroParameter { slot: 1 },
+                    ),
+                ),
+                storage: ResidentTokenStorage::MacroArgument(MacroArgumentCursor::new(
+                    range, 1, origin_run,
+                )),
+            }));
         let mut fuel = crate::CommandFuelLedger::default();
 
         assert_exact_direct_transition(&mut state, (0, 0, 2), |state| {
@@ -683,13 +711,23 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                     state
                         .input
                         .levels
-                        .push(InputLevel::MacroArgument(MacroArgumentCursor::new(
-                            InputLevelId(1),
-                            range,
-                            1,
-                            origin_run,
-                            None,
-                        )));
+                        .push(InputLevel::Resident(ResidentTokenRow {
+                            header: TokenRowHeader::new(
+                                TokenBehavior::Parameter,
+                                RetirementBehavior::Pop,
+                                ReplayTrace::MacroParameter { slot: 1 },
+                                packed_token_frame(
+                                    InputLevelId(1),
+                                    range.len() as usize,
+                                    &TokenBehavior::Parameter,
+                                    RetirementBehavior::Pop,
+                                    &ReplayTrace::MacroParameter { slot: 1 },
+                                ),
+                            ),
+                            storage: ResidentTokenStorage::MacroArgument(MacroArgumentCursor::new(
+                                range, 1, origin_run,
+                            )),
+                        }));
                 }
             }
 

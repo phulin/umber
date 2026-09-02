@@ -14,6 +14,8 @@ pub enum InputFrameKind {
     AlignmentVTemplate,
     BackedUp,
     Inserted,
+    Recovery,
+    ExpandedTokenList,
     Macro,
     OutputRoutine,
     EveryPar,
@@ -27,6 +29,7 @@ pub enum InputFrameKind {
     Mark,
     Write,
     UmberReplay,
+    OmitTemplate,
 }
 
 /// Orthogonal delivery/retirement flags for a compact input frame.
@@ -37,6 +40,7 @@ impl InputFrameFlags {
     pub const SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE: Self = Self(1 << 0);
     pub const STOP_AT_END: Self = Self(1 << 1);
     pub const RETAIN_AT_END: Self = Self(1 << 2);
+    pub const AWAITING_V_TEMPLATE_RETIREMENT: Self = Self(1 << 3);
 
     #[must_use]
     pub const fn empty() -> Self {
@@ -46,6 +50,11 @@ impl InputFrameFlags {
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+
+    #[must_use]
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
     }
 
     #[must_use]
@@ -161,6 +170,10 @@ impl InputFrame {
     #[must_use]
     pub const fn flags(self) -> InputFrameFlags {
         self.flags
+    }
+
+    pub const fn set_flags(&mut self, flags: InputFrameFlags) {
+        self.flags = flags;
     }
 
     #[must_use]

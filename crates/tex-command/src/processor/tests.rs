@@ -2,7 +2,10 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 #[cfg(feature = "profiling")]
-use crate::input::{InputLevel, MacroArgumentCursor};
+use crate::input::{
+    InputLevel, InputLevelId, MacroArgumentCursor, ResidentTokenRow, ResidentTokenStorage,
+    TokenRowHeader, packed_token_frame,
+};
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
@@ -1300,13 +1303,23 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 .scratch
                 .admitted_argument_origin_run(range)
                 .expect("argument provenance run");
-            command.push_input_level(InputLevel::MacroArgument(MacroArgumentCursor::new(
+            let behavior = TokenBehavior::Parameter;
+            let retirement = RetirementBehavior::Pop;
+            let trace = ReplayTrace::MacroParameter { slot: 1 };
+            let mut frame = packed_token_frame(
                 identity,
-                range,
-                1,
-                origin_run,
-                active_source,
-            )));
+                range.len() as usize,
+                &behavior,
+                retirement,
+                &trace,
+            );
+            frame.set_source_context(active_source);
+            command.push_input_level(InputLevel::Resident(ResidentTokenRow {
+                header: TokenRowHeader::new(behavior, retirement, trace, frame),
+                storage: ResidentTokenStorage::MacroArgument(MacroArgumentCursor::new(
+                    range, 1, origin_run,
+                )),
+            }));
 
             let mut capabilities = CommandHostCapabilities::default();
             let mut fuel = crate::CommandFuelLedger::default();

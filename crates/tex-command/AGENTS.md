@@ -265,21 +265,23 @@ collector (see `src/conditionals.rs`).
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
-  source/token cursors over one `PackedTokenSpanHandle` shape. Every concrete
-  token row embeds one authoritative `TokenRowHeader` carrying its packed
-  frame, rollback marker, behavior, retirement, and trace; the frame's limit is
-  the sole stored-span length, so the explicit-tag `InputLevel` remains 88
-  bytes without a metadata side lane. Replay, macro
+  source/token cursors. `InputLevel` has exactly a source variant and one
+  resident-token variant. Every resident row embeds one authoritative
+  `TokenRowHeader`; its packed frame carries identity, source context,
+  position, limit, semantic kind, delivery flags, and retirement flags beside
+  the row rollback marker. A tagged `ResidentTokenStorage` carries only the
+  replay, durable, attempt, macro-body, or macro-argument lifetime coordinate.
+  Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` through a reference-only `EmptyCommand`
   reborrow, resolves the resident packed word directly, returns only the
   scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
-  and advances only the owning cursor scalar. Replay, attempt, and durable rows
+  and advances only the common frame position. All resident storage domains
   share one header transition for first touch, logical position advance,
-  parameter interception, and exhaustion; their concrete variants perform only
-  the storage-specific word read. A successful safe read proves the admitted
+  parameter interception, and exhaustion; the storage tag performs only the
+  lifetime-specific word read. A successful safe read proves the admitted
   frame position and advances that scalar without a second bounds decision.
   Attempt-list admission validates the exact extent once, so resident delivery
   directly indexes its lifetime-specific storage without rebuilding a list view

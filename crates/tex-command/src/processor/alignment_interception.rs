@@ -156,31 +156,19 @@ impl<G> CommandProcessor<'_, '_, G> {
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
             match level {
-                level @ (InputLevel::ReplayTokens(_)
-                | InputLevel::DurableTokens(_)
-                | InputLevel::AttemptTokens(_)) => {
-                    let cursor = level.stored_common().expect("stored row");
+                level @ InputLevel::Resident(row) => {
+                    let cursor = &row.header;
                     if level.stored_is_exhausted() != Some(true) {
                         break;
                     }
                     if cursor.identity() == v_level
-                        && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                        && matches!(cursor.behavior(), TokenBehavior::VTemplate)
                         && matches!(
-                            cursor.retirement,
+                            cursor.retirement(),
                             RetirementBehavior::AwaitingVTemplateRetirement
                         )
                     {
                         found = true;
-                        break;
-                    }
-                }
-                InputLevel::MacroArgument(cursor) => {
-                    if !cursor.is_exhausted() {
-                        break;
-                    }
-                }
-                InputLevel::MacroBody(cursor) => {
-                    if !cursor.is_exhausted() {
                         break;
                     }
                 }

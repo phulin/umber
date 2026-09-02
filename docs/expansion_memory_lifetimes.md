@@ -917,16 +917,17 @@ replacement before the new occupant becomes eligible for direct reuse. A
 24-byte copy-only lexer cursor plus the four-byte input position is the only
 ordinary source execution state;
 control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
-The generation-tied `InputStack` owns stable source, stored-token, and direct
-macro-argument rows. Its one compact `InputUndo` history orders copy-small
+The generation-tied `InputStack` owns stable source rows and one resident-token
+row shape. Its one compact `InputUndo` history orders copy-small
 lexer/frame first touches, cold typed source-owner swaps, row replacement and
 reuse, retirement, rollback/redo, candidate settlement, and prefix release.
 Each row carries its own packed rollback epoch/state marker, so these operations
 select the row and its capture authority together without a parallel vector.
-Replay, attempt, and durable variants embed one authoritative token-row header.
-Its packed frame owns the sole span length and logical position beside behavior,
-retirement, trace, and the row rollback marker, leaving the explicit-tag
-`InputLevel` at 88 bytes without a side lane.
+Every non-source row embeds one authoritative token-row header. Its packed
+frame owns the sole identity, source context, span length, logical position,
+semantic kind, and delivery/retirement flags beside the row rollback marker.
+One tagged storage coordinate selects replay, durable, attempt, macro-body, or
+macro-argument lifetime without a metadata side lane.
 Only the first owner-changing transition of a checkpoint-visible source row is
 retained in an interval; later transitions drop their displaced intermediate
 owners, because rollback needs the initial owner and redo recovers the final
@@ -958,9 +959,9 @@ The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
 resident transition reads the `InputStack` top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal resident-
 top enum, repeats no row discrimination, and returns no cursor carrier. Its
-source branch lends the row and resident slot together, while its concrete
-replay, durable, attempt, macro-body, and macro-argument arms borrow the
-admitted span directly. Each advances only its owning cursor before ending that
+source branch lends the row and resident slot together; its one resident branch
+makes one tagged storage choice among replay, durable, attempt, macro-body, and
+macro-argument coordinates. Each advances the common frame position before ending that
 top borrow, then enters the same branch-independent final-command write and
 settlement tail. The same transition settles fuel, suppression, alignment, or
 parameter replay and returns only its final status. No cursor/token carrier,
@@ -971,9 +972,9 @@ and scalar advance, intercepts a parameter in place, or performs one final
 write with at most one dense meaning lookup. Replay words advance from the
 sole resident logical/physical coordinate: segment metadata is inspected only
 at crossed boundaries, and an e-TeX prefix changes runs only once before its
-body. A macro argument checks only its authoritative absolute cursor against
-the admitted end, reads separate packed word/origin parts, derives the delivery
-position, and advances that cursor once. It does not repeat the admission-time
+body. A macro argument derives its absolute coordinate from the common frame
+position, checks it against the admitted end, and reads separate packed
+word/origin parts before advancing the common position once. It does not repeat the admission-time
 lower/lane bounds or reify and split a traced-token carrier. Lazy
 diagnostic invalidation reads the advanced frame
 or source lexer coordinate only if a cold publication coordinate is captured
@@ -1018,7 +1019,7 @@ coordinates for `file_warning`. There is no shared usage ledger, post-open
 identity search, checkpoint source clone, or retirement-time ancestry clone. A durable token-list input now owns
 only the list id, chunk cursor, and length. Macro replacement input owns a
 definition coordinate; macro-argument input owns a sealed absolute scratch
-range and advances only its absolute cursor plus provenance-run index.
+range and advances only the common frame position plus provenance-run index.
 Small source-adjacent replay owns only a compact coordinate into the
 generation's segmented replay lane. Its traced words and optional source
 provenance are written once at admission. Popping the level releases exactly

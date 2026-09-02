@@ -109,10 +109,7 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
         .levels
         .iter()
         .rev()
-        .find_map(|level| match level {
-            crate::input::InputLevel::MacroBody(body) => body.arguments,
-            _ => None,
-        })
+        .find_map(|level| level.macro_body().and_then(|body| body.arguments))
         .expect("macro argument set");
     let range = processor
         .scratch
@@ -249,10 +246,7 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 .input
                 .levels
                 .last()
-                .and_then(|level| match level {
-                    crate::input::InputLevel::MacroBody(body) => Some(body),
-                    _ => None,
-                })
+                .and_then(crate::input::InputLevel::macro_body)
                 .expect("live macro body");
             assert_eq!(body.arguments.is_some(), has_arguments);
             assert_eq!(
@@ -347,10 +341,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
                     .input
                     .levels
                     .last()
-                    .and_then(|level| match level {
-                        crate::input::InputLevel::MacroBody(body) => Some(body),
-                        _ => None,
-                    })
+                    .and_then(crate::input::InputLevel::macro_body)
                     .expect("literal-prefix macro body");
                 assert!(body.arguments.is_none());
             }
@@ -399,7 +390,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
                 .input
                 .levels
                 .iter()
-                .any(|level| matches!(level, crate::input::InputLevel::MacroBody(_)))
+                .any(|level| level.macro_body().is_some())
         );
     });
 }
@@ -1231,10 +1222,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             .input
             .levels
             .iter()
-            .find_map(|level| match level {
-                crate::input::InputLevel::MacroBody(body) => body.arguments,
-                _ => None,
-            })
+            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
             .expect("long macro argument set");
         let range = processor
             .command
@@ -1379,10 +1367,7 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
             .input
             .levels
             .iter()
-            .find_map(|level| match level {
-                crate::input::InputLevel::MacroBody(body) => body.arguments,
-                _ => None,
-            })
+            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
             .expect("delimited macro argument set");
         let range = processor
             .command

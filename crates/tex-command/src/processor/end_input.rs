@@ -141,19 +141,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .levels
                 .last()
                 .and_then(|level| match level {
-                    level @ (InputLevel::ReplayTokens(_)
-                    | InputLevel::DurableTokens(_)
-                    | InputLevel::AttemptTokens(_)) => {
-                        let cursor = level.stored_common().expect("stored row");
-                        (!matches!(cursor.behavior, TokenBehavior::VTemplate)
+                    level @ InputLevel::Resident(row) => {
+                        let cursor = &row.header;
+                        (!matches!(cursor.behavior(), TokenBehavior::VTemplate)
                             && level.stored_is_exhausted() == Some(true))
                         .then(|| cursor.identity())
-                    }
-                    InputLevel::MacroArgument(cursor) => {
-                        cursor.is_exhausted().then(|| cursor.identity())
-                    }
-                    InputLevel::MacroBody(cursor) => {
-                        cursor.is_exhausted().then(|| cursor.identity())
                     }
                     InputLevel::Source(_) => None,
                 })
@@ -217,7 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             matches!(
                 level,
                 level if matches!(
-                    level.stored_common().map(|cursor| &cursor.trace),
+                    level.trace(),
                     Some(ReplayTrace::Stored(StoredReplayReason::OutputRoutine))
                 )
             )
@@ -229,9 +221,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            level @ (InputLevel::ReplayTokens(_)
-            | InputLevel::DurableTokens(_)
-            | InputLevel::AttemptTokens(_)) => level
+            level @ InputLevel::Resident(_) => level
                 .stored_indexed_token_at_cold(
                     PackedTokenSources::new(
                         &self.command.input.replay,
@@ -241,8 +231,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
                 .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
-            InputLevel::MacroBody(_) => unreachable!("output replay is not a macro body"),
-            InputLevel::MacroArgument(_) => unreachable!("output replay is not an argument"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
             .iter()
@@ -251,7 +239,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     level,
                     level
                         if matches!(
-                            level.stored_common().map(|cursor| &cursor.behavior),
+                            level.stored_common().map(|cursor| cursor.behavior()),
                             Some(TokenBehavior::BackedUp(_))
                         )
                             && level
@@ -280,12 +268,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         output.stored_common().expect("stored row").identity()
                                     }
                                     InputLevel::Source(_) => unreachable!("output token level"),
-                                    InputLevel::MacroBody(_) => {
-                                        unreachable!("output token level is not a macro body")
-                                    }
-                                    InputLevel::MacroArgument(_) => {
-                                        unreachable!("output token level is not an argument")
-                                    }
                                     _ => unreachable!("output token level remains stored"),
                                 } =>
                     {
@@ -301,12 +283,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .is_some(),
                         )
                     }
-                    InputLevel::Source(_)
-                    | InputLevel::ReplayTokens(_)
-                    | InputLevel::DurableTokens(_)
-                    | InputLevel::AttemptTokens(_)
-                    | InputLevel::MacroBody(_)
-                    | InputLevel::MacroArgument(_) => None,
+                    InputLevel::Source(_) | InputLevel::Resident(_) => None,
                 })
                 .unwrap_or(false)
             {
@@ -332,10 +309,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// one-token backup has ended before that hand-off and must be retired
     /// without fetching whatever lies beneath it.
     pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
-        let Some(level @ InputLevel::ReplayTokens(row)) = self.command.input.levels.last() else {
+        let Some(level @ InputLevel::Resident(row)) = self.command.input.levels.last() else {
             return Ok(());
         };
-        if !matches!(row.header.behavior, TokenBehavior::BackedUp(_))
+        if !matches!(
+            row.storage,
+            crate::input::ResidentTokenStorage::Replay { .. }
+        ) {
+            return Ok(());
+        }
+        let crate::input::ResidentTokenStorage::Replay { replay, .. } = row.storage else {
+            unreachable!()
+        };
+        if !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
             || level
                 .stored_indexed_token_at_cold(
                     PackedTokenSources::new(
@@ -349,7 +335,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command
                     .input
                     .replay
-                    .indexed_get_cold(row.replay, 0)
+                    .indexed_get_cold(replay, 0)
                     .map(|spelling| spelling.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
@@ -548,29 +534,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         loop {
             let depleted = match self.command.input.levels.last() {
-                Some(
-                    level @ (InputLevel::ReplayTokens(_)
-                    | InputLevel::DurableTokens(_)
-                    | InputLevel::AttemptTokens(_)),
-                ) if drains_for_stack_conservation(
-                    &level.stored_common().expect("stored row").behavior,
-                ) && level.stored_is_exhausted() == Some(true) =>
+                Some(level @ InputLevel::Resident(row))
+                    if drains_for_stack_conservation(&row.header.behavior())
+                        && level.stored_is_exhausted() == Some(true) =>
                 {
-                    Some(level.stored_common().expect("stored row").identity())
+                    Some(row.header.identity())
                 }
-                Some(InputLevel::MacroArgument(cursor)) if cursor.is_exhausted() => {
-                    Some(cursor.identity())
-                }
-                Some(InputLevel::MacroBody(cursor)) if cursor.is_exhausted() => {
-                    Some(cursor.identity())
-                }
-                Some(InputLevel::ReplayTokens(_))
-                | Some(InputLevel::DurableTokens(_))
-                | Some(InputLevel::AttemptTokens(_))
-                | Some(InputLevel::MacroBody(_))
-                | Some(InputLevel::MacroArgument(_))
-                | Some(InputLevel::Source(_))
-                | None => None,
+                Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
             };
             let Some(identity) = depleted else {
                 return Ok(());

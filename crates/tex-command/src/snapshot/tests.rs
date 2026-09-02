@@ -1211,7 +1211,7 @@ fn token_frame_history_is_one_compact_record_without_payload_clones() {
         let cursor = level
             .stored_common()
             .expect("restored token frame remains live");
-        assert_eq!(cursor.retirement, crate::input::RetirementBehavior::Pop);
+        assert_eq!(cursor.retirement(), crate::input::RetirementBehavior::Pop);
     });
 }
 

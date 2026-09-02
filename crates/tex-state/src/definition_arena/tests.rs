@@ -1391,7 +1391,7 @@ fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
             .definitions_mut()
             .allocate(&[], &replacement)
             .expect("rollback fixture");
-        let (_, _, mut body) = generation
+        let (_, _, body) = generation
             .definitions()
             .admit_macro_body(definition)
             .expect("resident body");
@@ -1403,20 +1403,19 @@ fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
             .enumerate()
             .take(checkpoint_position)
         {
-            assert_eq!(
-                body.advance_word(),
-                Some((expected_position as u32, expected))
-            );
+            assert_eq!(body.word(expected_position), Some(expected));
         }
-        let mut checkpoint = body.cursor();
-        let before = body.advance_word().expect("word before boundary");
-        let across = body.advance_word().expect("word across boundary");
+        let before = body
+            .word(checkpoint_position)
+            .expect("word before boundary");
+        let across = body
+            .word(checkpoint_position + 1)
+            .expect("word across boundary");
         assert_ne!(before, across);
-        body.swap_cursor(&mut checkpoint);
         assert_eq!(
-            body.advance_word(),
+            body.word(checkpoint_position),
             Some(before),
-            "restoring the opaque absolute cursor restores the same chunk-local read"
+            "the immutable coordinate repeats the same chunk-local read"
         );
     });
 }

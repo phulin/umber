@@ -6,8 +6,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use crate::command::DeliveryStamp;
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
-    InputLevel, InputLevelId, ResidentCommandColdTransition, ResidentCommandInterception,
-    SourceNameClass,
+    InputLevelId, ResidentCommandColdTransition, ResidentCommandInterception, SourceNameClass,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -936,9 +935,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         cursor.frame.source_context(),
                                     )
                                 })
-                            }
-                            InputLevel::MacroArgument(cursor) if cursor.identity() == identity => {
-                                Some((cursor.position() as u32, cursor.active_source()))
                             }
                             _ => None,
                         })

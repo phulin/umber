@@ -184,7 +184,7 @@ pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
     DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey, DefinitionBuildPhase,
     DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView, DefinitionWords,
-    ResidentMacroBody, ResidentMacroBodyCursor,
+    ResidentMacroBody,
 };
 #[cfg(any(test, feature = "testing"))]
 pub use definition_arena::{

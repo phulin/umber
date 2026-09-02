@@ -1090,16 +1090,16 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
                     .input
                     .levels
                     .last()
-                    .and_then(|level| match level {
-                        crate::input::InputLevel::MacroBody(body) => Some(body),
-                        _ => None,
-                    })
+                    .and_then(crate::input::InputLevel::macro_body)
                     .expect("live macro body");
                 assert_eq!(body.body.definition_ref().semantic_owner_count(), 0);
-                assert!(matches!(
-                    state.input.levels.last(),
-                    Some(crate::input::InputLevel::MacroBody(_))
-                ));
+                assert!(
+                    state
+                        .input
+                        .levels
+                        .last()
+                        .is_some_and(|level| level.macro_body().is_some())
+                );
                 assert_eq!(state.scratch.frame_len(), 0);
                 let retained_before_context = tex_state::definition_retain_count();
                 assert!(state.output_open_context(&context).contains("ownerprobe"));
