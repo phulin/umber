@@ -259,7 +259,10 @@ collector (see `src/conditionals.rs`).
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
-  source/token cursors over one `PackedTokenSpanHandle` shape. Replay, macro
+  source/token cursors over one `PackedTokenSpanHandle` shape. Every concrete
+  row owns its packed rollback epoch/state marker directly; the stored-span
+  length occupies the common cursor's former tail padding, so the explicit-tag
+  `InputLevel` remains 88 bytes without a metadata side lane. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` through a reference-only `EmptyCommand`

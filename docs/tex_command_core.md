@@ -2160,11 +2160,15 @@ ordered `InputUndo` journal as row replacement, retirement, candidate
 settlement, and prefix release, so direct restore and candidate reject/redo
 cannot settle source state separately from its input row. No
 `SourceCursor`, `SourceLineState`, or `SourceOpenDepths` implements `Clone`.
-One row-aligned eight-byte rollback marker packs its capture epoch with an
-admitted, inline-captured, or cold-captured state. An epoch mismatch directly
-means the row predates the current capture. This single lane selects ordinary
-first touch, rare cold capture, and safe pop/push reuse in constant time; the
-former parallel touched, partial, and cold epoch vectors do not exist.
+Each authoritative `InputLevel` directly owns one eight-byte rollback marker
+which packs its capture epoch with an admitted, inline-captured, or cold-
+captured state. An epoch mismatch directly means the row predates the current
+capture. The marker selects ordinary first touch, rare cold capture, and safe
+pop/push reuse in constant time from the same row lookup; no row-aligned side
+lane or former parallel touched, partial, and cold epoch vectors exist. Stored
+span length moved into the common token cursor's existing tail padding, and an
+explicit compact row tag keeps `InputLevel` at 88 bytes with direct variant
+dispatch.
 The first mutation or owner transition of one row visible at a legal checkpoint
 or operation mark records the old state; later cursor and owner advances
 coalesce into that record and the live row holds the final state. Rollback
