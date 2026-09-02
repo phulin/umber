@@ -23,6 +23,21 @@ fn print_nl_publication_uses_post_effect_selected_line_state() {
     );
 }
 
+#[test]
+fn encoded_print_nl_preserves_high_bytes_and_shared_line_start() {
+    let mut world = World::memory();
+    world.publish_print_text(PrintSink::Terminal, "term", 79);
+    world.publish_print_nl_encoded_bytes(PrintSink::TerminalAndLog, &[0xc3, 0xa3, b'\n'], 79);
+    let end = world.effect_pos();
+    world.commit_effects(end).expect("commit encoded print");
+
+    assert_eq!(
+        world.memory_terminal_output(),
+        Some(&b"term\n\xc3\xa3\n"[..])
+    );
+    assert_eq!(world.memory_log_output(), Some(&b"\n\xc3\xa3\n"[..]));
+}
+
 fn source(path: &str, start: u64, end: u64) -> ArtifactSourceRecipe {
     ArtifactSourceRecipe {
         content: ContentHash::for_domain(ContentDomain::Input, path.as_bytes()),

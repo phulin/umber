@@ -110,20 +110,19 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
         .expect("mutated box closure fits durable storage");
 }
 
-/// TeX82 §1370's printable-sink framing for an immediate `\write`.
+/// Queues TeX output whose character codes have crossed the immutable
+/// command-profile encoding boundary.
 ///
-/// A closed numbered stream (including stream 16) temporarily becomes a
-/// normal print selector: `print_nl(""); token_show(...); print_ln`. Going
-/// through [`tex_state::print::Printer`] is essential here because the
-/// process may select a `max_print_line` other than tex.web's compile-time default, and
-/// because the leading `print_nl` owns the break after a preceding
-/// newline-less `\message`. Real output files have neither print columns nor
-/// that leading break.
-pub(in crate::main_control) fn write_immediate_text<G>(
+/// When the encoded bytes already equal the Rust string's UTF-8 bytes, the
+/// ordinary text effect remains sufficient. Exact-byte high characters use
+/// [`tex_state::EffectRecord::StreamWriteBytes`] so their byte identity
+/// survives rollback and final host commit.
+pub(in crate::main_control) fn write_immediate_encoded_text<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
     sink: PrintSink,
-    text: &str,
+    text: String,
+    bytes: Vec<u8>,
 ) {
     let max_print_line = match sink {
         PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog => {
@@ -131,9 +130,11 @@ pub(in crate::main_control) fn write_immediate_text<G>(
         }
         PrintSink::Stream(_) => tex_state::print::MAX_PRINT_LINE,
     };
+    let encoded = (bytes.as_slice() != text.as_bytes()).then_some(bytes);
     command.immediate_prints.push(ImmediatePrint {
         sink,
-        text: text.to_owned(),
+        text,
+        encoded,
         max_print_line,
         ensure_line_start: !matches!(sink, PrintSink::Stream(_)),
     });
@@ -142,8 +143,8 @@ pub(in crate::main_control) fn write_immediate_text<G>(
 /// Queues text whose producer has already applied TeX's `print_nl` framing.
 ///
 /// `report_openout` samples the selected sinks' live offsets and owns its
-/// leading newline. Reapplying [`write_immediate_text`]'s open-line rule would
-/// turn that one canonical break into a blank line.
+/// leading newline. Reapplying immediate `\write`'s open-line rule would turn
+/// that one canonical break into a blank line.
 pub(in crate::main_control) fn write_preframed_immediate_text<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
@@ -153,6 +154,7 @@ pub(in crate::main_control) fn write_preframed_immediate_text<G>(
     command.immediate_prints.push(ImmediatePrint {
         sink,
         text,
+        encoded: None,
         max_print_line: stores.printer().max_print_line(),
         ensure_line_start: false,
     });

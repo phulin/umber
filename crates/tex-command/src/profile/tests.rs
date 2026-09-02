@@ -154,6 +154,28 @@ fn output_encoding_policy_distinguishes_exact_bytes_from_unicode() {
 }
 
 #[test]
+fn output_text_reapplies_the_profile_domain_after_token_display() {
+    let exact = CommandProfile::TEX82;
+    let unicode = CommandProfile::unicode_extended(CommandDialect::Tex82);
+
+    // Exact-byte token display projects 0xC3 and 0xA3 through their
+    // corresponding Rust scalars; the output boundary must not UTF-8 encode
+    // those scalar projections a second time.
+    assert_eq!(
+        exact.encode_output_text("MagalhÃ£es"),
+        Ok(b"Magalh\xc3\xa3es".to_vec())
+    );
+    assert_eq!(
+        unicode.encode_output_text("Magalhães"),
+        Ok(b"Magalh\xc3\xa3es".to_vec())
+    );
+    assert_eq!(
+        exact.encode_output_text("outside-\u{100}"),
+        Err(CharacterCodeError::ExpectedByte)
+    );
+}
+
+#[test]
 fn capabilities_are_semantic_and_validated_during_decode() {
     let tex = CommandProfile::TEX82.capabilities();
     assert!(!tex.supports_etex());

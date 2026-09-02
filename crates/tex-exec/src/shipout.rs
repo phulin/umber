@@ -41,6 +41,7 @@ pub(crate) trait ShipoutGeometrySink {
 
 pub(crate) struct ExpandedWrite {
     pub(crate) text: String,
+    pub(crate) encoded: Option<Vec<u8>>,
     pub(crate) publication: WritePublication,
 }
 
@@ -50,9 +51,11 @@ pub(crate) enum WritePublication {
 }
 
 impl ExpandedWrite {
-    pub(crate) fn transactional(text: String) -> Self {
+    pub(crate) fn transactional_encoded(text: String, bytes: Vec<u8>) -> Self {
+        let encoded = (bytes.as_slice() != text.as_bytes()).then_some(bytes);
         Self {
             text,
+            encoded,
             publication: WritePublication::Transactional,
         }
     }

@@ -215,6 +215,7 @@ fn next_non_blank_x_token_into<G>(
 struct ImmediatePrint {
     sink: PrintSink,
     text: String,
+    encoded: Option<Vec<u8>>,
     max_print_line: usize,
     ensure_line_start: bool,
 }
@@ -7687,18 +7688,35 @@ impl<G> MainControl<G> {
                     .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
             }
             for print in command.immediate_prints.drain(..) {
-                if print.ensure_line_start {
-                    stores.world_mut().publish_print_nl_text(
-                        print.sink,
-                        &print.text,
-                        print.max_print_line,
-                    );
-                } else {
-                    stores.world_mut().publish_print_text(
-                        print.sink,
-                        &print.text,
-                        print.max_print_line,
-                    );
+                match print.encoded {
+                    Some(bytes) if print.ensure_line_start => {
+                        stores.world_mut().publish_print_nl_encoded_bytes(
+                            print.sink,
+                            &bytes,
+                            print.max_print_line,
+                        );
+                    }
+                    Some(bytes) => {
+                        stores.world_mut().publish_print_encoded_bytes(
+                            print.sink,
+                            &bytes,
+                            print.max_print_line,
+                        );
+                    }
+                    None if print.ensure_line_start => {
+                        stores.world_mut().publish_print_nl_text(
+                            print.sink,
+                            &print.text,
+                            print.max_print_line,
+                        );
+                    }
+                    None => {
+                        stores.world_mut().publish_print_text(
+                            print.sink,
+                            &print.text,
+                            print.max_print_line,
+                        );
+                    }
                 }
             }
             if let Some(shipout) = command.prepared_shipout.take() {

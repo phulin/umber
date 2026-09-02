@@ -1058,9 +1058,17 @@ fn append_whatsit_effect<G>(
                 // of the write's own text; the leading `print_nl` is not.
                 if expanded.publication == crate::shipout::WritePublication::Transactional {
                     if write_line_is_open(stores, sink) {
-                        stores.world_mut().write_text(sink, "\n");
+                        if expanded.encoded.is_some() {
+                            stores.world_mut().write_encoded_bytes(sink, b"\n");
+                        } else {
+                            stores.world_mut().write_text(sink, "\n");
+                        }
                     }
-                    stores.world_mut().write_text(sink, &text);
+                    if let Some(bytes) = expanded.encoded.as_deref() {
+                        stores.world_mut().write_encoded_bytes(sink, bytes);
+                    } else {
+                        stores.world_mut().write_text(sink, &text);
+                    }
                 }
                 effects.push(PageEffect::Write {
                     sink: lower_sink(sink),

@@ -2395,8 +2395,13 @@ pub(in crate::main_control) fn apply<G>(
                 }
                 RootedImmediateExtension::Write { stream, tokens } => {
                     let text = write_text(tokens.prepared(), stores);
+                    let bytes = command
+                        .state
+                        .profile()
+                        .encode_output_text(&text)
+                        .expect("write text belongs to the active command character domain");
                     if let Some(sink) = immediate_write_sink(*stream, stores) {
-                        write_immediate_text(stores, command, sink, &text);
+                        write_immediate_encoded_text(stores, command, sink, text, bytes);
                     }
                 }
                 RootedImmediateExtension::CloseOut { stream } => {

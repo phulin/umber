@@ -581,7 +581,10 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
                              _: &mut tex_state::diagnostic::DiagnosticEffects,
                              _: PrintSink,
                              _: tex_state::ShipoutTokenSource<_>| {
-                Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()))
+                Ok(crate::shipout::ExpandedWrite::transactional_encoded(
+                    "w\n".into(),
+                    b"w\n".to_vec(),
+                ))
             };
             let mut unexpected_replay =
                 |_: &mut Universe<_>,
@@ -896,6 +899,66 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
         immediate_text, deferred_text,
         "unchanged meanings and newlinechar give immediate/deferred byte parity"
     );
+}
+
+#[test]
+fn exact_byte_profile_serializes_immediate_and_deferred_write_characters_once() {
+    // TeX82 §§58, 262, and 1370: exact-byte input tokens remain internal
+    // character codes through token_show; print_char applies xchr exactly
+    // once when the open write_file selector commits them.
+    let mut source = br"\immediate\openout0=bytes
+        \immediate\write0{Magalh"
+        .to_vec();
+    source.extend_from_slice(&[0xc3, 0xa3]);
+    source.extend_from_slice(
+        br"es}
+        \shipout\hbox{\write0{Magalh",
+    );
+    source.extend_from_slice(&[0xc3, 0xa3]);
+    source.extend_from_slice(
+        br"es}}
+        \immediate\closeout0\end",
+    );
+
+    with_observed_run(&source, |universe, _, observations| {
+        assert_eq!(
+            universe.world().memory_output("bytes.tex"),
+            Some(&b"Magalh\xc3\xa3es\nMagalh\xc3\xa3es\n"[..])
+        );
+        let byte_pairs = observations
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Effect(effect)
+                    if effect.kind == ObservationEffectKind::Write =>
+                {
+                    match &effect.value {
+                        ObservationValue::Tokens(tokens) => Some(tokens.as_slice()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .filter(|tokens| {
+                tokens.windows(2).any(|pair| {
+                    matches!(
+                        pair,
+                        [
+                            ObservedToken::Character {
+                                character: 'Ã', ..
+                            },
+                            ObservedToken::Character {
+                                character: '£', ..
+                            }
+                        ]
+                    )
+                })
+            })
+            .count();
+        assert_eq!(
+            byte_pairs, 2,
+            "immediate and deferred expansion retain exact byte-domain token codes"
+        );
+    });
 }
 
 #[test]

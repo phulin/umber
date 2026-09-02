@@ -367,6 +367,31 @@ impl CommandProfile {
         }
     }
 
+    /// Encodes token-display text for an externally committed TeX output.
+    ///
+    /// Token display uses Rust scalars as its compact spelling representation
+    /// in both character modes. Exact-byte jobs map
+    /// `U+0000..=U+00FF` back to their one-byte TeX character codes here;
+    /// Unicode jobs encode their scalar spellings as UTF-8. Keeping this at
+    /// the immutable profile boundary prevents an exact byte such as `0xC3`
+    /// from being encoded a second time merely because token display used a
+    /// Rust [`String`].
+    pub fn encode_output_text(self, text: &str) -> Result<Vec<u8>, CharacterCodeError> {
+        let mut output = Vec::with_capacity(text.len());
+        match self.characters {
+            CharacterMode::EightBitExact => {
+                for character in text.chars() {
+                    output.push(
+                        u8::try_from(u32::from(character))
+                            .map_err(|_| CharacterCodeError::ExpectedByte)?,
+                    );
+                }
+            }
+            CharacterMode::UnicodeExtended => output.extend_from_slice(text.as_bytes()),
+        }
+        Ok(output)
+    }
+
     /// Returns semantic capabilities derived from this immutable profile.
     #[must_use]
     pub const fn capabilities(self) -> CommandCapabilities {

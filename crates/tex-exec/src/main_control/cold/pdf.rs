@@ -20,6 +20,12 @@ pub(in crate::main_control) fn write_text<G>(
     text
 }
 
+fn encode_write_text(profile: tex_command::CommandProfile, text: &str) -> Vec<u8> {
+    profile
+        .encode_output_text(text)
+        .expect("token display belongs to the active command character domain")
+}
+
 /// TeX's eight-bit extension payload convention, with UTF-8 retained for
 /// extended host-profile characters exactly as the legacy byte boundary does.
 pub(in crate::main_control) fn tex_byte_text(text: &str) -> Vec<u8> {
@@ -849,7 +855,10 @@ pub(in crate::main_control) fn replay_write<G>(
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(&*stores, &text);
     text.push('\n');
-    Ok(crate::shipout::ExpandedWrite::transactional(text))
+    let bytes = encode_write_text(command.state.profile(), &text);
+    Ok(crate::shipout::ExpandedWrite::transactional_encoded(
+        text, bytes,
+    ))
 }
 
 fn replay_text_transaction<G>(
@@ -1716,7 +1725,10 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             )?;
         }
         text.push('\n');
-        Ok(crate::shipout::ExpandedWrite::transactional(text))
+        let bytes = encode_write_text(command.state.profile(), &text);
+        Ok(crate::shipout::ExpandedWrite::transactional_encoded(
+            text, bytes,
+        ))
     };
     let mut expand_replay = |stores: &mut Universe<G>,
                              _: &mut DiagnosticEffects,

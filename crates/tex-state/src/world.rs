@@ -4293,6 +4293,50 @@ impl World {
         }
     }
 
+    /// Publishes bytes which already crossed the command-profile encoding
+    /// boundary, after applying tex.web §62's live `print_nl` predicate.
+    ///
+    /// This is the byte-domain counterpart of [`Self::publish_print_nl_text`]
+    /// for immediate `\write` output. The two selected printable sinks share
+    /// §62's predicate, while §58 still meters their resulting byte streams
+    /// independently.
+    pub fn publish_print_nl_encoded_bytes(
+        &mut self,
+        sink: PrintSink,
+        bytes: &[u8],
+        max_print_line: usize,
+    ) {
+        let (terminal_open, log_open) = {
+            let bufs = self.stream_bufs();
+            (bufs.terminal_offset != 0, bufs.log_offset != 0)
+        };
+        let line_is_open = match sink {
+            PrintSink::Terminal => terminal_open,
+            PrintSink::Log => log_open,
+            PrintSink::TerminalAndLog => terminal_open || log_open,
+            PrintSink::Stream(_) => false,
+        };
+        if line_is_open {
+            let mut framed = Vec::with_capacity(bytes.len().saturating_add(1));
+            framed.push(b'\n');
+            framed.extend_from_slice(bytes);
+            self.write_encoded_bytes_with_line_limit(sink, &framed, max_print_line);
+        } else {
+            self.write_encoded_bytes_with_line_limit(sink, bytes, max_print_line);
+        }
+    }
+
+    /// Publishes already encoded bytes with the process-selected print-line
+    /// width retained by the admitted printer.
+    pub fn publish_print_encoded_bytes(
+        &mut self,
+        sink: PrintSink,
+        bytes: &[u8],
+        max_print_line: usize,
+    ) {
+        self.write_encoded_bytes_with_line_limit(sink, bytes, max_print_line);
+    }
+
     /// Detaches tex.web's terminal and transcript partial-line predicates for
     /// an outer publication barrier.
     #[must_use]
