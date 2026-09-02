@@ -203,7 +203,13 @@ interpreter, including origin restoration and typed `pdf_writer` operators.
 For mapped scalable fonts, that interpreter retains the current text position
 across compatible character, kern, glue, and direct-color operations and emits
 the intervening movement as a `TJ` adjustment, following pdftex.web §690's
-`pdf_begin_string`; fonts without the same `/Widths` raster remain absolutely
+`pdf_begin_string`. One pending `TJ` array spans adjacent glyph and kern/glue
+runs until a font, text-matrix, literal, or graphics boundary requires
+`pdf_end_string`; an unchanged PDF font resource and TeX font size do not emit
+another `Tf`. Section 690's `pdf_set_text_pos` uses relative `Td` placement
+while both the old and new horizontal expansion ratios are zero, including the
+first unexpanded position after `BT`, and uses absolute `Tm` whenever either
+ratio is nonzero. Fonts without the same `/Widths` raster remain absolutely
 positioned. Character-width accumulation uses pdfTeX's independent four-place
 font-size raster, `/Widths` preserves its one-decimal text-space coefficients,
 and `Tf` serializes that same four-place font-size value; none uses the

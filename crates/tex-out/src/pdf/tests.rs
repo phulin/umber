@@ -106,7 +106,7 @@ fn begin_text_restores_page_origin_after_an_origin_literal() {
             "1 0 0 1 -10 -20 cm\n",
             "BT\n",
             "/F1 10 Tf\n",
-            "1 0 0 1 30 40 Tm\n",
+            "30 40 Td\n",
             "(A) Tj\n",
             "ET\n",
             "q\n",
@@ -153,7 +153,8 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
     ]);
     let content = String::from_utf8(bytes).expect("ASCII content");
     assert_eq!(content.matches("BT").count(), 1);
-    assert!(content.contains("(A) Tj\nDIRECT\n/F1"), "{content}");
+    assert!(content.contains("(A) Tj\nDIRECT\n0 0 Td"), "{content}");
+    assert_eq!(content.matches("/F1 10 Tf").count(), 1, "{content}");
     assert!(content.contains("(B) Tj\nET\nPAGE"), "{content}");
 }
 
@@ -186,11 +187,52 @@ fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
         concat!(
             "BT\n",
             "/F1 10 Tf\n",
-            "1 0 0 1 10 20 Tm\n",
+            "10 20 Td\n",
             "(A) Tj\n",
             "0 g\n",
-            "/F1 10 Tf\n",
             "[-200 (B)] TJ\n",
+            "ET",
+        )
+    );
+}
+
+#[test]
+fn mapped_text_uses_td_and_consolidates_adjacent_glyph_and_kern_runs() {
+    let run = |x: f64, bytes: &[u8]| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: x as f32,
+            raster: Some(PdfContentTextRaster {
+                serialized_x: x,
+                position_x: x,
+                font_size: 10.0,
+                exact: None,
+                glyphs: bytes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| PdfContentGlyphRaster {
+                        position_x: x + index as f64 * 5.0,
+                        advance: 5.0,
+                        position_raw: 0,
+                        width_raw: 0,
+                    })
+                    .collect(),
+            }),
+            baseline: 20.0,
+            font_name: b"F42".to_vec(),
+            font_size: 17.215,
+            horizontal_scale: 1.0,
+            bytes: bytes.to_vec(),
+            advance: Some(bytes.len() as f64 * 5.0),
+        })
+    };
+    let bytes = ordered_page_content(&[run(10.0, b"Global"), run(43.02, b"exp")]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        concat!(
+            "BT\n",
+            "/F42 17.215 Tf\n",
+            "10 20 Td\n",
+            "[(Global) -302 (exp)] TJ\n",
             "ET",
         )
     );

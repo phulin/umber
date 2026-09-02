@@ -53,7 +53,27 @@ struct PdfPainter {
     origin: (f32, f32),
     saved_origins: Vec<(f32, f32)>,
     in_text: bool,
+    current_font: Option<PdfTextFont>,
+    text_matrix: Option<PdfTextMatrix>,
     text_cursor: Option<PdfTextCursor>,
+    pending_text: Vec<PdfTextItem>,
+}
+
+struct PdfTextFont {
+    name: Vec<u8>,
+    size: f32,
+}
+
+#[derive(Clone, Copy)]
+struct PdfTextMatrix {
+    x: f32,
+    baseline: f32,
+    horizontal_scale: f32,
+}
+
+enum PdfTextItem {
+    Text(Vec<u8>),
+    Adjustment(f32),
 }
 
 #[derive(Clone, Copy)]
@@ -77,7 +97,10 @@ impl PdfPainter {
             origin: (0.0, 0.0),
             saved_origins: Vec::new(),
             in_text: false,
+            current_font: None,
+            text_matrix: None,
             text_cursor: None,
+            pending_text: Vec::new(),
         }
     }
 
@@ -157,6 +180,12 @@ impl PdfPainter {
             self.set_origin(0.0, 0.0);
             self.content.begin_text();
             self.in_text = true;
+            self.current_font = None;
+            self.text_matrix = Some(PdfTextMatrix {
+                x: 0.0,
+                baseline: 0.0,
+                horizontal_scale: 1.0,
+            });
         }
         let (x, baseline) = self.relative_position(run.x, run.baseline);
         let serialized_x = run
@@ -169,7 +198,6 @@ impl PdfPainter {
             .as_ref()
             .map(|raster| raster.position_x - f64::from(self.origin.0))
             .unwrap_or_else(|| f64::from(x));
-        self.content.set_font(Name(&run.font_name), run.font_size);
         if let (Some(cursor), Some(advance)) = (self.text_cursor, run.advance)
             && cursor.baseline == baseline
             && cursor.horizontal_scale == run.horizontal_scale
@@ -189,6 +217,7 @@ impl PdfPainter {
                 let adjustment = exact_first_adjustment(run, cursor)
                     .unwrap_or_else(|| (-(positioning_x - cursor.x) / text_unit).round());
                 if adjustment.abs() < 32_768.0 {
+                    self.select_font(run);
                     let raster_cursor = if has_glyph_raster(run) {
                         self.show_rastered_text(
                             run,
@@ -200,13 +229,10 @@ impl PdfPainter {
                         )
                     } else {
                         if adjustment == 0.0 {
-                            self.content.show(Str(&run.bytes));
+                            self.append_text(&run.bytes);
                         } else {
-                            self.content
-                                .show_positioned()
-                                .items()
-                                .adjust(adjustment as f32)
-                                .show(Str(&run.bytes));
+                            self.append_adjustment(adjustment as f32);
+                            self.append_text(&run.bytes);
                         }
                         None
                     };
@@ -222,8 +248,9 @@ impl PdfPainter {
                 }
             }
         }
-        self.content
-            .set_text_matrix([run.horizontal_scale, 0.0, 0.0, 1.0, x, baseline]);
+        self.flush_text();
+        self.select_font(run);
+        self.set_text_position(x, baseline, run.horizontal_scale);
         let text_unit = run
             .raster
             .as_ref()
@@ -241,6 +268,7 @@ impl PdfPainter {
                 f64::from(self.origin.0),
             )
         } else {
+            self.flush_text();
             self.content.show(Str(&run.bytes));
             None
         };
@@ -309,28 +337,26 @@ impl PdfPainter {
             }
         }
         if adjustments.iter().all(|adjustment| *adjustment == 0.0) {
-            self.content.show(Str(&run.bytes));
+            self.append_text(&run.bytes);
             return Some(PdfRasteredTextCursor {
                 x: cursor_x,
                 exact: exact_cursor.take(),
             });
         }
 
-        let mut operation = self.content.show_positioned();
-        let mut items = operation.items();
         let mut string_start = 0;
         for (index, adjustment) in adjustments.iter().copied().enumerate() {
             if adjustment == 0.0 {
                 continue;
             }
             if string_start < index {
-                items.show(Str(&run.bytes[string_start..index]));
+                self.append_text(&run.bytes[string_start..index]);
             }
-            items.adjust(adjustment as f32);
+            self.append_adjustment(adjustment as f32);
             string_start = index;
         }
         if string_start < run.bytes.len() {
-            items.show(Str(&run.bytes[string_start..]));
+            self.append_text(&run.bytes[string_start..]);
         }
         Some(PdfRasteredTextCursor {
             x: cursor_x,
@@ -341,6 +367,8 @@ impl PdfPainter {
     fn prepare_literal(&mut self, mode: crate::PdfLiteralMode, x: f32, y: f32) {
         if mode != crate::PdfLiteralMode::Direct {
             self.end_text();
+        } else {
+            self.flush_text();
         }
         if mode == crate::PdfLiteralMode::Origin {
             self.set_origin(x, y);
@@ -383,10 +411,82 @@ impl PdfPainter {
 
     fn end_text(&mut self) {
         if self.in_text {
+            self.flush_text();
             self.content.end_text();
             self.in_text = false;
         }
+        self.current_font = None;
+        self.text_matrix = None;
         self.text_cursor = None;
+    }
+
+    fn select_font(&mut self, run: &super::PdfContentTextRun) {
+        if self
+            .current_font
+            .as_ref()
+            .is_some_and(|font| font.name == run.font_name && font.size == run.font_size)
+        {
+            return;
+        }
+        self.flush_text();
+        self.content.set_font(Name(&run.font_name), run.font_size);
+        self.current_font = Some(PdfTextFont {
+            name: run.font_name.clone(),
+            size: run.font_size,
+        });
+    }
+
+    fn set_text_position(&mut self, x: f32, baseline: f32, horizontal_scale: f32) {
+        let matrix = self
+            .text_matrix
+            .expect("an open PDF text object has a text matrix");
+        if horizontal_scale != 1.0 || matrix.horizontal_scale != 1.0 {
+            self.content
+                .set_text_matrix([horizontal_scale, 0.0, 0.0, 1.0, x, baseline]);
+        } else {
+            self.content
+                .next_line(x - matrix.x, baseline - matrix.baseline);
+        }
+        self.text_matrix = Some(PdfTextMatrix {
+            x,
+            baseline,
+            horizontal_scale,
+        });
+    }
+
+    fn append_text(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if let Some(PdfTextItem::Text(text)) = self.pending_text.last_mut() {
+            text.extend_from_slice(bytes);
+        } else {
+            self.pending_text.push(PdfTextItem::Text(bytes.to_vec()));
+        }
+    }
+
+    fn append_adjustment(&mut self, adjustment: f32) {
+        if adjustment != 0.0 {
+            self.pending_text.push(PdfTextItem::Adjustment(adjustment));
+        }
+    }
+
+    fn flush_text(&mut self) {
+        if self.pending_text.is_empty() {
+            return;
+        }
+        let mut operation = self.content.show_positioned();
+        let mut items = operation.items();
+        for item in self.pending_text.drain(..) {
+            match item {
+                PdfTextItem::Text(text) => {
+                    items.show(Str(&text));
+                }
+                PdfTextItem::Adjustment(adjustment) => {
+                    items.adjust(adjustment);
+                }
+            }
+        }
     }
 
     fn finish(mut self) -> Vec<u8> {
