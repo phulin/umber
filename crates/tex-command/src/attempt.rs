@@ -1012,9 +1012,13 @@ impl<G> AttemptArena<G> {
         debug_assert_eq!(row.serial, id.serial);
         match row.value {
             AttemptTokenStorage::Range(range) => {
-                let index = range.start as usize + index;
-                debug_assert!(index < range.start as usize + range.len as usize);
-                self.traced_words.get(index).copied()
+                // TeX82 §357 treats `loc=null` as exhaustion. The attempt
+                // lane can hold a later list after this range, so enforce this
+                // list's own extent before translating to an arena index.
+                (index < range.len as usize)
+                    .then(|| range.start as usize + index)
+                    .and_then(|index| self.traced_words.get(index))
+                    .copied()
             }
             AttemptTokenStorage::Buffer(buffer) => {
                 let row = self.token_buffers.get(buffer.index())?;

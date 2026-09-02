@@ -20,6 +20,20 @@ fn word(ch: char) -> TracedTokenWord {
     )
 }
 
+#[test]
+fn resident_empty_range_does_not_read_a_later_attempt_list() {
+    let mut attempt = AttemptArena::<()>::default();
+    let empty = attempt
+        .allocate_token_list([])
+        .expect("empty attempt token list allocates");
+    let later = attempt
+        .allocate_token_list([word('x')])
+        .expect("later attempt token list allocates");
+
+    assert_eq!(attempt.resident_token_word(&empty, 0), None);
+    assert_eq!(attempt.resident_token_word(&later, 0), Some(word('x')));
+}
+
 fn glue(width: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),
