@@ -119,6 +119,11 @@ fn logical_coordinates_are_pool_stable_and_reuse_increments_incarnation() {
     ));
     assert_eq!(view.get(replacement).expect("replacement")[0], 99);
     assert_eq!(view.get(positions[7]).expect("retained")[0], 7);
+    assert_eq!(
+        view.get(positions[0].checked_add_offset(7).expect("offset"))
+            .expect("advanced")[0],
+        7
+    );
     assert_eq!(table.metrics().logical_rows_reused, 1);
     assert_eq!(table.metrics().logical_stale_rejections, 1);
     assert_eq!(store.metrics().superblocks_reused, 1);

@@ -53,6 +53,16 @@ impl LogicalPosition {
     pub const fn offset(self) -> u32 {
         self.offset
     }
+
+    /// Advances within the same logical block. Resolution still validates the
+    /// resulting offset against the selected accepted or candidate prefix.
+    #[must_use]
+    pub fn checked_add_offset(self, additional: u32) -> Option<Self> {
+        Some(Self {
+            block: self.block,
+            offset: self.offset.checked_add(additional)?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +83,23 @@ impl LogicalCursor {
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.total_len == 0
+    }
+
+    #[must_use]
+    pub const fn logical_blocks(self) -> u32 {
+        self.order_len
+    }
+
+    /// Zero denotes an exact physical-block boundary. A nonzero value is the
+    /// initialized prefix copied by an interior candidate fork.
+    #[must_use]
+    pub const fn tail_len(self) -> u32 {
+        self.tail_len
+    }
+
+    #[must_use]
+    pub const fn boundary_block(self) -> Option<LogicalBlockId> {
+        self.boundary
     }
 }
 
