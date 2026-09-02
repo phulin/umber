@@ -74,10 +74,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   compatibility preparation path, or per-token payload exists.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
-  ordinary-group families. These commands bypass `ColdOperation`; the scanner
-  writes the completed hot operation into the existing caller-owned
-  `CommandEpisode`, root preparation mutates that resident operation, and
-  typed execution consumes its fields without a second carrier. Definition, let,
+  ordinary-group families. These commands bypass `ColdOperation`; dispatch
+  returns the completed hot operation directly to the admitted caller, which
+  applies it without storing it in `CommandEpisode`. Definition, let,
   and catcode delivery, expansion, scanning, application, ordered evidence
   publication, and §1269 `afterassignment` backup share one callback-scoped
   admitted context; a group transition ends admission before a possible

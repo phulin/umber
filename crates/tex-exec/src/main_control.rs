@@ -5,7 +5,6 @@
 //! `tex-command`; no independent source stack is accepted here.
 
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
@@ -121,7 +120,7 @@ use cold::*;
 use command_episode::*;
 use delivery::*;
 use executor_facts::ExecutorHostFacts;
-use executor_facts::{OperationPreparation, OperationPreparationScope};
+use executor_facts::OperationPreparation;
 use settlement::*;
 
 type PreparedDviPages = Vec<crate::dispatch::PreparedDviPage>;
@@ -3161,7 +3160,7 @@ impl<G> MainControl<G> {
     /// Captures TeX's checked save-stack projection into the resident
     /// operation facts while semantic admission is still live.
     fn capture_save_stack_usage(
-        preparation: &mut OperationPreparation<'_, G>,
+        preparation: &mut OperationPreparation<G>,
         stores: &CommandContext<'_, G>,
         boxes: &ReplayBoxes<G>,
         command: &tex_command::CommandState<G>,
@@ -3193,7 +3192,7 @@ impl<G> MainControl<G> {
     fn settle_save_stack_usage(
         &mut self,
         stores: &mut Universe<G>,
-        preparation: &mut OperationPreparation<'_, G>,
+        preparation: &mut OperationPreparation<G>,
     ) {
         let checked = if let Some(checked) = preparation.take_checked_save_stack_words() {
             checked
@@ -3298,8 +3297,7 @@ impl<G> MainControl<G> {
         };
 
         loop {
-            let mut preparation_scope = OperationPreparationScope;
-            let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
+            let mut host_preparation = OperationPreparation::new();
             if operations != 0
                 && let Some(boundary) = self.publish_pending_named_boundary(stores)?
             {
@@ -3461,20 +3459,24 @@ impl<G> MainControl<G> {
                 );
                 return Ok(StepResult::Progress(step));
             }
-            if host_preparation.has_delivery() {
+            let preflight_readiness = if host_preparation.has_delivery() {
                 // A retry reuses only its typed delivery/scanner owners. Live
                 // executor facts are sampled by the resumed processor if and
                 // when that scanner requests one.
+                PreflightReadiness::Ready
             } else if let Some(delivery) = initial_delivery.take() {
                 host_preparation.fill_delivery(delivery, None, None);
-            } else if self.preflight_replay_delivery(
-                stores,
-                &mut host_preparation,
-                &mut diagnostic_effects,
-                &mut command_episode,
-                &mut cold_operation,
-            ) == PreflightReadiness::Failed
-            {
+                PreflightReadiness::Ready
+            } else {
+                self.preflight_replay_delivery(
+                    stores,
+                    &mut host_preparation,
+                    &mut diagnostic_effects,
+                    &mut command_episode,
+                    &mut cold_operation,
+                )
+            };
+            if preflight_readiness == PreflightReadiness::Failed {
                 let error = command_episode.take_error();
                 if let Some(mark) = episode_tracked_mark.take() {
                     let _ = stores.abandon_dependency_region(mark);
@@ -3515,7 +3517,6 @@ impl<G> MainControl<G> {
                 }
                 return result;
             }
-
             let alignment_delivery = match host_preparation.delivery() {
                 OperationDelivery::Alignment(alignment) => Some(Some(*alignment)),
                 OperationDelivery::AlignmentRetry { alignment, .. } => Some(*alignment),
@@ -4225,8 +4226,7 @@ impl<G> MainControl<G> {
         let continuation = self.pending_diagnostic_operation.take();
         let mut command_episode = CommandEpisode::default();
         let mut cold_operation = ColdOperationSlot::default();
-        let mut preparation_scope = OperationPreparationScope;
-        let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
+        let mut host_preparation = OperationPreparation::new();
         let retained_attempt = match continuation {
             Some(PendingDiagnosticOperation {
                 operation,
@@ -6482,8 +6482,7 @@ impl<G> MainControl<G> {
         } else {
             OperationDelivery::Replay
         };
-        let mut preparation_scope = OperationPreparationScope;
-        let mut host_preparation = OperationPreparation::new(&mut preparation_scope);
+        let mut host_preparation = OperationPreparation::new();
         host_preparation.fill_delivery(delivery, None, None);
         let result = self.execute_typed_operation(
             stores,
@@ -6535,7 +6534,7 @@ impl<G> MainControl<G> {
     fn execute_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -6561,7 +6560,7 @@ impl<G> MainControl<G> {
     fn dispatch_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -6582,12 +6581,9 @@ impl<G> MainControl<G> {
             );
         } else if matches!(&delivery, OperationDelivery::Command) {
             frame.assert_command_only();
-        } else if matches!(&delivery, OperationDelivery::ResidentHot) {
-            frame.assert_hot_only();
         } else if matches!(&delivery, OperationDelivery::AppliedHot) {
             assert!(
                 frame.command.is_none()
-                    && frame.hot.is_none()
                     && frame.expansion.is_none()
                     && frame.phase.is_none()
                     && frame.cursor.is_none()
@@ -6608,24 +6604,6 @@ impl<G> MainControl<G> {
                 Some(error) => Err(TypedOperationError::Application(error)),
                 None => Ok(ReplayStep::Continue),
             };
-        }
-        if matches!(delivery, OperationDelivery::ResidentHot) {
-            let applied = self.apply_hot_operation(
-                stores,
-                host_preparation,
-                diagnostic_effects,
-                frame.hot_mut(),
-                OperationOutputStart {
-                    outer_paragraph_was_active,
-                    source_role,
-                    artifact_count: stores.world().artifact_commits().len(),
-                    effect_count: stores.world().effect_records().len(),
-                    prepared_page_count: self.prepared_dvi_pages.len(),
-                    tracked_region_is_active,
-                },
-            );
-            frame.hot = None;
-            return applied.map_err(TypedOperationError::Application);
         }
         if matches!(
             delivery,
@@ -6758,7 +6736,7 @@ impl<G> MainControl<G> {
                     let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
                         && mode == Mode::DisplayMath
                         && self.modes.current_list().has_display_alignment();
-                    let scanned = (|| -> Result<ScannedOperation, ExecError> {
+                    let scanned = (|| -> Result<ScannedOperation<G>, ExecError> {
                         Ok(match delivery {
                             OperationDelivery::Command => scan_preflight_command(
                                 &mut processor,
@@ -6885,11 +6863,6 @@ impl<G> MainControl<G> {
                             OperationDelivery::AppliedHot => {
                                 unreachable!("applied hot delivery returns before scanning")
                             }
-                            OperationDelivery::ResidentHot => {
-                                unreachable!(
-                                    "pre-scanned hot delivery bypasses operation preparation"
-                                )
-                            }
                             OperationDelivery::ResidentCold => {
                                 unreachable!(
                                     "pre-scanned cold delivery bypasses operation preparation"
@@ -6985,12 +6958,12 @@ impl<G> MainControl<G> {
                     tracked_region_is_active,
                 },
             ),
-            ScannedOperation::Hot => {
+            ScannedOperation::Hot(mut operation) => {
                 let applied = self.apply_hot_operation(
                     stores,
                     host_preparation,
                     diagnostic_effects,
-                    frame.hot_mut(),
+                    &mut operation,
                     OperationOutputStart {
                         outer_paragraph_was_active,
                         source_role,
@@ -7000,7 +6973,6 @@ impl<G> MainControl<G> {
                         tracked_region_is_active,
                     },
                 );
-                frame.hot = None;
                 applied.map_err(TypedOperationError::Application)
             }
         }
@@ -7010,7 +6982,7 @@ impl<G> MainControl<G> {
     fn execute_scanned_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -7134,7 +7106,7 @@ impl<G> MainControl<G> {
     fn apply_hot_operation(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         operation: &mut hot_apply::HotOperation<G>,
         output_start: OperationOutputStart,
@@ -7163,7 +7135,7 @@ impl<G> MainControl<G> {
     fn apply_hot_operation_admitted(
         &mut self,
         context: &mut CommandContext<'_, G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         operation: &mut hot_apply::HotOperation<G>,
     ) -> HotApplyAdmission {
@@ -7282,7 +7254,7 @@ impl<G> MainControl<G> {
     fn finish_hot_operation_admission(
         &mut self,
         stores: &mut Universe<G>,
-        _host_preparation: &mut OperationPreparation<'_, G>,
+        _host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         admission: HotApplyAdmission,
         output_start: OperationOutputStart,
@@ -7389,7 +7361,7 @@ impl<G> MainControl<G> {
     fn execute_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         episode: ColdExecutionEpisode<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {

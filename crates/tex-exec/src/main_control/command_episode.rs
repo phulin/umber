@@ -22,15 +22,7 @@ pub(super) enum OperationDelivery {
         alignment: Option<AlignmentIdentity>,
         cursor: tex_command::CommandDeliveryCursor,
     },
-    /// Ordinary delivery and operand scanning completed inside the
-    /// preflight processor borrow. The typed family operand is the real Rust
-    /// borrow barrier before semantic state application; no command or
-    /// universal scanned-step DTO crosses it.
-    ResidentHot,
-    /// Delivery, expansion, scanning, and semantic application completed in
-    /// the one admitted command-context episode. Only host-side settlement
-    /// remains. Success is implicit; an uncommon application error occupies
-    /// the episode's existing error slot until the dispatcher consumes it.
+    /// Hot application completed in the admitted command context.
     AppliedHot,
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the adjacent typed slot contains the cold operation.
@@ -436,12 +428,11 @@ impl TypedOperationError {
 
 /// Singular stationary owner for one command attempt.
 ///
-/// This value is resident in the executor loop. It owns delivery/scanner state
-/// and the hot branch result, but is not a suspension frame and is never
-/// moved into generation-lived storage. A genuine suspension packages it in
+/// This value is resident in the executor loop only for delivery and scanner
+/// state. Completed hot operands return directly to their admitted caller and
+/// never enter it. A genuine suspension packages the remaining state in
 /// [`OperationFrame`] exactly once.
 pub(super) struct CommandEpisode<G> {
-    pub(super) hot: Option<hot_apply::HotOperation<G>>,
     pub(super) error: Option<ExecError>,
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
     pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
@@ -460,7 +451,6 @@ pub(super) struct CommandEpisode<G> {
 impl<G> Default for CommandEpisode<G> {
     fn default() -> Self {
         Self {
-            hot: None,
             error: None,
             command: None,
             expansion: None,
@@ -665,7 +655,6 @@ impl<G> CommandEpisode<G> {
     pub(super) fn assert_empty(&self) {
         assert!(
             self.error.is_none()
-                && self.hot.is_none()
                 && self.command.is_none()
                 && self.expansion.is_none()
                 && self.phase.is_none()
@@ -696,27 +685,8 @@ impl<G> CommandEpisode<G> {
 
     pub(super) fn assert_command_only(&self) {
         assert!(
-            self.error.is_none()
-                && self.hot.is_none()
-                && self.phase.is_some()
-                && self.alignment_scanner.is_none(),
+            self.error.is_none() && self.phase.is_some() && self.alignment_scanner.is_none(),
             "command delivery owns only its operation-local command frame"
-        );
-    }
-
-    pub(super) fn assert_hot_only(&self) {
-        assert!(
-            self.error.is_none()
-                && self.hot.is_some()
-                && self.command.is_none()
-                && self.expansion.is_none()
-                && self.phase.is_none()
-                && self.cursor.is_none()
-                && self.scanner.is_none()
-                && self.scalar.is_empty()
-                && self.operation_scan.is_none()
-                && self.alignment_scanner.is_none(),
-            "pre-scanned hot delivery lives only in its operation frame"
         );
     }
 
@@ -735,12 +705,10 @@ impl<G> CommandEpisode<G> {
         cold: &mut ColdOperationSlot<G>,
         operation: ColdOperation<G>,
     ) {
-        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.write(operation);
     }
 
     pub(super) fn mark_resident_cold(&mut self, cold: &ColdOperationSlot<G>) {
-        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         assert!(
             cold.operation.is_some(),
             "cold scanning fills the resident leaf before publishing its tag"
@@ -749,7 +717,6 @@ impl<G> CommandEpisode<G> {
 
     #[cfg(feature = "profiling")]
     pub(super) fn unavailable<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a ColdOperation<G> {
-        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation
             .as_ref()
             .expect("operation frame owns its unavailable cold leaf")
@@ -759,26 +726,13 @@ impl<G> CommandEpisode<G> {
         &self,
         cold: &'a mut ColdOperationSlot<G>,
     ) -> &'a mut ColdOperation<G> {
-        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation
             .as_mut()
             .expect("operation frame owns its unavailable cold leaf")
     }
 
     pub(super) fn clear_cold(&mut self, cold: &mut ColdOperationSlot<G>) {
-        assert!(self.hot.is_none(), "cold and hot branches are exclusive");
         cold.operation = None;
-    }
-
-    pub(super) fn write_hot(&mut self, operation: hot_apply::HotOperation<G>) {
-        assert!(self.hot.is_none(), "one command owns one hot operation");
-        self.hot = Some(operation);
-    }
-
-    pub(super) fn hot_mut(&mut self) -> &mut hot_apply::HotOperation<G> {
-        self.hot
-            .as_mut()
-            .expect("command episode owns its hot operation")
     }
 }
 
@@ -844,9 +798,8 @@ pub(super) fn operation_frame_constructions() -> u64 {
 ///
 /// The hot variant is a family-sized borrow-release operand. Only the cold
 /// variant materializes a typed cold operation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ScannedOperation {
-    Hot,
+pub(super) enum ScannedOperation<G> {
+    Hot(hot_apply::HotOperation<G>),
     Cold,
 }
 
@@ -854,17 +807,15 @@ pub(super) fn retain_cold_operation<G>(
     frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
     operation: ColdOperation<G>,
-) -> ScannedOperation {
+) -> ScannedOperation<G> {
     frame.write_unavailable(cold, operation);
     ScannedOperation::Cold
 }
 
 pub(super) fn retain_hot_operation<G>(
-    frame: &mut CommandEpisode<G>,
     operation: hot_apply::HotOperation<G>,
-) -> ScannedOperation {
-    frame.write_hot(operation);
-    ScannedOperation::Hot
+) -> ScannedOperation<G> {
+    ScannedOperation::Hot(operation)
 }
 
 pub(super) struct PendingResourceOperation<G> {

@@ -113,7 +113,7 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        host_preparation: &mut OperationPreparation<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
@@ -122,6 +122,7 @@ impl<G> MainControl<G> {
         self.ensure_primitive_handles(stores);
         let mut diagnostics = Vec::new();
         let mut hot_admission = None;
+        let mut hot_operation = None;
         let raw_main_loop_delivery = self.main_loop_active;
         let outer_paragraph_was_active =
             self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
@@ -284,18 +285,10 @@ impl<G> MainControl<G> {
                                     .map(PendingDiagnostic::Command),
                             );
                             match scanned {
-                                Ok(ScannedOperation::Hot) => {
-                                    // The scanned operation now owns every durable
-                                    // result. Retire the delivery/scanner episode as a
-                                    // unit before handing that operation to execution;
-                                    // no classification belongs to the next stage.
+                                Ok(ScannedOperation::Hot(operation)) => {
                                     frame.retain_source_role();
                                     frame.clear_preflight();
-                                    host_preparation.fill_delivery(
-                                        OperationDelivery::ResidentHot,
-                                        None,
-                                        None,
-                                    );
+                                    hot_operation = Some(operation);
                                 }
                                 Ok(ScannedOperation::Cold) => {
                                     frame.retain_source_role();
@@ -360,9 +353,8 @@ impl<G> MainControl<G> {
                     }
                     host_preparation.record_delivery_status(status, reported);
                 };
-                if host_preparation.has_delivery()
-                    && diagnostics.is_empty()
-                    && matches!(host_preparation.delivery(), OperationDelivery::ResidentHot)
+                if diagnostics.is_empty()
+                    && let Some(mut operation) = hot_operation.take()
                 {
                     let output_start = OperationOutputStart {
                         outer_paragraph_was_active,
@@ -376,10 +368,9 @@ impl<G> MainControl<G> {
                         context,
                         host_preparation,
                         diagnostic_effects,
-                        frame.hot_mut(),
+                        &mut operation,
                     );
                     hot_admission = Some((admission, output_start));
-                    frame.hot = None;
                 }
                 PreflightReadiness::Ready
             })
@@ -391,10 +382,6 @@ impl<G> MainControl<G> {
         self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
         if let Some((admission, output_start)) = hot_admission {
-            assert!(matches!(
-                host_preparation.take_delivery(),
-                OperationDelivery::ResidentHot
-            ));
             if let Err(error) = self.finish_hot_operation_admission(
                 stores,
                 host_preparation,
@@ -413,6 +400,29 @@ impl<G> MainControl<G> {
         if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
             frame.error = Some(error);
             return PreflightReadiness::Failed;
+        }
+        if let Some(mut operation) = hot_operation {
+            let output_start = OperationOutputStart {
+                outer_paragraph_was_active,
+                source_role: frame.operation_source_role(),
+                artifact_count: stores.world().artifact_commits().len(),
+                effect_count: stores.world().effect_records().len(),
+                prepared_page_count: self.prepared_dvi_pages.len(),
+                tracked_region_is_active: false,
+            };
+            if let Err(error) = self.apply_hot_operation(
+                stores,
+                host_preparation,
+                diagnostic_effects,
+                &mut operation,
+                output_start,
+            ) {
+                frame.error = Some(error);
+            }
+            frame.clear_operation_origin();
+            host_preparation.fill_applied_hot();
+            host_preparation.discard_delivery_status();
+            return PreflightReadiness::Ready;
         }
         if frame.error.is_some() {
             return PreflightReadiness::Failed;
@@ -580,7 +590,7 @@ pub(super) fn scan_replay_step<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
             AlignmentPreamblePhase::Opening => {
@@ -819,7 +829,7 @@ pub(super) fn scan_noalign_body<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let mut destination = None;
     if processor
@@ -898,7 +908,7 @@ pub(super) fn scan_alignment_delivery_step<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     frame: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let mut destination = None;
     let delivery = processor
@@ -1110,7 +1120,7 @@ pub(super) fn settle_preflight_step<G>(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     let expansion = command.take_expansion();
     match processor
         .resume_expansion_into(expansion, main_loop, &mut command.command)
@@ -1197,7 +1207,7 @@ pub(super) fn scan_preflight_command<G>(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let Some(cursor) = command.cursor {
         processor.resume_delivery_cursor(cursor);
     }
@@ -1377,7 +1387,7 @@ pub(super) fn scan_step<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     command_owner: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
@@ -2720,7 +2730,7 @@ pub(super) fn resume_pending_operation_scan<G>(
     cold: &mut ColdOperationSlot<G>,
     pending: PendingOperationScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let PendingOperationScanPhase::CatCode { global, phase } = pending {
         let operation = hot_apply::scan_catcode_assignment(
             processor,
@@ -2729,7 +2739,7 @@ pub(super) fn resume_pending_operation_scan<G>(
             phase,
             suspended,
         )?;
-        return Ok(retain_hot_operation(frame, operation));
+        return Ok(retain_hot_operation(operation));
     }
     let scalar = &mut frame.scalar;
     match pending {
@@ -2871,7 +2881,7 @@ pub(super) fn dispatch_main_control_command<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1078 uses §404's non-blank, non-relax fetch after every leader
     // payload. Constructed boxes close in a separate replay step, so the first
     // token after the box has already reached this dispatcher. Finish §404
@@ -3006,7 +3016,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
     mut initial_prefix: Option<(bool, MeaningFlags)>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1078 fetches the command following a completed leader payload
     // inside `box_end`, before control returns to §1030's `big_switch` or
     // §1211's prefix loop. Split replay finishes the box in one step and
@@ -3355,7 +3365,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
         }
         let scanned = scanned_result?;
         if suppress_left_boundary
-            && scanned == ScannedOperation::Cold
+            && matches!(scanned, ScannedOperation::Cold)
             && let ColdOperation::<G>::Character {
                 suppress_left_boundary,
                 ..
@@ -3807,7 +3817,7 @@ pub(super) fn scan_command<G>(
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
     suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
@@ -3961,7 +3971,6 @@ pub(super) fn scan_command<G>(
         )
     {
         return Ok(retain_hot_operation(
-            command,
             hot_apply::HotOperation::<G>::end_ordinary_group(),
         ));
     }
@@ -4142,7 +4151,7 @@ pub(super) fn scan_command<G>(
             ColdOperation::<G>::ParagraphStart,
         ));
     }
-    if hot_apply::scan(
+    if let Some(operation) = hot_apply::scan(
         processor,
         command,
         global,
@@ -4150,7 +4159,7 @@ pub(super) fn scan_command<G>(
         innermost_group,
         suspended_operation_scan,
     )? {
-        return Ok(ScannedOperation::Hot);
+        return Ok(ScannedOperation::Hot(operation));
     }
     scan_cold_operation(
         processor,

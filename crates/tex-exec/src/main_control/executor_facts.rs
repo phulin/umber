@@ -2,21 +2,13 @@
 
 use super::*;
 
-/// Stack-owned brand for one command-processing interval.
-///
-/// Delivery preparation may cross synchronous processor borrows, but cannot
-/// enter a suspension or persistent operation frame. Live executor facts use
-/// a separate processor-episode borrow and are never stored here.
-pub(super) struct OperationPreparationScope;
-
 /// Copy-free delivery/retry preparation for one operation.
-pub(super) struct OperationPreparation<'operation, G> {
+pub(super) struct OperationPreparation<G> {
     checked_save_stack_words: Option<usize>,
     delivery: Option<OperationDelivery>,
     resume: Option<OperationResume<G>>,
     delivery_status: Option<tex_command::DeliveryStatus>,
     trace_reported: bool,
-    pub(super) _scope: PhantomData<&'operation mut OperationPreparationScope>,
 }
 
 struct OperationResume<G> {
@@ -24,15 +16,14 @@ struct OperationResume<G> {
     expansion: Option<tex_command::ExpansionWorkKey<G>>,
 }
 
-impl<'operation, G> OperationPreparation<'operation, G> {
-    pub(super) fn new(_scope: &'operation mut OperationPreparationScope) -> Self {
+impl<G> OperationPreparation<G> {
+    pub(super) fn new() -> Self {
         Self {
             checked_save_stack_words: None,
             delivery: None,
             resume: None,
             delivery_status: None,
             trace_reported: false,
-            _scope: PhantomData,
         }
     }
 
@@ -52,12 +43,12 @@ impl<'operation, G> OperationPreparation<'operation, G> {
         }
     }
 
-    pub(super) fn fill_applied_hot(&mut self) {
-        self.fill_delivery(OperationDelivery::AppliedHot, None, None);
-    }
-
     pub(super) fn has_delivery(&self) -> bool {
         self.delivery.is_some()
+    }
+
+    pub(super) fn fill_applied_hot(&mut self) {
+        self.fill_delivery(OperationDelivery::AppliedHot, None, None);
     }
 
     pub(super) fn delivery(&self) -> &OperationDelivery {
@@ -302,8 +293,7 @@ mod layout_tests {
 
     #[test]
     fn operation_preparation_initializes_only_direct_delivery_state() {
-        let mut scope = OperationPreparationScope;
-        let mut preparation: OperationPreparation<'_, ()> = OperationPreparation::new(&mut scope);
+        let mut preparation: OperationPreparation<()> = OperationPreparation::new();
         preparation.fill_delivery(OperationDelivery::Replay, None, None);
         assert!(preparation.resume.is_none());
     }

@@ -444,7 +444,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
         .expect("locate resident command episode");
     assert!(command_episode_definition.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(command_episode_definition.contains("hot: Option<hot_apply::HotOperation<G>>"));
+    assert!(!command_episode_definition.contains("hot: Option<hot_apply::HotOperation<G>>"));
     assert!(command_episode_definition.contains("phase: Option<PreflightCommandPhase>"));
     assert!(!ownership_surface.contains("OperationPayload"));
     assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
@@ -517,9 +517,10 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .and_then(|(_, tail)| tail.split_once("let mode_fingerprint"))
         .map(|(body, _)| body)
         .expect("locate pre-scanned preparation bypass");
-    assert!(preparation_front.contains("OperationDelivery::ResidentHot"));
-    assert!(preparation_front.contains("frame.hot_mut()"));
-    assert!(!preparation_front.contains("frame.take_hot()"));
+    assert!(!ownership_surface.contains("OperationDelivery::ResidentHot"));
+    assert!(!ownership_surface.contains("frame.hot_mut()"));
+    assert!(preflight.contains("ScannedOperation::Hot(operation)"));
+    assert!(preflight.contains("apply_hot_operation_admitted("));
     assert!(preparation_front.contains("OperationDelivery::ResidentCold"));
     assert_eq!(
         preparation_front

@@ -4,9 +4,8 @@
 //! definition, let, prefix-result, group, and catcode families. They scan into
 //! a family-sized typed operand and apply it immediately after the command
 //! processor releases its borrow. `ColdOperation` is not materialized on this
-//! path. The caller-owned [`CommandEpisode`] stores the hot result in its one
-//! branch-owned field, alongside its reusable scalar destination; typed
-//! execution borrows that resident value directly.
+//! path. Dispatch returns the family-sized hot result directly to the admitted
+//! caller; it never enters the suspension-only command episode.
 
 use super::*;
 
@@ -70,7 +69,7 @@ pub(super) fn scan<G>(
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
     suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
-) -> Result<bool, ExecError> {
+) -> Result<Option<HotOperation<G>>, ExecError> {
     let operation = match command.meaning() {
         tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -128,10 +127,9 @@ pub(super) fn scan<G>(
                 global,
             }
         }
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
-    command.write_hot(operation);
-    Ok(true)
+    Ok(Some(operation))
 }
 
 pub(super) fn scan_catcode_assignment<G>(

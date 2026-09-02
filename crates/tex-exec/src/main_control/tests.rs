@@ -6676,12 +6676,10 @@ fn ordinary_command_episode_evidence(
             frame.assert_empty();
             scalar_transitions += 1;
             whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
-            frame.write_hot(hot_apply::HotOperation::end_ordinary_group());
-            frame.assert_hot_only();
+            let mut hot = std::hint::black_box(hot_apply::HotOperation::<()>::end_ordinary_group());
             scalar_transitions += 1;
             whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
-            let _ = frame.hot_mut();
-            frame.hot = None;
+            let _ = std::hint::black_box(&mut hot);
             frame.assert_empty();
             scalar_transitions += 1;
             whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
