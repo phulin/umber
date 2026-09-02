@@ -61,8 +61,9 @@ ahash = "0.8"
 anyhow = "1"
 bincode = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib"] }
 hayro-syntax = { git = "https://github.com/phulin/hayro.git", rev = "abf6c167f6b877a18a077b9ff76dad36573e271d", default-features = false, features = ["std", "unsafe"] }
+libz-sys = { version = "1.1.29", features = ["static"] }
 md-5 = "0.10"
 memchr = "2.8"
 pdf-writer = { git = "https://github.com/phulin/pdf-writer.git", rev = "030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91" }

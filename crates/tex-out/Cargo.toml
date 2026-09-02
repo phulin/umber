@@ -16,6 +16,7 @@ bench = false
 [dependencies]
 flate2.workspace = true
 hayro-syntax.workspace = true
+libz-sys.workspace = true
 md-5.workspace = true
 pdf-writer.workspace = true
 png.workspace = true

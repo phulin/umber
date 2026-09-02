@@ -3,7 +3,9 @@ use crate::pdf::{
     PdfIndirectObject, PdfModelError, PdfObject, PdfObjectId, PdfTrailer, PdfValue, PdfVersion,
     UnvalidatedPdfDocument,
 };
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
+use std::io::Read as _;
 use test_support::pdf_query::{PdfQuery, QueryDictionary, QueryLimits, QueryObjectId, QueryValue};
 
 fn query(bytes: &[u8]) -> PdfQuery {
@@ -360,6 +362,47 @@ fn deterministic_flate_streams_are_declared_and_decode_exactly() {
     );
     assert_ne!(content.raw, content.decoded);
     assert_eq!(content.decoded, b"q\n10 20 30 40 re\nS\nQ\n");
+}
+
+#[test]
+fn stream_deflate_matches_pdftex_zlib_for_binary_payload() {
+    // Pinned pdfTeX 1.40.29 writezip.c uses zlib deflateInit(level), followed
+    // by Z_NO_FLUSH input and Z_FINISH. These binary witnesses distinguish that
+    // encoder from flate2's default miniz backend and prove the level is honored.
+    let payload =
+        &include_bytes!("../../../../../tests/corpus/pdf/embedded_subset_type1/cmr10.pfb")[..8_192];
+    let expected = [
+        (
+            1,
+            5_986,
+            "4f9b65d204b5ca7f8e7fd5427453b9895b7cd5d33ceac8c7065aa59334b56a02",
+        ),
+        (
+            6,
+            5_888,
+            "16242b98df0c0a3166da3e2b03710837c605505a8dc8b028de933941ecfcca9b",
+        ),
+        (
+            9,
+            5_888,
+            "c9fd9add710bd89bb6101633266740314866229241e8d8c53343e9f5ed634c3d",
+        ),
+    ];
+
+    for (level, expected_len, expected_sha256) in expected {
+        let compressed = deflate(payload, level).expect("compress binary witness");
+        assert_eq!(compressed.len(), expected_len, "level {level}");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&compressed)),
+            expected_sha256,
+            "level {level}"
+        );
+        let mut decoded = Vec::new();
+        flate2::read::ZlibDecoder::new(compressed.as_slice())
+            .read_to_end(&mut decoded)
+            .expect("decode binary witness");
+        assert_eq!(decoded, payload, "level {level}");
+    }
 }
 
 #[test]

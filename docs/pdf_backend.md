@@ -181,6 +181,15 @@ matching type-2 entries from `finish_with_xref_stream`. Positive
 ordinary type-1 entries. When stream compression is enabled, ordinary,
 object, and cross-reference streams all declare deterministic Flate encoding
 through `pdf_writer`. None of these byte policies change semantic identity.
+The compression adapter follows pdftex.web section 685 and
+`writezip.c::writezip`: `deflateInit` receives the selected level, ordinary
+input is delivered with `Z_NO_FLUSH`, and stream completion uses `Z_FINISH`.
+The workspace therefore selects `flate2`'s zlib backend and statically links
+the stock zlib 1.3.2 carried by `libz-sys` 1.1.29, rather than selecting a
+format-compatible but byte-different DEFLATE implementation. This owner is
+shared by ordinary, form, object, and cross-reference stream serialization;
+decoded payloads and detached semantic identities remain independent of the
+compression container.
 Type3 bitmap glyph streams also remain crate-owned: the fork's content
 builder accepts typed width, height, image-mask, bit depth, decode array, and
 payload inputs and writes the complete inline-image operation. Umber never
