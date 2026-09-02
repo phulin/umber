@@ -212,6 +212,62 @@ dup 90 /Z put\nreadonly def\n";
 }
 
 #[test]
+fn type1_encoding_registry_shares_object_and_unions_marked_slots() {
+    // pdftex.web §32e and writeenc.c retain one encoding object per encoding
+    // file and write the union of character positions marked by its fonts.
+    let mut source = b"/SharedEncoding [".to_vec();
+    for code in 0..=u8::MAX {
+        source.extend_from_slice(format!("/g{code} ").as_bytes());
+    }
+    source.extend_from_slice(b"] def\n");
+    let encoding = tex_fonts::PdfEncoding::parse(&source).expect("valid encoding");
+    let mut encodings = PdfFontEncodings {
+        shared_names: BTreeSet::from([b"shared.enc".to_vec()]),
+        entries: BTreeMap::new(),
+    };
+    let mut next_object = 40;
+    let first = encodings
+        .register_encoding(
+            b"shared.enc",
+            &encoding,
+            &BTreeSet::from([2, 4]),
+            &mut next_object,
+        )
+        .expect("first encoding registration");
+    let second = encodings
+        .register_encoding(
+            b"shared.enc",
+            &encoding,
+            &BTreeSet::from([3, 151]),
+            &mut next_object,
+        )
+        .expect("second encoding registration");
+    assert_eq!(first, object_id(40).expect("valid object id"));
+    assert_eq!(second, first);
+    assert_eq!(next_object, 41);
+
+    let [object] = encodings
+        .into_objects()
+        .expect("encoding object")
+        .try_into()
+        .expect("one shared encoding object");
+    let PdfObject::Value(PdfValue::Dictionary(dictionary)) = object.object else {
+        panic!("encoding object was not a dictionary");
+    };
+    assert_eq!(
+        dictionary.get(b"Differences"),
+        Some(&PdfValue::Array(vec![
+            PdfValue::Integer(2),
+            PdfValue::Name("g2".into()),
+            PdfValue::Name("g3".into()),
+            PdfValue::Name("g4".into()),
+            PdfValue::Integer(151),
+            PdfValue::Name("g151".into()),
+        ]))
+    );
+}
+
+#[test]
 fn font_dictionary_name_is_type3_only() {
     for subtype in ["Type1", "TrueType"] {
         let dictionary = font_dictionary_header(PdfFontDictionaryHeader::Scalable {

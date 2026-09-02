@@ -356,6 +356,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
     let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + input.raw_objects.len() + 2);
     let mut kids = Vec::with_capacity(page_records.len());
     let mut emitted_fonts = std::collections::BTreeSet::new();
+    let mut font_encodings = PdfFontEncodings::collect(input, &font_usage)?;
     let mut interword_space_enabled = false;
     let mut fallback_space_font = None;
     let mut diagnostics = Vec::new();
@@ -618,6 +619,11 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                     })?;
                                 let mapped = resolved_font_map.contains_key(font.name.as_bytes());
                                 let ids = if mapped {
+                                    let encoding = font_encodings.register(
+                                        width_resource,
+                                        used_codes,
+                                        &mut next_object,
+                                    )?;
                                     let descriptor = object_id(next_object)?;
                                     let program = object_id(
                                         next_object
@@ -637,6 +643,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                         descriptor: Some(descriptor),
                                         program: Some(program),
                                         to_unicode,
+                                        encoding,
                                         char_procs: BTreeMap::new(),
                                     }
                                 } else {
@@ -652,6 +659,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                         descriptor: None,
                                         program: None,
                                         to_unicode: None,
+                                        encoding: None,
                                         char_procs,
                                     }
                                 };
@@ -1217,6 +1225,11 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             .ok_or_else(|| PdfBuildError::MissingFontUsage(font.name.clone()))?;
                         let mapped = resolved_font_map.contains_key(font.name.as_bytes());
                         let ids = if mapped {
+                            let encoding = font_encodings.register(
+                                width_resource,
+                                used_codes,
+                                &mut next_object,
+                            )?;
                             let descriptor = object_id(next_object)?;
                             let program = object_id(
                                 next_object
@@ -1236,6 +1249,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 descriptor: Some(descriptor),
                                 program: Some(program),
                                 to_unicode,
+                                encoding,
                                 char_procs: BTreeMap::new(),
                             }
                         } else {
@@ -1251,6 +1265,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 descriptor: None,
                                 program: None,
                                 to_unicode: None,
+                                encoding: None,
                                 char_procs,
                             }
                         };
@@ -1359,6 +1374,8 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
             },
         });
     }
+
+    objects.extend(font_encodings.into_objects()?);
 
     let mut pages = PdfDictionary::new();
     pages.insert("Type", PdfValue::Name("Pages".into()))?;
@@ -2869,7 +2886,140 @@ struct PdfFontObjectIds {
     descriptor: Option<PdfObjectId>,
     program: Option<PdfObjectId>,
     to_unicode: Option<PdfObjectId>,
+    encoding: Option<PdfObjectId>,
     char_procs: BTreeMap<u8, PdfObjectId>,
+}
+
+struct PdfFontEncodings {
+    shared_names: BTreeSet<Vec<u8>>,
+    entries: BTreeMap<Vec<u8>, PdfFontEncodingEntry>,
+}
+
+struct PdfFontEncodingEntry {
+    object: PdfObjectId,
+    encoding: tex_fonts::PdfEncoding,
+    used_codes: BTreeSet<u8>,
+}
+
+impl PdfFontEncodings {
+    fn collect(
+        input: &PdfFinalizationInput,
+        font_usage: &BTreeMap<u32, BTreeSet<u8>>,
+    ) -> Result<Self, PdfBuildError> {
+        let mut users = BTreeMap::<Vec<u8>, BTreeSet<u32>>::new();
+        for resource in input.fonts.values() {
+            if !font_usage.contains_key(&resource.object_number) {
+                continue;
+            }
+            let width_resource =
+                mapped_width_resource(input, &resource.artifact_resource, resource)?;
+            if let Some(name) = Self::encoding_name(width_resource) {
+                users
+                    .entry(name.to_vec())
+                    .or_default()
+                    .insert(resource.object_number);
+            }
+        }
+        Ok(Self {
+            shared_names: users
+                .into_iter()
+                .filter_map(|(name, users)| (users.len() > 1).then_some(name))
+                .collect(),
+            entries: BTreeMap::new(),
+        })
+    }
+
+    fn encoding_name(input: &PdfFontInput) -> Option<&[u8]> {
+        if matches!(
+            input.program,
+            PdfFontProgramInput::TrueType(_) | PdfFontProgramInput::Pk { .. }
+        ) || input.encoding.is_none()
+        {
+            return None;
+        }
+        input
+            .map_entry
+            .as_ref()?
+            .encoding_files
+            .first()
+            .map(Vec::as_slice)
+    }
+
+    /// Registers one externally reencoded Type-1 font and returns the shared
+    /// encoding object allocated for its logical encoding file.
+    ///
+    /// pdfTeX keys `fe_entry` by encoding-file name, allocates `fe_objnum` on
+    /// its first font dictionary, and accumulates every font's marked slots in
+    /// the entry's `tx_tree`; see pdftex.web section 32e,
+    /// `writefont.c::create_fontdictionary`, and `writeenc.c`.
+    fn register(
+        &mut self,
+        input: &PdfFontInput,
+        used_codes: &BTreeSet<u8>,
+        next_object: &mut u32,
+    ) -> Result<Option<PdfObjectId>, PdfBuildError> {
+        let Some(name) = Self::encoding_name(input) else {
+            return Ok(None);
+        };
+        if !self.shared_names.contains(name) {
+            return Ok(None);
+        }
+        let Some(encoding) = input.encoding.as_ref() else {
+            unreachable!("shared encoding names require an encoding vector");
+        };
+
+        self.register_encoding(name, encoding, used_codes, next_object)
+            .map(Some)
+    }
+
+    fn register_encoding(
+        &mut self,
+        name: &[u8],
+        encoding: &tex_fonts::PdfEncoding,
+        used_codes: &BTreeSet<u8>,
+        next_object: &mut u32,
+    ) -> Result<PdfObjectId, PdfBuildError> {
+        if let Some(entry) = self.entries.get_mut(name) {
+            if entry.encoding != *encoding {
+                return Err(PdfBuildError::ConflictingEncoding(name.to_vec()));
+            }
+            entry.used_codes.extend(used_codes);
+            return Ok(entry.object);
+        }
+
+        let object = object_id(*next_object)?;
+        *next_object = next_object
+            .checked_add(1)
+            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+        self.entries.insert(
+            name.to_vec(),
+            PdfFontEncodingEntry {
+                object,
+                encoding: encoding.clone(),
+                used_codes: used_codes.clone(),
+            },
+        );
+        Ok(object)
+    }
+
+    fn into_objects(self) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
+        self.entries
+            .into_values()
+            .map(|entry| {
+                let mut dictionary = PdfDictionary::new();
+                dictionary.insert("Type", PdfValue::Name("Encoding".into()))?;
+                dictionary.insert(
+                    "Differences",
+                    PdfValue::Array(encoding_differences(
+                        &entry.encoding,
+                        &entry.used_codes,
+                        true,
+                    )),
+                )?;
+                Ok(indirect_dictionary(entry.object, dictionary))
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3308,11 +3458,15 @@ fn pdf_font_objects(
         base_font: &subset_font_name,
     })?;
     if let Some(encoding) = encoding {
-        let differences = encoding_differences(encoding, used_codes, subset_requested);
-        let mut encoding_dictionary = PdfDictionary::new();
-        encoding_dictionary.insert("Type", PdfValue::Name("Encoding".into()))?;
-        encoding_dictionary.insert("Differences", PdfValue::Array(differences))?;
-        dictionary.insert("Encoding", PdfValue::Dictionary(encoding_dictionary))?;
+        if let Some(encoding_object) = ids.encoding {
+            dictionary.insert("Encoding", PdfValue::Reference(encoding_object))?;
+        } else {
+            let differences = encoding_differences(encoding, used_codes, subset_requested);
+            let mut encoding_dictionary = PdfDictionary::new();
+            encoding_dictionary.insert("Type", PdfValue::Name("Encoding".into()))?;
+            encoding_dictionary.insert("Differences", PdfValue::Array(differences))?;
+            dictionary.insert("Encoding", PdfValue::Dictionary(encoding_dictionary))?;
+        }
     }
     let first_char = if subset_requested {
         i64::from(*used_codes.first().expect("emitted font has used codes"))
@@ -4970,6 +5124,7 @@ pub enum PdfBuildError {
         code: u8,
     },
     MissingEncoding(Vec<u8>),
+    ConflictingEncoding(Vec<u8>),
     MissingSpaceFontName(u32),
     MissingBuiltinGlyphName {
         font: String,
@@ -5166,6 +5321,11 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingEncoding(name) => write!(
                 f,
                 "PDF encoding resource {:?} was not supplied",
+                String::from_utf8_lossy(name)
+            ),
+            Self::ConflictingEncoding(name) => write!(
+                f,
+                "PDF encoding resource {:?} resolved to conflicting vectors",
                 String::from_utf8_lossy(name)
             ),
             Self::MissingSpaceFontName(id) => {
