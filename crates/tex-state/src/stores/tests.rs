@@ -97,7 +97,7 @@ fn retirement_releases_one_complete_generation_bundle() {
         assert_eq!(retired.generation.token_lists, 1);
         assert_eq!(retired.generation.glue_values, 1);
         assert_eq!(retired.generation.provenance_records, 0);
-        assert_eq!(retired.journal_entries, 1);
+        assert_eq!(retired.journal_entries, 0);
     });
 }
 

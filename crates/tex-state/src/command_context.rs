@@ -763,21 +763,6 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[inline(always)]
     pub fn meaning(&self, symbol: Symbol) -> ResolvedMeaning<G> {
-        self.session
-            .interner()
-            .resolve_local(symbol)
-            .expect("command symbols belong to the admitted session");
-        self.compact_control_sequence_meaning(symbol)
-    }
-
-    /// Resolves an already-admitted compact control-sequence coordinate.
-    ///
-    /// Packed command tokens carry only same-session [`Symbol`] values. Their
-    /// interner admission happened when the token was created or restored, so
-    /// hot delivery can index the meaning bank directly without resolving the
-    /// symbol's retained name bytes again.
-    #[inline(always)]
-    pub fn compact_control_sequence_meaning(&self, symbol: Symbol) -> ResolvedMeaning<G> {
         self.compact_control_sequence_meaning_word(symbol).resolve()
     }
 

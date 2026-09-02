@@ -185,7 +185,7 @@ fn runtime_identity_demand_publishes_every_authoritative_owner_root() {
 }
 
 #[test]
-fn late_runtime_identity_selection_fails_closed_for_missed_core_mutation() {
+fn runtime_identity_is_computed_from_current_dense_state_on_demand() {
     with_universe(budget(), |universe| {
         universe
             .assign_count(17, 41, AssignmentScope::Global)
@@ -195,7 +195,10 @@ fn late_runtime_identity_selection_fails_closed_for_missed_core_mutation() {
             .runtime_checkpoint_with_page_roots_and_identity(false, true)
             .expect("identity-demanded checkpoint")
             .reachable_state_identity_roots();
-        assert_eq!(roots.core(), None, "missed owner history stays unavailable");
+        assert!(
+            roots.core().is_some(),
+            "current dense state is authoritative"
+        );
         assert!(roots.page().is_some());
         assert!(roots.world().is_some());
     })

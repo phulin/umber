@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::env::group::GroupFrame;
 use crate::env::{StateCell, StateWord};
-use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, OperationMark};
+use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena};
 
 #[path = "journal/cell.rs"]
 mod cell;
@@ -106,17 +106,13 @@ impl<G> JournalCursor<G> {
     }
 }
 
-/// Suffix cursor for one possibly nested fine-grained state operation.
+/// Aggregate operation token for the independently transactional durable-box
+/// lane. Ordinary eqtb assignments have TeX's immediate semantics and are not
+/// mirrored into an executor-operation undo log.
 pub struct StateOperation<G> {
-    owner: u64,
-    serial: u64,
-    group_id: u64,
-    group_entry_position: u32,
-    group_depth: u32,
-    checkpoint: OperationMark<DenseJournalLane>,
-    checkpoint_entries: u32,
-    operation_position: u32,
-    pending_group_position: u32,
+    transaction_position: usize,
+    group_depth: usize,
+    save_stack: SaveStackProjection,
     durable_box: Option<crate::env::DurableBoxOperation>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
@@ -128,6 +124,32 @@ impl<G> core::fmt::Debug for StateOperation<G> {
 }
 
 impl<G> StateOperation<G> {
+    pub(crate) const fn transaction(
+        position: usize,
+        group_depth: usize,
+        save_stack: SaveStackProjection,
+    ) -> Self {
+        Self {
+            transaction_position: position,
+            group_depth,
+            save_stack,
+            durable_box: None,
+            _brand: PhantomData,
+        }
+    }
+
+    pub(crate) const fn transaction_position(&self) -> usize {
+        self.transaction_position
+    }
+
+    pub(crate) const fn group_depth(&self) -> usize {
+        self.group_depth
+    }
+
+    pub(crate) const fn save_stack(&self) -> SaveStackProjection {
+        self.save_stack
+    }
+
     pub(crate) fn attach_durable_box(&mut self, operation: crate::env::DurableBoxOperation) {
         assert!(self.durable_box.replace(operation).is_none());
     }
@@ -263,7 +285,7 @@ impl<G> AcceptedJournalTail<G> {
 /// command owner's journal-relative aftergroup position so §§1334/273 can
 /// report the depth immediately before the newest checked push.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct SaveStackProjection {
+pub(crate) struct SaveStackProjection {
     words: usize,
     latest_push: Option<(u32, usize)>,
 }
@@ -323,7 +345,6 @@ pub(crate) struct SaveJournal<G> {
     active_groups: Vec<GroupSegment<G>>,
     active_group_entries: usize,
     retained_groups: Vec<GroupSegment<G>>,
-    pending_operation_groups: Vec<GroupSegment<G>>,
     spare_group_entries: Vec<Vec<Mutation<G>>>,
     next_group_id: u64,
     checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
@@ -331,13 +352,11 @@ pub(crate) struct SaveJournal<G> {
     checkpoint_entries: usize,
     save_serial: u64,
     checkpoint_fork: bool,
-    operation_entries: Vec<JournalEntry<G>>,
-    active_operations: Vec<u64>,
-    next_operation: u64,
+    transaction_entries: Vec<Mutation<G>>,
+    transaction_depth: usize,
     save_stack: SaveStackProjection,
     group_capacity_bytes: usize,
     checkpoint_capacity_bytes: usize,
-    operation_capacity_bytes: usize,
     #[cfg(test)]
     first_touch_cell_visits: usize,
     #[cfg(feature = "profiling")]
@@ -375,21 +394,22 @@ impl<G> SaveJournal<G> {
             active_groups: Vec::new(),
             active_group_entries: 0,
             retained_groups: Vec::new(),
-            pending_operation_groups: Vec::new(),
             spare_group_entries: Vec::new(),
             next_group_id: 0,
             checkpoint_pool,
             checkpoint_arena: ForkArena::new(),
             checkpoint_entries: 0,
-            save_serial: 1,
+            // Before the first named checkpoint there is no earlier state to
+            // retain. Cells and the journal therefore begin in the same
+            // interval; sealing the first checkpoint advances the serial and
+            // makes its first subsequent write capture one alternate.
+            save_serial: 0,
             checkpoint_fork: false,
-            operation_entries: Vec::new(),
-            active_operations: Vec::new(),
-            next_operation: 0,
+            transaction_entries: Vec::new(),
+            transaction_depth: 0,
             save_stack: SaveStackProjection::default(),
             group_capacity_bytes: 0,
             checkpoint_capacity_bytes,
-            operation_capacity_bytes: 0,
             #[cfg(test)]
             first_touch_cell_visits: 0,
             #[cfg(feature = "profiling")]
@@ -423,59 +443,6 @@ impl<G> SaveJournal<G> {
         );
         self.advance_save_serial();
         cursor
-    }
-
-    pub(crate) fn begin_operation(&mut self) -> StateOperation<G> {
-        self.next_operation = self
-            .next_operation
-            .checked_add(1)
-            .expect("state operation identity space exhausted");
-        let (group_id, group_entry_position) = self.active_groups.last().map_or((0, 0), |group| {
-            (
-                group.id,
-                u32::try_from(group.entries.len()).expect("group save segment exceeds u32 entries"),
-            )
-        });
-        self.active_operations.push(self.next_operation);
-        StateOperation {
-            owner: self.owner,
-            serial: self.next_operation,
-            group_id,
-            group_entry_position,
-            group_depth: u32::try_from(self.active_groups.len()).expect("group depth fits u32"),
-            checkpoint: self.checkpoint_arena.operation_mark(&self.checkpoint_pool),
-            checkpoint_entries: u32::try_from(self.checkpoint_entries)
-                .expect("checkpoint journal exceeds u32 entries"),
-            operation_position: u32::try_from(self.operation_entries.len())
-                .expect("operation journal exceeds u32 entries"),
-            pending_group_position: u32::try_from(self.pending_operation_groups.len())
-                .expect("pending group journal exceeds u32 entries"),
-            durable_box: None,
-            _brand: PhantomData,
-        }
-    }
-
-    pub(crate) fn commit_operation(&mut self, operation: StateOperation<G>) {
-        self.validate_operation(&operation);
-        self.active_operations.pop();
-        if self.active_operations.is_empty() {
-            self.operation_entries.clear();
-            for segment in self.pending_operation_groups.drain(..) {
-                if segment.checkpoint_pinned {
-                    let before = self.retained_groups.capacity();
-                    self.retained_groups.push(segment);
-                    Self::account_capacity_change::<GroupSegment<G>>(
-                        &mut self.group_capacity_bytes,
-                        before,
-                        self.retained_groups.capacity(),
-                    );
-                } else {
-                    let mut entries = segment.entries;
-                    entries.clear();
-                    self.spare_group_entries.push(entries);
-                }
-            }
-        }
     }
 
     pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
@@ -533,17 +500,84 @@ impl<G> SaveJournal<G> {
             self.push_group_mutation(mutation.clone());
             self.active_group_entries = self.active_group_entries.saturating_add(1);
         }
-        if !self.active_operations.is_empty() {
+        if self.transaction_depth != 0 {
             #[cfg(feature = "profiling")]
             self.record_profile_growth(
-                self.operation_entries.len(),
-                self.operation_entries.capacity(),
-                core::mem::size_of::<JournalEntry<G>>(),
+                self.transaction_entries.len(),
+                self.transaction_entries.capacity(),
+                core::mem::size_of::<Mutation<G>>(),
             );
-            self.push_operation_entry(JournalEntry::Mutation(mutation));
+            self.transaction_entries.push(mutation);
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
+    }
+
+    /// Whether this assignment needs any retained inverse at all.
+    ///
+    /// A checkpoint takes the first prior value in its interval. TeX grouping
+    /// independently takes the first value displaced at the current level.
+    /// Global/root writes satisfying neither condition replace the dense cell
+    /// without constructing a mutation record.
+    #[inline(always)]
+    pub(crate) const fn needs_mutation(
+        &self,
+        before_save_serial: u64,
+        saved_at: Option<u32>,
+    ) -> bool {
+        before_save_serial != self.save_serial || saved_at.is_some() || self.transaction_depth != 0
+    }
+
+    pub(crate) fn begin_transaction(&mut self) -> usize {
+        let position = self.transaction_entries.len();
+        self.transaction_depth = self.transaction_depth.saturating_add(1);
+        position
+    }
+
+    pub(crate) const fn current_save_stack(&self) -> SaveStackProjection {
+        self.save_stack
+    }
+
+    pub(crate) fn commit_transaction(&mut self, position: usize) {
+        assert!(self.transaction_depth != 0, "state transaction is active");
+        assert!(position <= self.transaction_entries.len());
+        self.transaction_depth -= 1;
+        if self.transaction_depth == 0 {
+            self.transaction_entries.clear();
+        }
+    }
+
+    pub(crate) fn transaction_entry(&self, index: usize) -> Option<Mutation<G>> {
+        self.transaction_entries.get(index).cloned()
+    }
+
+    pub(crate) fn transaction_len(&self) -> usize {
+        self.transaction_entries.len()
+    }
+
+    pub(crate) fn finish_transaction_rollback(&mut self, position: usize) {
+        assert!(self.transaction_depth != 0, "state transaction is active");
+        self.transaction_entries.truncate(position);
+        self.transaction_depth -= 1;
+    }
+
+    pub(crate) fn rollback_group_suffix(
+        &mut self,
+        group_depth: usize,
+        save_stack: SaveStackProjection,
+    ) -> bool {
+        if self.active_groups.len() < group_depth {
+            return false;
+        }
+        while self.active_groups.len() > group_depth {
+            let segment = self.active_groups.pop().expect("group suffix is nonempty");
+            self.active_group_entries = self
+                .active_group_entries
+                .saturating_sub(segment.entries.len().saturating_add(1));
+            self.recycle_segment(segment);
+        }
+        self.save_stack = save_stack;
+        true
     }
 
     /// The monotonic serial written directly into every cell mutated in the
@@ -566,10 +600,10 @@ impl<G> SaveJournal<G> {
     pub(crate) fn record_group_enter(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_enter();
-        let entry = JournalEntry::GroupEnter(frame);
         let position = u32::try_from(self.len().saturating_add(1))
             .expect("group save stack exceeds u32 entries");
-        self.save_stack.push(&entry, position);
+        self.save_stack
+            .push(&JournalEntry::<G>::GroupEnter(frame), position);
         self.next_group_id = self
             .next_group_id
             .checked_add(1)
@@ -584,15 +618,6 @@ impl<G> SaveJournal<G> {
             checkpoint_pinned: false,
         });
         self.active_group_entries = self.active_group_entries.saturating_add(1);
-        if !self.active_operations.is_empty() {
-            #[cfg(feature = "profiling")]
-            self.record_profile_growth(
-                self.operation_entries.len(),
-                self.operation_entries.capacity(),
-                core::mem::size_of::<JournalEntry<G>>(),
-            );
-            self.push_operation_entry(entry);
-        }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
     }
@@ -600,7 +625,6 @@ impl<G> SaveJournal<G> {
     pub(crate) fn record_group_exit(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_exit();
-        let entry = JournalEntry::GroupExit(frame);
         let segment = self
             .active_groups
             .pop()
@@ -613,23 +637,12 @@ impl<G> SaveJournal<G> {
             words: frame.save_stack_words_before,
             latest_push: frame.latest_save_push_before,
         };
-        if !self.active_operations.is_empty() {
-            self.push_pending_group(segment);
-        } else if segment.checkpoint_pinned {
+        if segment.checkpoint_pinned {
             self.push_retained_group(segment);
         } else {
             let mut entries = segment.entries;
             entries.clear();
             self.spare_group_entries.push(entries);
-        }
-        if !self.active_operations.is_empty() {
-            #[cfg(feature = "profiling")]
-            self.record_profile_growth(
-                self.operation_entries.len(),
-                self.operation_entries.capacity(),
-                core::mem::size_of::<JournalEntry<G>>(),
-            );
-            self.push_operation_entry(entry);
         }
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
@@ -650,14 +663,18 @@ impl<G> SaveJournal<G> {
     pub(crate) fn retained_len(&self) -> usize {
         self.group_save_len()
             .saturating_add(self.checkpoint_entries)
-            .saturating_add(self.operation_entries.len())
+            .saturating_add(self.transaction_entries.len())
     }
 
     #[must_use]
     pub(crate) const fn retained_bytes(&self) -> usize {
         self.group_capacity_bytes
             .saturating_add(self.checkpoint_capacity_bytes)
-            .saturating_add(self.operation_capacity_bytes)
+            .saturating_add(
+                self.transaction_entries
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
+            )
     }
 
     #[cfg(test)]
@@ -771,9 +788,6 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
     ) -> AcceptedJournalTail<G> {
         assert!(self.validate_cursor(cursor));
-        assert!(self.active_operations.is_empty());
-        assert!(self.pending_operation_groups.is_empty());
-
         assert!(!self.checkpoint_fork);
         let prior_checkpoint_entries = self.checkpoint_entries;
         self.checkpoint_arena
@@ -858,7 +872,6 @@ impl<G> SaveJournal<G> {
     /// Restores the accepted group/journal topology after the candidate lane
     /// has already been destructively returned to its empty root.
     pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedJournalTail<G>) {
-        debug_assert!(self.active_operations.is_empty());
         match tail.groups {
             AcceptedGroupTail::Root {
                 accepted_retained_groups,
@@ -975,24 +988,6 @@ impl<G> SaveJournal<G> {
         self.advance_save_serial();
     }
 
-    pub(crate) fn operation_suffix(&self, operation: &StateOperation<G>) -> &[JournalEntry<G>] {
-        self.validate_operation(operation);
-        &self.operation_entries[operation.operation_position as usize..]
-    }
-
-    /// Returns one detached entry from an active operation's suffix.
-    ///
-    /// Rollback uses this narrow accessor so it can release the journal borrow
-    /// before mutating the corresponding state cell, without copying the whole
-    /// suffix into a temporary allocation.
-    pub(crate) fn operation_entry(
-        &self,
-        operation: &StateOperation<G>,
-        index: usize,
-    ) -> Option<JournalEntry<G>> {
-        self.operation_suffix(operation).get(index).cloned()
-    }
-
     pub(crate) fn truncate_checkpoint(&mut self, cursor: JournalCursor<G>) {
         assert_eq!(
             cursor.owner, self.owner,
@@ -1020,70 +1015,6 @@ impl<G> SaveJournal<G> {
             .map_err(|_| crate::StateError::InvalidCursor)?;
         self.refresh_checkpoint_capacity_bytes();
         Ok(released)
-    }
-
-    pub(crate) fn finish_operation_rollback(&mut self, operation: StateOperation<G>) {
-        self.validate_operation(&operation);
-        while self.operation_entries.len() > operation.operation_position as usize {
-            match self
-                .operation_entries
-                .pop()
-                .expect("operation suffix remains nonempty")
-            {
-                JournalEntry::Mutation(mutation) => {
-                    if let Some(level) = mutation.saved_at() {
-                        let group = self
-                            .active_groups
-                            .last_mut()
-                            .expect("operation save remains in its group");
-                        debug_assert_eq!(group.frame.level(), level);
-                        let saved = group
-                            .entries
-                            .pop()
-                            .expect("operation save remains in its group");
-                        debug_assert_eq!(saved.cell(), mutation.cell());
-                    }
-                }
-                JournalEntry::GroupEnter(frame) => {
-                    let segment = self
-                        .active_groups
-                        .pop()
-                        .expect("operation-entered group remains active");
-                    debug_assert_eq!(segment.frame, frame);
-                    self.recycle_segment(segment);
-                }
-                JournalEntry::GroupExit(frame) => {
-                    let segment = self
-                        .pending_operation_groups
-                        .pop()
-                        .expect("operation-exited group remains pending");
-                    debug_assert_eq!(segment.frame, frame);
-                    self.push_active_group(segment);
-                }
-            }
-        }
-        debug_assert_eq!(self.active_groups.len(), operation.group_depth as usize);
-        debug_assert_eq!(
-            self.pending_operation_groups.len(),
-            operation.pending_group_position as usize
-        );
-        if operation.group_id == 0 {
-            debug_assert!(self.active_groups.is_empty());
-        } else {
-            let group = self
-                .active_groups
-                .last()
-                .expect("operation started in a live group");
-            debug_assert_eq!(group.id, operation.group_id);
-            debug_assert_eq!(group.entries.len(), operation.group_entry_position as usize);
-        }
-        self.active_operations.pop();
-        self.checkpoint_arena
-            .restore_operation(&mut self.checkpoint_pool, operation.checkpoint)
-            .expect("state operation restores its dense journal suffix");
-        self.refresh_checkpoint_capacity_bytes();
-        self.checkpoint_entries = operation.checkpoint_entries as usize;
-        self.rebuild_save_stack_projection();
     }
 
     #[must_use]
@@ -1208,38 +1139,10 @@ impl<G> SaveJournal<G> {
         self.active_groups.iter().map(|group| group.frame)
     }
 
-    pub(crate) fn validate_operation(&self, operation: &StateOperation<G>) {
-        assert_eq!(
-            operation.owner, self.owner,
-            "operation belongs to another state"
-        );
-        assert_eq!(
-            self.active_operations.last().copied(),
-            Some(operation.serial),
-            "operation is not active"
-        );
-    }
-
-    fn rebuild_save_stack_projection(&mut self) {
-        let mut projection = SaveStackProjection::default();
-        let mut position = 0_u32;
-        for group in &self.active_groups {
-            position = position.checked_add(1).expect("save position fits u32");
-            projection.push(&JournalEntry::<G>::GroupEnter(group.frame), position);
-            for mutation in &group.entries {
-                position = position.checked_add(1).expect("save position fits u32");
-                projection.push(&JournalEntry::Mutation(mutation.clone()), position);
-            }
-        }
-        self.save_stack = projection;
-        self.active_group_entries = position as usize;
-    }
-
     fn group_segment(&self, id: u64) -> Option<&GroupSegment<G>> {
         self.active_groups
             .iter()
             .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
             .find(|group| group.id == id)
     }
 
@@ -1247,7 +1150,6 @@ impl<G> SaveJournal<G> {
         self.active_groups
             .iter()
             .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
             .map(|group| group.entries.len().saturating_add(1))
             .sum()
     }
@@ -1257,7 +1159,6 @@ impl<G> SaveJournal<G> {
         self.active_groups
             .iter()
             .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
             .map(|group| group.entries.len())
             .sum()
     }
@@ -1267,7 +1168,6 @@ impl<G> SaveJournal<G> {
         self.active_groups
             .iter()
             .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
             .map(|group| group.entries.capacity())
             .chain(self.spare_group_entries.iter().map(Vec::capacity))
             .sum()
@@ -1278,9 +1178,9 @@ impl<G> SaveJournal<G> {
         self.group_capacity_bytes_census()
             .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
             .saturating_add(
-                self.operation_entries
+                self.transaction_entries
                     .capacity()
-                    .saturating_mul(core::mem::size_of::<JournalEntry<G>>()),
+                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
             )
     }
 
@@ -1290,12 +1190,10 @@ impl<G> SaveJournal<G> {
             .active_groups
             .capacity()
             .saturating_add(self.retained_groups.capacity())
-            .saturating_add(self.pending_operation_groups.capacity())
             .saturating_mul(core::mem::size_of::<GroupSegment<G>>());
         self.active_groups
             .iter()
             .chain(&self.retained_groups)
-            .chain(&self.pending_operation_groups)
             .map(|group| {
                 group
                     .entries
@@ -1357,26 +1255,6 @@ impl<G> SaveJournal<G> {
             &mut self.group_capacity_bytes,
             before,
             self.retained_groups.capacity(),
-        );
-    }
-
-    fn push_pending_group(&mut self, segment: GroupSegment<G>) {
-        let before = self.pending_operation_groups.capacity();
-        self.pending_operation_groups.push(segment);
-        Self::account_capacity_change::<GroupSegment<G>>(
-            &mut self.group_capacity_bytes,
-            before,
-            self.pending_operation_groups.capacity(),
-        );
-    }
-
-    fn push_operation_entry(&mut self, entry: JournalEntry<G>) {
-        let before = self.operation_entries.capacity();
-        self.operation_entries.push(entry);
-        Self::account_capacity_change::<JournalEntry<G>>(
-            &mut self.operation_capacity_bytes,
-            before,
-            self.operation_entries.capacity(),
         );
     }
 
@@ -1484,7 +1362,7 @@ impl<G> Drop for SaveJournal<G> {
             capacity: u64::try_from(
                 self.group_mutation_capacity()
                     .saturating_add(self.checkpoint_pool.chunk_capacity())
-                    .saturating_add(self.operation_entries.capacity()),
+                    .saturating_add(self.transaction_entries.capacity()),
             )
             .unwrap_or(u64::MAX),
             peak_entries: u64::try_from(self.profile.peak_entries).unwrap_or(u64::MAX),
@@ -1500,10 +1378,10 @@ impl<G> Drop for SaveJournal<G> {
                 .unwrap_or(u64::MAX),
             checkpoint_entry_size: u64::try_from(core::mem::size_of::<CheckpointDelta<G>>())
                 .unwrap_or(u64::MAX),
-            operation_entries: u64::try_from(self.operation_entries.len()).unwrap_or(u64::MAX),
-            operation_capacity: u64::try_from(self.operation_entries.capacity())
+            operation_entries: u64::try_from(self.transaction_entries.len()).unwrap_or(u64::MAX),
+            operation_capacity: u64::try_from(self.transaction_entries.capacity())
                 .unwrap_or(u64::MAX),
-            operation_entry_size: u64::try_from(core::mem::size_of::<JournalEntry<G>>())
+            operation_entry_size: u64::try_from(core::mem::size_of::<Mutation<G>>())
                 .unwrap_or(u64::MAX),
             // Direct stamps live in their authoritative dense cells. The old
             // hash-table occupancy controls remain zero for profile schema

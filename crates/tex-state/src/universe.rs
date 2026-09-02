@@ -2697,7 +2697,7 @@ impl<G> Universe<G> {
     }
 
     pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
-        let mut operation = self.live_state_mut()?.begin_state_operation();
+        let mut operation = self.live_state_mut()?.begin_state_transaction();
         operation.attach_durable_box(self.durable_boxes.begin_operation());
         Ok(operation)
     }
@@ -2709,7 +2709,8 @@ impl<G> Universe<G> {
         let durable = operation.take_durable_box();
         self.durable_boxes
             .commit_operation(&mut self.page_region.nodes_mut(), durable);
-        self.live_state_mut()?.commit_state_operation(operation);
+        self.live_state_mut()?
+            .commit_state_transaction(operation.transaction_position());
         Ok(())
     }
 
@@ -2732,7 +2733,8 @@ impl<G> Universe<G> {
         let durable = operation.take_durable_box();
         self.durable_boxes
             .rollback_operation(&mut self.page_region.nodes_mut(), durable);
-        self.live_state_mut()?.rollback_state_operation(operation)?;
+        self.live_state_mut()?
+            .rollback_state_transaction(&operation)?;
         Ok(())
     }
 

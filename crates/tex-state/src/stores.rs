@@ -112,13 +112,17 @@ impl<G> StateCore<G> {
         if !generation.enable_semantic_identity() {
             return false;
         }
-        self.state.enable_reachable_state_identity(|definition| {
-            generation.definitions().get(definition).semantic_identity()
-        })
+        self.state.enable_reachable_state_identity()
     }
 
     pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
-        self.state.reachable_state_identity_root()
+        self.state.reachable_state_identity_root(|definition| {
+            self.generation
+                .generation()
+                .definitions()
+                .get(definition)
+                .semantic_identity()
+        })
     }
 
     pub(crate) fn checkpoint_retained_bytes(&self) -> usize {
@@ -367,16 +371,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         value: crate::MeaningWord<G>,
         scope: crate::AssignmentScope,
     ) -> Result<(), StateError> {
-        let identity = match value {
-            crate::MeaningWord::Macro { definition, .. } => self
-                .generation
-                .definitions()
-                .get(definition)
-                .semantic_identity(),
-            crate::MeaningWord::Static(_) | crate::MeaningWord::Font(_) => None,
-        };
-        self.state
-            .assign_meaning_with_identity(symbol, value, identity, scope)
+        self.state.assign_meaning(symbol, value, scope)
     }
 
     #[inline(always)]

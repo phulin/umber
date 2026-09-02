@@ -88,7 +88,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   views/cursors, and exact private-suffix rollback for token, glue, and
   provenance publication.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
-  local/global save semantics, group boundaries, and journal-cursor restore.
+  local/global save semantics, group boundaries, journal-cursor restore, and
+  demand-only semantic-root traversal. Ordinary meaning writes replace their
+  dense row directly and never hash definition contents.
 - `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
   durable node-closure register owners, exact group/operation/checkpoint
   owner swaps, bounded history-preservation copies, and lifecycle tests.
@@ -205,9 +207,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal.rs`: Separate compact TeX group saves, direct-cell-serial
   first-touch and typed chunk-arena named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
-  capacity-change accounting for constant-time budget reads,
-  prefix-independent accepted/current suffix settlement, and reusable
-  operation-local undo with owner-checked stable cursors.
+  capacity-change accounting for constant-time budget reads, and
+  prefix-independent accepted/current suffix settlement. A flat reusable
+  retry transaction retains only assignment inverses; it has no parallel
+  group topology, cell identity, or chunk-arena machinery.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,

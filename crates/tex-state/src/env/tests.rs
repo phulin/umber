@@ -1,7 +1,7 @@
 use super::{
     AssignmentScope, CodeTableKind, DenseState, FreshParameterDefault, FreshParameterInstallError,
     FreshParameterInstallation, FreshParameterProfile, GroupRestorationCell,
-    GroupRestorationOutcome, GroupRestorationValue, StateWord,
+    GroupRestorationOutcome, GroupRestorationValue,
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::GroupKind;
@@ -137,84 +137,9 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
     });
 }
 
-#[test]
-fn operation_rollback_is_exact_after_the_cell_was_already_written_in_the_interval() {
-    let mut state = state();
-    state
-        .assign_count(0, 1, AssignmentScope::Global)
-        .expect("base assignment");
-    let checkpoint = state.journal_cursor();
-    state
-        .assign_count(0, 2, AssignmentScope::Global)
-        .expect("interval assignment");
-    let operation = state.begin_state_operation();
-    state
-        .assign_count(0, 3, AssignmentScope::Global)
-        .expect("operation assignment");
-    state
-        .rollback_state_operation(operation)
-        .expect("operation rollback");
-    assert_eq!(state.count(0).expect("count"), 2);
-
-    state.restore(checkpoint).expect("checkpoint rollback");
-    assert_eq!(state.count(0).expect("count"), 1);
-}
-
-#[test]
-fn operation_rollback_restores_the_prior_direct_save_serial() {
-    let mut state = state();
-    state
-        .assign_count(7, 1, AssignmentScope::Global)
-        .expect("base assignment");
-    let before_serial = state
-        .read_cell(super::StateCell::Count(7))
-        .expect("base cell")
-        .save_serial;
-    let checkpoint = state.journal_cursor();
-    let interval_serial = state.journal().save_serial();
-    let operation = state.begin_state_operation();
-    state
-        .assign_count(7, 2, AssignmentScope::Global)
-        .expect("first operation assignment");
-    state
-        .assign_count(7, 3, AssignmentScope::Global)
-        .expect("repeated operation assignment");
-    assert_eq!(
-        state
-            .read_cell(super::StateCell::Count(7))
-            .expect("mutated cell")
-            .save_serial,
-        interval_serial
-    );
-
-    state
-        .rollback_state_operation(operation)
-        .expect("operation rollback");
-    let rolled_back = state
-        .read_cell(super::StateCell::Count(7))
-        .expect("rolled-back cell");
-    assert_eq!(
-        (rolled_back.value, rolled_back.save_serial),
-        (StateWord::Integer(1), before_serial)
-    );
-
-    state
-        .assign_count(7, 4, AssignmentScope::Global)
-        .expect("post-rollback assignment");
-    assert_eq!(state.journal().checkpoint_entry_count(), 2);
-    state.restore(checkpoint).expect("checkpoint restore");
-    let restored = state
-        .read_cell(super::StateCell::Count(7))
-        .expect("restored cell");
-    assert_eq!(
-        (restored.value, restored.save_serial),
-        (StateWord::Integer(1), before_serial)
-    );
-}
-
 #[cfg(not(feature = "profiling"))]
 #[test]
-fn one_of_4096_repeated_dense_writes_has_one_entry_one_visit_each_and_no_allocations() {
+fn repeated_dense_writes_construct_only_the_first_checkpoint_inverse() {
     const WRITES: usize = 4_096;
     const OWNER: usize = 14;
 
@@ -249,113 +174,13 @@ fn one_of_4096_repeated_dense_writes_has_one_entry_one_visit_each_and_no_allocat
     );
     assert_eq!(
         state.journal().first_touch_cell_visits() - visits_before,
-        WRITES,
-        "every mutation performs exactly one direct stamp visit"
+        1,
+        "only the first write constructs and admits an inverse"
     );
     assert_eq!(allocation_after.calls - allocation_before.calls, 0);
     assert_eq!(
         allocation_after.requested_bytes - allocation_before.requested_bytes,
         0
-    );
-}
-
-#[test]
-fn operation_rollback_rewinds_cross_kind_sibling_groups_before_named_checkpoint_restore() {
-    let mut names = interner();
-    let local = names.intern("local").expect("intern local");
-    let mut state = state();
-    state.admit_symbol(local.symbol()).expect("admit local");
-    state
-        .assign_dimension(53, Scaled::from_raw(5), AssignmentScope::Global)
-        .expect("install base dimension");
-    let checkpoint = state.journal_cursor();
-
-    let operation = state.begin_state_operation();
-    state
-        .begin_group(GroupKind::Simple, 1)
-        .expect("first group");
-    state
-        .assign_meaning(
-            local.symbol(),
-            MeaningWord::from_static(Meaning::Relax),
-            AssignmentScope::Local,
-        )
-        .expect("first sibling mutation");
-    state.end_group(GroupKind::Simple).expect("end first group");
-    state
-        .begin_group(GroupKind::Simple, 2)
-        .expect("second group");
-    state
-        .assign_dimension(53, Scaled::from_raw(7), AssignmentScope::Local)
-        .expect("second sibling mutation");
-
-    // TeX82 §§282--283 consumes each group's §275 save records while that
-    // exact group is current. Operation rollback must preserve the same order
-    // even when sibling groups share one numeric level and cell kinds differ.
-    state.rollback_state_operation(operation).expect("rollback");
-    assert_eq!(state.group_depth(), 0);
-    assert_eq!(
-        state.meaning(local.symbol()).expect("meaning"),
-        ResolvedMeaning::Static(Meaning::Undefined)
-    );
-    assert_eq!(state.dimension(53).expect("dimension"), Scaled::from_raw(5));
-
-    state
-        .assign_dimension(53, Scaled::from_raw(9), AssignmentScope::Global)
-        .expect("post-operation assignment");
-    state.restore(checkpoint).expect("named checkpoint restore");
-    assert_eq!(
-        state.dimension(53).expect("restored dimension"),
-        Scaled::from_raw(5),
-        "operation rollback restores its private delta without consuming the named checkpoint"
-    );
-}
-
-#[test]
-fn nested_operation_rollback_restores_the_exact_parent_group_segment() {
-    let mut names = interner();
-    let local = names.intern("nested").expect("intern nested");
-    let mut state = state();
-    state.admit_symbol(local.symbol()).expect("admit nested");
-    let outer = state.begin_state_operation();
-    state
-        .begin_group(GroupKind::Simple, 1)
-        .expect("parent group");
-    state
-        .assign_count(7, 11, AssignmentScope::Local)
-        .expect("parent mutation");
-
-    let inner = state.begin_state_operation();
-    state.end_group(GroupKind::Simple).expect("exit parent");
-    state
-        .begin_group(GroupKind::Simple, 2)
-        .expect("sibling group");
-    state
-        .assign_dimension(8, Scaled::from_raw(13), AssignmentScope::Local)
-        .expect("sibling mutation");
-    state
-        .rollback_state_operation(inner)
-        .expect("inner rollback");
-
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.count(7).expect("parent count"), 11);
-    assert_eq!(state.dimension(8).expect("dimension"), Scaled::from_raw(0));
-    state
-        .assign_meaning(
-            local.symbol(),
-            MeaningWord::from_static(Meaning::Relax),
-            AssignmentScope::Local,
-        )
-        .expect("outer suffix mutation");
-    state
-        .rollback_state_operation(outer)
-        .expect("outer rollback");
-
-    assert_eq!(state.group_depth(), 0);
-    assert_eq!(state.count(7).expect("restored count"), 0);
-    assert_eq!(
-        state.meaning(local.symbol()).expect("restored meaning"),
-        ResolvedMeaning::Static(Meaning::Undefined)
     );
 }
 
@@ -774,39 +599,6 @@ fn closed_group_saves_pop_when_no_checkpoint_or_operation_pins_them() {
     assert_ne!(state.journal().retained_len(), 0);
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.journal().group_save_len(), 0);
-    assert_eq!(state.count(0).expect("read"), 0);
-}
-
-#[test]
-fn operation_started_inside_group_temporarily_pins_then_releases_group_saves() {
-    let mut state = state();
-    state.begin_group(GroupKind::Simple, 1).expect("group");
-    state
-        .assign_count(0, 9, AssignmentScope::Local)
-        .expect("local");
-    let operation = state.begin_state_operation();
-    state.end_group(GroupKind::Simple).expect("end");
-    assert_eq!(state.group_depth(), 0);
-    assert_ne!(state.journal().group_save_len(), 0);
-    state.commit_state_operation(operation);
-    assert_eq!(state.journal().group_save_len(), 0);
-}
-
-#[test]
-fn operation_rollback_reactivates_a_group_segment_closed_during_the_attempt() {
-    let mut state = state();
-    state.begin_group(GroupKind::Simple, 1).expect("group");
-    state
-        .assign_count(0, 9, AssignmentScope::Local)
-        .expect("local");
-    let operation = state.begin_state_operation();
-    state.end_group(GroupKind::Simple).expect("end");
-    state.rollback_state_operation(operation).expect("rollback");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.count(0).expect("read"), 9);
-    state
-        .end_group(GroupKind::Simple)
-        .expect("end restored group");
     assert_eq!(state.count(0).expect("read"), 0);
 }
 

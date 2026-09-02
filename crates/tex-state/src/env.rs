@@ -482,12 +482,7 @@ pub(crate) struct DenseState<G> {
     journal: Option<SaveJournal<G>>,
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
-    reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
-    /// Cold semantic identities for definition coordinates currently or
-    /// historically reachable from eqtb. The hot meaning row remains the
-    /// compact non-owning coordinate; checkpoint hashing consults this side
-    /// table only when maintained semantic identity is enabled.
-    definition_identities: std::collections::HashMap<crate::DefinitionRef<G>, u64>,
+    reachable_state_identity_enabled: bool,
 }
 
 /// Accepted dense suffix retained while the current candidate mutates the
@@ -946,37 +941,35 @@ impl<G> DenseState<G> {
             journal: Some(SaveJournal::new()),
             groups: Vec::new(),
             next_group_lineage: 1,
-            reachable_state_identity: None,
-            definition_identities: std::collections::HashMap::new(),
+            reachable_state_identity_enabled: false,
         })
     }
 
-    pub(crate) fn enable_reachable_state_identity(
-        &mut self,
-        mut definition_identity: impl FnMut(crate::DefinitionRef<G>) -> Option<u64>,
-    ) -> bool {
-        if self.reachable_state_identity.is_some() {
+    pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
+        if self.reachable_state_identity_enabled {
             return true;
         }
         if self.fresh_parameter_profiles != 0 || !self.groups.is_empty() || self.journal_len() != 0
         {
             return false;
         }
-        for meaning in self.meanings.values() {
-            if let MeaningWord::Macro { definition, .. } = meaning {
-                let Some(identity) = definition_identity(definition) else {
-                    return false;
-                };
-                self.definition_identities.insert(definition, identity);
-            }
+        self.reachable_state_identity_enabled = true;
+        true
+    }
+
+    pub(crate) fn reachable_state_identity_root(
+        &self,
+        mut definition_identity: impl FnMut(crate::DefinitionRef<G>) -> Option<u64>,
+    ) -> Option<u64> {
+        if !self.reachable_state_identity_enabled {
+            return None;
         }
         let mut root = crate::state_hash::SemanticMapIdentity::empty(0x636f_7265_5f65_6e76);
         let mut complete = true;
-        let definition_identities = &self.definition_identities;
         let mut include = |cell, word: StateWord<G>| match state_word_semantic_contribution(
             cell,
             &word,
-            definition_identities,
+            &mut definition_identity,
         ) {
             Ok(Some(value)) => {
                 root.replace(state_cell_semantic_key(cell), None, Some(value));
@@ -1094,12 +1087,7 @@ impl<G> DenseState<G> {
                 StateWord::Dimension(value.value),
             ),
         });
-        self.reachable_state_identity = complete.then_some(root);
-        complete
-    }
-
-    pub(crate) fn reachable_state_identity_root(&self) -> Option<u64> {
-        self.reachable_state_identity.map(|root| root.root())
+        complete.then(|| root.root())
     }
 
     /// Installs one complete fresh profile layer without creating TeX
@@ -1199,28 +1187,33 @@ impl<G> DenseState<G> {
         value: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        self.assign(
-            StateCell::Meaning(symbol.raw()),
-            StateWord::Meaning(value),
-            scope,
-        )
-    }
-
-    pub(crate) fn assign_meaning_with_identity(
-        &mut self,
-        symbol: Symbol,
-        value: MeaningWord<G>,
-        definition_identity: Option<u64>,
-        scope: AssignmentScope,
-    ) -> Result<(), StateError> {
-        if let MeaningWord::Macro { definition, .. } = value {
-            if let Some(identity) = definition_identity {
-                self.definition_identities.insert(definition, identity);
-            } else if self.reachable_state_identity.is_some() {
-                self.reachable_state_identity = None;
-            }
+        let index = symbol.raw();
+        let before = self.meanings.get_ref(index)?;
+        let before_value = before.value;
+        let before_level = before.level;
+        let before_save_serial = before.save_serial;
+        let current_level = self.current_level();
+        let after_level = match scope {
+            AssignmentScope::Global => LEVEL_ONE,
+            AssignmentScope::Local => current_level,
+        };
+        let saved_at = (scope == AssignmentScope::Local
+            && current_level != LEVEL_ONE
+            && before_level != current_level)
+            .then_some(current_level);
+        let save_serial = self.journal().save_serial();
+        let needs_mutation = self.journal().needs_mutation(before_save_serial, saved_at);
+        *self.meanings.get_mut(index)? = BankCell::new(value, after_level, save_serial);
+        if needs_mutation {
+            self.journal_mut().record_mutation(Mutation::new(
+                StateCell::Meaning(index),
+                StateWord::Meaning(before_value),
+                before_level,
+                before_save_serial,
+                saved_at,
+            ));
         }
-        self.assign_meaning(symbol, value, scope)
+        Ok(())
     }
 
     #[inline(always)]
@@ -1637,14 +1630,6 @@ impl<G> DenseState<G> {
         self.journal_mut().checkpoint_cursor(group_depth)
     }
 
-    pub(crate) fn begin_state_operation(&mut self) -> StateOperation<G> {
-        self.journal_mut().begin_operation()
-    }
-
-    pub(crate) fn commit_state_operation(&mut self, operation: StateOperation<G>) {
-        self.journal_mut().commit_operation(operation);
-    }
-
     #[must_use]
     pub(crate) fn group_depth(&self) -> usize {
         self.groups.len()
@@ -1958,37 +1943,45 @@ impl<G> DenseState<G> {
         drop(tail);
     }
 
-    pub(crate) fn rollback_state_operation(
+    pub(crate) fn begin_state_transaction(&mut self) -> StateOperation<G> {
+        let group_depth = self.groups.len();
+        let save_stack = self.journal().current_save_stack();
+        let position = self.journal_mut().begin_transaction();
+        StateOperation::transaction(position, group_depth, save_stack)
+    }
+
+    pub(crate) fn commit_state_transaction(&mut self, position: usize) {
+        self.journal_mut().commit_transaction(position);
+    }
+
+    pub(crate) fn rollback_state_transaction(
         &mut self,
-        operation: StateOperation<G>,
+        operation: &StateOperation<G>,
     ) -> Result<(), StateError> {
-        self.validate_operation_restore(&operation)?;
-        let suffix_len = self.journal().operation_suffix(&operation).len();
-        for index in (0..suffix_len).rev() {
-            let entry = self
+        let position = operation.transaction_position();
+        let suffix_len = self.journal().transaction_len();
+        for index in (position..suffix_len).rev() {
+            let mutation = self
                 .journal()
-                .operation_entry(&operation, index)
-                .expect("operation suffix length remains stable during replay");
-            match entry {
-                JournalEntry::Mutation(mutation) => self.write_cell(
-                    mutation.cell(),
-                    BankCell::new(
-                        mutation.before,
-                        mutation.before_level,
-                        mutation.before_save_serial,
-                    ),
-                )?,
-                JournalEntry::GroupExit(frame) => self.groups.push(frame),
-                JournalEntry::GroupEnter(frame) => {
-                    let popped = self
-                        .groups
-                        .pop()
-                        .expect("operation validation proved group");
-                    debug_assert_eq!(popped, frame);
-                }
-            }
+                .transaction_entry(index)
+                .expect("transaction suffix length remains stable");
+            self.write_cell(
+                mutation.cell(),
+                BankCell::new(
+                    mutation.before,
+                    mutation.before_level,
+                    mutation.before_save_serial,
+                ),
+            )?;
         }
-        self.journal_mut().finish_operation_rollback(operation);
+        if !self
+            .journal_mut()
+            .rollback_group_suffix(operation.group_depth(), operation.save_stack())
+        {
+            return Err(StateError::InvalidCursor);
+        }
+        self.groups.truncate(operation.group_depth());
+        self.journal_mut().finish_transaction_rollback(position);
         Ok(())
     }
 
@@ -2031,17 +2024,20 @@ impl<G> DenseState<G> {
             && current_level != LEVEL_ONE
             && before.level != current_level)
             .then_some(current_level);
+        let needs_mutation = self.journal().needs_mutation(before.save_serial, saved_at);
         self.write_cell(
             cell,
             BankCell::new(value, after_level, self.journal().save_serial()),
         )?;
-        self.journal_mut().record_mutation(Mutation::new(
-            cell,
-            before.value,
-            before.level,
-            before.save_serial,
-            saved_at,
-        ));
+        if needs_mutation {
+            self.journal_mut().record_mutation(Mutation::new(
+                cell,
+                before.value,
+                before.level,
+                before.save_serial,
+                saved_at,
+            ));
+        }
         Ok(())
     }
 
@@ -2097,12 +2093,6 @@ impl<G> DenseState<G> {
         cell: StateCell,
         value: BankCell<StateWord<G>>,
     ) -> Result<(), StateError> {
-        let identity_before = self
-            .reachable_state_identity
-            .is_some()
-            .then(|| self.read_cell(cell))
-            .transpose()?;
-        let identity_after = value.value.clone();
         let BankCell {
             value,
             level,
@@ -2159,22 +2149,6 @@ impl<G> DenseState<G> {
             )?,
             _ => return Err(StateError::CellKindMismatch),
         }
-        if let (Some(before), Some(root)) =
-            (identity_before, self.reachable_state_identity.as_mut())
-        {
-            let key = state_cell_semantic_key(cell);
-            let old =
-                state_word_semantic_contribution(cell, &before.value, &self.definition_identities);
-            let new = state_word_semantic_contribution(
-                cell,
-                &identity_after,
-                &self.definition_identities,
-            );
-            match (old, new) {
-                (Ok(old), Ok(new)) => root.replace(key, old, new),
-                (Err(()), _) | (_, Err(())) => self.reachable_state_identity = None,
-            }
-        }
         Ok(())
     }
 
@@ -2193,11 +2167,6 @@ impl<G> DenseState<G> {
             std::mem::swap(&mut target.save_serial, save_serial);
         }
 
-        let identity_before = self
-            .reachable_state_identity
-            .is_some()
-            .then(|| self.read_cell(delta.cell))
-            .transpose()?;
         match (delta.cell, &mut delta.alternate) {
             (StateCell::Meaning(index), StateWord::Meaning(value)) => swap_cell(
                 self.meanings.get_mut(index)?,
@@ -2297,25 +2266,6 @@ impl<G> DenseState<G> {
             }
             _ => return Err(StateError::CellKindMismatch),
         }
-        if let Some(before) = identity_before {
-            let after = self.read_cell(delta.cell)?;
-            let key = state_cell_semantic_key(delta.cell);
-            let old = state_word_semantic_contribution(
-                delta.cell,
-                &before.value,
-                &self.definition_identities,
-            );
-            let new = state_word_semantic_contribution(
-                delta.cell,
-                &after.value,
-                &self.definition_identities,
-            );
-            match (old, new, self.reachable_state_identity.as_mut()) {
-                (Ok(old), Ok(new), Some(root)) => root.replace(key, old, new),
-                (Err(()), _, _) | (_, Err(()), _) => self.reachable_state_identity = None,
-                (Ok(_), Ok(_), None) => {}
-            }
-        }
         Ok(())
     }
 
@@ -2338,27 +2288,6 @@ impl<G> DenseState<G> {
         cursor: JournalCursor<G>,
     ) -> Result<usize, StateError> {
         self.journal_mut().release_checkpoint_prefix(cursor)
-    }
-
-    fn validate_operation_restore(&self, operation: &StateOperation<G>) -> Result<(), StateError> {
-        self.journal().validate_operation(operation);
-        let mut groups = self.groups.clone();
-        for entry in self.journal().operation_suffix(operation).iter().rev() {
-            match entry {
-                JournalEntry::Mutation(mutation) => {
-                    if !word_matches(mutation.cell(), &mutation.before) {
-                        return Err(StateError::CellKindMismatch);
-                    }
-                }
-                JournalEntry::GroupExit(frame) => groups.push(*frame),
-                JournalEntry::GroupEnter(frame) => {
-                    if groups.pop() != Some(*frame) {
-                        return Err(StateError::InvalidCursor);
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     fn code_bank(&self, kind: CodeTableKind) -> &PagedDenseBank<i64> {
@@ -2528,7 +2457,7 @@ fn font_runtime_cell_semantic_key(cell: FontRuntimeCell) -> u64 {
 fn state_word_semantic_contribution<G>(
     cell: StateCell,
     word: &StateWord<G>,
-    definition_identities: &std::collections::HashMap<crate::DefinitionRef<G>, u64>,
+    definition_identity: &mut impl FnMut(crate::DefinitionRef<G>) -> Option<u64>,
 ) -> Result<Option<u64>, ()> {
     let is_default = match (cell, word) {
         (StateCell::Meaning(_), StateWord::Meaning(value)) => value == &MeaningWord::UNDEFINED,
@@ -2569,9 +2498,7 @@ fn state_word_semantic_contribution<G>(
     let identity = match word {
         StateWord::Meaning(value) => {
             let definition_identity = match value {
-                MeaningWord::Macro { definition, .. } => {
-                    definition_identities.get(definition).copied()
-                }
+                MeaningWord::Macro { definition, .. } => definition_identity(*definition),
                 MeaningWord::Static(_) | MeaningWord::Font(_) => None,
             };
             value.semantic_identity(definition_identity).ok_or(())?

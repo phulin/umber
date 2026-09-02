@@ -204,10 +204,9 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
 }
 
 #[test]
-fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order() {
+fn checkpoint_intervals_deduplicate_the_first_prior_value() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let _start = journal.checkpoint_cursor(0);
-    let operation = journal.begin_operation();
     let interval_serial = journal.save_serial();
     for (before, before_save_serial) in [(1, 0), (2, interval_serial)] {
         journal.record_mutation(Mutation::new(
@@ -234,12 +233,7 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
     assert!(matches!(checkpoint_values[0].1, StateWord::Integer(1)));
     assert_eq!(checkpoint_values[0].2, 1);
     assert_eq!(checkpoint_values[0].3, 0);
-    assert_eq!(journal.operation_entries.len(), 2);
     assert!(journal.active_groups.is_empty());
-
-    journal.commit_operation(operation);
-    assert!(journal.operation_entries.is_empty());
-    assert!(journal.operation_entries.capacity() >= 2);
     let _interval = journal.checkpoint_cursor(0);
     journal.record_mutation(Mutation::new(
         StateCell::Count(7),
@@ -253,34 +247,7 @@ fn checkpoint_intervals_deduplicate_first_before_but_operations_keep_exact_order
 }
 
 #[test]
-fn nested_operations_share_one_ordered_lane_and_rollback_only_the_inner_suffix() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
-    let outer = journal.begin_operation();
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(7),
-        StateWord::Integer(1),
-        1,
-        0,
-        None,
-    ));
-    let inner = journal.begin_operation();
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(8),
-        StateWord::Integer(2),
-        1,
-        0,
-        None,
-    ));
-    assert_eq!(journal.operation_suffix(&inner).len(), 1);
-    journal.finish_operation_rollback(inner);
-    assert_eq!(journal.operation_suffix(&outer).len(), 1);
-    journal.commit_operation(outer);
-    assert!(journal.operation_entries.is_empty());
-    assert_exact_capacity_accounting(&journal);
-}
-
-#[test]
-fn exact_capacity_accounting_covers_group_reuse_and_operation_settlement() {
+fn exact_capacity_accounting_covers_group_reuse_and_checkpoint_settlement() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     assert_exact_capacity_accounting(&journal);
 
@@ -290,20 +257,15 @@ fn exact_capacity_accounting_covers_group_reuse_and_operation_settlement() {
     }
     assert_exact_capacity_accounting(&journal);
 
-    let operation = journal.begin_operation();
     let _inner = enter_group(&mut journal, 2);
     for cell in 64..128 {
         record_saved_count(&mut journal, cell, i32::from(cell));
     }
     assert_exact_capacity_accounting(&journal);
-    journal.finish_operation_rollback(operation);
-    assert_exact_capacity_accounting(&journal);
-
-    let operation = journal.begin_operation();
+    journal.record_group_exit(_inner);
     let inner = enter_group(&mut journal, 3);
     record_saved_count(&mut journal, 128, 128);
     journal.record_group_exit(inner);
-    journal.commit_operation(operation);
     assert_exact_capacity_accounting(&journal);
 
     journal.record_group_exit(outer);
@@ -422,13 +384,11 @@ fn retained_byte_projection_has_fixed_work_with_many_group_segments() {
         shallow
             .group_capacity_bytes
             .saturating_add(shallow.checkpoint_capacity_bytes)
-            .saturating_add(shallow.operation_capacity_bytes)
     );
     assert_eq!(
         deep.retained_bytes(),
         deep.group_capacity_bytes
             .saturating_add(deep.checkpoint_capacity_bytes)
-            .saturating_add(deep.operation_capacity_bytes)
     );
 }
 
