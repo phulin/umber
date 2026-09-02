@@ -32,7 +32,7 @@ impl<W: std::io::Write> DviFileWriter<W> {
         i32::try_from(offset).map_err(|_| DviError::OffsetOverflow { offset })
     }
 
-    fn current_offset(&self) -> Result<usize, DviError> {
+    pub(super) fn current_offset(&self) -> Result<usize, DviError> {
         self.committed_offset
             .checked_add(self.bytes.len())
             .ok_or(DviError::OffsetOverflow { offset: usize::MAX })

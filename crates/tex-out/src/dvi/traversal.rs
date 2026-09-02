@@ -117,6 +117,9 @@ impl DviBodyCompiler {
             self.u8(PUSH);
         }
         let save_loc = self.bytes.len();
+        if self.cur_s > 0 {
+            self.dvi_pop_save_locs.push(save_loc);
+        }
         let axis = if vertical {
             let left_edge = self.cur_h;
             self.cur_v = sub_scaled(self.cur_v, fields.height)?;
@@ -738,12 +741,14 @@ impl DviBodyCompiler {
         self.right_stack.prune_movements(save_loc);
     }
 
-    fn dvi_pop(&mut self, save_loc: usize) {
-        if save_loc == self.bytes.len() && !self.bytes.is_empty() {
-            self.bytes.pop();
-        } else {
-            self.u8(POP);
-        }
+    fn dvi_pop(&mut self, _save_loc: usize) {
+        // Record the unoptimized command stream. The final file assembler
+        // owns the absolute DVI address needed by pdfTeX WEB §628's
+        // `dvi_ptr > 0` condition and performs the cancellation there.
+        self.dvi_pop_sites.push(super::plan::DviPopSite {
+            pop_offset: self.bytes.len(),
+        });
+        self.u8(POP);
     }
 
     fn out_what(&mut self, effects: &[PageEffect], effect_index: u32) -> Result<(), DviError> {

@@ -4,7 +4,8 @@ use super::opcodes::{
     XXX4,
 };
 use super::{
-    DviError, DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter, DviStreamWriter, write_dvi,
+    DVI_BUFFER_SIZE, DviError, DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter,
+    DviStreamWriter, write_dvi,
 };
 use crate::{
     BoxNode, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
@@ -68,6 +69,62 @@ fn precompiled_page_plans_match_owned_multi_page_output() {
     }
 
     assert_eq!(writer.finish().expect("planned DVI finishes"), expected);
+}
+
+#[test]
+fn dvi_pop_does_not_cancel_across_pdftex_full_buffer_boundary() {
+    // pdfTeX WEB §§621, 625, and 628: after `push` fills the configured DVI
+    // buffer, `dvi_swap` resets `dvi_ptr` to zero. The matching `pop` must
+    // therefore be emitted even when the box produced no intervening bytes.
+    fn inert_box_after_special(payload_len: usize) -> PageArtifact {
+        let mut page = empty_page(1);
+        page.testing_mut().root = hlist(
+            0,
+            0,
+            0,
+            vec![
+                PageNode::WhatsitAnchor { effect_index: 0 },
+                hlist(0, 0, 0, vec![PageNode::Penalty(0)]),
+            ],
+        );
+        page.testing_mut().effects = vec![PageEffect::Special {
+            class: "dvi".to_owned(),
+            payload: vec![0; payload_len],
+        }];
+        page
+    }
+
+    // The one-byte banner preamble and bop occupy 61 bytes. A long special
+    // occupies five more framing bytes, so this payload puts `push` at byte
+    // 16,383 and leaves pdfTeX's next buffer pointer at zero.
+    let boundary_payload = DVI_BUFFER_SIZE - 67;
+    let boundary =
+        write_dvi(&[inert_box_after_special(boundary_payload)]).expect("boundary page writes");
+    assert_eq!(
+        &boundary[DVI_BUFFER_SIZE - 1..=DVI_BUFFER_SIZE],
+        &[PUSH, POP]
+    );
+    let boundary_bop = boundary
+        .iter()
+        .position(|&byte| byte == BOP)
+        .expect("boundary bop");
+    assert_eq!(
+        page_body(&boundary, boundary_bop).len(),
+        5 + boundary_payload + 2
+    );
+
+    let ordinary_payload = boundary_payload - 1;
+    let ordinary =
+        write_dvi(&[inert_box_after_special(ordinary_payload)]).expect("ordinary page writes");
+    let ordinary_bop = ordinary
+        .iter()
+        .position(|&byte| byte == BOP)
+        .expect("ordinary bop");
+    assert_eq!(
+        page_body(&ordinary, ordinary_bop).len(),
+        5 + ordinary_payload,
+        "an adjacent push/pop away from the full-buffer boundary still cancels"
+    );
 }
 
 #[test]

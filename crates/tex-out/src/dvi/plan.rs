@@ -5,9 +5,9 @@ use crate::{
 };
 
 use super::{
-    DviBodyCompiler, DviError, DviFileWriter,
+    DVI_BUFFER_SIZE, DviBodyCompiler, DviError, DviFileWriter,
     fonts::{DefinedFont, FontKey},
-    opcodes::{BOP, EOP},
+    opcodes::{BOP, EOP, POP, PUSH},
     traversal::DirectStreamState,
 };
 
@@ -24,6 +24,8 @@ pub struct DviPagePlan {
     fonts: Vec<FontResource>,
     body: Vec<u8>,
     font_definition_sites: Vec<FontDefinitionSite>,
+    dvi_pop_save_locs: Vec<usize>,
+    dvi_pop_sites: Vec<DviPopSite>,
     max_height_depth: i32,
     max_width: i32,
     max_stack_depth: u16,
@@ -359,6 +361,10 @@ impl DviPagePlanBuilder {
             .font_definition_sites
             .take()
             .expect("page-plan compiler enables font relocation recording");
+        let mut dvi_pop_sites = std::mem::take(&mut self.writer.dvi_pop_sites);
+        dvi_pop_sites.sort_unstable_by_key(|site| site.pop_offset);
+        let dvi_pop_save_locs = std::mem::take(&mut self.writer.dvi_pop_save_locs);
+        debug_assert_eq!(dvi_pop_save_locs.len(), dvi_pop_sites.len());
         Ok(DviPagePlan {
             banner: self.job.banner,
             mag: self.job.mag,
@@ -366,6 +372,8 @@ impl DviPagePlanBuilder {
             fonts: fonts.to_vec(),
             body,
             font_definition_sites,
+            dvi_pop_save_locs,
+            dvi_pop_sites,
             max_height_depth: self.max_height_depth,
             max_width: self.max_width,
             max_stack_depth: self.writer.max_stack_depth,
@@ -378,6 +386,11 @@ pub(super) struct FontDefinitionSite {
     pub(super) font_id: u32,
     pub(super) start: usize,
     pub(super) end: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DviPopSite {
+    pub(super) pop_offset: usize,
 }
 
 impl DviPagePlan {
@@ -719,33 +732,108 @@ impl<W: std::io::Write> DviFileWriter<W> {
         self.max_width = self.max_width.max(plan.max_width);
         self.max_stack_depth = self.max_stack_depth.max(plan.max_stack_depth);
 
-        let mut cursor = 0usize;
-        for site in &plan.font_definition_sites {
-            debug_assert!(cursor <= site.start && site.start <= site.end);
-            debug_assert!(site.end <= plan.body.len());
-            self.raw(&plan.body[cursor..site.start]);
-            let font =
-                self.page_fonts
-                    .get(&site.font_id)
-                    .cloned()
-                    .ok_or(DviError::MissingFont {
-                        font_id: site.font_id,
-                    })?;
-            let key = FontKey::from(&font);
-            if !self.fonts.contains_key(&key) {
-                self.raw(&plan.body[site.start..site.end]);
-                self.fonts.insert(
-                    key.clone(),
-                    DefinedFont {
-                        number: font.font_id,
-                        font,
-                    },
-                );
-            }
-            cursor = site.end;
-        }
-        self.raw(&plan.body[cursor..]);
+        self.write_plan_body(plan)?;
         self.u8(EOP);
+        Ok(())
+    }
+
+    fn write_plan_body(&mut self, plan: &DviPagePlan) -> Result<(), DviError> {
+        self.dvi_pop_save_offsets.clear();
+        let mut save_index = 0usize;
+        let mut pop_index = 0usize;
+        let mut font_index = 0usize;
+        let mut cursor = 0usize;
+
+        while cursor < plan.body.len() {
+            while plan
+                .dvi_pop_save_locs
+                .get(save_index)
+                .is_some_and(|&offset| offset == cursor)
+            {
+                let current = self.current_offset()?;
+                self.dvi_pop_save_offsets.push(current);
+                save_index += 1;
+            }
+
+            if let Some(site) = plan.font_definition_sites.get(font_index)
+                && site.start == cursor
+            {
+                debug_assert!(site.start <= site.end && site.end <= plan.body.len());
+                debug_assert!(
+                    plan.dvi_pop_save_locs
+                        .get(save_index)
+                        .is_none_or(|&offset| offset >= site.end)
+                );
+                debug_assert!(
+                    plan.dvi_pop_sites
+                        .get(pop_index)
+                        .is_none_or(|pop| pop.pop_offset >= site.end)
+                );
+                let font =
+                    self.page_fonts
+                        .get(&site.font_id)
+                        .cloned()
+                        .ok_or(DviError::MissingFont {
+                            font_id: site.font_id,
+                        })?;
+                let key = FontKey::from(&font);
+                if !self.fonts.contains_key(&key) {
+                    self.raw(&plan.body[site.start..site.end]);
+                    self.fonts.insert(
+                        key.clone(),
+                        DefinedFont {
+                            number: font.font_id,
+                            font,
+                        },
+                    );
+                }
+                cursor = site.end;
+                font_index += 1;
+                continue;
+            }
+
+            if let Some(site) = plan.dvi_pop_sites.get(pop_index)
+                && site.pop_offset == cursor
+            {
+                debug_assert_eq!(plan.body[cursor], POP);
+                let current = self.current_offset()?;
+                let saved = self
+                    .dvi_pop_save_offsets
+                    .pop()
+                    .expect("every planned DVI pop has a matching push");
+                if saved == current && !current.is_multiple_of(DVI_BUFFER_SIZE) {
+                    debug_assert_eq!(self.bytes.last(), Some(&PUSH));
+                    self.bytes.pop();
+                } else {
+                    self.u8(POP);
+                }
+                cursor += 1;
+                pop_index += 1;
+                continue;
+            }
+
+            let next_save = plan
+                .dvi_pop_save_locs
+                .get(save_index)
+                .copied()
+                .unwrap_or(plan.body.len());
+            let next_pop = plan
+                .dvi_pop_sites
+                .get(pop_index)
+                .map_or(plan.body.len(), |site| site.pop_offset);
+            let next_font = plan
+                .font_definition_sites
+                .get(font_index)
+                .map_or(plan.body.len(), |site| site.start);
+            let end = next_save.min(next_pop).min(next_font).min(plan.body.len());
+            debug_assert!(cursor < end);
+            self.raw(&plan.body[cursor..end]);
+            cursor = end;
+        }
+        debug_assert_eq!(save_index, plan.dvi_pop_save_locs.len());
+        debug_assert_eq!(pop_index, plan.dvi_pop_sites.len());
+        debug_assert_eq!(font_index, plan.font_definition_sites.len());
+        debug_assert!(self.dvi_pop_save_offsets.is_empty());
         Ok(())
     }
 }

@@ -10,6 +10,11 @@ use movement::MovementStack;
 
 use crate::PageArtifact;
 
+// The pinned TeX Live 2026 pdfTeX configuration sets `dvi_buf_size` to
+// 16 KiB. pdfTeX WEB §§621, 625, and 628 make that physical buffer size
+// byte-observable when `dvi_pop` reaches a full-buffer boundary.
+const DVI_BUFFER_SIZE: usize = 16_384;
+
 #[cfg(test)]
 mod tests;
 
@@ -220,6 +225,8 @@ struct DviBodyCompiler {
     dvi_f: Option<u32>,
     cur_s: i32,
     font_definition_sites: Option<Vec<plan::FontDefinitionSite>>,
+    dvi_pop_save_locs: Vec<usize>,
+    dvi_pop_sites: Vec<plan::DviPopSite>,
     snap_reference: (Scaled, Scaled),
 }
 
@@ -235,6 +242,7 @@ struct DviFileWriter<W: Write> {
     previous_bop: i32,
     max_height_depth: i32,
     max_width: i32,
+    dvi_pop_save_offsets: Vec<usize>,
 }
 
 impl DviBodyCompiler {
@@ -254,6 +262,8 @@ impl DviBodyCompiler {
             dvi_f: None,
             cur_s: -1,
             font_definition_sites: None,
+            dvi_pop_save_locs: Vec::new(),
+            dvi_pop_sites: Vec::new(),
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }
@@ -271,6 +281,7 @@ impl<W: Write> DviFileWriter<W> {
             previous_bop: -1,
             max_height_depth: 0,
             max_width: 0,
+            dvi_pop_save_offsets: Vec::new(),
         }
     }
 
