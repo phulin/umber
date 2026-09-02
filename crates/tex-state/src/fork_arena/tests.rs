@@ -128,6 +128,103 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
 }
 
 #[test]
+fn final_logical_chunk_release_drops_optional_superblock_and_reuses_stable_slot() {
+    let mut pool =
+        ChunkPool::<u64>::with_node_pool_chunk_bytes(32_768, super::NodePoolStorageClass::Node);
+    let first = pool.payload.allocate(7, 9).expect("first chunk");
+    let second = pool.payload.allocate(7, 9).expect("second chunk");
+    let physical = pool.payload.physical(first).expect("first physical block");
+    assert_eq!(
+        pool.payload
+            .physical(second)
+            .expect("second physical block"),
+        physical,
+        "two half-block logical chunks share one physical superblock"
+    );
+    *pool
+        .payload
+        .reserve(first, 7, 9, None, None, false)
+        .expect("first value")
+        .slot = Some(11);
+    *pool
+        .payload
+        .reserve(second, 7, 9, None, None, false)
+        .expect("second value")
+        .slot = Some(22);
+    let live_bytes = pool.allocated_heap_bytes();
+    assert_eq!(
+        pool.payload.live_page_payload_bytes(),
+        tex_dense_prefix::SUPERBLOCK_BYTES
+    );
+
+    assert_eq!(pool.payload.release(first, 7), Ok(1));
+    assert_eq!(
+        pool.payload.live_page_payload_bytes(),
+        tex_dense_prefix::SUPERBLOCK_BYTES,
+        "a physical block remains while its other logical chunk is live"
+    );
+    assert_eq!(pool.payload.release(second, 7), Ok(1));
+    assert_eq!(pool.payload.live_page_payload_bytes(), 0);
+    assert_eq!(pool.payload.vacant_page_payload_bytes(), 0);
+    assert!(pool.allocated_heap_bytes() < live_bytes);
+    let vacant_bytes = pool.allocated_heap_bytes();
+    assert_eq!(pool.page_count(), 1, "stable slot indexing remains intact");
+    assert!(pool.payload.get(first, 7, 0).is_none());
+    assert!(pool.payload.get(second, 7, 0).is_none());
+
+    let replacement = pool.payload.allocate(7, 9).expect("replacement chunk");
+    let replacement_physical = pool
+        .payload
+        .physical(replacement)
+        .expect("replacement physical block");
+    assert_eq!(replacement_physical.slot, physical.slot);
+    assert_ne!(replacement_physical.incarnation, physical.incarnation);
+    assert_eq!(
+        pool.allocated_heap_bytes() - vacant_bytes,
+        tex_dense_prefix::SUPERBLOCK_BYTES
+    );
+    assert!(pool.payload.get(first, 7, 0).is_none());
+    assert!(pool.payload.get(second, 7, 0).is_none());
+}
+
+#[test]
+fn packed_superblock_release_returns_backing_and_rejects_stale_coordinate() {
+    let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
+        65_536,
+        super::NodePoolStorageClass::Annex,
+    );
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let stale = list(&mut arena, &mut pool, [41]);
+    let physical = pool
+        .payload
+        .physical(stale.head.raw)
+        .expect("packed physical block");
+    let live_bytes = pool.allocated_heap_bytes();
+
+    arena.retire_region(&mut pool).expect("retire packed arena");
+    assert_eq!(pool.payload.live_page_payload_bytes(), 0);
+    assert_eq!(pool.payload.vacant_page_payload_bytes(), 0);
+    assert!(pool.allocated_heap_bytes() < live_bytes);
+    let vacant_bytes = pool.allocated_heap_bytes();
+    assert_eq!(pool.page_count(), 1, "physical slot identity is stable");
+    assert!(pool.payload.get(stale.head.raw, arena.owner, 0).is_none());
+
+    let mut replacement_arena = ForkArena::<u32, ActiveLane>::new();
+    let replacement = list(&mut replacement_arena, &mut pool, [43]);
+    let replacement_physical = pool
+        .payload
+        .physical(replacement.head.raw)
+        .expect("reused packed physical block");
+    assert_eq!(replacement_physical.slot, physical.slot);
+    assert_ne!(replacement_physical.incarnation, physical.incarnation);
+    assert_eq!(
+        pool.allocated_heap_bytes() - vacant_bytes,
+        tex_dense_prefix::SUPERBLOCK_BYTES
+    );
+    assert!(pool.payload.get(stale.head.raw, arena.owner, 0).is_none());
+}
+
+#[test]
 fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let drops = Rc::new(RefCell::new(Vec::new()));
     let did_panic = Rc::new(Cell::new(false));

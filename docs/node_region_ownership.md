@@ -431,8 +431,11 @@ Dropping an envelope visits its logical and physical block ranges only. A
 block shared solely by the accepted/candidate fork remains live until that
 aggregate transaction settles; no semantic owner adds another share. Reuse
 advances logical and physical incarnations, so retiring prior before current
-or current before prior releases exactly the unreachable blocks. A third view
-is unconstructible. A successor root
+or current before prior releases exactly the unreachable blocks. Last-lineage
+release returns the exact 64 KiB backing immediately while preserving only the
+stable physical slot and its incarnation; later reuse allocates new backing in
+that slot and cannot revive a stale coordinate. A third view is
+unconstructible. A successor root
 which crosses the build boundary or was not published through the checked
 dependency-folding seam retains the explicit structural-copy fallback. The
 shipped page, complete old region, and unrelated checkpoint material are never
@@ -486,7 +489,8 @@ here.
 Logical retained-byte accounting follows the direct owner:
 
 - each live `PageRegion` is charged once for its pool pages, aggregate node and
-  annex envelopes, logical topology metadata, journal storage, and reusable capacity;
+  annex envelopes, logical topology metadata, journal storage, and stable slot
+  metadata; vacant slots retain no payload backing;
 - each checkpoint is charged only for its fixed boundary row and aggregate
   non-node metadata;
 - each durable node region is charged once to its register, form, or history
@@ -541,7 +545,8 @@ preflight, the infallible drop order is:
 3. retire child `OwnedNodeClosure` values and candidate active builders;
 4. settle canonical logical tables and predecessor metadata;
 5. release paired node and annex envelopes; and
-6. recycle empty pool slots with fresh generations.
+6. return empty NodePool backing allocations and recycle their stable slots
+   with fresh incarnations.
 
 For shipout, detached output is built first, held-over material is established
 in the next page region second, and only then may the old page region drop. For
@@ -645,8 +650,9 @@ The deterministic performance gates are:
   later region owners, never the unchanged prefix;
 - rejection returns exact roots, chunk generations, identities, counters, and
   region order; acceptance makes superseded coordinates stale;
-- repeated pages without retained boundaries reach a stable pool high-water
-  plateau after output and held-over evacuation;
+- repeated pages without retained boundaries reach a stable pool slot-metadata
+  high-water after output and held-over evacuation while vacant payload bytes
+  return to zero;
 - a unique `\box`/`\unhbox` transfer performs zero node copies, an explicit
   `\copy`/`\unhcopy` copies exactly the selected closure, and a move protected
   by history increments only `history_preservation_nodes_copied`;

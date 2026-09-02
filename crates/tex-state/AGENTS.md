@@ -118,7 +118,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe caller-owned
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
   arenas, pool-chunk-local owner-relative positions without per-region sparse
-  resolver prefixes, resident-slot page payload publication, move-only
+  resolver prefixes, NodePool-only last-lineage return of vacant exact-64-KiB
+  backing while stable slots retain incarnation-based stale rejection,
+  resident-slot page payload publication, move-only
   detached active-list builders with explicit pool mutation, constant-time opaque-root admission into stable borrowed
   views whose ordinary reads carry owner-relative chunk/offset cursors without
   repeating owner or incarnation validation, allocation-free logical-order
@@ -208,8 +210,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   borrowed row directly into its caller's final command fields.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
-  allocation attribution, structural dispatch census, and coarse retained
-  generation lifetime counters. Ordinary builds compile neither the module nor
+  allocation attribution, structural dispatch census, coarse retained
+  generation lifetime counters, and separate node/annex live-versus-vacant
+  NodePool backing evidence. Ordinary builds compile neither the module nor
   any associated fields, branches, or atomics.
 - `src/memory_accounting.rs`: Generation-local constant-time TeX main-memory
   totals updated by immutable payload publication/final release and node-arena

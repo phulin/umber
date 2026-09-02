@@ -156,12 +156,16 @@ linked-node traversal, descriptor search, physical-owner range scan,
 forwarding lookup, or compaction.
 
 Released logical rows enter an explicit pool-owned free-slot stack. Reuse
-increments the row incarnation before publishing a new mapping, so the flat
-vector remains bounded by its live/high-water demand without relocating a live
-row. Fork metrics report copied live and vacant rows separately; a long
-session must reach a stable table high-water when its semantic owners do. A
-hole is never skipped through a search structure and compaction is not a
-fallback for excessive metadata.
+increments the row incarnation before publishing a new mapping. When the last
+logical chunk leaves a physical NodePool slot, that slot keeps only its stable
+incarnation metadata and the pool immediately returns the exact 64 KiB backing
+allocation. Reuse allocates fresh backing in the same slot before incrementing
+its physical incarnation and publishing a mapping. The flat vectors therefore
+remain bounded by live/high-water slot demand without retaining vacant payload
+or relocating a live row. Fork metrics report copied live and vacant rows
+separately; a long session must reach a stable table high-water when its
+semantic owners do. A hole is never skipped through a search structure and
+compaction is not a fallback for excessive metadata.
 
 An annex cursor uses a seven-word compact direct-list shape. The admitted
 paired view supplies the pool-stable annex space:
@@ -741,8 +745,10 @@ name the superseded accepted suffix, then drops that node suffix, then drops
 its annex suffix, and finally moves the candidate flat tables into the
 accepted owner. Acceptance copies zero payload. Reusable physical block slots
 and newly occupied logical ordinals increment their respective incarnations
-before publication. Reusing an offset in a surviving partial block changes its
-publication serial. Stale keys therefore fail even if ordinal, slot, and
+before publication. A vacant physical slot has no `Superblock`; reuse first
+constructs one fresh exact allocation and changes no table or incarnation if
+that allocation fails. Reusing an offset in a surviving partial block changes
+its publication serial. Stale keys therefore fail even if ordinal, slot, and
 offset recur. The at-most-two-generation rule applies to both tables as one
 aggregate transaction; no third node or annex view can be created.
 
@@ -791,7 +797,8 @@ The deterministic gates report:
 - zero node/annex copy at checkpoint capture, exact maxima of 65,504 node and
   65,532 annex bytes at fork, and zero payload copy at acceptance;
 - exact table entries/bytes copied, node/annex tail values/bytes copied,
-  boundary padding, live bytes, reusable capacity, and stale-key rejections;
+  boundary padding, live backing bytes, zero vacant backing bytes, stable
+  vacant-slot metadata, and stale-key rejections;
   and
 - removal of the authenticated 3,143,705 by 168-byte release row, or
   528,142,440 bytes, without comparable construction, append, token, annex,

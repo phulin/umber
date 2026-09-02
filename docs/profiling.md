@@ -184,6 +184,15 @@ scope exit. There is no mutable global reset: concurrent or nested diagnostic
 code cannot erase another measurement, and counters never enter semantic
 state, snapshots, rollback, formats, hashes, checkpoints, fuel, or output.
 
+The same report scope emits `NODE_POOL_STORAGE_CENSUS`. Its separate node and
+annex lanes give exact fresh/reuse/release event totals, current and peak live
+block counts, current and peak vacant stable-slot counts, and corresponding
+live and vacant payload bytes. NodePool last-lineage release returns the exact
+64 KiB allocation, so vacant payload bytes remain zero even while vacant slot
+metadata stays available for direct incarnation-safe reuse. The counters are
+profiling-only scalar updates at allocation and release boundaries; they do
+not scan tables, decide liveness, or change ordinary arena retention policy.
+
 The JSON fields have these semantics:
 
 - `allocations` always names `command_state_clone`, `step_snapshot_clone`,

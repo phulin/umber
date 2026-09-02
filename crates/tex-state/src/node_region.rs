@@ -11,8 +11,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
     ActiveListBuilder, AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool,
-    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane, RegionValue,
-    SealedBoundary, SequenceSummaryWork,
+    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, NodePoolStorageClass,
+    PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
 };
 use crate::node::Node;
 #[cfg(test)]
@@ -131,8 +131,11 @@ impl NodePool {
     pub fn with_chunk_bytes(chunk_bytes: usize) -> Self {
         Self {
             id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
-            chunks: ChunkPool::with_chunk_bytes(chunk_bytes),
-            annex_chunks: ChunkPool::with_packed_chunk_bytes(65_536),
+            chunks: ChunkPool::with_node_pool_chunk_bytes(chunk_bytes, NodePoolStorageClass::Node),
+            annex_chunks: ChunkPool::with_node_pool_packed_chunk_bytes(
+                65_536,
+                NodePoolStorageClass::Annex,
+            ),
             regions: Vec::new(),
             free_regions: Vec::new(),
             closure_transitions: ClosureTransitionCounters::default(),

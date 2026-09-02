@@ -250,6 +250,32 @@ impl Drop for HotCoreProfilingReport {
             nodes.checkpoint_sidecar_nodes,
             nodes.checkpoint_shared_rows,
         );
+        let storage = tex_state::measurement::node_pool_storage_census();
+        eprintln!(
+            "NODE_POOL_STORAGE_CENSUS node_fresh_allocations={} node_reuse_allocations={} node_releases={} node_live_blocks={} node_peak_live_blocks={} node_vacant_slots={} node_peak_vacant_slots={} node_live_payload_bytes={} node_peak_live_payload_bytes={} node_vacant_payload_bytes={} node_peak_vacant_payload_bytes={} annex_fresh_allocations={} annex_reuse_allocations={} annex_releases={} annex_live_blocks={} annex_peak_live_blocks={} annex_vacant_slots={} annex_peak_vacant_slots={} annex_live_payload_bytes={} annex_peak_live_payload_bytes={} annex_vacant_payload_bytes={} annex_peak_vacant_payload_bytes={}",
+            storage.nodes.fresh_allocations,
+            storage.nodes.reuse_allocations,
+            storage.nodes.releases,
+            storage.nodes.live_blocks,
+            storage.nodes.peak_live_blocks,
+            storage.nodes.vacant_slots,
+            storage.nodes.peak_vacant_slots,
+            storage.nodes.live_payload_bytes,
+            storage.nodes.peak_live_payload_bytes,
+            storage.nodes.vacant_payload_bytes,
+            storage.nodes.peak_vacant_payload_bytes,
+            storage.annexes.fresh_allocations,
+            storage.annexes.reuse_allocations,
+            storage.annexes.releases,
+            storage.annexes.live_blocks,
+            storage.annexes.peak_live_blocks,
+            storage.annexes.vacant_slots,
+            storage.annexes.peak_vacant_slots,
+            storage.annexes.live_payload_bytes,
+            storage.annexes.peak_live_payload_bytes,
+            storage.annexes.vacant_payload_bytes,
+            storage.annexes.peak_vacant_payload_bytes,
+        );
     }
 }
 

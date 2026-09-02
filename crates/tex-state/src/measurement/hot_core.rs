@@ -2,6 +2,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::fork_arena::{NodePoolStorageClass, NodePoolStorageEvent};
+
 pub use umber_hot_core_allocator::HotCoreAllocator;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -352,6 +354,31 @@ pub struct NodeGraphCensus {
     pub checkpoint_shared_rows: u64,
 }
 
+/// Physical backing and stable-slot occupancy for one `NodePool` lane.
+///
+/// A vacant slot retains an incarnation but no 64-KiB payload allocation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodePoolStorageLaneCensus {
+    pub fresh_allocations: u64,
+    pub reuse_allocations: u64,
+    pub releases: u64,
+    pub live_blocks: u64,
+    pub peak_live_blocks: u64,
+    pub vacant_slots: u64,
+    pub peak_vacant_slots: u64,
+    pub live_payload_bytes: u64,
+    pub peak_live_payload_bytes: u64,
+    pub vacant_payload_bytes: u64,
+    pub peak_vacant_payload_bytes: u64,
+}
+
+/// Process-wide physical backing census for node-record and annex lanes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodePoolStorageCensus {
+    pub nodes: NodePoolStorageLaneCensus,
+    pub annexes: NodePoolStorageLaneCensus,
+}
+
 impl NodeGraphCensus {
     #[must_use]
     pub fn saturating_sub(self, baseline: Self) -> Self {
@@ -579,6 +606,91 @@ static NODE_DIAGNOSTIC_PROJECTION_NODES: AtomicU64 = AtomicU64::new(0);
 static NODE_CHECKPOINT_SIDECAR_ROWS: AtomicU64 = AtomicU64::new(0);
 static NODE_CHECKPOINT_SIDECAR_NODES: AtomicU64 = AtomicU64::new(0);
 static NODE_CHECKPOINT_SHARED_ROWS: AtomicU64 = AtomicU64::new(0);
+static NODE_POOL_FRESH_ALLOCATIONS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_REUSE_ALLOCATIONS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_RELEASES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_LIVE_BLOCKS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_PEAK_LIVE_BLOCKS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_VACANT_SLOTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_PEAK_VACANT_SLOTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+const fn node_pool_storage_index(class: NodePoolStorageClass) -> usize {
+    match class {
+        NodePoolStorageClass::Node => 0,
+        NodePoolStorageClass::Annex => 1,
+    }
+}
+
+fn subtract_gauge(counter: &AtomicU64, value: u64) {
+    let previous = counter.fetch_sub(value, Ordering::Relaxed);
+    debug_assert!(previous >= value, "node-pool storage gauge underflow");
+}
+
+pub(crate) fn record_node_pool_storage(
+    class: NodePoolStorageClass,
+    live_blocks: usize,
+    vacant_slots: usize,
+    live_payload_bytes: usize,
+    vacant_payload_bytes: usize,
+    event: NodePoolStorageEvent,
+) {
+    debug_assert_eq!(
+        live_payload_bytes,
+        live_blocks.saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES)
+    );
+    debug_assert_eq!(vacant_payload_bytes, 0);
+    let index = node_pool_storage_index(class);
+    match event {
+        NodePoolStorageEvent::FreshAllocation => {
+            NODE_POOL_FRESH_ALLOCATIONS[index].fetch_add(1, Ordering::Relaxed);
+            let live = NODE_POOL_LIVE_BLOCKS[index].fetch_add(1, Ordering::Relaxed) + 1;
+            NODE_POOL_PEAK_LIVE_BLOCKS[index].fetch_max(live, Ordering::Relaxed);
+        }
+        NodePoolStorageEvent::ReuseAllocation => {
+            NODE_POOL_REUSE_ALLOCATIONS[index].fetch_add(1, Ordering::Relaxed);
+            subtract_gauge(&NODE_POOL_VACANT_SLOTS[index], 1);
+            let live = NODE_POOL_LIVE_BLOCKS[index].fetch_add(1, Ordering::Relaxed) + 1;
+            NODE_POOL_PEAK_LIVE_BLOCKS[index].fetch_max(live, Ordering::Relaxed);
+        }
+        NodePoolStorageEvent::Release => {
+            NODE_POOL_RELEASES[index].fetch_add(1, Ordering::Relaxed);
+            subtract_gauge(&NODE_POOL_LIVE_BLOCKS[index], 1);
+            let vacant = NODE_POOL_VACANT_SLOTS[index].fetch_add(1, Ordering::Relaxed) + 1;
+            NODE_POOL_PEAK_VACANT_SLOTS[index].fetch_max(vacant, Ordering::Relaxed);
+        }
+        NodePoolStorageEvent::DropStorage => {
+            subtract_gauge(&NODE_POOL_LIVE_BLOCKS[index], live_blocks as u64);
+            subtract_gauge(&NODE_POOL_VACANT_SLOTS[index], vacant_slots as u64);
+        }
+    }
+}
+
+fn node_pool_storage_lane_census(index: usize) -> NodePoolStorageLaneCensus {
+    let live_blocks = NODE_POOL_LIVE_BLOCKS[index].load(Ordering::Relaxed);
+    let peak_live_blocks = NODE_POOL_PEAK_LIVE_BLOCKS[index].load(Ordering::Relaxed);
+    NodePoolStorageLaneCensus {
+        fresh_allocations: NODE_POOL_FRESH_ALLOCATIONS[index].load(Ordering::Relaxed),
+        reuse_allocations: NODE_POOL_REUSE_ALLOCATIONS[index].load(Ordering::Relaxed),
+        releases: NODE_POOL_RELEASES[index].load(Ordering::Relaxed),
+        live_blocks,
+        peak_live_blocks,
+        vacant_slots: NODE_POOL_VACANT_SLOTS[index].load(Ordering::Relaxed),
+        peak_vacant_slots: NODE_POOL_PEAK_VACANT_SLOTS[index].load(Ordering::Relaxed),
+        live_payload_bytes: live_blocks.saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
+        peak_live_payload_bytes: peak_live_blocks
+            .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
+        vacant_payload_bytes: 0,
+        peak_vacant_payload_bytes: 0,
+    }
+}
+
+#[must_use]
+pub fn node_pool_storage_census() -> NodePoolStorageCensus {
+    NodePoolStorageCensus {
+        nodes: node_pool_storage_lane_census(0),
+        annexes: node_pool_storage_lane_census(1),
+    }
+}
 
 #[must_use = "keep the allocation scope alive for the interval being measured"]
 pub fn hot_core_allocation_scope(
