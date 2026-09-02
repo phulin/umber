@@ -2055,11 +2055,14 @@ semantic position with the word; rollback swaps one opaque four-byte store
 coordinate. `MacroArgumentCursor` is specialized independently. Its admitted
 range already contains absolute scratch-lane bounds, so the row owns one
 absolute coordinate plus identity and optional source context directly. Warm
-delivery checks that coordinate against the range, performs the fixed-chunk
-lookup, and advances it once. It derives the relative semantic position only
-when command stamping or diagnostic projection requires one; rollback journals
-and swaps the exact absolute coordinate. This avoids maintaining a second
-relative cursor and rebuilding an absolute scratch coordinate for every word.
+delivery checks that coordinate against the range end, performs the
+fixed-chunk lookup, and advances it once. Admission already proved the lower
+bound and lane extent. The same operation returns the pre-advance relative
+position and separate packed word/origin parts, avoiding both a second bounds
+pass and construction then immediate splitting of a `TracedTokenWord`.
+Rollback journals and swaps the exact absolute coordinate and provenance-run
+index. This avoids maintaining a second relative cursor or rebuilding and
+revalidating an absolute scratch coordinate for every word.
 On the supported 64-bit host the body row is the macro call. Eqtb stores the
 eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
@@ -2069,9 +2072,10 @@ an `ArgumentSetId`; parameterless macros allocate and push only the body row.
 
 The argument cursor locates its opening provenance run once at admission and
 then advances that run index only when sequential replay crosses a provenance
-boundary. It does not binary-search the run table for every token. Its absolute
-coordinate does not change the provenance, source, or relative delivery stamp
-visible outside the resident row. The input
+boundary. It does not binary-search the run table, repeat the already-proved
+run-start/range-lower checks, or reify a combined traced word for every token.
+Its absolute coordinate does not change the provenance, source, or relative
+delivery stamp visible outside the resident row. The input
 stack also maintains the live macro-parameter total on body push, body pop, and
 checkpoint restore; macro activation reads that scalar instead of walking all
 active input rows.

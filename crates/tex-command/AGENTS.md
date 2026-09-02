@@ -289,10 +289,12 @@ collector (see `src/conditionals.rs`).
   derives a flat region-local chunk slot in constant time and changes chunks
   only at a 4,096-word boundary. The macro-argument row likewise owns the
   admitted range's absolute scratch-lane coordinate directly. Warm delivery
-  checks that coordinate against the range and advances it once; the row
-  derives a relative semantic position only when command or diagnostic
-  projection requires one, and rollback journals the exact absolute
-  coordinate. A
+  checks that coordinate against the range end and advances it once; admission
+  already proved the lower bound and lane extent. The same operation returns
+  the relative delivery position plus separate packed word/origin parts, so it
+  neither revalidates the admitted range nor constructs and immediately splits
+  a `TracedTokenWord`. Rollback journals the exact absolute coordinate and
+  provenance run. A
   source row contains only its common frame and one eight-byte ABA-checked key
   into the `InputStack`'s fixed reusable source-slot pages. The slot solely
   owns backing, replacement, `everyeof`, ancestry, source classification, and
@@ -532,8 +534,9 @@ collector (see `src/conditionals.rs`).
   matcher or argument state. Resident selection returns the bare body or
   argument cursor, constructs checkpoint state only on a real first touch, and
   advances one packed word before testing `Param` and writing the final command
-  slot. Argument cursors advance one provenance-run index only at run
-  boundaries. The body word read remains the narrow opaque seam where stable
+  slot. Argument cursors admit word/origin parts directly, derive the delivery
+  position from their one absolute coordinate, and advance one provenance-run
+  index only at run boundaries. The body word read remains the narrow opaque seam where stable
   coarse definition storage replaces the current key lookup; it must not expose
   definition coordinates or add independent ownership. Tail-child argument
   spans never rebase or copy.

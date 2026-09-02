@@ -755,18 +755,16 @@ impl MacroWordLane {
             .and_then(|run| u32::try_from(run).ok())
     }
 
-    /// Reads the next sequential word while advancing only across provenance
-    /// boundaries. Admission finds the opening run once; ordinary replay then
-    /// performs one direct word lookup and at most one adjacent-run check.
-    fn get_sequential(&self, index: u32, run: &mut u32) -> Option<TracedTokenWord> {
-        if index >= self.len {
-            return None;
-        }
+    /// Reads one admitted sequential word and its provenance without
+    /// constructing the traced-token representation that resident delivery
+    /// would immediately split again. Admission finds the opening run once;
+    /// ordinary replay then performs one direct word lookup and at most one
+    /// adjacent-run check. The admitted range proves `index < self.len`, and
+    /// the cursor's stored run proves its start is not after `index`; repeating
+    /// either comparison here would revalidate the same resident coordinate.
+    #[inline(always)]
+    fn get_sequential_parts(&self, index: u32, run: &mut u32) -> Option<(TokenWord, OriginId)> {
         let mut run_index = *run as usize;
-        let current = self.origins.get(run_index)?;
-        if current.start > index {
-            return None;
-        }
         if self
             .origins
             .get(run_index + 1)
@@ -782,7 +780,7 @@ impl MacroWordLane {
             .get(index / MACRO_WORD_RESERVE)?
             .words
             .get(index % MACRO_WORD_RESERVE)?;
-        Some(TracedTokenWord::from_parts(word, origin))
+        Some((word, origin))
     }
 
     /// Moves one unpublished pending-frame suffix into the dead prefix left by
@@ -1898,18 +1896,19 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    pub(crate) fn admitted_argument_word_at_sequential(
+    /// Reads through the cursor-owned admitted range.
+    ///
+    /// [`crate::input::MacroArgumentCursor`] owns and checks the half-open
+    /// argument end before calling this method. Its absolute coordinate was
+    /// validated at admission and can only advance, so repeating both range
+    /// comparisons here would maintain a second per-word bounds pass.
+    #[inline(always)]
+    pub(crate) fn admitted_argument_parts_at_sequential(
         &self,
-        range: MacroArgumentRange<G>,
         absolute: u32,
         origin_run: &mut u32,
-    ) -> Result<TracedTokenWord, ScratchError> {
-        if absolute < range.start || absolute >= range.end {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.macro_words
-            .get_sequential(absolute, origin_run)
-            .ok_or(ScratchError::InvalidCoordinate)
+    ) -> Option<(TokenWord, OriginId)> {
+        self.macro_words.get_sequential_parts(absolute, origin_run)
     }
 
     fn validate_admitted_argument_range(

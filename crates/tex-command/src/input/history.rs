@@ -1403,11 +1403,10 @@ impl<G> crate::CommandState<G> {
                             .saturating_add(1);
                     }
                     let exhausted_identity = top.identity();
-                    let position = top.position() as u32;
                     let identity = exhausted_identity.0;
                     let active_source = top.active_source();
-                    let Some(word) = top
-                        .advance_word(&self.scratch)
+                    let Some((position, word, origin)) = top
+                        .advance_delivery(&self.scratch)
                         .map_err(|()| super::ResidentCommandColdTransition::Failure)?
                     else {
                         if let Some(transition) = self
@@ -1444,8 +1443,8 @@ impl<G> crate::CommandState<G> {
                             .saturating_add(1);
                     }
                     let resolution = destination.reborrow().write_resolved_delivery(
-                        word.token_word(),
-                        word.origin(),
+                        word,
+                        origin,
                         identity,
                         u64::from(position),
                         active_source,

@@ -921,7 +921,10 @@ and scalar advance, intercepts a parameter in place, or performs one final
 write with at most one dense meaning lookup. Replay words advance from the
 sole resident logical/physical coordinate: segment metadata is inspected only
 at crossed boundaries, and an e-TeX prefix changes runs only once before its
-body. Lazy
+body. A macro argument checks only its authoritative absolute cursor against
+the admitted end, reads separate packed word/origin parts, derives the delivery
+position, and advances that cursor once. It does not repeat the admission-time
+lower/lane bounds or reify and split a traced-token carrier. Lazy
 diagnostic invalidation reads the advanced frame
 or source lexer coordinate only if a cold publication coordinate is captured
 or validated; resident source, stored-token, and macro-argument delivery carry
@@ -965,7 +968,7 @@ coordinates for `file_warning`. There is no shared usage ledger, post-open
 identity search, checkpoint source clone, or retirement-time ancestry clone. A durable token-list input now owns
 only the list id, chunk cursor, and length. Macro replacement input owns a
 definition coordinate; macro-argument input owns a sealed absolute scratch
-range and advances only the packed input frame's scalar position.
+range and advances only its absolute cursor plus provenance-run index.
 Small source-adjacent replay owns only a compact coordinate into the
 generation's segmented replay lane. Its traced words and optional source
 provenance are written once at admission. Popping the level releases exactly

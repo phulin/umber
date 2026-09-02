@@ -386,20 +386,23 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(super) fn advance_word(
+    pub(super) fn advance_delivery(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Result<Option<TracedTokenWord>, ()> {
+    ) -> Result<Option<(u32, TokenWord, OriginId)>, ()> {
         let absolute = self.absolute;
-        let Ok(word) = scratch.admitted_argument_word_at_sequential(
-            self.range,
-            absolute,
-            &mut self.origin_run,
-        ) else {
+        if absolute >= self.range.end() {
+            return Ok(None);
+        }
+        debug_assert!(absolute >= self.range.start());
+        let Some((word, origin)) =
+            scratch.admitted_argument_parts_at_sequential(absolute, &mut self.origin_run)
+        else {
             return Ok(None);
         };
-        self.absolute = self.absolute.checked_add(1).ok_or(())?;
-        Ok(Some(word))
+        let position = absolute - self.range.start();
+        self.absolute = absolute.checked_add(1).ok_or(())?;
+        Ok(Some((position, word, origin)))
     }
 
     fn swap_absolute(&mut self, position: &mut u32) {

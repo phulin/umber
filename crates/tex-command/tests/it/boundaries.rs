@@ -126,6 +126,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         .expect("read resident input owner");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input-level representation");
+    let execution_scratch = fs::read_to_string(manifest_dir.join("src/execution_scratch.rs"))
+        .expect("read macro-argument storage");
     let command = fs::read_to_string(manifest_dir.join("src/command.rs"))
         .expect("read current-command typestate");
 
@@ -248,6 +250,38 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         );
     }
     assert!(resident_front.contains("return self.settle_resident_delivery("));
+    let macro_argument_arm = resident_front
+        .split("InputLevel::MacroArgument(top) =>")
+        .nth(1)
+        .expect("locate direct macro-argument arm");
+    assert!(
+        macro_argument_arm
+            .contains("top\n                        .advance_delivery(&self.scratch)")
+    );
+    assert!(!macro_argument_arm.contains("top.position()"));
+    assert!(!macro_argument_arm.contains("word.token_word()"));
+    assert!(!macro_argument_arm.contains("word.origin()"));
+    let macro_argument_cursor = levels
+        .split("impl<G> MacroArgumentCursor<G>")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<G> TokenCursor<G>").next())
+        .expect("locate macro-argument cursor implementation");
+    assert!(!macro_argument_cursor.contains("fn advance_word("));
+    assert!(macro_argument_cursor.contains("fn advance_delivery("));
+    assert_eq!(
+        execution_scratch
+            .matches("fn admitted_argument_parts_at_sequential(")
+            .count(),
+        1
+    );
+    assert!(!execution_scratch.contains("fn admitted_argument_word_at_sequential("));
+    let admitted_argument_read = execution_scratch
+        .split("fn admitted_argument_parts_at_sequential(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn validate_admitted_argument_range(").next())
+        .expect("locate admitted sequential argument read");
+    assert!(!admitted_argument_read.contains("range:"));
+    assert!(!admitted_argument_read.contains("TracedTokenWord"));
     assert!(!input_stack.contains("fn deliver_top_into("));
     assert!(!input_history.contains("let Some(level) = roots.input.levels.last()"));
     let input_top_transition = input_history
