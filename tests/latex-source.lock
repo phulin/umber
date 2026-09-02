@@ -1,9 +1,9 @@
 # Exact opened inputs for the Umber TeX Live 2026 LaTeX format.
-# The distribution pin is installed by the schema-6 republication in umber2-66p0.27.
+# The distribution pin names the current schema-8 packed snapshot authority.
 # Common fields: source|local <path> <bytes> <sha256>.
 # pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-20260301-texmf
-distribution_ahash64 7d0fdcf5b35d0058
+distribution_ahash64 df66c327ae636145
 format_schema 12
 source_date_epoch 1772323200
 pdftex-reference-source web2c/texmf.cnf 43630 a2e9447fc8b6dfa407fa8d0d710e59b039e22598e3f17de0bdf54daba478742c
