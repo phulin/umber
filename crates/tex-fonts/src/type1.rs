@@ -81,6 +81,11 @@ impl PdfType1Program {
     /// transitive calls are encoded inside encrypted Type-1 programs; removing
     /// CharStrings still produces a genuine, renderable subset without host
     /// PostScript execution.
+    ///
+    /// Like pdfTeX's `writet1.c::t1_subset_ascii_part`, the cleartext program
+    /// is line-normalized, its encoding is rebuilt from the requested glyphs,
+    /// and subset-invalid `/UniqueID` entries are omitted. PDF does not need
+    /// the PFB zero trailer, so subset streams end with the eexec segment.
     pub fn subset(
         &self,
         glyph_names: &BTreeSet<Vec<u8>>,
@@ -98,22 +103,15 @@ impl PdfType1Program {
             .bytes
             .get(clear_end..encrypted_end)
             .ok_or(PdfType1SubsetError::InvalidSegments)?;
-        let trailer = self
-            .bytes
-            .get(encrypted_end..)
-            .ok_or(PdfType1SubsetError::InvalidSegments)?;
-
-        let clear = replace_font_name(clear, subset_font_name)?;
+        let clear = subset_ascii_part(self, clear, glyph_names, subset_font_name)?;
         let decrypted = eexec_crypt(encrypted, false);
         let subset_plaintext = subset_charstrings(&decrypted, glyph_names)?;
         let encrypted = eexec_crypt(&subset_plaintext, true);
-        let mut bytes = Vec::with_capacity(clear.len() + encrypted.len() + trailer.len());
+        let mut bytes = Vec::with_capacity(clear.len() + encrypted.len());
         bytes.extend_from_slice(&clear);
         bytes.extend_from_slice(&encrypted);
-        bytes.extend_from_slice(trailer);
         let length1 = u32::try_from(clear.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
         let length2 = u32::try_from(encrypted.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
-        let length3 = u32::try_from(trailer.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
         Ok(Self {
             identity: PdfType1ProgramIdentity(
                 AHash64::for_bytes(HashDomain::Type1Program, &bytes).to_le_bytes(),
@@ -121,7 +119,7 @@ impl PdfType1Program {
             bytes,
             length1,
             length2,
-            length3,
+            length3: 0,
         })
     }
 
@@ -363,6 +361,107 @@ fn replace_font_name(cleartext: &[u8], name: &[u8]) -> Result<Vec<u8>, PdfType1S
     Ok(replaced)
 }
 
+fn subset_ascii_part(
+    program: &PdfType1Program,
+    cleartext: &[u8],
+    glyph_names: &BTreeSet<Vec<u8>>,
+    font_name: &[u8],
+) -> Result<Vec<u8>, PdfType1SubsetError> {
+    let normalized = normalize_type1_ascii(cleartext);
+    let normalized = replace_font_name(&normalized, font_name)?;
+    let mut encoding_start = None;
+    let mut encoding_end = None;
+    let mut cursor = 0usize;
+    for line in normalized.split_inclusive(|byte| *byte == b'\n') {
+        if encoding_start.is_none() && line.starts_with(b"/Encoding") {
+            encoding_start = Some(cursor);
+        }
+        if encoding_start.is_some() && type1_line_ends_with_def(line) {
+            encoding_end = Some(cursor + line.len());
+            break;
+        }
+        cursor += line.len();
+    }
+    let encoding_start = encoding_start.ok_or(PdfType1SubsetError::MissingEncoding)?;
+    let encoding_end = encoding_end.ok_or(PdfType1SubsetError::MissingEncoding)?;
+
+    let mut subset = Vec::with_capacity(normalized.len());
+    append_without_unique_id(&mut subset, &normalized[..encoding_start], true);
+    if &normalized[encoding_start..encoding_end] == b"/Encoding StandardEncoding def\n" {
+        subset.extend_from_slice(b"/Encoding StandardEncoding def\n");
+    } else {
+        subset.extend_from_slice(b"/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n");
+        let mut encoded = 0usize;
+        for glyph_name in glyph_names {
+            let Some(code) = (0u8..=u8::MAX).find(|code| {
+                program
+                    .builtin_glyph_name(*code)
+                    .is_some_and(|name| name == *glyph_name)
+            }) else {
+                continue;
+            };
+            subset.extend_from_slice(b"dup ");
+            subset.extend_from_slice(code.to_string().as_bytes());
+            subset.extend_from_slice(b" /");
+            subset.extend_from_slice(glyph_name);
+            subset.extend_from_slice(b" put\n");
+            encoded += 1;
+        }
+        if encoded == 0 {
+            subset.extend_from_slice(b"dup 0 /.notdef put\n");
+        }
+        subset.extend_from_slice(b"readonly def\n");
+    }
+    append_without_unique_id(&mut subset, &normalized[encoding_end..], false);
+    Ok(subset)
+}
+
+fn normalize_type1_ascii(bytes: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut line = Vec::new();
+    let mut pending_space = false;
+    for byte in bytes.iter().copied().chain(std::iter::once(b'\n')) {
+        match byte {
+            b'\r' | b'\n' => {
+                if !line.is_empty() {
+                    line.push(b'\n');
+                    normalized.extend_from_slice(&line);
+                    line.clear();
+                }
+                pending_space = false;
+            }
+            b' ' | b'\t' => {
+                if !line.is_empty() {
+                    pending_space = true;
+                }
+            }
+            _ => {
+                if pending_space {
+                    line.push(b' ');
+                    pending_space = false;
+                }
+                line.push(byte);
+            }
+        }
+    }
+    normalized
+}
+
+fn append_without_unique_id(output: &mut Vec<u8>, bytes: &[u8], only_definitions: bool) {
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let unique_id =
+            line.starts_with(b"/UniqueID") && (!only_definitions || type1_line_ends_with_def(line));
+        if !unique_id {
+            output.extend_from_slice(line);
+        }
+    }
+}
+
+fn type1_line_ends_with_def(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line == b"def" || line.ends_with(b" def")
+}
+
 fn eexec_crypt(bytes: &[u8], encrypt: bool) -> Vec<u8> {
     let mut state = 55_665u16;
     bytes
@@ -495,6 +594,7 @@ fn parse_decimal(bytes: &[u8], cursor: &mut usize) -> Result<usize, PdfType1Subs
 pub enum PdfType1SubsetError {
     InvalidSegments,
     MissingFontName,
+    MissingEncoding,
     MissingCharStrings,
     MalformedCharStrings,
     MissingRequestedGlyphs,
@@ -614,7 +714,8 @@ mod tests {
 
     #[test]
     fn subsets_charstrings_separated_by_postscript_carriage_returns() {
-        let clear = b"%!PS /FontName /Fixture def\r";
+        let clear =
+            b"%!PS /FontName /Fixture def\r/Encoding StandardEncoding def\rcurrentfile eexec\r";
         let plaintext = b"/CharStrings 3 dict dup begin\r\
             /.notdef 1 RD x ND\r\
             /space 1 RD y ND\r\
@@ -656,6 +757,8 @@ mod tests {
             .subset(&glyphs, &subset_name)
             .expect("committed CMR subsets");
         assert!(subset.bytes().len() < program.bytes().len());
+        assert_eq!(subset.lengths()[0], 1391);
+        assert_eq!(subset.lengths()[2], 0);
         assert!(
             subset
                 .bytes()
@@ -674,5 +777,44 @@ mod tests {
             );
         }
         assert!(!decrypted.windows(3).any(|window| window == b"/D "));
+    }
+
+    #[test]
+    fn subset_ascii_part_matches_pdftex_and_rejects_the_unfiltered_control() {
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
+        let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
+        let glyphs = [b"A".to_vec(), b"B".to_vec(), b"C".to_vec()]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let original_clear = &program.bytes()[..program.length1 as usize];
+
+        let subset = program
+            .subset(&glyphs, b"QBBONQ+CMR10")
+            .expect("committed CMR subset");
+        let clear = &subset.bytes()[..subset.length1 as usize];
+        let unique_id_definition = b"/UniqueID 5000793 def";
+        assert_eq!(
+            format!("{:x}", md5::Md5::digest(clear)),
+            "1d2f7f176577933a65bb76a39a86b955",
+            "cleartext must stay byte-exact with the pinned pdfTeX stream",
+        );
+        assert!(
+            original_clear
+                .windows(unique_id_definition.len())
+                .any(|window| window == unique_id_definition)
+        );
+        assert!(
+            original_clear
+                .windows(12)
+                .any(|window| window == b"dup 0 /Gamma")
+        );
+        assert!(
+            !clear
+                .windows(unique_id_definition.len())
+                .any(|window| window == unique_id_definition)
+        );
+        assert!(!clear.windows(12).any(|window| window == b"dup 0 /Gamma"));
+        assert!(clear.windows(13).any(|window| window == b"dup 65 /A put"));
+        assert!(clear.ends_with(b"currentfile eexec\n"));
     }
 }

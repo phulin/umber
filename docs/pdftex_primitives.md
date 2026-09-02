@@ -488,9 +488,13 @@ object numbers are allocated at enquiry or first shipout use and survive
 checkpoint rollback exactly. Finalization projects the union of committed page
 glyph use and `\pdfincludechars` through the selected encoding. Type-1 eexec
 programs are decrypted, reduced to the named CharStrings plus `.notdef`, and
-deterministically re-encrypted; TrueType glyf programs use a compact named-glyph
-and composite closure. Both reproduce pdfTeX's MD5-derived six-letter subset
-name. Positive `\pdfgentounicode` emits UTF-16BE CMaps from global or
+deterministically re-encrypted. Their cleartext segment follows
+`writet1.c::t1_subset_ascii_part`: whitespace is normalized line by line,
+subset-invalid `/UniqueID` definitions are omitted, a built-in encoding is
+rebuilt from the requested glyph names, and the unnecessary PFB zero trailer
+is not embedded in PDF. StandardEncoding remains predefined. TrueType glyf
+programs use a compact named-glyph and composite closure. Both reproduce
+pdfTeX's MD5-derived six-letter subset name. Positive `\pdfgentounicode` emits UTF-16BE CMaps from global or
 `tfm:name/glyph` mappings, while per-font `\pdfnobuiltintounicode` suppresses
 the stream and nonzero `\pdfomitcharset` suppresses eligible Type-1 `/CharSet`.
 All dictionaries and streams continue through the canonical vendored
