@@ -220,7 +220,7 @@ fn replay_coordinates_keep_input_frames_compact() {
     assert_eq!(std::mem::size_of::<super::ReplayTokenCursor<()>>(), 72);
     assert_eq!(std::mem::size_of::<super::DurableTokenCursor<()>>(), 80);
     assert_eq!(std::mem::size_of::<super::AttemptTokenCursor<()>>(), 72);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 48);
     assert!(

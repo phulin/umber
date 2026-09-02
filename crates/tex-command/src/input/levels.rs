@@ -101,6 +101,7 @@ pub(crate) fn packed_token_frame(
 /// Conditions, caches, scanner policy, and paragraph transitions cannot be
 /// represented here. Both character profiles use this same level structure.
 #[derive(Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
     ReplayTokens(ReplayTokenCursor<G>),
