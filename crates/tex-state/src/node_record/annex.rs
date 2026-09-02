@@ -464,7 +464,11 @@ impl<'a> NodeAnnexView<'a> {
 
     pub(super) fn detach_span<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
         let view = self.list(key)?;
-        Some(view.iter().skip(1).copied().collect())
+        let mut words = Vec::with_capacity(view.len().saturating_sub(1));
+        for word in view.iter().skip(1) {
+            words.push(*word);
+        }
+        Some(words)
     }
 }
 
