@@ -152,6 +152,55 @@ fn sample_document(order: &[u32]) -> PdfDocument {
 }
 
 #[test]
+fn image_attributes_precede_the_imported_page_group() {
+    // pdftex.web §776 writes the `\pdfximage` attribute list before the image
+    // backend. The PDF importer then writes the selected page's Group entry,
+    // so that later entry is effective when the attribute list also named it.
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    let mut form = dictionary([
+        ("Resources", PdfValue::Dictionary(PdfDictionary::new())),
+        ("Group", PdfValue::Reference(id(7))),
+    ]);
+    form.set_raw_entries(b"/Group <</I false /K false /S /Transparency>>".to_vec());
+    input.objects.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::FormXObject {
+            dictionary: form,
+            data: Vec::new(),
+            bbox: [PdfNumber::new(0, 0).expect("zero"); 4],
+            matrix: None,
+        },
+    });
+    input.objects.push(indirect(
+        7,
+        PdfValue::Dictionary(dictionary([
+            ("Type", PdfValue::Name("Group".into())),
+            ("S", PdfValue::Name("Transparency".into())),
+            ("CS", PdfValue::Name("DeviceRGB".into())),
+        ])),
+    ));
+
+    let bytes = input
+        .validate()
+        .expect("form and imported group are valid")
+        .to_pdf_bytes()
+        .expect("serialize form and imported group");
+    let attribute = find_bytes(&bytes, b"/Group <</I false /K false /S /Transparency>>")
+        .expect("verbatim image attribute");
+    let imported = find_bytes(&bytes, b"/Group 7 0 R").expect("imported page group");
+    assert!(attribute < imported);
+
+    let parsed = query(&bytes);
+    let form = parsed
+        .dictionary(query_id(6))
+        .expect("imported Form XObject");
+    assert_eq!(
+        form.get(b"Group").and_then(|value| value.referenced_id()),
+        Some(query_id(7))
+    );
+}
+
+#[test]
 fn compact_serialization_is_deterministic_and_independently_parseable() {
     let first = sample_document(&[1, 2, 3, 4, 5]);
     let reordered = sample_document(&[5, 3, 1, 4, 2]);

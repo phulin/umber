@@ -370,6 +370,7 @@ fn write_image_xobject(
     let height = i32::try_from(image.height)
         .map_err(|_| PdfSerializeError::IntegerOutOfRange(i64::from(image.height)))?;
     let mut writer = pdf.image_xobject(reference, data);
+    writer.raw_entries(dictionary.raw_entries());
     writer
         .width(width)
         .height(height)
@@ -409,7 +410,7 @@ fn write_image_xobject(
     if let Some(mask) = image.soft_mask {
         writer.s_mask(writer_ref(mask)?);
     }
-    write_dictionary_entries(&mut writer, dictionary, None)?;
+    write_typed_dictionary_entries_skipping(&mut writer, dictionary, &[])?;
     writer.finish();
     Ok(())
 }
@@ -572,6 +573,7 @@ fn write_form_xobject(
     match compression {
         PdfStreamCompression::None => {
             let mut form = pdf.form_xobject(reference, data);
+            form.raw_entries(dictionary.raw_entries());
             form.bbox(bbox);
             if let Some(matrix) = matrix {
                 form.matrix(matrix);
@@ -582,6 +584,7 @@ fn write_form_xobject(
         PdfStreamCompression::Flate { level } => {
             let compressed = deflate(data, level)?;
             let mut form = pdf.form_xobject(reference, &compressed);
+            form.raw_entries(dictionary.raw_entries());
             form.bbox(bbox).filter(Filter::FlateDecode);
             if let Some(matrix) = matrix {
                 form.matrix(matrix);
@@ -607,7 +610,7 @@ fn write_form_entries(
     if let Some(PdfValue::Reference(group)) = dictionary.get(b"Group") {
         form.group_ref(writer_ref(*group)?);
     }
-    write_dictionary_entries_skipping(form, dictionary, &[b"Resources", b"Group"])
+    write_typed_dictionary_entries_skipping(form, dictionary, &[b"Resources", b"Group"])
 }
 
 fn writer_ref(id: PdfObjectId) -> Result<Ref, PdfSerializeError> {
@@ -827,13 +830,22 @@ fn write_dictionary_entries_skipping(
     dictionary: &PdfDictionary,
     skip: &[&[u8]],
 ) -> Result<(), PdfSerializeError> {
+    write_typed_dictionary_entries_skipping(writer, dictionary, skip)?;
+    writer.raw_entries(dictionary.raw_entries());
+    Ok(())
+}
+
+fn write_typed_dictionary_entries_skipping(
+    writer: &mut Dict<'_>,
+    dictionary: &PdfDictionary,
+    skip: &[&[u8]],
+) -> Result<(), PdfSerializeError> {
     for (key, value) in dictionary.iter() {
         if skip.contains(&key.as_bytes()) {
             continue;
         }
         write_value(writer.insert(Name(key.as_bytes())), value)?;
     }
-    writer.raw_entries(dictionary.raw_entries());
     Ok(())
 }
 
