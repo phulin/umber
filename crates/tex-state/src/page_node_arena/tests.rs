@@ -1009,10 +1009,11 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
         .expect("leaf address");
     let before = arena.counters().source_nodes_copied;
 
+    let mut durable = Some(durable);
     let moved = arena
-        .move_durable_to_page(durable)
-        .map_err(|(error, _)| error)
+        .move_durable_to_page_in_place(&mut durable)
         .expect("unique move");
+    assert!(durable.is_none());
     let Node::HList(box_node) = arena
         .list(moved)
         .expect("moved root")

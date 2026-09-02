@@ -126,14 +126,13 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
         .get(0)
         .map(std::ptr::from_ref)
         .expect("source annex address");
-    let closure = source
+    let mut closure = source
         .into_closure(&pool, parent)
         .map_err(|(error, _)| error)
         .expect("owned closure");
     let mut destination = pool.start_region::<PageRole>().expect("destination");
 
-    let moved = transfer_closure_into(&mut pool, closure, &mut destination)
-        .map_err(|failure| failure.error)
+    let moved = transfer_closure_into(&mut pool, &mut closure, &mut destination)
         .expect("whole closure transfer");
     let moved_parent = destination.list(&pool, moved).expect("moved parent");
     let Node::HList(box_node) = moved_parent.get(0).expect("parent node") else {

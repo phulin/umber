@@ -340,18 +340,25 @@ impl NodePool {
         &mut self,
         mut region: NodeRegion<Role>,
     ) -> Result<(), (ForkArenaError, NodeRegion<Role>)> {
-        if let Err(error) = self.validate_region(&region) {
+        if let Err(error) = self.retire_region_in_place(&mut region) {
             return Err((error, region));
         }
-        if let Err(error) = region.pub_arena.can_retire_region(&self.chunks) {
-            return Err((error, region));
-        }
-        if let Err(error) = region.annex_arena.can_retire_region(&self.annex_chunks) {
-            return Err((error, region));
-        }
+        Ok(())
+    }
+
+    /// Retires one authoritative region slot without transporting its complete
+    /// envelope through a temporary return value. The now-empty value may be
+    /// dropped in place by a higher-level owner store.
+    pub(crate) fn retire_region_in_place<Role>(
+        &mut self,
+        region: &mut NodeRegion<Role>,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_region(region)?;
+        region.pub_arena.can_retire_region(&self.chunks)?;
+        region.annex_arena.can_retire_region(&self.annex_chunks)?;
         let next_generation = match region.id.generation.checked_add(1) {
             Some(generation) => generation,
-            None => return Err((ForkArenaError::CapacityOverflow, region)),
+            None => return Err(ForkArenaError::CapacityOverflow),
         };
         region
             .pub_arena
@@ -368,6 +375,13 @@ impl NodePool {
         entry.generation = next_generation;
         self.free_regions.push(region.id.slot);
         Ok(())
+    }
+
+    pub(crate) fn retire_closure_in_place<Role>(
+        &mut self,
+        closure: &mut OwnedNodeClosure<Role>,
+    ) -> Result<(), ForkArenaError> {
+        self.retire_region_in_place(&mut closure.region)
     }
 }
 
@@ -1147,12 +1161,6 @@ impl<Role> OwnedNodeClosure<Role> {
     }
 }
 
-/// Failed move which returns the still-exclusive source owner unchanged.
-pub(crate) struct ClosureTransferError<Role> {
-    pub(crate) error: ForkArenaError,
-    pub(crate) closure: OwnedNodeClosure<Role>,
-}
-
 /// Commits a detached construction suffix into a destination region. Failed
 /// destination validation returns the move-only suffix loan unchanged.
 #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
@@ -1236,12 +1244,11 @@ pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
 
 /// Moves a whole self-contained closure envelope and rebrands every nested
 /// child coordinate without moving any node address.
-#[allow(clippy::result_large_err)] // Transfer failure must return the exclusive closure owner.
 pub(crate) fn transfer_closure_into<Source, Destination>(
     pool: &mut NodePool,
-    mut closure: OwnedNodeClosure<Source>,
+    closure: &mut OwnedNodeClosure<Source>,
     destination: &mut NodeRegion<Destination>,
-) -> Result<RegionRoot<Destination>, ClosureTransferError<Source>> {
+) -> Result<RegionRoot<Destination>, ForkArenaError> {
     let preflight = pool
         .validate_region(&closure.region)
         .and_then(|()| pool.validate_region(destination))
@@ -1260,9 +1267,7 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
                 &[],
             )
         });
-    if let Err(error) = preflight {
-        return Err(ClosureTransferError { error, closure });
-    }
+    preflight?;
 
     let batch = closure
         .region
@@ -1308,10 +1313,9 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         list: closure.root.list.with_coordinate(coordinate),
         _role: PhantomData,
     };
-    match pool.retire_region(closure.region) {
-        Ok(()) => Ok(root),
-        Err((_error, _region)) => unreachable!("empty transferred region retires infallibly"),
-    }
+    pool.retire_region_in_place(&mut closure.region)
+        .unwrap_or_else(|_| unreachable!("empty transferred region retires infallibly"));
+    Ok(root)
 }
 
 /// Recursively copies one exact node closure into an independently owned

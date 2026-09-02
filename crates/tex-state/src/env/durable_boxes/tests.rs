@@ -25,6 +25,25 @@ fn current_region(state: &DurableBoxState, index: u16) -> Option<NodeRegionId> {
 }
 
 #[test]
+fn durable_owner_slots_reuse_storage_with_a_fresh_incarnation() {
+    page_arena!(arena, pool, region, 64);
+    let mut owners = DurableOwnerStore::default();
+    let first_owner = owner(&mut arena, 7);
+    let first_region = first_owner.region_id();
+    let first = owners.insert(first_owner);
+    owners.retire(&mut arena, first);
+
+    let second_owner = owner(&mut arena, 9);
+    let second_region = second_owner.region_id();
+    let second = owners.insert(second_owner);
+    assert_eq!(second.slot, first.slot);
+    assert_ne!(second.incarnation, first.incarnation);
+    assert!(!arena.durable_region_is_live(first_region));
+    assert_eq!(owners.owner(second).region_id(), second_region);
+    owners.retire(&mut arena, second);
+}
+
+#[test]
 fn overwrite_without_retained_history_retires_the_old_owner() {
     page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();

@@ -180,6 +180,17 @@ token lists, and glue specifications through their existing typed contracts,
 but it cannot contain a node-list coordinate into another reclaimable node
 region.
 
+`DurableBoxState` keeps every live box closure in one authoritative reusable
+owner-slot store. A box cell, group save, checkpoint, or operation journal
+holds only the slot index and incarnation. Assignments therefore rename or
+swap the compact owner-relative coordinate; they do not carry the complete
+region envelope by value. Unique page transfer empties the selected slot in
+place. Commit retires that same reserved slot, while rollback reconstructs the
+loan into it before restoring the cell coordinate. Slot reuse increments the
+incarnation. This is an ownership table, not a second node representation:
+the existing closure remains the sole owner of the paired node/annex ranges,
+and store capacity is reused rather than allocated per operation.
+
 ### Pool tables and aggregate envelopes
 
 `NodePool`, not an individual region, owns the exact-64-KiB node and annex
@@ -228,8 +239,9 @@ The Rust boundary must enforce these rules:
   inside checkpoint rows owned by the corresponding history `PageRegion`;
 - a box register or PDF form stores a move-only `OwnedNodeClosure`, not an
   unaccompanied `DurableListId`;
-- a journal entry either owns an `OwnedNodeClosure` or stores an owner-relative
-  coordinate under the same enclosing region owner; and
+- a journal entry either owns an `OwnedNodeClosure` or stores an
+  incarnation-checked owner-relative coordinate under the same enclosing
+  durable owner store; and
 - detached formats, memos, artifacts, continuations, process messages, and
   thread messages contain no runtime coordinate.
 

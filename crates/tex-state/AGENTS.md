@@ -281,8 +281,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   page regions; aggregate checkpoint release removes the private row, and the
   last row of a noncurrent region retires its envelopes and stale id.
   Succession preparation consumes the executor's move-only rootless-mode
-  receipt; durable box/form carriers still keep the production tail on the
-  existing region.
+  receipt. Durable box cells, group saves, checkpoints, and operation journals
+  name one reusable incarnation-checked owner-slot store with compact ids;
+  unique page transfers empty and retire the authoritative closure slot in
+  place instead of transporting the complete owner envelope through journals.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,

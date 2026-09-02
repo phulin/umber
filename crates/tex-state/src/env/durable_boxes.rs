@@ -55,7 +55,7 @@ impl DurableNodeMetadata {
 }
 
 struct DurableBoxCell {
-    pub(super) value: Option<DurableNodeClosure>,
+    value: Option<DurableOwnerId>,
     level: u32,
 }
 
@@ -70,8 +70,105 @@ impl Default for DurableBoxCell {
 
 struct DurableMutation {
     index: u16,
-    alternate: Option<DurableNodeClosure>,
+    alternate: Option<DurableOwnerId>,
     alternate_level: u32,
+}
+
+/// Compact reference into the one durable-owner store. Cells and reversible
+/// journals move only this coordinate; the exclusive region envelope never
+/// leaves its authoritative slot merely because TeX changes which root names
+/// it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DurableOwnerId {
+    slot: u32,
+    incarnation: u32,
+}
+
+struct DurableOwnerSlot {
+    incarnation: u32,
+    live: bool,
+    owner: Option<DurableNodeClosure>,
+}
+
+#[derive(Default)]
+struct DurableOwnerStore {
+    slots: Vec<DurableOwnerSlot>,
+    free: Vec<u32>,
+}
+
+impl DurableOwnerStore {
+    fn insert(&mut self, owner: DurableNodeClosure) -> DurableOwnerId {
+        if let Some(slot) = self.free.pop() {
+            let entry = self
+                .slots
+                .get_mut(slot as usize)
+                .expect("free durable owner slot exists");
+            assert!(!entry.live && entry.owner.is_none());
+            entry.live = true;
+            entry.owner = Some(owner);
+            return DurableOwnerId {
+                slot,
+                incarnation: entry.incarnation,
+            };
+        }
+        let slot = u32::try_from(self.slots.len()).expect("durable owner slots fit u32");
+        self.slots.push(DurableOwnerSlot {
+            incarnation: 1,
+            live: true,
+            owner: Some(owner),
+        });
+        DurableOwnerId {
+            slot,
+            incarnation: 1,
+        }
+    }
+
+    fn slot(&self, id: DurableOwnerId) -> &DurableOwnerSlot {
+        let entry = self
+            .slots
+            .get(id.slot as usize)
+            .expect("durable owner id names a slot");
+        assert!(entry.live && entry.incarnation == id.incarnation);
+        entry
+    }
+
+    fn slot_mut(&mut self, id: DurableOwnerId) -> &mut DurableOwnerSlot {
+        let entry = self
+            .slots
+            .get_mut(id.slot as usize)
+            .expect("durable owner id names a slot");
+        assert!(entry.live && entry.incarnation == id.incarnation);
+        entry
+    }
+
+    fn owner(&self, id: DurableOwnerId) -> &DurableNodeClosure {
+        self.slot(id)
+            .owner
+            .as_ref()
+            .expect("live durable owner slot contains its region")
+    }
+
+    fn owner_slot_mut(&mut self, id: DurableOwnerId) -> &mut Option<DurableNodeClosure> {
+        &mut self.slot_mut(id).owner
+    }
+
+    fn restore(&mut self, id: DurableOwnerId, owner: DurableNodeClosure) {
+        let slot = self.slot_mut(id);
+        assert!(slot.owner.replace(owner).is_none());
+    }
+
+    fn retire(&mut self, arena: &mut PageMaterialArena, id: DurableOwnerId) {
+        let slot = self.slot_mut(id);
+        arena
+            .retire_durable_in_place(&mut slot.owner)
+            .expect("durable journal owns a live or transferred closure");
+        slot.live = false;
+        slot.incarnation = slot
+            .incarnation
+            .checked_add(1)
+            .expect("durable owner incarnation space");
+        self.free.push(id.slot);
+    }
 }
 
 struct DurableGroup {
@@ -169,6 +266,7 @@ impl AcceptedDurableBoxTail {
 
     fn release_retained_group_prefix(
         &mut self,
+        owners: &mut DurableOwnerStore,
         arena: &mut PageMaterialArena,
         floor: usize,
     ) -> Result<usize, super::StateError> {
@@ -180,7 +278,7 @@ impl AcceptedDurableBoxTail {
             .filter(|released| *released <= self.accepted_retained_groups_mut().len())
             .ok_or(super::StateError::InvalidCursor)?;
         for group in self.accepted_retained_groups_mut().drain(..released) {
-            DurableBoxState::retire_group(arena, group);
+            DurableBoxState::retire_group(owners, arena, group);
         }
         self.retained_group_base = floor;
         Ok(released)
@@ -243,6 +341,7 @@ pub(crate) struct DurableGroupRestoration {
 }
 
 pub(crate) struct DurableBoxState {
+    owners: DurableOwnerStore,
     dense: Box<[DurableBoxCell]>,
     overflow: HashMap<u16, DurableBoxCell>,
     checkpoint_entries: Vec<DurableMutation>,
@@ -306,7 +405,9 @@ impl DurableFormState {
     pub(crate) fn reject_candidate(&mut self, arena: &mut PageMaterialArena) {
         assert!(self.base_len.take().is_some());
         for entry in self.delta.drain(..) {
-            DurableBoxState::retire_value(arena, Some(entry.owner));
+            arena
+                .retire_durable(entry.owner)
+                .expect("rejected PDF form owner remains live");
         }
     }
 
@@ -316,7 +417,9 @@ impl DurableFormState {
             .take()
             .expect("PDF form transaction is active");
         for entry in self.accepted.drain(base_len..) {
-            DurableBoxState::retire_value(arena, Some(entry.owner));
+            arena
+                .retire_durable(entry.owner)
+                .expect("superseded PDF form owner remains live");
         }
         self.accepted.append(&mut self.delta);
     }
@@ -327,7 +430,9 @@ impl DurableFormState {
             "PDF form candidate is not truncated directly"
         );
         for entry in self.accepted.drain(len..) {
-            DurableBoxState::retire_value(arena, Some(entry.owner));
+            arena
+                .retire_durable(entry.owner)
+                .expect("truncated PDF form owner remains live");
         }
     }
 
@@ -348,10 +453,14 @@ impl DurableFormState {
             "PDF form candidate settles before retirement"
         );
         for entry in self.accepted.drain(..) {
-            DurableBoxState::retire_value(arena, Some(entry.owner));
+            arena
+                .retire_durable(entry.owner)
+                .expect("accepted PDF form owner remains live");
         }
         for entry in self.delta.drain(..) {
-            DurableBoxState::retire_value(arena, Some(entry.owner));
+            arena
+                .retire_durable(entry.owner)
+                .expect("candidate PDF form owner remains live");
         }
     }
 }
@@ -359,6 +468,7 @@ impl DurableFormState {
 impl DurableBoxState {
     pub(crate) fn new() -> Self {
         Self {
+            owners: DurableOwnerStore::default(),
             dense: (0..=u8::MAX)
                 .map(|_| DurableBoxCell::default())
                 .collect::<Vec<_>>()
@@ -397,25 +507,28 @@ impl DurableBoxState {
 
     pub(crate) fn metadata(&self, index: u16) -> Option<DurableNodeMetadata> {
         self.cell(index)
-            .and_then(|cell| cell.value.as_ref())
+            .and_then(|cell| cell.value)
+            .map(|id| self.owners.owner(id))
             .map(DurableNodeMetadata::from_closure)
     }
 
     pub(crate) fn value(&self, index: u16) -> Option<&DurableNodeClosure> {
-        self.cell(index).and_then(|cell| cell.value.as_ref())
+        self.cell(index)
+            .and_then(|cell| cell.value)
+            .map(|id| self.owners.owner(id))
     }
 
     pub(crate) fn visit_current(&self, mut visit: impl FnMut(u16, &DurableNodeClosure)) {
         for (index, cell) in self.dense.iter().enumerate() {
-            if let Some(owner) = &cell.value {
-                visit(index as u16, owner);
+            if let Some(owner) = cell.value {
+                visit(index as u16, self.owners.owner(owner));
             }
         }
         let mut overflow = self.overflow.iter().collect::<Vec<_>>();
         overflow.sort_unstable_by_key(|(index, _)| **index);
         for (&index, cell) in overflow {
-            if let Some(owner) = &cell.value {
-                visit(index, owner);
+            if let Some(owner) = cell.value {
+                visit(index, self.owners.owner(owner));
             }
         }
     }
@@ -426,7 +539,8 @@ impl DurableBoxState {
         }
         let mut identity = crate::state_hash::SemanticMapIdentity::empty(0x626f_785f_726f_6f74);
         for (index, cell) in self.dense.iter().enumerate() {
-            if let Some(owner) = &cell.value {
+            if let Some(owner) = cell.value {
+                let owner = self.owners.owner(owner);
                 identity.replace(
                     index as u64,
                     None,
@@ -440,7 +554,8 @@ impl DurableBoxState {
         let mut overflow = self.overflow.iter().collect::<Vec<_>>();
         overflow.sort_unstable_by_key(|(index, _)| **index);
         for (&index, cell) in overflow {
-            if let Some(owner) = &cell.value {
+            if let Some(owner) = cell.value {
+                let owner = self.owners.owner(owner);
                 identity.replace(
                     u64::from(index),
                     None,
@@ -459,8 +574,9 @@ impl DurableBoxState {
         self.semantic_identity.map(|identity| identity.root())
     }
 
-    fn value_identity(value: &Option<DurableNodeClosure>) -> Option<u64> {
-        value.as_ref().map(|owner| {
+    fn value_identity(&self, value: Option<DurableOwnerId>) -> Option<u64> {
+        value.map(|owner| {
+            let owner = self.owners.owner(owner);
             owner
                 .root()
                 .list()
@@ -469,7 +585,8 @@ impl DurableBoxState {
         })
     }
 
-    fn transferred_value_identity(owner: &DurableNodeClosure) -> u64 {
+    fn transferred_value_identity(&self, owner: DurableOwnerId) -> u64 {
+        let owner = self.owners.owner(owner);
         owner
             .root()
             .list()
@@ -477,31 +594,35 @@ impl DurableBoxState {
             .expect("identity demand precedes durable box transfer")
     }
 
-    fn record_unique_take(&mut self, index: u16, owner: &DurableNodeClosure) {
-        if let Some(identity) = &mut self.semantic_identity {
-            identity.replace(
-                u64::from(index),
-                Some(Self::transferred_value_identity(owner)),
-                None,
-            );
+    fn record_unique_take(&mut self, index: u16, owner: DurableOwnerId) {
+        let owner_identity = self
+            .semantic_identity
+            .is_some()
+            .then(|| self.transferred_value_identity(owner));
+        if let (Some(identity), Some(owner_identity)) =
+            (&mut self.semantic_identity, owner_identity)
+        {
+            identity.replace(u64::from(index), Some(owner_identity), None);
         }
     }
 
-    fn record_failed_unique_take(&mut self, index: u16, owner: &DurableNodeClosure) {
-        if let Some(identity) = &mut self.semantic_identity {
-            identity.replace(
-                u64::from(index),
-                None,
-                Some(Self::transferred_value_identity(owner)),
-            );
+    fn record_failed_unique_take(&mut self, index: u16, owner: DurableOwnerId) {
+        let owner_identity = self
+            .semantic_identity
+            .is_some()
+            .then(|| self.transferred_value_identity(owner));
+        if let (Some(identity), Some(owner_identity)) =
+            (&mut self.semantic_identity, owner_identity)
+        {
+            identity.replace(u64::from(index), None, Some(owner_identity));
         }
     }
 
     fn swap_mutation(&mut self, mutation: &mut DurableMutation) {
         let identities = self.semantic_identity.is_some().then(|| {
             (
-                Self::value_identity(&self.cell_mut(mutation.index).value),
-                Self::value_identity(&mutation.alternate),
+                self.value_identity(self.cell(mutation.index).and_then(|cell| cell.value)),
+                self.value_identity(mutation.alternate),
             )
         });
         let cell = self.cell_mut(mutation.index);
@@ -513,27 +634,36 @@ impl DurableBoxState {
     }
 
     fn copy_value(
+        owners: &mut DurableOwnerStore,
         arena: &mut PageMaterialArena,
-        value: &Option<DurableNodeClosure>,
-    ) -> Result<Option<DurableNodeClosure>, BankError> {
-        value
-            .as_ref()
-            .map(|value| arena.copy_durable_owner(value))
-            .transpose()
-            .map_err(|_| BankError::AllocationFailed)
+        value: Option<DurableOwnerId>,
+    ) -> Result<Option<DurableOwnerId>, BankError> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let copy = arena
+            .copy_durable_owner(owners.owner(value))
+            .map_err(|_| BankError::AllocationFailed)?;
+        Ok(Some(owners.insert(copy)))
     }
 
-    fn retire_value(arena: &mut PageMaterialArena, value: Option<DurableNodeClosure>) {
+    fn retire_value(
+        owners: &mut DurableOwnerStore,
+        arena: &mut PageMaterialArena,
+        value: Option<DurableOwnerId>,
+    ) {
         if let Some(value) = value {
-            arena
-                .retire_durable(value)
-                .expect("durable journal owns a live closure");
+            owners.retire(arena, value);
         }
     }
 
-    fn retire_group(arena: &mut PageMaterialArena, group: DurableGroup) {
+    fn retire_group(
+        owners: &mut DurableOwnerStore,
+        arena: &mut PageMaterialArena,
+        group: DurableGroup,
+    ) {
         for mutation in group.entries {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(owners, arena, mutation.alternate);
         }
     }
 
@@ -578,7 +708,7 @@ impl DurableBoxState {
             .filter(|released| *released <= self.checkpoint_entries.len())
             .ok_or(super::StateError::InvalidCursor)?;
         for mutation in self.checkpoint_entries.drain(..released) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         self.checkpoint_entry_base = floor;
         Ok(released)
@@ -599,7 +729,7 @@ impl DurableBoxState {
             .filter(|released| *released <= self.retained_groups.len())
             .ok_or(super::StateError::InvalidCursor)?;
         for group in self.retained_groups.drain(..released) {
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         self.retained_group_base = floor;
         Ok(released)
@@ -657,9 +787,12 @@ impl DurableBoxState {
         let checkpoint_entries = self.release_checkpoint_entries(arena, checkpoint_floor)?;
         let mut retained_groups = self.release_retained_groups(arena, retained_group_floor)?;
         if let Some(accepted) = accepted.as_mut() {
-            retained_groups = retained_groups.saturating_add(
-                accepted.release_retained_group_prefix(arena, retained_group_floor)?,
-            );
+            retained_groups =
+                retained_groups.saturating_add(accepted.release_retained_group_prefix(
+                    &mut self.owners,
+                    arena,
+                    retained_group_floor,
+                )?);
         }
         if oldest_retained.is_none() {
             for group in &mut self.groups {
@@ -676,6 +809,7 @@ impl DurableBoxState {
     }
 
     fn copy_group(
+        owners: &mut DurableOwnerStore,
         arena: &mut PageMaterialArena,
         group: &DurableGroup,
     ) -> Result<DurableGroup, BankError> {
@@ -683,7 +817,7 @@ impl DurableBoxState {
         for mutation in &group.entries {
             entries.push(DurableMutation {
                 index: mutation.index,
-                alternate: Self::copy_value(arena, &mutation.alternate)?,
+                alternate: Self::copy_value(owners, arena, mutation.alternate)?,
                 alternate_level: mutation.alternate_level,
             });
         }
@@ -700,7 +834,7 @@ impl DurableBoxState {
         &mut self,
         arena: &mut PageMaterialArena,
         index: u16,
-        value: Option<DurableNodeClosure>,
+        value: Option<DurableOwnerId>,
         level: u32,
         saved_at: Option<u32>,
     ) -> Result<(), BankError> {
@@ -711,8 +845,8 @@ impl DurableBoxState {
         self.cell_mut(index).level = level;
         let identities = self.semantic_identity.is_some().then(|| {
             (
-                Self::value_identity(&before.0),
-                Self::value_identity(&self.cell(index).expect("durable box cell exists").value),
+                self.value_identity(before.0),
+                self.value_identity(self.cell(index).expect("durable box cell exists").value),
             )
         });
         if let (Some(identity), Some((old_identity, new_identity))) =
@@ -729,14 +863,18 @@ impl DurableBoxState {
             + usize::from(group_needed)
             + usize::from(operation_needed);
         if destinations == 0 {
-            Self::retire_value(arena, before.0);
+            Self::retire_value(&mut self.owners, arena, before.0);
             return Ok(());
         }
 
         let mut owner = Some(before.0);
         if checkpoint_needed {
             let alternate = if group_needed || operation_needed {
-                Self::copy_value(arena, owner.as_ref().expect("checkpoint source"))?
+                Self::copy_value(
+                    &mut self.owners,
+                    arena,
+                    *owner.as_ref().expect("checkpoint source"),
+                )?
             } else {
                 owner.take().expect("checkpoint owner")
             };
@@ -749,7 +887,11 @@ impl DurableBoxState {
         }
         if group_needed {
             let alternate = if operation_needed {
-                Self::copy_value(arena, owner.as_ref().expect("group source"))?
+                Self::copy_value(
+                    &mut self.owners,
+                    arena,
+                    *owner.as_ref().expect("group source"),
+                )?
             } else {
                 owner.take().expect("group owner")
             };
@@ -781,6 +923,7 @@ impl DurableBoxState {
         scope: super::AssignmentScope,
         current_level: u32,
     ) -> Result<(), BankError> {
+        let value = value.map(|owner| self.owners.insert(owner));
         let before_level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
         let level = match scope {
             super::AssignmentScope::Global => LEVEL_ONE,
@@ -799,6 +942,7 @@ impl DurableBoxState {
         index: u16,
         value: Option<DurableNodeClosure>,
     ) -> Result<(), BankError> {
+        let value = value.map(|owner| self.owners.insert(owner));
         let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
         self.install_mutation(arena, index, value, level, None)
     }
@@ -831,18 +975,20 @@ impl DurableBoxState {
             return Ok(None);
         };
         if self.can_take_unique(index) {
-            self.record_unique_take(index, &owner);
+            self.record_unique_take(index, owner);
             if !self.active_operations.is_empty() {
                 let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
-                let (root, loan) = arena.loan_durable_to_page(owner).map_err(|(_, owner)| {
-                    self.record_failed_unique_take(index, &owner);
+                let transfer =
+                    arena.loan_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
+                let (root, loan) = transfer.map_err(|_| {
+                    self.record_failed_unique_take(index, owner);
                     self.cell_mut(index).value = Some(owner);
                     BankError::AllocationFailed
                 })?;
                 let mutation_position = self.operation_entries.len();
                 self.operation_entries.push(DurableMutation {
                     index,
-                    alternate: None,
+                    alternate: Some(owner),
                     alternate_level: level,
                 });
                 self.transfer_loans.push(DurableBoxTransferLoan {
@@ -851,14 +997,18 @@ impl DurableBoxState {
                 });
                 return Ok(Some(root));
             }
-            return arena
-                .move_durable_to_page(owner)
-                .map(Some)
-                .map_err(|(_, owner)| {
-                    self.record_failed_unique_take(index, &owner);
+            let moved = arena.move_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
+            return match moved {
+                Ok(root) => {
+                    self.owners.retire(arena, owner);
+                    Ok(Some(root))
+                }
+                Err(_) => {
+                    self.record_failed_unique_take(index, owner);
                     self.cell_mut(index).value = Some(owner);
-                    BankError::AllocationFailed
-                });
+                    Err(BankError::AllocationFailed)
+                }
+            };
         }
 
         // The source owner must enter every retained history lane before the
@@ -896,28 +1046,22 @@ impl DurableBoxState {
         assert_eq!(group.level, level);
         let retained = group
             .checkpoint_pinned
-            .then(|| Self::copy_group(arena, &group))
+            .then(|| Self::copy_group(&mut self.owners, arena, &group))
             .transpose()?;
         let mut restorations = Vec::with_capacity(group.entries.len());
         for mut mutation in group.entries.into_iter().rev() {
             let saved = mutation
                 .alternate
-                .as_ref()
-                .map(DurableNodeMetadata::from_closure);
+                .map(|owner| DurableNodeMetadata::from_closure(self.owners.owner(owner)));
             if self.cell_mut(mutation.index).level == LEVEL_ONE {
-                let live = self
-                    .cell(mutation.index)
-                    .expect("durable box cell")
-                    .value
-                    .as_ref()
-                    .map(DurableNodeMetadata::from_closure);
+                let live = self.metadata(mutation.index);
                 restorations.push(DurableGroupRestoration {
                     index: mutation.index,
                     saved,
                     live,
                     outcome: super::GroupRestorationOutcome::Retained,
                 });
-                Self::retire_value(arena, mutation.alternate);
+                Self::retire_value(&mut self.owners, arena, mutation.alternate);
             } else {
                 let restored = mutation.alternate.take();
                 self.install_mutation(
@@ -927,12 +1071,7 @@ impl DurableBoxState {
                     mutation.alternate_level,
                     None,
                 )?;
-                let live = self
-                    .cell(mutation.index)
-                    .expect("durable box cell")
-                    .value
-                    .as_ref()
-                    .map(DurableNodeMetadata::from_closure);
+                let live = self.metadata(mutation.index);
                 restorations.push(DurableGroupRestoration {
                     index: mutation.index,
                     saved,
@@ -1031,7 +1170,7 @@ impl DurableBoxState {
     }
 
     fn checkpoint_groups(
-        &self,
+        &mut self,
         arena: &mut PageMaterialArena,
         cursor: DurableBoxCursor,
     ) -> Result<Vec<DurableGroup>, BankError> {
@@ -1059,13 +1198,13 @@ impl DurableBoxState {
                 .chain(&self.retained_groups)
                 .find(|group| group.id == id)
                 .expect("validated durable group remains retained");
-            result.push(Self::copy_group(arena, source)?);
+            result.push(Self::copy_group(&mut self.owners, arena, source)?);
         }
         let inner = result
             .last_mut()
             .expect("non-root cursor has an inner group");
         for mutation in inner.entries.drain(cursor.group_entry_position..) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         Ok(result)
     }
@@ -1091,7 +1230,7 @@ impl DurableBoxState {
                 arena.commit_durable_transfer_loan(loan.loan);
             }
             for mutation in self.operation_entries.drain(..) {
-                Self::retire_value(arena, mutation.alternate);
+                Self::retire_value(&mut self.owners, arena, mutation.alternate);
             }
         }
     }
@@ -1111,22 +1250,24 @@ impl DurableBoxState {
                 .operation_entries
                 .get_mut(loan.mutation_position)
                 .expect("durable transfer loan names its operation mutation");
-            debug_assert!(mutation.alternate.is_none());
-            mutation.alternate = Some(owner);
+            let owner_slot = mutation
+                .alternate
+                .expect("durable transfer mutation retains its owner slot");
+            self.owners.restore(owner_slot, owner);
         }
         let mut suffix = self.operation_entries.split_off(operation.position);
         for mutation in suffix.iter_mut().rev() {
             self.swap_mutation(mutation);
         }
         for mutation in suffix {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         while self.groups.len() > operation.group_position {
             let group = self
                 .groups
                 .pop()
                 .expect("operation-created group remains live");
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         self.active_operations.pop();
     }
@@ -1148,13 +1289,13 @@ impl DurableBoxState {
             .expect("checkpoint group preservation copy must succeed");
         self.swap_checkpoint_suffix(rebased.checkpoint_entries);
         for mutation in self.checkpoint_entries.drain(rebased.checkpoint_entries..) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         for group in std::mem::take(&mut self.groups) {
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         for group in std::mem::take(&mut self.retained_groups) {
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         self.groups = restored_groups;
         self.retained_group_base = cursor.retained_groups;
@@ -1214,18 +1355,18 @@ impl DurableBoxState {
             .expect("validated durable rejection cursor rebases");
         self.swap_checkpoint_suffix(rebased.checkpoint_entries);
         for mutation in self.checkpoint_entries.drain(rebased.checkpoint_entries..) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         for mutation in &mut accepted.entries {
             self.swap_mutation(mutation);
         }
         self.checkpoint_entries.append(&mut accepted.entries);
         for group in std::mem::take(&mut self.groups) {
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         let candidate_retained_groups = self.retained_groups.split_off(rebased.retained_groups);
         for group in candidate_retained_groups {
-            Self::retire_group(arena, group);
+            Self::retire_group(&mut self.owners, arena, group);
         }
         debug_assert_eq!(
             self.retained_group_end(),
@@ -1257,7 +1398,7 @@ impl DurableBoxState {
         accepted: AcceptedDurableBoxTail,
     ) {
         for mutation in accepted.entries {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         match accepted.groups {
             AcceptedDurableGroupTail::Root {
@@ -1271,10 +1412,10 @@ impl DurableBoxState {
                 ..
             } => {
                 for group in accepted_groups {
-                    Self::retire_group(arena, group);
+                    Self::retire_group(&mut self.owners, arena, group);
                 }
                 for group in accepted_retained_groups {
-                    Self::retire_group(arena, group);
+                    Self::retire_group(&mut self.owners, arena, group);
                 }
             }
         }
@@ -1284,26 +1425,26 @@ impl DurableBoxState {
 
     pub(crate) fn retire_all(mut self, arena: &mut PageMaterialArena) {
         for cell in &mut self.dense {
-            Self::retire_value(arena, cell.value.take());
+            Self::retire_value(&mut self.owners, arena, cell.value.take());
         }
         for (_, mut cell) in self.overflow.drain() {
-            Self::retire_value(arena, cell.value.take());
+            Self::retire_value(&mut self.owners, arena, cell.value.take());
         }
         for mutation in self.checkpoint_entries.drain(..) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
         for group in self.groups.drain(..) {
             for mutation in group.entries {
-                Self::retire_value(arena, mutation.alternate);
+                Self::retire_value(&mut self.owners, arena, mutation.alternate);
             }
         }
         for group in self.retained_groups.drain(..) {
             for mutation in group.entries {
-                Self::retire_value(arena, mutation.alternate);
+                Self::retire_value(&mut self.owners, arena, mutation.alternate);
             }
         }
         for mutation in self.operation_entries.drain(..) {
-            Self::retire_value(arena, mutation.alternate);
+            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
     }
 }

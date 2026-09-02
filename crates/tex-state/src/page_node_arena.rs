@@ -1070,40 +1070,32 @@ impl<'a> PageMaterialArena<'a> {
         Ok(owner)
     }
 
-    /// Consumes a unique durable owner and transfers its exact addresses into
-    /// the current page region.
-    #[allow(clippy::result_large_err)] // Failed transfer must return the move-only durable owner.
-    pub(crate) fn move_durable_to_page(
+    pub(crate) fn move_durable_to_page_in_place(
         &mut self,
-        closure: DurableNodeClosure,
-    ) -> Result<PageListId, (ForkArenaError, DurableNodeClosure)> {
-        transfer_closure_into(self.pool, closure, self.region)
-            .map(|root| root.list())
-            .map_err(|failure| (failure.error, failure.closure))
+        closure: &mut Option<DurableNodeClosure>,
+    ) -> Result<PageListId, ForkArenaError> {
+        let owner = closure.as_mut().ok_or(ForkArenaError::InvalidRegion)?;
+        let root = transfer_closure_into(self.pool, owner, self.region)?.list();
+        *closure = None;
+        Ok(root)
     }
 
-    /// Moves a unique durable owner into the page region while retaining the
-    /// exact suffix authority needed to reverse the move on operation
-    /// rollback. No history-preservation copy is made merely because the
-    /// command operation is live.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn loan_durable_to_page(
+    pub(crate) fn loan_durable_to_page_in_place(
         &mut self,
-        closure: DurableNodeClosure,
-    ) -> Result<(PageListId, DurableTransferLoan), (ForkArenaError, DurableNodeClosure)> {
-        let build = match self.region.begin_closure_build(self.pool) {
-            Ok(build) => build,
-            Err(error) => return Err((error, closure)),
-        };
-        let root = match transfer_closure_into(self.pool, closure, self.region) {
+        closure: &mut Option<DurableNodeClosure>,
+    ) -> Result<(PageListId, DurableTransferLoan), ForkArenaError> {
+        let build = self.region.begin_closure_build(self.pool)?;
+        let owner = closure.as_mut().ok_or(ForkArenaError::InvalidRegion)?;
+        let root = match transfer_closure_into(self.pool, owner, self.region) {
             Ok(root) => root.list(),
-            Err(failure) => {
+            Err(error) => {
                 self.region
                     .cancel_closure_build(self.pool, build)
                     .expect("empty failed transfer suffix rolls back");
-                return Err((failure.error, failure.closure));
+                return Err(error);
             }
         };
+        *closure = None;
         let settled = self.region.pub_arena.operation_mark(&self.pool.chunks);
         Ok((
             root,
@@ -1255,6 +1247,21 @@ impl<'a> PageMaterialArena<'a> {
         self.pool
             .retire_region(closure.into_region())
             .map_err(|(error, _)| error)
+    }
+
+    /// Retires a closure in its authoritative owner slot. This avoids moving
+    /// the complete region envelope through every journal retirement; after
+    /// success the slot is vacant and may be reused by the durable owner store.
+    pub(crate) fn retire_durable_in_place(
+        &mut self,
+        closure: &mut Option<DurableNodeClosure>,
+    ) -> Result<(), ForkArenaError> {
+        let Some(owner) = closure.as_mut() else {
+            return Ok(());
+        };
+        self.pool.retire_closure_in_place(owner)?;
+        *closure = None;
+        Ok(())
     }
 
     #[cfg(test)]
