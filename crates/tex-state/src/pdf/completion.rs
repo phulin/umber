@@ -630,7 +630,10 @@ pub(crate) fn detach<G>(
         images: pdf
             .external_images
             .iter()
-            .map(|entry| pdf.materialize_external_image(entry))
+            .enumerate()
+            .map(|(index, entry)| {
+                pdf.materialize_external_image(entry, super::image_resource_number(index))
+            })
             .collect(),
         raw_objects,
         raw_object_file_needs,

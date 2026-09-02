@@ -257,6 +257,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
                 image.id().raw(),
                 PdfExternalImageInput {
                     object: image.id().raw(),
+                    resource: image.resource(),
                     identity: image.identity(),
                     metadata: image_metadata(image.metadata()),
                     width: dimensions.width,

@@ -4270,9 +4270,9 @@ fn image_resource_name(
 ) -> Vec<u8> {
     if parameters.unique_resource_names > 0 {
         let prefix = image.identity.hex();
-        format!("{}Im{}", &prefix[..6], image.object).into_bytes()
+        format!("{}Im{}", &prefix[..6], image.resource).into_bytes()
     } else {
-        format!("Im{}", image.object).into_bytes()
+        format!("Im{}", image.resource).into_bytes()
     }
 }
 

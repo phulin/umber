@@ -181,6 +181,8 @@ pub struct PdfVirtualLocalTfmInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfExternalImageInput {
     pub object: u32,
+    /// Image-local resource identity (`pdf_ximage_count` in pdftex.web §1551).
+    pub resource: u32,
     pub identity: ContentHash,
     pub metadata: PdfImageMetadataInput,
     pub width: Scaled,

@@ -358,6 +358,7 @@ impl PdfPageGroupSelector {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfExternalImageRecord {
     id: PdfExternalImageId,
+    resource: u32,
     identity: ContentHash,
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
@@ -673,6 +674,13 @@ impl PdfExternalImageRecord {
     #[must_use]
     pub const fn id(&self) -> PdfExternalImageId {
         self.id
+    }
+    /// Image-local resource identity assigned by pdftex.web section 1551.
+    ///
+    /// This is `pdf_ximage_count`, not the shared indirect-object number.
+    #[must_use]
+    pub const fn resource(&self) -> u32 {
+        self.resource
     }
     #[must_use]
     pub const fn identity(&self) -> ContentHash {
@@ -3561,13 +3569,21 @@ impl<G> PdfState<G> {
         self.external_images
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .and_then(|index| self.external_images.get(index))
-            .map(|entry| self.materialize_external_image(entry))
+            .and_then(|index| {
+                self.external_images.get(index).map(|entry| {
+                    self.materialize_external_image(entry, image_resource_number(index))
+                })
+            })
     }
 
-    fn materialize_external_image(&self, entry: &PdfExternalImageEntry) -> PdfExternalImageRecord {
+    fn materialize_external_image(
+        &self,
+        entry: &PdfExternalImageEntry,
+        resource: u32,
+    ) -> PdfExternalImageRecord {
         PdfExternalImageRecord {
             id: entry.id,
+            resource,
             identity: entry.identity,
             metadata: entry.metadata,
             dimensions: entry.dimensions,
@@ -3605,7 +3621,8 @@ impl<G> PdfState<G> {
             payload,
             mask_object,
         };
-        let record = self.materialize_external_image(&entry);
+        let record = self
+            .materialize_external_image(&entry, image_resource_number(self.external_images.len()));
         self.external_images.push(entry);
         self.external_image_fingerprint =
             external_image_fingerprint(&self.external_images, &self.payloads);
@@ -3613,9 +3630,12 @@ impl<G> PdfState<G> {
     }
 
     pub(crate) fn last_external_image(&self) -> Option<PdfExternalImageRecord> {
-        self.external_images
-            .last()
-            .map(|entry| self.materialize_external_image(entry))
+        self.external_images.last().map(|entry| {
+            self.materialize_external_image(
+                entry,
+                image_resource_number(self.external_images.len() - 1),
+            )
+        })
     }
 
     pub(crate) fn reserve_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
@@ -4357,6 +4377,13 @@ fn append_color_stack_action_fingerprint(
 
 fn external_image_base_fingerprint() -> StateHashFragment {
     StateHasher::new_exact(PDF_EXTERNAL_IMAGE_DOMAIN).finish_fragment()
+}
+
+fn image_resource_number(index: usize) -> u32 {
+    u32::try_from(index)
+        .ok()
+        .and_then(|index| index.checked_add(1))
+        .expect("PDF image row count fits the object ledger")
 }
 
 fn page_reservation_fingerprint(reservations: &PdfRows<PdfPageReservation>) -> StateHashFragment {

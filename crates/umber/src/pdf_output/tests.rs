@@ -98,6 +98,7 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
                 "image-owner",
                 concat!(
                     "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\pdfobj reserveobjnum\\pdfobj reserveobjnum\\pdfobj reserveobjnum",
                     "\\pdfximage{figure.pdf}",
                     "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
                 )
@@ -120,6 +121,10 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
     let [image] = completion.images() else {
         panic!("expected exactly one external image");
     };
+    // pdftex.web §1551 gives the image its own `pdf_ximage_count` resource
+    // identity even when earlier allocations advanced the shared object table.
+    assert_eq!(image.id().raw(), 4);
+    assert_eq!(image.resource(), 1);
     assert!(tex_state::SharedBytes::ptr_eq(
         &image.shared_bytes(),
         &acquired
@@ -139,11 +144,28 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
     let first = tex_out::pdf::finalize_pdf(&input).expect("first deterministic finalization");
     let second = tex_out::pdf::finalize_pdf(&input).expect("second deterministic finalization");
     assert_eq!(first.bytes, second.bytes);
-    test_support::pdf_query::PdfQuery::new(
+    let query = test_support::pdf_query::PdfQuery::new(
         &first.bytes,
         test_support::pdf_query::QueryLimits::default(),
     )
     .expect("independent parser accepts external-image PDF");
+    let pages = query.pages().expect("query external-image page");
+    let xobjects = pages[0]
+        .resources
+        .categories
+        .get(b"XObject".as_slice())
+        .expect("page has an XObject resource");
+    let entries: Vec<_> = xobjects[0].entries().collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, b"Im1");
+    assert_eq!(
+        entries[0]
+            .1
+            .referenced_id()
+            .expect("image reference")
+            .number,
+        4
+    );
 }
 
 #[test]
