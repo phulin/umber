@@ -100,7 +100,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   which constructs it directly in the callee stack and returns only detached
   copy-small settlement facts;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
-  families without introducing another executor.
+  families without introducing another executor. Residual transaction and
+  cold scanning constructs its admitted `CommandContext` directly inside one
+  callback and reborrows it through tracked-region projection, main-control
+  entry, and scanner settlement. The callback ends before diagnostic
+  reporting, resource preparation, suspension, semantic apply, or rollback;
+  nested cold execution carries only the already-known tracking bit.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
   caller-owned fixed-chunk output ledger for coordinate-only checkpoint
   publication, exact prior/current settlement, resource fulfillment,

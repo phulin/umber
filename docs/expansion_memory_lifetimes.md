@@ -197,6 +197,13 @@ The callback passes only narrow mutable borrows; it neither returns nor moves
 the admitted aggregate. Group application ends the callback before its
 possible page-output boundary and reacquires only for command-local
 publication afterward.
+Residual transaction and cold scanning similarly constructs one callback-local
+context and reborrows it through tracked-region projection, main-control entry,
+command processing, and scanner settlement. The direct-episode caller passes
+only its already-known tracking bit; nested cold execution propagates that bit
+without retaining the context. The callback ends before diagnostic reporting,
+resource preparation, suspension, cold or hot semantic application, and
+rollback or publication.
 Diagnostic or host boundaries which can change the sampled state refresh only
 their affected fields after the live dialogue. No layer returns, takes, or
 stores a whole admitted context or duplicate facts aggregate. Resource

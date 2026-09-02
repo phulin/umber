@@ -514,7 +514,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!preflight.contains("let mut destination = None"));
     let preparation_front = control
         .split_once("fn dispatch_typed_operation(")
-        .and_then(|(_, tail)| tail.split_once("let tracked_region_is_active"))
+        .and_then(|(_, tail)| tail.split_once("let mode_fingerprint"))
         .map(|(body, _)| body)
         .expect("locate pre-scanned preparation bypass");
     assert!(preparation_front.contains("OperationDelivery::ResidentHot"));
@@ -527,6 +527,23 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
             .count(),
         1
     );
+    let residual_scan_admission = control
+        .split_once("fn dispatch_typed_operation(")
+        .and_then(|(_, tail)| tail.split_once("let mode_fingerprint ="))
+        .and_then(|(_, tail)| {
+            tail.split_once(".expect(\"cold scanning keeps its generation admitted\")?;")
+        })
+        .map(|(body, _)| body)
+        .expect("locate callback-scoped residual cold scanning");
+    assert_eq!(
+        residual_scan_admission
+            .matches(".with_command_context(|context|")
+            .count(),
+        1
+    );
+    assert!(residual_scan_admission.contains("observe_changed_command_projection("));
+    assert!(residual_scan_admission.contains("command_processor("));
+    assert!(!residual_scan_admission.contains("stores.command_context()"));
     let scanned_preparation = control
         .split_once("fn prepare_cold_execution_episode<")
         .and_then(|(_, tail)| tail.split_once("fn apply_hot_operation("))

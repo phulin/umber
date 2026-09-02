@@ -16,6 +16,7 @@ pub(super) struct OperationOutputStart {
     pub(super) artifact_count: usize,
     pub(super) effect_count: usize,
     pub(super) prepared_page_count: usize,
+    pub(super) tracked_region_is_active: bool,
 }
 
 pub(super) struct DirectFailureContext {

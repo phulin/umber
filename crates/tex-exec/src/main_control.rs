@@ -2721,15 +2721,19 @@ impl<G> MainControl<G> {
         scanned: &mut PreparedColdCommand<G>,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Option<Result<ReplayStep, ExecError>> {
         let applied = match scanned {
             ColdOperation::ReplayCompleted(episode) => {
                 self.completed_replay_episode = Some(*episode);
                 Ok(ReplayStep::Continue)
             }
-            ColdOperation::Math(request) => {
-                self.apply_math_request(*request, stores, diagnostic_effects)
-            }
+            ColdOperation::Math(request) => self.apply_math_request(
+                *request,
+                stores,
+                diagnostic_effects,
+                tracked_region_is_active,
+            ),
             ColdOperation::DisplayAlignmentRecovery => {
                 self.recover_display_alignment_closer(stores, diagnostic_effects)
             }
@@ -2756,7 +2760,12 @@ impl<G> MainControl<G> {
             // TeX82 §1123's `make_accent` runs §1270's `do_assignments`
             // between the accent code and §1124's base character, so it
             // executes whole commands of its own before it can finish.
-            ColdOperation::Accent(accent) => self.apply_accent(*accent, stores, diagnostic_effects),
+            ColdOperation::Accent(accent) => self.apply_accent(
+                *accent,
+                stores,
+                diagnostic_effects,
+                tracked_region_is_active,
+            ),
             ColdOperation::InputStream { request, resource } => match request {
                 RootedInputStreamRequest::Open {
                     stream, file_name, ..
@@ -3553,6 +3562,7 @@ impl<G> MainControl<G> {
                     &mut diagnostic_effects,
                     &mut command_episode,
                     &mut cold_operation,
+                    tracked_mark.is_some(),
                 ) {
                     Err(TypedOperationError::Preparation(error)) => {
                         command_episode.error = Some(error);
@@ -3702,6 +3712,7 @@ impl<G> MainControl<G> {
                     &mut diagnostic_effects,
                     &mut command_episode,
                     &mut cold_operation,
+                    tracked_mark.is_some(),
                 ) {
                     Err(TypedOperationError::Preparation(error)) => {
                         command_episode.error = Some(error);
@@ -3912,6 +3923,7 @@ impl<G> MainControl<G> {
                 &mut diagnostic_effects,
                 &mut command_episode,
                 &mut cold_operation,
+                tracked_mark.is_some(),
             ) {
                 Err(TypedOperationError::Preparation(error)) => {
                     command_episode.error = Some(error);
@@ -4324,6 +4336,7 @@ impl<G> MainControl<G> {
             &mut diagnostic_effects,
             &mut command_episode,
             &mut cold_operation,
+            false,
         ) {
             Err(TypedOperationError::Preparation(error)) => {
                 command_episode.error = Some(error);
@@ -4430,8 +4443,14 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         settled: Option<tex_command::CurrentCommand<G>>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, ExecError> {
-        let result = self.apply_operation(stores, settled, diagnostic_effects);
+        let result = self.apply_operation(
+            stores,
+            settled,
+            diagnostic_effects,
+            tracked_region_is_active,
+        );
         if result.is_ok()
             && let Some(error) = self.operation_evidence_limit_error()
         {
@@ -4460,6 +4479,7 @@ impl<G> MainControl<G> {
         scanned: ScannedAccent,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -4500,7 +4520,11 @@ impl<G> MainControl<G> {
             return Ok(ReplayStep::Continue);
         };
         drop(context);
-        let base = self.do_assignments_then_accent_base(stores, diagnostic_effects)?;
+        let base = self.do_assignments_then_accent_base(
+            stores,
+            diagnostic_effects,
+            tracked_region_is_active,
+        )?;
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         let mut context = stores.command_context().expect("live generation");
@@ -4533,6 +4557,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
         // None of §1270's assignments is a §1030 `main_loop` entry.
         self.main_loop_active = false;
@@ -4568,8 +4593,12 @@ impl<G> MainControl<G> {
                     // `max_non_prefixed_command` to, so this dispatches the
                     // delivered command in place rather than re-fetching it.
                     self.set_box_forbidden_depth += 1;
-                    let step =
-                        self.execute_nested_operation(stores, Some(command), diagnostic_effects);
+                    let step = self.execute_nested_operation(
+                        stores,
+                        Some(command),
+                        diagnostic_effects,
+                        tracked_region_is_active,
+                    );
                     self.set_box_forbidden_depth -= 1;
                     match step? {
                         ReplayStep::Continue => {}
@@ -4770,6 +4799,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
@@ -4810,7 +4840,12 @@ impl<G> MainControl<G> {
             .len()
             > enclosing_depth
         {
-            let step = self.execute_nested_operation(stores, None, diagnostic_effects)?;
+            let step = self.execute_nested_operation(
+                stores,
+                None,
+                diagnostic_effects,
+                tracked_region_is_active,
+            )?;
             // `execute_live_math_choice_group` fuses the body into its opener's
             // outer operation, but TeX finishes each nested command before
             // fetching the next one. Publish its completed diagnostic
@@ -4892,9 +4927,10 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores, diagnostic_effects)?;
-        self.execute_live_math_choice_group(stores, diagnostic_effects)
+        self.execute_live_math_choice_group(stores, diagnostic_effects, tracked_region_is_active)
     }
 
     /// Stores one completed TeX82 §1151 field or opens its live §1153 group.
@@ -4960,6 +4996,7 @@ impl<G> MainControl<G> {
         request: MathRequest,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, ExecError> {
         match request {
             MathRequest::Character(value) => {
@@ -5073,23 +5110,38 @@ impl<G> MainControl<G> {
                 // every input level the branch body itself opens.
                 self.active_math_choices.push(0);
                 let branches = (|| {
-                    let display = self.execute_math_choice_branch(stores, diagnostic_effects)?;
+                    let display = self.execute_math_choice_branch(
+                        stores,
+                        diagnostic_effects,
+                        tracked_region_is_active,
+                    )?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 1;
-                    let text = self.execute_math_choice_branch(stores, diagnostic_effects)?;
+                    let text = self.execute_math_choice_branch(
+                        stores,
+                        diagnostic_effects,
+                        tracked_region_is_active,
+                    )?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 2;
-                    let script = self.execute_math_choice_branch(stores, diagnostic_effects)?;
+                    let script = self.execute_math_choice_branch(
+                        stores,
+                        diagnostic_effects,
+                        tracked_region_is_active,
+                    )?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 3;
-                    let script_script =
-                        self.execute_math_choice_branch(stores, diagnostic_effects)?;
+                    let script_script = self.execute_math_choice_branch(
+                        stores,
+                        diagnostic_effects,
+                        tracked_region_is_active,
+                    )?;
                     Ok::<_, ExecError>((display, text, script, script_script))
                 })();
                 self.active_math_choices.pop();
@@ -6420,6 +6472,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         command: Option<tex_command::CurrentCommand<G>>,
         diagnostic_effects: &mut DiagnosticEffects,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, ExecError> {
         let mut frame = CommandEpisode::default();
         let mut cold = ColdOperationSlot::default();
@@ -6438,6 +6491,7 @@ impl<G> MainControl<G> {
             diagnostic_effects,
             &mut frame,
             &mut cold,
+            tracked_region_is_active,
         );
         self.settle_save_stack_usage(stores, &mut host_preparation);
         result.map_err(TypedOperationError::into_exec_error)
@@ -6485,6 +6539,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, TypedOperationError> {
         let result = self.dispatch_typed_operation(
             stores,
@@ -6492,6 +6547,7 @@ impl<G> MainControl<G> {
             diagnostic_effects,
             frame,
             cold,
+            tracked_region_is_active,
         );
         if result.is_ok() {
             self.apply_error_stop_transition(stores, diagnostic_effects)
@@ -6509,6 +6565,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
+        tracked_region_is_active: bool,
     ) -> Result<ReplayStep, TypedOperationError> {
         let delivery = host_preparation.take_delivery();
         let scanner_resume = host_preparation.take_scanner();
@@ -6545,6 +6602,7 @@ impl<G> MainControl<G> {
                     artifact_count: stores.world().artifact_commits().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
+                    tracked_region_is_active,
                 },
             );
             frame.hot = None;
@@ -6566,225 +6624,185 @@ impl<G> MainControl<G> {
                     artifact_count: stores.world().artifact_commits().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
+                    tracked_region_is_active,
                 },
             );
         }
-        let tracked_region_is_active = stores
-            .command_context()
-            .is_ok_and(|context| context.tracked_region_is_active());
-        if tracked_region_is_active {
-            let mode_fingerprint = self.modes.semantic_fingerprint(stores);
-            let mut context = stores
-                .command_context()
-                .expect("tracked region keeps its generation admitted");
-            let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
-            let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
-            let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
-            // Executor-owned mode facts have no state-layer mutation facade.
-            // Advance their conservative generation once per observed outer
-            // operation so validation always compares the canonical value
-            // after another operation has had a chance to mutate the nest.
-            let mut host_facts = ExecutorHostFacts {
-                modes: &self.modes,
-                pdf_ignore_depth: self.pdf_ignore_depth,
-                telemetry: &mut self.episode_telemetry,
-            };
-            let last_node_type =
-                tex_command::CommandHostFacts::last_node_type(&mut host_facts, &context);
-            context.observe_changed_command_projection(
-                mode_key,
-                DependencyValue::Projection {
-                    schema: 1,
-                    fingerprint: mode_fingerprint,
-                },
-            );
-            context.observe_changed_command_projection(
-                inner_key,
-                DependencyValue::Bool(mode.is_inner()),
-            );
-            let (group_level, group_type) = context.current_group_values();
-            context.observe_changed_command_projection(
-                DependencyKey::Engine(DependencyEngineField::GroupLevel),
-                DependencyValue::Integer(i64::from(group_level)),
-            );
-            context.observe_changed_command_projection(
-                DependencyKey::Engine(DependencyEngineField::GroupType),
-                DependencyValue::Integer(i64::from(group_type)),
-            );
-            context.observe_changed_command_projection(
-                last_node_key,
-                DependencyValue::Integer(i64::from(last_node_type)),
-            );
-            let insertions = context.page_insertions().len();
-            context.observe_changed_command_projection(
-                DependencyKey::Engine(DependencyEngineField::PageInsertions),
-                DependencyValue::Integer(i64::try_from(insertions).unwrap_or(i64::MAX)),
-            );
-        }
+        let mode_fingerprint =
+            tracked_region_is_active.then(|| self.modes.semantic_fingerprint(stores));
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
         self.ensure_primitive_handles(stores);
-        let mut context = stores.command_context().expect("live generation");
-        if matches!(&delivery, OperationDelivery::Replay) && self.enter_main_control(&mut context) {
-            // §1030's prologue precedes `big_switch`, so its push is published
-            // ahead of the first command this step delivers rather than with
-            // the step's own applied records.
-            publish_named_token_list_pushes(
-                &mut self.command,
-                &mut context,
-                diagnostic_effects,
-                &mut self.operation_observations,
-            );
-        }
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
-        let (innermost_group, job_is_all_over) = (
-            context.innermost_group_kind(),
-            crate::page_output::job_is_all_over(&context),
-        );
         let mut diagnostics = Vec::new();
-        let scanned = {
-            #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_phase(
-                tex_state::measurement::HotCorePhase::DeliveryAndScan,
-            );
-            #[cfg(feature = "profiling")]
-            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
-            );
-            let mut host_facts = ExecutorHostFacts {
-                modes: &self.modes,
-                pdf_ignore_depth: self.pdf_ignore_depth,
-                telemetry: &mut self.episode_telemetry,
-            };
-            let mut processor = command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            );
-            let scanner_resume = if matches!(&delivery, OperationDelivery::Command) {
-                frame.scanner.take()
-            } else {
-                scanner_resume
-            };
-            processor.install_scanner_resume(scanner_resume);
-            if let Some(expansion) = expansion_resume {
-                processor.install_expansion_resume(expansion);
-            }
-            processor.set_output_routine_active(self.boxes.output_routine_active);
-            let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
-                && mode == Mode::DisplayMath
-                && self.modes.current_list().has_display_alignment();
-            let scanned = (|| -> Result<ScannedOperation, ExecError> {
-                Ok(match delivery {
-                    OperationDelivery::Command => scan_preflight_command(
-                        &mut processor,
-                        frame,
-                        cold,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                    )?,
-                    OperationDelivery::Replay if display_alignment_tail => {
-                        match processor
-                            .next_do_assignments_command()
-                            .map_err(command_error)?
-                        {
-                            Some(command) => match command.meaning() {
-                                meaning
-                                    if tex_command::exceeds_max_non_prefixed_command(
-                                        static_meaning(meaning),
-                                    ) || matches!(
-                                        meaning,
-                                        ResolvedMeaning::Static(Meaning::CharToken {
-                                            cat: Catcode::MathShift,
-                                            ..
-                                        })
-                                    ) =>
-                                {
-                                    frame.admit_settled(command, None);
-                                    dispatch_main_control_command(
-                                        &mut processor,
-                                        frame,
-                                        cold,
-                                        mode,
-                                        &self.boxes,
-                                        innermost_group,
-                                        job_is_all_over,
-                                        false,
-                                        &mut self.shown_mode,
-                                        &mut diagnostics,
-                                        None,
-                                        false,
-                                    )?
-                                }
-                                _ => {
-                                    processor.back_input(command).map_err(command_error)?;
-                                    retain_cold_operation(
-                                        frame,
-                                        cold,
-                                        ColdOperation::<G>::DisplayAlignmentRecovery,
-                                    )
-                                }
-                            },
-                            None => {
-                                retain_cold_operation(frame, cold, ColdOperation::<G>::EndOfInput)
-                            }
-                        }
+        let scanned = stores
+            .with_command_context(|context| {
+                if tracked_region_is_active {
+                    let mode_fingerprint =
+                        mode_fingerprint.expect("tracked region owns its mode projection");
+                    let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
+                    let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
+                    let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
+                    // Executor-owned mode facts have no state-layer mutation facade.
+                    // Advance their conservative generation once per observed outer
+                    // operation so validation always compares the canonical value
+                    // after another operation has had a chance to mutate the nest.
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
+                    let last_node_type =
+                        tex_command::CommandHostFacts::last_node_type(&mut host_facts, context);
+                    context.observe_changed_command_projection(
+                        mode_key,
+                        DependencyValue::Projection {
+                            schema: 1,
+                            fingerprint: mode_fingerprint,
+                        },
+                    );
+                    context.observe_changed_command_projection(
+                        inner_key,
+                        DependencyValue::Bool(mode.is_inner()),
+                    );
+                    let (group_level, group_type) = context.current_group_values();
+                    context.observe_changed_command_projection(
+                        DependencyKey::Engine(DependencyEngineField::GroupLevel),
+                        DependencyValue::Integer(i64::from(group_level)),
+                    );
+                    context.observe_changed_command_projection(
+                        DependencyKey::Engine(DependencyEngineField::GroupType),
+                        DependencyValue::Integer(i64::from(group_type)),
+                    );
+                    context.observe_changed_command_projection(
+                        last_node_key,
+                        DependencyValue::Integer(i64::from(last_node_type)),
+                    );
+                    let insertions = context.page_insertions().len();
+                    context.observe_changed_command_projection(
+                        DependencyKey::Engine(DependencyEngineField::PageInsertions),
+                        DependencyValue::Integer(i64::try_from(insertions).unwrap_or(i64::MAX)),
+                    );
+                }
+                if matches!(&delivery, OperationDelivery::Replay)
+                    && self.enter_main_control(context)
+                {
+                    // §1030's prologue precedes `big_switch`, so its push is published
+                    // ahead of the first command this step delivers rather than with
+                    // the step's own applied records.
+                    publish_named_token_list_pushes(
+                        &mut self.command,
+                        context,
+                        diagnostic_effects,
+                        &mut self.operation_observations,
+                    );
+                }
+                let (innermost_group, job_is_all_over) = (
+                    context.innermost_group_kind(),
+                    crate::page_output::job_is_all_over(context),
+                );
+                let scanned = {
+                    #[cfg(feature = "profiling")]
+                    tex_state::measurement::record_hot_core_phase(
+                        tex_state::measurement::HotCorePhase::DeliveryAndScan,
+                    );
+                    #[cfg(feature = "profiling")]
+                    let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                        tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+                    );
+                    let mut host_facts = ExecutorHostFacts {
+                        modes: &self.modes,
+                        pdf_ignore_depth: self.pdf_ignore_depth,
+                        telemetry: &mut self.episode_telemetry,
+                    };
+                    let mut processor = command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    );
+                    let scanner_resume = if matches!(&delivery, OperationDelivery::Command) {
+                        frame.scanner.take()
+                    } else {
+                        scanner_resume
+                    };
+                    processor.install_scanner_resume(scanner_resume);
+                    if let Some(expansion) = expansion_resume {
+                        processor.install_expansion_resume(expansion);
                     }
-                    OperationDelivery::Replay => scan_replay_step(
-                        &mut processor,
-                        mode,
-                        &self.boxes,
-                        alignment_preamble,
-                        innermost_group,
-                        job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
-                        self.main_loop_active,
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        frame,
-                        cold,
-                    )?,
-                    OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
-                        &mut processor,
-                        alignment,
-                        &ReplayBoxes::default(),
-                        innermost_group,
-                        mode,
-                        job_is_all_over,
-                        self.main_loop_active,
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        frame,
-                        cold,
-                    )?,
-                    OperationDelivery::AlignmentRetry { alignment, cursor } => {
-                        processor.resume_delivery_cursor(cursor);
-                        match alignment {
-                            Some(alignment) => scan_alignment_delivery_step(
+                    processor.set_output_routine_active(self.boxes.output_routine_active);
+                    let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
+                        && mode == Mode::DisplayMath
+                        && self.modes.current_list().has_display_alignment();
+                    let scanned = (|| -> Result<ScannedOperation, ExecError> {
+                        Ok(match delivery {
+                            OperationDelivery::Command => scan_preflight_command(
                                 &mut processor,
-                                alignment,
-                                &ReplayBoxes::default(),
-                                innermost_group,
-                                mode,
-                                job_is_all_over,
-                                self.main_loop_active,
-                                &mut self.shown_mode,
-                                &mut diagnostics,
                                 frame,
                                 cold,
+                                mode,
+                                &self.boxes,
+                                innermost_group,
+                                job_is_all_over,
+                                self.modes.current_list().display_eq_no().is_some(),
+                                &mut self.shown_mode,
+                                &mut diagnostics,
                             )?,
-                            None => scan_replay_step(
+                            OperationDelivery::Replay if display_alignment_tail => {
+                                match processor
+                                    .next_do_assignments_command()
+                                    .map_err(command_error)?
+                                {
+                                    Some(command) => match command.meaning() {
+                                        meaning
+                                            if tex_command::exceeds_max_non_prefixed_command(
+                                                static_meaning(meaning),
+                                            ) || matches!(
+                                                meaning,
+                                                ResolvedMeaning::Static(Meaning::CharToken {
+                                                    cat: Catcode::MathShift,
+                                                    ..
+                                                })
+                                            ) =>
+                                        {
+                                            frame.admit_settled(command, None);
+                                            dispatch_main_control_command(
+                                                &mut processor,
+                                                frame,
+                                                cold,
+                                                mode,
+                                                &self.boxes,
+                                                innermost_group,
+                                                job_is_all_over,
+                                                false,
+                                                &mut self.shown_mode,
+                                                &mut diagnostics,
+                                                None,
+                                                false,
+                                            )?
+                                        }
+                                        _ => {
+                                            processor.back_input(command).map_err(command_error)?;
+                                            retain_cold_operation(
+                                                frame,
+                                                cold,
+                                                ColdOperation::<G>::DisplayAlignmentRecovery,
+                                            )
+                                        }
+                                    },
+                                    None => retain_cold_operation(
+                                        frame,
+                                        cold,
+                                        ColdOperation::<G>::EndOfInput,
+                                    ),
+                                }
+                            }
+                            OperationDelivery::Replay => scan_replay_step(
                                 &mut processor,
                                 mode,
                                 &self.boxes,
@@ -6798,74 +6816,125 @@ impl<G> MainControl<G> {
                                 frame,
                                 cold,
                             )?,
+                            OperationDelivery::Alignment(alignment) => {
+                                scan_alignment_delivery_step(
+                                    &mut processor,
+                                    alignment,
+                                    &ReplayBoxes::default(),
+                                    innermost_group,
+                                    mode,
+                                    job_is_all_over,
+                                    self.main_loop_active,
+                                    &mut self.shown_mode,
+                                    &mut diagnostics,
+                                    frame,
+                                    cold,
+                                )?
+                            }
+                            OperationDelivery::AlignmentRetry { alignment, cursor } => {
+                                processor.resume_delivery_cursor(cursor);
+                                match alignment {
+                                    Some(alignment) => scan_alignment_delivery_step(
+                                        &mut processor,
+                                        alignment,
+                                        &ReplayBoxes::default(),
+                                        innermost_group,
+                                        mode,
+                                        job_is_all_over,
+                                        self.main_loop_active,
+                                        &mut self.shown_mode,
+                                        &mut diagnostics,
+                                        frame,
+                                        cold,
+                                    )?,
+                                    None => scan_replay_step(
+                                        &mut processor,
+                                        mode,
+                                        &self.boxes,
+                                        alignment_preamble,
+                                        innermost_group,
+                                        job_is_all_over,
+                                        self.modes.current_list().display_eq_no().is_some(),
+                                        self.main_loop_active,
+                                        &mut self.shown_mode,
+                                        &mut diagnostics,
+                                        frame,
+                                        cold,
+                                    )?,
+                                }
+                            }
+                            OperationDelivery::ResidentHot => {
+                                unreachable!(
+                                    "pre-scanned hot delivery bypasses operation preparation"
+                                )
+                            }
+                            OperationDelivery::ResidentCold => {
+                                unreachable!(
+                                    "pre-scanned cold delivery bypasses operation preparation"
+                                )
+                            }
+                            OperationDelivery::SuspendedCold { .. } => {
+                                unreachable!("prepared cold operations bypass operand scanning")
+                            }
+                        })
+                    })();
+                    let cursor = processor.delivery_cursor();
+                    let retry_expansion = processor.take_pending_expansion_work();
+                    let scanner_resume = processor.take_scanner_resume();
+                    let retained_command_scan = frame.is_command_scan();
+                    let alignment_scanner = if retained_command_scan {
+                        assert!(
+                            scanner_resume.is_none(),
+                            "the direct-operation parent already owns its exact scanner child"
+                        );
+                        None
+                    } else if let Some(expansion) = retry_expansion {
+                        frame.clear_preflight();
+                        frame.admit_expanding(expansion, self.main_loop_active, cursor);
+                        assert!(
+                            scanner_resume.is_none(),
+                            "parked expansion owns its scanner child internally"
+                        );
+                        None
+                    } else if frame.has_preflight() {
+                        frame.retain_scanner(cursor, scanner_resume);
+                        None
+                    } else {
+                        scanner_resume
+                    };
+                    let scanned = match scanned {
+                        Ok(scanned) => scanned,
+                        Err(error) => {
+                            frame.write_retry_failure(error, cursor, alignment_scanner);
+                            return Err(TypedOperationError::Preparation(frame.take_error()));
                         }
+                    };
+                    if frame.command.is_none()
+                        && frame.has_preflight()
+                        && !matches!(
+                            frame.phase,
+                            Some(PreflightCommandPhase::ImmediatePdfRetry(_))
+                        )
+                    {
+                        frame.clear_preflight();
                     }
-                    OperationDelivery::ResidentHot => {
-                        unreachable!("pre-scanned hot delivery bypasses operation preparation")
+                    #[cfg(feature = "profiling")]
+                    if matches!(scanned, ScannedOperation::Cold) {
+                        tex_state::measurement::record_hot_core_materialization(
+                            tex_state::measurement::HotCoreMaterialization::ScannedStep,
+                        );
                     }
-                    OperationDelivery::ResidentCold => {
-                        unreachable!("pre-scanned cold delivery bypasses operation preparation")
-                    }
-                    OperationDelivery::SuspendedCold { .. } => {
-                        unreachable!("prepared cold operations bypass operand scanning")
-                    }
-                })
-            })();
-            let cursor = processor.delivery_cursor();
-            let retry_expansion = processor.take_pending_expansion_work();
-            let scanner_resume = processor.take_scanner_resume();
-            let retained_command_scan = frame.is_command_scan();
-            let alignment_scanner = if retained_command_scan {
-                assert!(
-                    scanner_resume.is_none(),
-                    "the direct-operation parent already owns its exact scanner child"
-                );
-                None
-            } else if let Some(expansion) = retry_expansion {
-                frame.clear_preflight();
-                frame.admit_expanding(expansion, self.main_loop_active, cursor);
-                assert!(
-                    scanner_resume.is_none(),
-                    "parked expansion owns its scanner child internally"
-                );
-                None
-            } else if frame.has_preflight() {
-                frame.retain_scanner(cursor, scanner_resume);
-                None
-            } else {
-                scanner_resume
-            };
-            let scanned = match scanned {
-                Ok(scanned) => scanned,
-                Err(error) => {
-                    frame.write_retry_failure(error, cursor, alignment_scanner);
-                    return Err(TypedOperationError::Preparation(frame.take_error()));
-                }
-            };
-            if frame.command.is_none()
-                && frame.has_preflight()
-                && !matches!(
-                    frame.phase,
-                    Some(PreflightCommandPhase::ImmediatePdfRetry(_))
-                )
-            {
-                frame.clear_preflight();
-            }
-            #[cfg(feature = "profiling")]
-            if matches!(scanned, ScannedOperation::Cold) {
-                tex_state::measurement::record_hot_core_materialization(
-                    tex_state::measurement::HotCoreMaterialization::ScannedStep,
-                );
-            }
-            diagnostics.extend(
-                processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command),
-            );
-            scanned
-        };
-        drop(context);
+                    diagnostics.extend(
+                        processor
+                            .take_semantic_diagnostics()
+                            .into_iter()
+                            .map(PendingDiagnostic::Command),
+                    );
+                    scanned
+                };
+                Ok(scanned)
+            })
+            .expect("cold scanning keeps its generation admitted")?;
         // tex.web's `line` is maintained by `get_next` as it moves to a new
         // input line, so it is already the delivered command's own line by
         // the time that command is applied. Publish it here, after delivery,
@@ -6891,6 +6960,7 @@ impl<G> MainControl<G> {
                     artifact_count: stores.world().artifact_commits().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
+                    tracked_region_is_active,
                 },
             ),
             ScannedOperation::Hot => {
@@ -6905,6 +6975,7 @@ impl<G> MainControl<G> {
                         artifact_count: stores.world().artifact_commits().len(),
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
+                        tracked_region_is_active,
                     },
                 );
                 frame.hot = None;
@@ -7257,6 +7328,7 @@ impl<G> MainControl<G> {
             alignment_preamble,
             output_start,
         } = episode;
+        let tracked_region_is_active = output_start.tracked_region_is_active;
         let nested_snapshot = operation
             .executes_nested_operations()
             .then(|| {
@@ -7277,7 +7349,12 @@ impl<G> MainControl<G> {
         let _semantic_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
         );
-        if let Some(applied) = self.apply_host_owned_step(operation, stores, diagnostic_effects) {
+        if let Some(applied) = self.apply_host_owned_step(
+            operation,
+            stores,
+            diagnostic_effects,
+            tracked_region_is_active,
+        ) {
             let result =
                 self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
             if let Some(snapshot) = nested_snapshot {
