@@ -561,7 +561,9 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
     #[derive(Clone, Copy, Debug)]
     enum Branch {
         Source,
-        StoredToken,
+        ReplayToken,
+        AttemptToken,
+        DurableToken,
         MacroArgument,
     }
 
@@ -594,11 +596,30 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                         .expect("source fixture opens");
                     state.profile_prepare_source_line(1);
                 }
-                Branch::StoredToken => {
+                Branch::ReplayToken => {
                     state.profile_push_replay_stored_tokens(std::iter::repeat_n(
                         word('x'),
                         operations,
                     ));
+                }
+                Branch::AttemptToken => {
+                    state.profile_push_attempt_stored_tokens(
+                        std::iter::repeat_n(word('x'), operations),
+                        operations,
+                    );
+                }
+                Branch::DurableToken => {
+                    let words = vec![word('x').token_word(); operations];
+                    let list = universe
+                        .allocate_token_list(&words)
+                        .expect("durable fixture list");
+                    let context = universe.command_context().expect("durable context");
+                    state.push_token_level(
+                        PackedTokenSpanHandle::durable(context.token_list(list)),
+                        TokenBehavior::Ordinary,
+                        RetirementBehavior::Pop,
+                        ReplayTrace::Inserted,
+                    );
                 }
                 Branch::MacroArgument => {
                     let matching = state.scratch.begin_macro_match().expect("macro match");
@@ -708,7 +729,17 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                 (operations, 0, 0, 0),
             ),
             (
-                Branch::StoredToken,
+                Branch::ReplayToken,
+                (operations, 0, operations, 0),
+                (0, operations, 0, 0),
+            ),
+            (
+                Branch::AttemptToken,
+                (operations, 0, operations, 0),
+                (0, operations, 0, 0),
+            ),
+            (
+                Branch::DurableToken,
                 (operations, 0, operations, 0),
                 (0, operations, 0, 0),
             ),
