@@ -557,8 +557,9 @@ struct PackedArgument {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct MacroAppendPosition {
     absolute: u32,
-    chunk: u32,
-    offset: u16,
+    chunk: usize,
+    offset: usize,
+    chunk_limit: usize,
     last_origin: Option<OriginId>,
 }
 
@@ -604,7 +605,6 @@ impl MacroSlot {
 #[derive(Debug, Eq, PartialEq)]
 struct MacroWordChunk {
     words: Box<[TokenWord; MACRO_WORD_RESERVE]>,
-    used: u16,
 }
 
 impl MacroWordChunk {
@@ -622,7 +622,7 @@ impl MacroWordChunk {
             .into_boxed_slice()
             .try_into()
             .map_err(|_| ScratchError::InvalidCoordinate)?;
-        Ok(Self { words, used: 0 })
+        Ok(Self { words })
     }
 }
 
@@ -653,15 +653,85 @@ impl MacroWordLane {
         self.len
     }
 
-    fn append_position(&self) -> Result<MacroAppendPosition, ScratchError> {
-        let chunk = self.len as usize / MACRO_WORD_RESERVE;
-        let offset = self.len as usize % MACRO_WORD_RESERVE;
+    fn admit_append_position(&mut self) -> Result<MacroAppendPosition, ScratchError> {
+        if self.len == u32::MAX {
+            return Err(ScratchError::CapacityOverflow);
+        }
+        let absolute = self.len as usize;
+        let chunk = absolute / MACRO_WORD_RESERVE;
+        let offset = absolute % MACRO_WORD_RESERVE;
+        if offset == 0 {
+            self.admit_chunk(chunk)?;
+        } else if chunk >= self.active.len() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
         Ok(MacroAppendPosition {
             absolute: self.len,
-            chunk: u32::try_from(chunk).map_err(|_| ScratchError::CapacityOverflow)?,
-            offset: u16::try_from(offset).map_err(|_| ScratchError::CapacityOverflow)?,
+            chunk,
+            offset,
+            chunk_limit: Self::chunk_limit(chunk),
             last_origin: self.origins.last().map(|run| run.origin),
         })
+    }
+
+    fn chunk_limit(chunk: usize) -> usize {
+        let remaining = u32::MAX as usize - chunk * MACRO_WORD_RESERVE;
+        remaining.min(MACRO_WORD_RESERVE)
+    }
+
+    fn admit_chunk(&mut self, chunk: usize) -> Result<(), ScratchError> {
+        if chunk != self.active.len() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.active
+            .try_reserve(1)
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        self.spare
+            .try_reserve(1)
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        let admitted = if let Some(chunk) = self.spare.pop() {
+            chunk
+        } else {
+            MacroWordChunk::new()?
+        };
+        self.active.push(admitted);
+        Ok(())
+    }
+
+    #[cold]
+    fn advance_append_chunk(
+        &mut self,
+        position: &mut MacroAppendPosition,
+    ) -> Result<(), ScratchError> {
+        if position.absolute == u32::MAX {
+            return Err(ScratchError::CapacityOverflow);
+        }
+        let chunk = position
+            .chunk
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        self.admit_chunk(chunk)?;
+        position.chunk = chunk;
+        position.offset = 0;
+        position.chunk_limit = Self::chunk_limit(chunk);
+        Ok(())
+    }
+
+    #[cold]
+    fn begin_origin_run(
+        &mut self,
+        position: &mut MacroAppendPosition,
+        origin: OriginId,
+    ) -> Result<(), ScratchError> {
+        self.origins
+            .try_reserve(1)
+            .map_err(|_| ScratchError::AllocationFailed)?;
+        self.origins.push(MacroOriginRun {
+            start: position.absolute,
+            origin,
+        });
+        position.last_origin = Some(origin);
+        Ok(())
     }
 
     #[inline]
@@ -670,62 +740,17 @@ impl MacroWordLane {
         position: &mut MacroAppendPosition,
         word: TracedTokenWord,
     ) -> Result<(), ScratchError> {
-        if position.absolute == u32::MAX {
-            return Err(ScratchError::CapacityOverflow);
+        if position.offset == position.chunk_limit {
+            self.advance_append_chunk(position)?;
         }
-        let offset = usize::from(position.offset);
         let origin = word.origin();
-        let starts_origin_run = position.last_origin != Some(origin);
-        if starts_origin_run {
-            self.origins
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
+        if position.last_origin != Some(origin) {
+            self.begin_origin_run(position, origin)?;
         }
-        let next_chunk = if offset + 1 == MACRO_WORD_RESERVE {
-            Some(
-                position
-                    .chunk
-                    .checked_add(1)
-                    .ok_or(ScratchError::CapacityOverflow)?,
-            )
-        } else {
-            None
-        };
-        if offset == 0 {
-            self.active
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            self.spare
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            let mut chunk = if let Some(chunk) = self.spare.pop() {
-                chunk
-            } else {
-                MacroWordChunk::new()?
-            };
-            chunk.used = 0;
-            self.active.push(chunk);
-        }
-        let chunk_index = position.chunk as usize;
-        if starts_origin_run {
-            self.origins.push(MacroOriginRun {
-                start: position.absolute,
-                origin,
-            });
-            position.last_origin = Some(origin);
-        }
-        let chunk = self
-            .active
-            .get_mut(chunk_index)
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        chunk.words[offset] = word.token_word();
-        chunk.used = u16::try_from(offset + 1).map_err(|_| ScratchError::CapacityOverflow)?;
-        position.absolute += 1;
+        let chunk = &mut self.active[position.chunk];
+        chunk.words[position.offset] = word.token_word();
         position.offset += 1;
-        if let Some(next_chunk) = next_chunk {
-            position.chunk = next_chunk;
-            position.offset = 0;
-        }
+        position.absolute += 1;
         self.len = position.absolute;
         Ok(())
     }
@@ -864,14 +889,8 @@ impl MacroWordLane {
         }
         let needed = (mark as usize).div_ceil(MACRO_WORD_RESERVE);
         while self.active.len() > needed {
-            let mut chunk = self.active.pop().expect("active suffix chunk");
-            chunk.used = 0;
+            let chunk = self.active.pop().expect("active suffix chunk");
             self.spare.push(chunk);
-        }
-        if let Some(tail) = self.active.last_mut() {
-            let used = mark as usize % MACRO_WORD_RESERVE;
-            tail.used = u16::try_from(if used == 0 { MACRO_WORD_RESERVE } else { used })
-                .map_err(|_| ScratchError::CapacityOverflow)?;
         }
         self.len = mark;
         while self.origins.last().is_some_and(|run| run.start >= mark) {
@@ -1498,7 +1517,6 @@ impl<G> ExecutionScratch<G> {
         matching: &PendingArgumentSet<G>,
     ) -> Result<MacroArgumentWriter<G>, ScratchError> {
         let start = self.macro_words.len();
-        let append = self.macro_words.append_position()?;
         let delimiter_start = self.delimiter_words.len();
         let slot_index = matching.frame.slot() as usize;
         let slot = self.pending_slot_for(matching.frame)?;
@@ -1506,6 +1524,7 @@ impl<G> ExecutionScratch<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         let argument_slot = slot.argument_count;
+        let append = self.macro_words.admit_append_position()?;
         let slot = &mut self.macro_slots[slot_index];
         slot.current_argument = Some(argument_slot);
         #[cfg(test)]

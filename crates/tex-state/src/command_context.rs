@@ -2083,13 +2083,12 @@ impl<'a, G> CommandContext<'a, G> {
             _ => false,
         };
         let candidate = match side {
-            crate::node::MarginKernSide::Left => children
-                .iter()
-                .find(|node| !skippable(node.clone())),
-            crate::node::MarginKernSide::Right => children
-                .iter()
-                .rev()
-                .find(|node| !skippable(node.clone())),
+            crate::node::MarginKernSide::Left => {
+                children.iter().find(|node| !skippable(node.clone()))
+            }
+            crate::node::MarginKernSide::Right => {
+                children.iter().rev().find(|node| !skippable(node.clone()))
+            }
         };
         Some(match candidate {
             Some(crate::NodeView::MarginKern {
