@@ -58,7 +58,8 @@ impl<'a> PdfPaintProgram<'a> {
 struct PdfPainter {
     content: pdf_writer::Content,
     origin: (f32, f32),
-    saved_origins: Vec<(f32, f32)>,
+    exact_origin: Option<PdfExactTextPosition>,
+    saved_origins: Vec<((f32, f32), Option<PdfExactTextPosition>)>,
     in_text: bool,
     current_font: Option<PdfTextFont>,
     text_matrix: Option<PdfTextMatrix>,
@@ -109,6 +110,7 @@ impl PdfPainter {
         Self {
             content: pdf_writer::Content::new(),
             origin: (0.0, 0.0),
+            exact_origin: Some(PdfExactTextPosition { h: 0, v: 0 }),
             saved_origins: Vec::new(),
             in_text: false,
             current_font: None,
@@ -139,28 +141,53 @@ impl PdfPainter {
             }
             PdfContentOperation::Rule(rule) => self.rule(rule),
             PdfContentOperation::Text(run) => self.text(run),
-            PdfContentOperation::Literal { mode, x, y, bytes } => {
-                self.prepare_literal(*mode, *x, *y);
+            PdfContentOperation::Literal {
+                mode,
+                x,
+                y,
+                exact_position,
+                bytes,
+            } => {
+                self.prepare_literal(*mode, *x, *y, *exact_position);
                 self.content.verbatim_operations(bytes);
             }
-            PdfContentOperation::ColorStack { mode, x, y, bytes } => {
-                self.prepare_literal(*mode, *x, *y);
+            PdfContentOperation::ColorStack {
+                mode,
+                x,
+                y,
+                exact_position,
+                bytes,
+            } => {
+                self.prepare_literal(*mode, *x, *y, *exact_position);
                 self.content.color_stack_operations(bytes);
             }
-            PdfContentOperation::SetMatrix { x, y, matrix } => {
+            PdfContentOperation::SetMatrix {
+                x,
+                y,
+                exact_position,
+                matrix,
+            } => {
                 self.end_text();
-                self.set_origin(*x, *y);
+                self.set_origin(*x, *y, *exact_position);
                 self.content
                     .transform([matrix[0], matrix[1], matrix[2], matrix[3], 0.0, 0.0]);
             }
-            PdfContentOperation::Save { x, y } => {
+            PdfContentOperation::Save {
+                x,
+                y,
+                exact_position,
+            } => {
                 self.end_text();
-                self.set_origin(*x, *y);
+                self.set_origin(*x, *y, *exact_position);
                 self.save();
             }
-            PdfContentOperation::Restore { x, y } => {
+            PdfContentOperation::Restore {
+                x,
+                y,
+                exact_position,
+            } => {
                 self.end_text();
-                self.set_origin(*x, *y);
+                self.set_origin(*x, *y, *exact_position);
                 self.restore();
             }
             PdfContentOperation::FormXObject { x, y, name } => {
@@ -255,7 +282,16 @@ impl PdfPainter {
             // leave later text expressed through its translated CTM: although
             // the affine positions are equivalent, PDF consumers raster and
             // extract the composed floating-point coordinates differently.
-            self.set_origin(0.0, 0.0);
+            self.set_origin(
+                0.0,
+                0.0,
+                run.exact_position
+                    .map(|position| super::PdfContentTextPosition {
+                        h: 0,
+                        v: 0,
+                        decimal_digits: position.decimal_digits,
+                    }),
+            );
             self.content.begin_text();
             self.in_text = true;
             self.current_font = None;
@@ -263,7 +299,7 @@ impl PdfPainter {
                 x: 0.0,
                 baseline: 0.0,
                 horizontal_scale: 1.0,
-                exact: Some(PdfExactTextPosition { h: 0, v: 0 }),
+                exact: self.exact_origin,
             });
         }
         let (x, baseline) = self.relative_position(run.x, run.baseline);
@@ -449,14 +485,20 @@ impl PdfPainter {
         })
     }
 
-    fn prepare_literal(&mut self, mode: crate::PdfLiteralMode, x: f32, y: f32) {
+    fn prepare_literal(
+        &mut self,
+        mode: crate::PdfLiteralMode,
+        x: f32,
+        y: f32,
+        exact_position: Option<super::PdfContentTextPosition>,
+    ) {
         if mode != crate::PdfLiteralMode::Direct {
             self.end_text();
         } else {
             self.flush_text();
         }
         if mode == crate::PdfLiteralMode::Origin {
-            self.set_origin(x, y);
+            self.set_origin(x, y, exact_position);
         }
     }
 
@@ -474,23 +516,42 @@ impl PdfPainter {
         (x - self.origin.0, y - self.origin.1)
     }
 
-    fn set_origin(&mut self, x: f32, y: f32) {
+    fn set_origin(
+        &mut self,
+        x: f32,
+        y: f32,
+        exact_position: Option<super::PdfContentTextPosition>,
+    ) {
         let (dx, dy) = (x - self.origin.0, y - self.origin.1);
         if dx != 0.0 || dy != 0.0 {
             self.content.transform([1.0, 0.0, 0.0, 1.0, dx, dy]);
             self.origin = (x, y);
         }
+        self.exact_origin = match (self.exact_origin, exact_position) {
+            (Some(origin), Some(position)) => {
+                let (_, h_out) =
+                    pdftex_text_coordinate(position.h - origin.h, position.decimal_digits);
+                let (_, v_out) =
+                    pdftex_text_coordinate(position.v - origin.v, position.decimal_digits);
+                Some(PdfExactTextPosition {
+                    h: origin.h + h_out,
+                    v: origin.v + v_out,
+                })
+            }
+            _ => None,
+        };
     }
 
     fn save(&mut self) {
-        self.saved_origins.push(self.origin);
+        self.saved_origins.push((self.origin, self.exact_origin));
         self.content.save_state();
     }
 
     fn restore(&mut self) {
         self.content.restore_state();
-        if let Some(origin) = self.saved_origins.pop() {
+        if let Some((origin, exact_origin)) = self.saved_origins.pop() {
             self.origin = origin;
+            self.exact_origin = exact_origin;
         }
     }
 
@@ -623,6 +684,22 @@ impl PdfPainter {
         self.end_text();
         self.content.finish().to_vec()
     }
+}
+
+#[cfg(test)]
+pub(super) fn retained_origin_after_save_restore(
+    saved: super::PdfContentTextPosition,
+    nested: super::PdfContentTextPosition,
+) -> (i64, i64) {
+    let mut painter = PdfPainter::new();
+    painter.set_origin(48.964, 0.0, Some(saved));
+    painter.save();
+    painter.set_origin(58.927, 0.0, Some(nested));
+    painter.restore();
+    let exact = painter
+        .exact_origin
+        .expect("exact graphics positions retain an exact origin");
+    (exact.h, exact.v)
 }
 
 fn scaled_to_bp(value: Scaled, decimal_digits: u8) -> f32 {

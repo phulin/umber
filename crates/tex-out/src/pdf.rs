@@ -133,26 +133,31 @@ pub enum PdfContentOperation {
         mode: crate::PdfLiteralMode,
         x: f32,
         y: f32,
+        exact_position: Option<PdfContentTextPosition>,
         bytes: Vec<u8>,
     },
     ColorStack {
         mode: crate::PdfLiteralMode,
         x: f32,
         y: f32,
+        exact_position: Option<PdfContentTextPosition>,
         bytes: Vec<u8>,
     },
     SetMatrix {
         x: f32,
         y: f32,
+        exact_position: Option<PdfContentTextPosition>,
         matrix: [f32; 4],
     },
     Save {
         x: f32,
         y: f32,
+        exact_position: Option<PdfContentTextPosition>,
     },
     Restore {
         x: f32,
         y: f32,
+        exact_position: Option<PdfContentTextPosition>,
     },
     FormXObject {
         x: f32,

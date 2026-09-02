@@ -77,19 +77,29 @@ fn canonical_rule_paint_selects_strokes_and_fills_at_one_bp() {
 #[test]
 fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
     let bytes = ordered_page_content(&[
-        PdfContentOperation::Save { x: 10.0, y: 20.0 },
+        PdfContentOperation::Save {
+            x: 10.0,
+            y: 20.0,
+            exact_position: None,
+        },
         PdfContentOperation::SetMatrix {
             x: 10.0,
             y: 20.0,
+            exact_position: None,
             matrix: [1.0, 0.25, -0.5, 1.0],
         },
         PdfContentOperation::Literal {
             mode: crate::PdfLiteralMode::Direct,
             x: 99.0,
             y: 99.0,
+            exact_position: None,
             bytes: b"0.1 g 1 2 m".to_vec(),
         },
-        PdfContentOperation::Restore { x: 10.0, y: 20.0 },
+        PdfContentOperation::Restore {
+            x: 10.0,
+            y: 20.0,
+            exact_position: None,
+        },
     ]);
     let text = String::from_utf8(bytes).expect("ASCII content");
     assert_eq!(
@@ -99,24 +109,47 @@ fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
 }
 
 #[test]
+fn graphics_save_restore_retains_the_pdftex_origin_raster() {
+    // pdftex.web §690 (`pdf_set_origin`) retains `scaled_out`, rather than
+    // the requested TeX coordinate. The graphics stack must preserve that
+    // exact raster because a later text object starts from the restored CTM.
+    let retained = super::paint::retained_origin_after_save_restore(
+        PdfContentTextPosition {
+            h: 3_220_936,
+            v: 0,
+            decimal_digits: 3,
+        },
+        PdfContentTextPosition {
+            h: 3_876_320,
+            v: 0,
+            decimal_digits: 3,
+        },
+    );
+    assert_eq!(retained, (3_220_938, 0));
+}
+
+#[test]
 fn origin_literal_moves_but_page_and_direct_literals_do_not() {
     let bytes = ordered_page_content(&[
         PdfContentOperation::Literal {
             mode: crate::PdfLiteralMode::Page,
             x: 10.0,
             y: 20.0,
+            exact_position: None,
             bytes: b"PAGE".to_vec(),
         },
         PdfContentOperation::Literal {
             mode: crate::PdfLiteralMode::Origin,
             x: 10.0,
             y: 20.0,
+            exact_position: None,
             bytes: b"ORIGIN".to_vec(),
         },
         PdfContentOperation::Literal {
             mode: crate::PdfLiteralMode::Direct,
             x: 30.0,
             y: 40.0,
+            exact_position: None,
             bytes: b"DIRECT".to_vec(),
         },
     ]);
@@ -136,6 +169,7 @@ fn begin_text_restores_page_origin_after_an_origin_literal() {
             mode: crate::PdfLiteralMode::Origin,
             x: 10.0,
             y: 20.0,
+            exact_position: None,
             bytes: b"ORIGIN".to_vec(),
         },
         PdfContentOperation::ImageXObject {
@@ -216,6 +250,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
             mode: crate::PdfLiteralMode::Direct,
             x: 0.0,
             y: 0.0,
+            exact_position: None,
             bytes: b"DIRECT".to_vec(),
         },
         text(b"B"),
@@ -223,6 +258,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
             mode: crate::PdfLiteralMode::Page,
             x: 0.0,
             y: 0.0,
+            exact_position: None,
             bytes: b"PAGE".to_vec(),
         },
     ]);
@@ -254,6 +290,7 @@ fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
             mode: crate::PdfLiteralMode::Direct,
             x: 0.0,
             y: 0.0,
+            exact_position: None,
             bytes: b"0 g".to_vec(),
         },
         text(17.0, b'B'),
@@ -575,18 +612,21 @@ fn color_stack_bytes_use_the_writer_owned_path_and_literal_modes() {
             mode: crate::PdfLiteralMode::Page,
             x: 99.0,
             y: 99.0,
+            exact_position: None,
             bytes: b"0 0 1 rg".to_vec(),
         },
         PdfContentOperation::ColorStack {
             mode: crate::PdfLiteralMode::Origin,
             x: 10.0,
             y: 20.0,
+            exact_position: None,
             bytes: b"1 0 0 rg".to_vec(),
         },
         PdfContentOperation::ColorStack {
             mode: crate::PdfLiteralMode::Direct,
             x: 30.0,
             y: 40.0,
+            exact_position: None,
             bytes: b"0 g".to_vec(),
         },
     ]);

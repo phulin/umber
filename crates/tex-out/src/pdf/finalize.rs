@@ -859,26 +859,25 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                 }
                 PositionedEvent::PdfGraphics(graphics) => {
                     has_pdf_graphics = true;
-                    let x = scaled_to_bp_f32(
-                        graphics
-                            .x
-                            .checked_add(record.h_origin())
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    );
-                    let y = scaled_to_bp_f32(
-                        page_height
-                            .checked_sub(graphics.y)
-                            .and_then(|value| value.checked_sub(record.v_origin()))
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    );
+                    let raw_x = graphics
+                        .x
+                        .checked_add(record.h_origin())
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    let raw_y = page_height
+                        .checked_sub(graphics.y)
+                        .and_then(|value| value.checked_sub(record.v_origin()))
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    let x = scaled_to_bp_f32(raw_x, parameters.decimal_digits);
+                    let y = scaled_to_bp_f32(raw_y, parameters.decimal_digits);
+                    let exact_position =
+                        exact_text_position(raw_x, raw_y, parameters.decimal_digits);
                     let operation = match graphics.effect {
                         crate::PageEffect::PdfLiteral { mode, payload } => {
                             PdfContentOperation::Literal {
                                 mode,
                                 x,
                                 y,
+                                exact_position,
                                 bytes: payload,
                             }
                         }
@@ -886,16 +885,26 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             PdfContentOperation::SetMatrix {
                                 x,
                                 y,
+                                exact_position,
                                 matrix: parse_pdf_matrix(&payload)?,
                             }
                         }
-                        crate::PageEffect::PdfSave => PdfContentOperation::Save { x, y },
-                        crate::PageEffect::PdfRestore => PdfContentOperation::Restore { x, y },
+                        crate::PageEffect::PdfSave => PdfContentOperation::Save {
+                            x,
+                            y,
+                            exact_position,
+                        },
+                        crate::PageEffect::PdfRestore => PdfContentOperation::Restore {
+                            x,
+                            y,
+                            exact_position,
+                        },
                         crate::PageEffect::PdfColorStack { mode, payload, .. } => {
                             PdfContentOperation::ColorStack {
                                 mode,
                                 x,
                                 y,
+                                exact_position,
                                 bytes: payload,
                             }
                         }
@@ -1157,19 +1166,21 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     }))
                 }
                 PositionedEvent::PdfGraphics(graphics) => {
-                    let x = scaled_to_bp_f32(graphics.x, parameters.decimal_digits);
-                    let y = scaled_to_bp_f32(
-                        total_height
-                            .checked_sub(graphics.y)
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    );
+                    let raw_x = graphics.x;
+                    let raw_y = total_height
+                        .checked_sub(graphics.y)
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    let x = scaled_to_bp_f32(raw_x, parameters.decimal_digits);
+                    let y = scaled_to_bp_f32(raw_y, parameters.decimal_digits);
+                    let exact_position =
+                        exact_text_position(raw_x, raw_y, parameters.decimal_digits);
                     let operation = match graphics.effect {
                         crate::PageEffect::PdfLiteral { mode, payload } => {
                             PdfContentOperation::Literal {
                                 mode,
                                 x,
                                 y,
+                                exact_position,
                                 bytes: payload,
                             }
                         }
@@ -1177,16 +1188,26 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             PdfContentOperation::SetMatrix {
                                 x,
                                 y,
+                                exact_position,
                                 matrix: parse_pdf_matrix(&payload)?,
                             }
                         }
-                        crate::PageEffect::PdfSave => PdfContentOperation::Save { x, y },
-                        crate::PageEffect::PdfRestore => PdfContentOperation::Restore { x, y },
+                        crate::PageEffect::PdfSave => PdfContentOperation::Save {
+                            x,
+                            y,
+                            exact_position,
+                        },
+                        crate::PageEffect::PdfRestore => PdfContentOperation::Restore {
+                            x,
+                            y,
+                            exact_position,
+                        },
                         crate::PageEffect::PdfColorStack { mode, payload, .. } => {
                             PdfContentOperation::ColorStack {
                                 mode,
                                 x,
                                 y,
+                                exact_position,
                                 bytes: payload,
                             }
                         }
