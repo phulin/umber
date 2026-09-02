@@ -299,6 +299,19 @@ dictionaries use `/BaseFont` and omit `/Name`; Type-3 dictionaries retain the
 resource-local `/Name`. One detached header constructor owns that distinction
 for mapped, resident, PK, and generated fallback-space fonts.
 
+The same font-finalization boundary owns the generic ToUnicode CMap emitted by
+`tounicode.c::write_tounicode`. Its identity is the TFM name plus the external
+encoding filename without `.enc`, or `builtin` for a Type-1 program encoding.
+It resolves all 256 encoding slots rather than only the subset's used codes,
+coalesces consecutive scalar mappings into at most 100-entry `bfrange` groups
+without incrementing a UTF-16 final byte past 255, and writes string mappings
+separately in `bfchar` groups. The DSC prologue, empty groups, CIDSystemInfo,
+and resource footer are part of the decoded canonical stream; compression is
+applied only afterward by the shared serializer.
+Font-scoped `tfm:<name>/glyph` mappings are resolved before the global glyph
+namespace regardless of definition order; within either namespace the latest
+definition wins.
+
 When a mapped Type-1 font has no external encoding, finalization resolves used
 character codes through the program's cleartext built-in encoding. The bounded
 PostScript token scan accepts both spaced entries (`dup 10 /name put`) and the

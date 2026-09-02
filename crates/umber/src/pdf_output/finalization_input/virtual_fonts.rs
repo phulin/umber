@@ -12,7 +12,7 @@ use tex_state::{
     FontArtifactRecipe,
 };
 
-use super::{detached_encoding, detached_font_program};
+use super::{detached_encoding, detached_font_program, glyph_to_unicode_mapping};
 use crate::PdfBuildError;
 
 #[derive(Clone, Debug)]
@@ -251,16 +251,7 @@ fn materialize_local_instance(
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|glyph_name| {
-                glyph_mappings
-                    .iter()
-                    .rev()
-                    .find(|mapping| {
-                        mapping.glyph_name == glyph_name
-                            && mapping
-                                .tfm_name
-                                .as_deref()
-                                .is_none_or(|tfm| tfm == name.as_bytes())
-                    })
+                glyph_to_unicode_mapping(glyph_mappings, name.as_bytes(), &glyph_name)
                     .map(|mapping| (glyph_name, mapping.unicode.clone()))
             })
             .collect();

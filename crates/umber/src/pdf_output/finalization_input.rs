@@ -185,16 +185,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|name| {
-                glyph_mappings
-                    .iter()
-                    .rev()
-                    .find(|mapping| {
-                        mapping.glyph_name == name
-                            && mapping
-                                .tfm_name
-                                .as_deref()
-                                .is_none_or(|tfm| tfm == detached.recipe.name.as_bytes())
-                    })
+                glyph_to_unicode_mapping(&glyph_mappings, detached.recipe.name.as_bytes(), &name)
                     .map(|mapping| (name, mapping.unicode.clone()))
             })
             .collect();
@@ -385,6 +376,27 @@ pub fn pdf_finalization_input_with_raw_object_files(
         },
         limits: PdfFinalizationLimits::default(),
     })
+}
+
+fn glyph_to_unicode_mapping<'a>(
+    mappings: &'a [&tex_state::PdfGlyphToUnicode],
+    tfm_name: &[u8],
+    glyph_name: &[u8],
+) -> Option<&'a tex_state::PdfGlyphToUnicode> {
+    mappings
+        .iter()
+        .rev()
+        .find(|mapping| {
+            mapping.tfm_name.as_deref() == Some(tfm_name) && mapping.glyph_name == glyph_name
+        })
+        .copied()
+        .or_else(|| {
+            mappings
+                .iter()
+                .rev()
+                .find(|mapping| mapping.tfm_name.is_none() && mapping.glyph_name == glyph_name)
+                .copied()
+        })
 }
 
 fn detached_encoding(
@@ -701,5 +713,34 @@ fn annotation_dimensions(dimensions: PdfAnnotationDimensions) -> PdfAnnotationDi
         width: dimensions.width,
         height: dimensions.height,
         depth: dimensions.depth,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glyph_to_unicode_mapping;
+    use tex_state::PdfGlyphToUnicode;
+
+    #[test]
+    fn tounicode_tfm_namespace_precedes_later_global_mapping() {
+        let scoped = PdfGlyphToUnicode {
+            tfm_name: Some(b"cmr10".to_vec()),
+            glyph_name: b"A".to_vec(),
+            unicode: vec![0x0391],
+        };
+        let later_global = PdfGlyphToUnicode {
+            tfm_name: None,
+            glyph_name: b"A".to_vec(),
+            unicode: vec![0x0041],
+        };
+
+        assert_eq!(
+            glyph_to_unicode_mapping(&[&scoped, &later_global], b"cmr10", b"A"),
+            Some(&scoped)
+        );
+        assert_eq!(
+            glyph_to_unicode_mapping(&[&scoped, &later_global], b"cmr7", b"A"),
+            Some(&later_global)
+        );
     }
 }
