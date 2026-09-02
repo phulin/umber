@@ -3609,12 +3609,18 @@ fn pdf_font_objects(
 /// pdfTeX's Type-1 descriptor fallbacks use named TFM characters, not the
 /// extrema of the complete character table. In particular, `/StemV` starts as
 /// one third of period's width and is replaced only when the font program has
-/// `/StdVW`. See pdftex.web §799, `writefont.c::preset_fontmetrics`, and
-/// `writet1.c::t1_scan_keys` in the pinned 1.40.29 source.
+/// `/StdVW`. The metrics are divided by the six-place PDF font-size raster,
+/// rather than the original TeX font size. See pdftex.web §690,
+/// `writefont.c::preset_fontmetrics`, and `writet1.c::t1_scan_keys` in the
+/// pinned 1.40.29 source.
 fn type1_fallback_descriptor_metrics(metrics: &PdfFontMetricsInput, at_size: Scaled) -> [i64; 5] {
-    let denominator = i64::from(at_size.raw()).max(1);
-    let scale_metric =
-        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
+    let denominator = pdftex_font_size_raster(at_size)
+        .expect("validated scalable font has a positive bounded size");
+    let scale_metric = |value: Scaled| {
+        pdftex_divide_scaled_positive(i64::from(value.raw()), denominator, 3)
+            .expect("validated TFM descriptor metric is nonnegative and bounded")
+            .0
+    };
     [
         scale_metric(metrics.heights[usize::from(b'h')]),
         -scale_metric(metrics.depths[usize::from(b'y')]),
@@ -5009,15 +5015,19 @@ fn pdftex_font_size_f64(value: Scaled) -> f64 {
 
 pub(super) fn pdftex_scalable_width_tenths(width: Scaled, font_size: Scaled) -> Option<i64> {
     // pdftex.web §690 and writefont.c `create_charwidth_array`: first retain
-    // the four-place font-size raster selected by `pdf_use_font`, then divide
+    // the six-place font-size raster selected by `pdf_use_font`, then divide
     // each TFM width onto the 1/10000 raster consumed by `adv_char_width`.
     // `/Widths` prints that coefficient with one fractional decimal place.
-    const ONE_HUNDRED_BP: i64 = 6_578_176;
-    let (_, font_size_raster) =
-        pdftex_divide_scaled_positive(i64::from(font_size.raw()), ONE_HUNDRED_BP, 6)?;
+    let font_size_raster = pdftex_font_size_raster(font_size)?;
     let (coefficient, _) =
         pdftex_divide_scaled_positive(i64::from(width.raw()), font_size_raster, 4)?;
     Some(coefficient)
+}
+
+fn pdftex_font_size_raster(font_size: Scaled) -> Option<i64> {
+    const ONE_HUNDRED_BP: i64 = 6_578_176;
+    pdftex_divide_scaled_positive(i64::from(font_size.raw()), ONE_HUNDRED_BP, 6)
+        .map(|(_, scaled_out)| scaled_out)
 }
 
 fn pdftex_divide_scaled_positive(

@@ -319,6 +319,27 @@ fn type1_descriptor_fallback_uses_named_tfm_characters_instead_of_table_extrema(
 }
 
 #[test]
+fn type1_descriptor_fallback_uses_pdf_font_size_raster() {
+    let mut heights = [Scaled::from_raw(0); 256];
+    heights[usize::from(b'h')] = Scaled::from_raw(438_108);
+    heights[usize::from(b'H')] = Scaled::from_raw(438_108);
+    let metrics = PdfFontMetricsInput {
+        widths: [Scaled::from_raw(0); 256],
+        heights,
+        depths: [Scaled::from_raw(0); 256],
+        x_height: Scaled::from_raw(0),
+    };
+
+    // pdftex.web §690 first moves 10pt onto the six-place PDF-size raster,
+    // producing 655358sp. writefont.c::preset_fontmetrics then divides the
+    // exact ptmri8r `h`/`H` height by that raster and rounds 668.502... to 669.
+    assert_eq!(
+        type1_fallback_descriptor_metrics(&metrics, Scaled::from_raw(10 * Scaled::UNITY)),
+        [669, 0, 669, 0, 0],
+    );
+}
+
+#[test]
 fn type1_std_vw_overrides_the_period_width_fallback() {
     fn type1_program(header: &[u8]) -> tex_fonts::PdfType1Program {
         let mut pfb = vec![0x80, 1];
