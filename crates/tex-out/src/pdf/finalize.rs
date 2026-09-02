@@ -31,6 +31,68 @@ struct PdfFormTraversalLimits {
     max_work: usize,
 }
 
+/// Page/form-local resource classes from pdftex.web sections 766--768.
+///
+/// pdfTeX derives these compatibility names from the generated font and image
+/// resource lists, not from the content operator stream. In particular,
+/// ordinary graphics and nested forms do not contribute a ProcSet class.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PdfProcSetUsage {
+    text: bool,
+    image_b: bool,
+    image_c: bool,
+    image_i: bool,
+}
+
+impl PdfProcSetUsage {
+    fn include_text(&mut self, used: bool) {
+        self.text |= used;
+    }
+
+    fn include_image(&mut self, metadata: PdfImageMetadataInput) {
+        let PdfImageMetadataInput::Raster {
+            format,
+            color_space,
+            png_color_type,
+            ..
+        } = metadata
+        else {
+            // writeimg.c leaves imported PDF pages at the zero color mask.
+            return;
+        };
+        // writepng.c classifies palette images as both color and indexed,
+        // independently of the decoded palette's eventual device space.
+        if format == PdfRasterFormatInput::Png && png_color_type == Some(3) {
+            self.image_c = true;
+            self.image_i = true;
+            return;
+        }
+        match color_space {
+            PdfRasterColorSpaceInput::Gray => self.image_b = true,
+            PdfRasterColorSpaceInput::Rgb | PdfRasterColorSpaceInput::Cmyk => {
+                self.image_c = true;
+            }
+        }
+    }
+
+    fn into_pdf_array(self) -> PdfValue {
+        let mut names = vec![PdfValue::Name("PDF".into())];
+        if self.text {
+            names.push(PdfValue::Name("Text".into()));
+        }
+        if self.image_b {
+            names.push(PdfValue::Name("ImageB".into()));
+        }
+        if self.image_c {
+            names.push(PdfValue::Name("ImageC".into()));
+        }
+        if self.image_i {
+            names.push(PdfValue::Name("ImageI".into()));
+        }
+        PdfValue::Array(names)
+    }
+}
+
 fn parse_pdf_matrix(payload: &[u8]) -> Result<[f32; 4], PdfBuildError> {
     let text =
         std::str::from_utf8(payload).map_err(|_| PdfBuildError::InvalidMatrix(payload.to_vec()))?;
@@ -511,6 +573,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         let mut page_group_selected = false;
         let mut page_group = None;
         let mut has_pdf_graphics = false;
+        let mut procset = PdfProcSetUsage::default();
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
         for event in positioned.events {
@@ -833,6 +896,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 .images
                                 .get(&object)
                                 .ok_or(PdfBuildError::MissingRasterImage(object))?;
+                            procset.include_image(image.metadata);
                             if matches!(image.metadata, PdfImageMetadataInput::PdfPage { .. }) {
                                 let group = pdf_image_groups.get(&object).copied().flatten();
                                 if group.is_some() {
@@ -922,10 +986,8 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         let mut resources = PdfDictionary::new();
         if record.omit_procset() < 0 || (record.omit_procset() == 0 && parameters.major_version < 2)
         {
-            resources.insert(
-                "ProcSet",
-                PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
-            )?;
+            procset.include_text(!page_fonts.is_empty() || fallback_space_on_page);
+            resources.insert("ProcSet", procset.into_pdf_array())?;
         }
         if !page_fonts.is_empty() || fallback_space_on_page {
             let mut fonts = PdfDictionary::new();
@@ -1238,10 +1300,9 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         resources.set_raw_entries(form.resource_entries.clone());
         let omit_procset = input.document.form_omit_procset;
         if omit_procset < 0 || (omit_procset == 0 && parameters.major_version < 2) {
-            resources.insert(
-                "ProcSet",
-                PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
-            )?;
+            let mut procset = PdfProcSetUsage::default();
+            procset.include_text(!form_fonts.is_empty());
+            resources.insert("ProcSet", procset.into_pdf_array())?;
         }
         if !nested_forms.is_empty() {
             let mut xobjects = PdfDictionary::new();

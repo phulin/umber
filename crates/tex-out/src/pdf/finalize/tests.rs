@@ -1,5 +1,85 @@
 use super::*;
 
+fn expected_procset(names: &[&str]) -> PdfValue {
+    PdfValue::Array(
+        names
+            .iter()
+            .map(|name| PdfValue::Name((*name).into()))
+            .collect(),
+    )
+}
+
+fn raster_metadata(
+    color_space: PdfRasterColorSpaceInput,
+    png_color_type: Option<u8>,
+) -> PdfImageMetadataInput {
+    PdfImageMetadataInput::Raster {
+        format: PdfRasterFormatInput::Png,
+        width: 1,
+        height: 1,
+        bits_per_component: 8,
+        color_space,
+        alpha: false,
+        png_color_type,
+    }
+}
+
+#[test]
+fn procset_tracks_pdftex_page_resource_classes() {
+    // pdftex.web §§766--768 set /Text from the font resource list and union
+    // writeimg.c's direct-image color mask. Empty pages and ordinary graphics
+    // therefore retain only /PDF.
+    let empty = PdfProcSetUsage::default();
+    assert_eq!(empty.into_pdf_array(), expected_procset(&["PDF"]));
+    let graphics_only = PdfProcSetUsage::default();
+    assert_eq!(graphics_only.into_pdf_array(), expected_procset(&["PDF"]));
+
+    let mut text = PdfProcSetUsage::default();
+    text.include_text(true);
+    assert_eq!(text.into_pdf_array(), expected_procset(&["PDF", "Text"]));
+
+    let mut gray = PdfProcSetUsage::default();
+    gray.include_image(raster_metadata(PdfRasterColorSpaceInput::Gray, Some(0)));
+    assert_eq!(gray.into_pdf_array(), expected_procset(&["PDF", "ImageB"]));
+
+    let mut color = PdfProcSetUsage::default();
+    color.include_image(raster_metadata(PdfRasterColorSpaceInput::Rgb, Some(2)));
+    color.include_image(raster_metadata(PdfRasterColorSpaceInput::Cmyk, None));
+    assert_eq!(color.into_pdf_array(), expected_procset(&["PDF", "ImageC"]));
+
+    let mut indexed = PdfProcSetUsage::default();
+    indexed.include_image(raster_metadata(PdfRasterColorSpaceInput::Rgb, Some(3)));
+    assert_eq!(
+        indexed.into_pdf_array(),
+        expected_procset(&["PDF", "ImageC", "ImageI"])
+    );
+
+    let mut imported_pdf = PdfProcSetUsage::default();
+    imported_pdf.include_image(PdfImageMetadataInput::PdfPage {
+        page_box: super::super::PdfPageBoxInput {
+            left: Scaled::from_raw(0),
+            bottom: Scaled::from_raw(0),
+            right: Scaled::from_raw(Scaled::UNITY),
+            top: Scaled::from_raw(Scaled::UNITY),
+        },
+        rotation: PdfPageRotationInput::None,
+        page: 1,
+        total_pages: 1,
+        has_page_group: false,
+        version: (1, 4),
+    });
+    assert_eq!(imported_pdf.into_pdf_array(), expected_procset(&["PDF"]));
+
+    let mut mixed = PdfProcSetUsage::default();
+    mixed.include_text(true);
+    mixed.include_image(raster_metadata(PdfRasterColorSpaceInput::Gray, Some(0)));
+    mixed.include_image(raster_metadata(PdfRasterColorSpaceInput::Rgb, Some(3)));
+    assert_eq!(
+        mixed.into_pdf_array(),
+        expected_procset(&["PDF", "Text", "ImageB", "ImageC", "ImageI"])
+    );
+}
+
 #[test]
 fn tounicode_cmap_matches_pdftex_generic_resource_shape() {
     // pdftex.web section 32e delegates to tounicode.c::write_tounicode.

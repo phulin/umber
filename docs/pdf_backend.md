@@ -368,8 +368,13 @@ legacy `PTEX.` versus `PTEX_` spelling exactly as in pdfTeX (PDF 2 also selects
 the underscore spelling). `\pdfomitprocset` is captured in each committed
 page receipt because resource dictionaries are page-scoped: negative values
 always emit `/ProcSet`, zero emits it before PDF 2, and positive values omit
-it. Both the information and resource dictionaries remain structural values
-whose final bytes are written only by `pdf_writer`.
+it. When present, pdftex.web sections 766--768 derive the ordered compatibility
+array from that page or form's own generated resources: `/PDF` is unconditional,
+`/Text` follows a nonempty font list, and `/ImageB`, `/ImageC`, and `/ImageI`
+are the union of direct raster-image color classes. Rules, literal graphics,
+nested forms, imported PDF pages, and empty output add no class; palette PNGs
+add both `/ImageC` and `/ImageI`. Both the information and resource dictionaries
+remain structural values whose final bytes are written only by `pdf_writer`.
 
 pdfTeX mode freezes `\pdfoutput`, the PDF version, stream/object compression,
 decimal precision, gamma conversion, draft mode, inclusion copy-fonts, PK
