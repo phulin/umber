@@ -656,9 +656,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
-    /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
-    /// `fetch` names, optionally entered with the raw command §1038's
-    /// lookahead has already fetched.
+    /// TeX82 §341's one raw destination loop.
+    #[inline(never)]
     pub(super) fn raw_delivery_entry(
         &mut self,
         replay_completion: ReplayCompletionPolicy,
@@ -666,36 +665,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
-        let mut error = DeliveryErrorSlot::empty();
         debug_assert!(destination.is_none());
-        let result = self.raw_destination_loop(
-            replay_completion,
-            alignment_interception,
-            destination,
-            &mut error,
-        );
-        match result {
-            Ok(status) => Ok(status),
-            Err(failure) => {
-                destination.take();
-                self.invalidate_delivery_freshness();
-                Err(error.take(failure))
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn raw_destination_loop(
-        &mut self,
-        replay_completion: ReplayCompletionPolicy,
-        alignment_interception: AlignmentInterceptionPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-        error: &mut DeliveryErrorSlot,
-    ) -> Result<DeliveryStatus, DeliveryFailed> {
         'delivery: loop {
             self.invalidate_delivery_freshness();
             if let Err(failure) = self.charge_command_action() {
-                return error.fail(failure);
+                return self.fail_raw_delivery(destination, failure);
             }
             if destination.is_none() {
                 *destination = Some(CurrentCommand::empty());
@@ -730,7 +704,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 match transition {
                     Ok(interception) => break interception,
                     Err(cold) => {
-                        match self.settle_resident_cold_transition(cold, destination, error)? {
+                        let settled =
+                            match self.settle_raw_resident_cold_transition(cold, destination) {
+                                Ok(settled) => settled,
+                                Err(failure) => {
+                                    return self.fail_raw_delivery(destination, failure);
+                                }
+                            };
+                        match settled {
                             ResidentColdOutcome::Retry => continue,
                             ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
                             ResidentColdOutcome::ReplayCompleted(episode) => {
@@ -758,8 +739,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if matches!(interception, ResidentCommandInterception::Outer)
                 && let Err(failure) = self.check_outer_validity_entry(command)
             {
-                destination.take();
-                return error.fail(failure);
+                return self.fail_raw_delivery(destination, failure);
             }
             if self.is_observed() {
                 self.observe_resident_command(command);
@@ -771,12 +751,38 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             {
                 if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
-                    return error.fail(failure);
+                    return self.fail_raw_delivery(destination, failure);
                 }
                 destination.take();
                 continue;
             }
             return Ok(DeliveryStatus::Command);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_raw_delivery(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        failure: CommandError,
+    ) -> Result<DeliveryStatus, CommandError> {
+        destination.take();
+        self.invalidate_delivery_freshness();
+        Err(failure)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn settle_raw_resident_cold_transition(
+        &mut self,
+        cold: ResidentCommandColdTransition,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<ResidentColdOutcome, CommandError> {
+        let mut error = DeliveryErrorSlot::empty();
+        match self.settle_resident_cold_transition(cold, destination, &mut error) {
+            Ok(settled) => Ok(settled),
+            Err(failure) => Err(error.take(failure)),
         }
     }
 

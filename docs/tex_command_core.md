@@ -202,7 +202,13 @@ the reusable destination through at most one dense meaning lookup and returns
 only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
-The public boundary returns the compact final `DeliveryStatus`. A command moves
+The raw entry is the one raw delivery loop. Its ordinary command/end branches
+write the final result directly into the caller's return slot, without an eager
+`CommandError`, `DeliveryErrorSlot`, or general internal status relay. Only a
+cold failure helper constructs the rich error, and only the cold resident-
+transition adapter creates an error slot before reusing the shared recovery and
+retirement implementation. The public boundary returns the compact final
+`DeliveryStatus`. A command moves
 out of its destination slot only into its final consumer or the one typed
 expansion suspension slot at a real resource barrier. There is no process-global
 slot, mailbox, destination inference, nested-request reuse, or second raw

@@ -135,7 +135,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         !next.contains("fn next_command_into("),
         "raw entry points must not own a second next-command pipeline"
     );
-    assert_eq!(expansion.matches("fn raw_destination_loop(").count(), 1);
+    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 1);
+    assert!(!expansion.contains("fn raw_destination_loop("));
     assert_eq!(
         expansion.matches("fn expanded_destination_loop(").count(),
         1
@@ -315,7 +316,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "canonical command delivery must not carry source-name creation policy"
     );
     assert!(!expansion.contains("self.next_command_into("));
-    assert!(expansion.contains("self.raw_destination_loop("));
+    assert!(expansion.contains("settle_raw_resident_cold_transition"));
     assert!(expansion.contains("self.expanded_destination_loop("));
     assert!(!expansion.contains("delivery_state_machine::<"));
     assert!(next.contains("create_source_control_sequences"));
@@ -580,7 +581,8 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     let command_state = fs::read_to_string(manifest_dir.join("src/state.rs"))
         .expect("read command-state ownership");
 
-    assert_eq!(expansion.matches("fn raw_destination_loop(").count(), 1);
+    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 1);
+    assert!(!expansion.contains("fn raw_destination_loop("));
     assert_eq!(
         expansion.matches("fn expanded_destination_loop(").count(),
         1
@@ -593,6 +595,14 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     }
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
+    let raw_entry = expansion
+        .split("pub(super) fn raw_delivery_entry(")
+        .nth(1)
+        .and_then(|tail| tail.split("#[cold]").next())
+        .expect("locate ordinary raw-delivery entry");
+    assert!(!raw_entry.contains("DeliveryErrorSlot"));
+    assert!(!raw_entry.contains("DeliveryFailed"));
+    assert!(raw_entry.contains("return Ok(DeliveryStatus::Command)"));
     assert!(!input_history.contains("take_ready_replay_completion"));
     assert!(!command_state.contains("pending_replay_completions"));
     assert!(!command_state.contains("replay_completions.iter()"));

@@ -388,10 +388,13 @@ overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between
 expansions. Each concrete loop returns only its final compact status and moves the command
 only to its final consumer or the exact typed expansion suspension slot. The
-request also owns one stack-local cold error slot. Internal delivery transitions
-return a zero-sized failure marker; a real failure moves its `CommandError` into
-that slot, and only the public boundary constructs the rich `Result`. Thus an
-ordinary successful token neither copies nor reconstructs the error envelope.
+expanded request owns one stack-local cold error slot. The raw entry instead
+writes ordinary command/end results directly into its caller's return slot and
+creates `DeliveryErrorSlot` only inside the cold resident-transition adapter.
+Internal delivery transitions return a zero-sized failure marker; a real raw
+failure reaches the cold failure helper, which clears destination freshness and
+constructs the rich result there. Thus an ordinary successful token neither
+copies nor reconstructs the error envelope.
 The command slot is neither global nor a mailbox and never survives
 independently of its request. `CurrentCommand` retains only its compact
 immediate-delivery coordinate and the `OriginId` already packed in its

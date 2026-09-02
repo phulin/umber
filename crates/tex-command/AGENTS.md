@@ -144,7 +144,10 @@ collector (see `src/conditionals.rs`).
   delivery state machine and static primitive dispatch. Its const-specialized
   raw and expanded entries advance resident input into the caller's final slot,
   settle that delivery in place, and, when requested, inspect and expand the
-  same resident command without a second command handoff. It also includes one
+  same resident command without a second command handoff. The raw entry is its
+  one delivery loop and writes the ordinary command/end result directly into
+  the caller's return slot; only its cold failure and resident-transition
+  helpers construct `CommandError` or `DeliveryErrorSlot`. It also includes one
   main-control preflight entry that raw-fetches into the caller's destination,
   classifies that resident command once, publishes an ordinary unexpandable
   result directly, and passes an expandable command's exact dispatch directly
@@ -388,8 +391,9 @@ collector (see `src/conditionals.rs`).
   token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
   delivery controls. The loops do not test a raw-versus-expanded mode on every
-  token. Only cold resident transitions return a status or zero-sized failure marker;
-  one request-local cold error slot carries a real error to the public boundary.
+  token. Only cold resident transitions return a status or zero-sized failure marker.
+  The expanded request retains its request-local cold error slot; raw delivery
+  creates that slot only after entering the cold resident-transition helper.
   Expanded delivery classifies each resolved meaning once as return,
   end-template handling, macro activation, undefined recovery, or one exact
   primitive dispatch. That borrowed decision directly drives expansion;
