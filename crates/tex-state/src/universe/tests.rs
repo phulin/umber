@@ -357,8 +357,8 @@ fn rejected_checkpoint_loan_invalidates_candidate_coordinates_before_retry() {
             retry
                 .page_node_list(retry_node)
                 .expect("retry coordinate is live")
-                .owned_node(0),
-            Some(&Node::Penalty(91))
+                .get(0),
+            Some(crate::NodeView::Penalty(91))
         );
         assert_eq!(
             retry

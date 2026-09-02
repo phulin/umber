@@ -413,7 +413,7 @@ fn append_short_display_cursor<G>(
             tex_state::node_arena::NodeView::Lig { orig, font, .. } => {
                 // §175 recurses into `lig_ptr`, the original characters the
                 // ligature replaced, not the ligature character itself.
-                for original in orig {
+                for original in orig.iter() {
                     append_short_char(stores, font, *original, font_in_short_display, out);
                 }
             }

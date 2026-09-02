@@ -4,7 +4,7 @@ use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
 
-fn boxed(children: PageListId) -> RegionNode {
+fn boxed(children: PageListId) -> Node<PageListId> {
     Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(20),
@@ -19,15 +19,47 @@ fn boxed(children: PageListId) -> RegionNode {
 }
 
 fn publish_raw(
-    arena: &mut ForkArena<RegionNode, PageMaterialLane>,
-    pool: &mut ChunkPool<RegionNode>,
-    nodes: impl IntoIterator<Item = RegionNode>,
+    arena: &mut ForkArena<Node<PageListId>, PageMaterialLane>,
+    pool: &mut ChunkPool<Node<PageListId>>,
+    nodes: impl IntoIterator<Item = Node<PageListId>>,
 ) -> ArenaListId<PageMaterialLane> {
     let mut builder = arena.begin_builder(pool).expect("open list builder");
     for node in nodes {
         builder.push(node).expect("publish test node");
     }
     builder.seal().expect("seal test list")
+}
+
+fn resident_address<Role>(
+    region: &NodeRegion<Role>,
+    pool: &NodePool,
+    list: PageListId,
+) -> *const RegionNode {
+    region
+        .pub_arena
+        .list(&pool.chunks, list.coordinate())
+        .expect("resident list")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("resident node")
+}
+
+fn resident_nodes<Role>(
+    region: &NodeRegion<Role>,
+    pool: &NodePool,
+    list: PageListId,
+) -> Vec<Node<PageListId>> {
+    region
+        .pub_arena
+        .list(&pool.chunks, list.coordinate())
+        .expect("resident list")
+        .iter()
+        .map(|record| {
+            record
+                .decode_owned(&pool.record_annex)
+                .expect("typed annex")
+        })
+        .collect()
 }
 
 #[test]
@@ -74,12 +106,7 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
     let child = source
         .publish_owned(&mut pool, [Node::Penalty(11)])
         .expect("child");
-    let child_address = source
-        .list(&pool, child)
-        .expect("source child")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("child address");
+    let child_address = resident_address(&source, &pool, child.list);
     let parent = source
         .publish_owned(&mut pool, [boxed(child.list)])
         .expect("parent");
@@ -115,8 +142,8 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
         .expect("rebranded nested child");
 
     assert_eq!(
-        moved_child.iter().cloned().collect::<Vec<_>>(),
-        [Node::Penalty(11),]
+        resident_nodes(&destination, &pool, box_node.children),
+        [Node::Penalty(11)]
     );
     assert_eq!(
         moved_child.get(0).map(std::ptr::from_ref),
@@ -143,29 +170,10 @@ fn whole_closure_preflight_rejects_foreign_nested_child_atomically() {
         .publish_owned(&mut pool, [Node::Penalty(17)])
         .expect("foreign child");
     let mut source = pool.start_region::<DurableRole>().expect("source");
-    let parent = source
-        .publish_owned(&mut pool, [boxed(foreign_child.list)])
-        .expect("foreign-bearing parent");
-    let closure = source
-        .into_closure(&pool, parent)
-        .map_err(|(error, _)| error)
-        .expect("owned closure");
-    let mut destination = pool.start_region::<PageRole>().expect("destination");
-    let source_before = closure.region.counters();
-    let destination_before = destination.counters();
-
-    let failure = transfer_closure_into(&mut pool, closure, &mut destination)
-        .expect_err("foreign nested child must reject");
-    assert_eq!(failure.error, ForkArenaError::InvalidRegion);
-    assert_eq!(failure.closure.region.counters(), source_before);
-    assert_eq!(destination.counters(), destination_before);
     assert_eq!(
-        failure
-            .closure
-            .list(&pool)
-            .expect("source root remains admitted")
-            .len(),
-        1
+        source.publish_owned(&mut pool, [boxed(foreign_child.list)]),
+        Err(ForkArenaError::InvalidRegion),
+        "foreign child rejects at destination-directed publication"
     );
     assert_eq!(
         foreign
@@ -180,9 +188,9 @@ fn whole_closure_preflight_rejects_foreign_nested_child_atomically() {
 
 #[test]
 fn suffix_transfer_preflights_and_rebrands_the_whole_nested_closure() {
-    let mut chunks = ChunkPool::<RegionNode>::with_chunk_bytes(64);
-    let mut source = ForkArena::<RegionNode, PageMaterialLane>::new();
-    let mut destination = ForkArena::<RegionNode, PageMaterialLane>::new();
+    let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
+    let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
+    let mut destination = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
     let mark = source.begin_batch(&mut chunks).expect("suffix start");
     let child = publish_raw(&mut source, &mut chunks, [Node::Penalty(23)]);
     let parent = publish_raw(
@@ -222,9 +230,9 @@ fn suffix_transfer_preflights_and_rebrands_the_whole_nested_closure() {
 
 #[test]
 fn suffix_transfer_failure_returns_the_unchanged_batch_authority() {
-    let mut chunks = ChunkPool::<RegionNode>::with_chunk_bytes(64);
-    let mut source = ForkArena::<RegionNode, PageMaterialLane>::new();
-    let mut destination = ForkArena::<RegionNode, PageMaterialLane>::new();
+    let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
+    let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
+    let mut destination = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
     let prefix_child = publish_raw(&mut source, &mut chunks, [Node::Penalty(29)]);
     let mark = source.begin_batch(&mut chunks).expect("suffix start");
     let parent = publish_raw(
@@ -278,12 +286,7 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
             }],
         )
         .expect("root");
-    let source_leaf_address = source
-        .list(&pool, leaf)
-        .expect("source leaf")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("source leaf address");
+    let source_leaf_address = resident_address(&source, &pool, leaf.list);
     let closure = source
         .into_closure(&pool, root)
         .map_err(|(error, _)| error)
@@ -298,11 +301,8 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
     let Node::Disc { pre, .. } = copied_root.get(0).expect("disc node") else {
         panic!("copied root lost discretionary shape");
     };
-    let copied_child = destination
-        .pub_arena
-        .list(&pool.chunks, pre.coordinate())
-        .expect("copied child");
-    let Node::HList(box_node) = copied_child.get(0).expect("box node") else {
+    let copied_child = resident_nodes(&destination, &pool, *pre);
+    let Node::HList(box_node) = &copied_child[0] else {
         panic!("copied child lost box shape");
     };
     let copied_leaf = destination
@@ -315,8 +315,8 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
         Some(source_leaf_address)
     );
     assert_eq!(
-        copied_leaf.iter().cloned().collect::<Vec<_>>(),
-        [Node::Penalty(31),]
+        resident_nodes(&destination, &pool, box_node.children),
+        [Node::Penalty(31)]
     );
     assert_eq!(
         closure
@@ -328,17 +328,17 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
     assert!(pre.semantic_identity().is_some());
     assert!(box_node.children.semantic_identity().is_some());
     assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 3);
-    assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 3);
+    assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 0);
     assert_eq!(
         after.resident_payload_clones - before.resident_payload_clones,
-        3
+        0
     );
     assert_eq!(after.whole_payload_moves - before.whole_payload_moves, 0);
 }
 
 #[test]
 fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
-    assert_eq!(core::mem::size_of::<RegionNode>(), 168);
+    assert_eq!(core::mem::size_of::<RegionNode>(), 32);
 
     for size in [1_usize, 64, 4_096] {
         let mut pool = NodePool::with_chunk_bytes(512);
@@ -349,12 +349,7 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
                 (0..size).map(|value| Node::Penalty(value as i32)),
             )
             .expect("source root");
-        let source_address = source
-            .list(&pool, root)
-            .expect("source list")
-            .get(0)
-            .map(std::ptr::from_ref)
-            .expect("source address");
+        let source_address = resident_address(&source, &pool, root.list);
         let closure = source
             .into_closure(&pool, root)
             .map_err(|(error, _)| error)
@@ -373,13 +368,11 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
             after.source_nodes_copied - before.source_nodes_copied,
             size as u64
         );
-        assert_eq!(copies, size as u64, "one required Clone per RegionNode");
-        assert_eq!(resident_clones, size as u64);
         assert_eq!(
-            copies - resident_clones,
-            0,
-            "the required Clone writes its final slot without a second transfer"
+            copies, 0,
+            "destination-directed encoding performs no resident Clone"
         );
+        assert_eq!(resident_clones, 0);
         assert_eq!(
             after.whole_payload_moves - before.whole_payload_moves,
             0,
@@ -395,15 +388,11 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
             assert_eq!(node, &Node::Penalty(index as i32));
         }
         assert_eq!(
-            closure
-                .list(&pool)
-                .expect("source closure remains live")
-                .get(0)
-                .map(std::ptr::from_ref),
+            Some(resident_address(&closure.region, &pool, root.list)),
             Some(source_address)
         );
         eprintln!(
-            "MAPPED_REGION_NODE_CLONE_SCALE bytes=168 nodes={size} required_clones={copies} resident_clones={resident_clones} second_payload_transfers=0"
+            "MAPPED_REGION_NODE_CLONE_SCALE bytes=32 nodes={size} required_clones={copies} resident_clones={resident_clones} second_payload_transfers=0"
         );
     }
 }
@@ -566,12 +555,7 @@ fn closure_boundary_rotates_node_and_annex_tails() {
         .expect("annex prefix builder");
     prefix_annex_builder.push(113).expect("annex prefix");
     let prefix_annex = prefix_annex_builder.seal().expect("annex prefix list");
-    let prefix_node_address = source
-        .list(&pool, prefix)
-        .expect("prefix node")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("prefix node address");
+    let prefix_node_address = resident_address(&source, &pool, prefix.list);
     let prefix_annex_address = source
         .annex_arena
         .list(&pool.annex_chunks, prefix_annex)
@@ -592,12 +576,7 @@ fn closure_boundary_rotates_node_and_annex_tails() {
         .expect("annex suffix builder");
     suffix_annex_builder.push(131).expect("annex suffix");
     let suffix_annex = suffix_annex_builder.seal().expect("annex suffix list");
-    let suffix_node_address = source
-        .list(&pool, suffix)
-        .expect("suffix node")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("suffix node address");
+    let suffix_node_address = resident_address(&source, &pool, suffix.list);
     let suffix_annex_address = source
         .annex_arena
         .list(&pool.annex_chunks, suffix_annex)
@@ -748,12 +727,7 @@ fn closure_build_transfer_rebrands_nested_suffix_children() {
     let child = source
         .publish_owned(&mut pool, [Node::Penalty(47)])
         .expect("child");
-    let child_address = source
-        .list(&pool, child)
-        .expect("source child")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("child address");
+    let child_address = resident_address(&source, &pool, child.list);
     let root = source
         .publish_owned(&mut pool, [boxed(child.list)])
         .expect("parent");

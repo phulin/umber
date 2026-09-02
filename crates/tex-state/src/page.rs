@@ -4085,14 +4085,14 @@ impl PageBuilderState {
             .slice_span(self.current_page, split_index..self.current_page.len())
             .expect("current-page suffix belongs to the live arena");
         let current = arena
-            .span_list(self.current_page)
+            .span_node_cursor(self.current_page)
             .expect("current page belongs to the live arena");
         let mut words = (0_usize, 0_usize);
         let mut roots = 0_usize;
         current.for_each(|node| {
             words.0 = words.0.saturating_add(node.tex_memory_words(false).1);
             words.1 = words.1.saturating_add(node.tex_memory_words(true).1);
-            roots += usize::from(node_retains_page_handle(node.into()));
+            roots += usize::from(node_retains_page_handle(node));
         });
         let _ = current;
         self.current_page = PageListSpan::empty();

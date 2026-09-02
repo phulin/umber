@@ -13,6 +13,7 @@ use core::marker::PhantomData;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tex_dense_arena::{AcceptedBlockTable, LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
+use tex_dense_prefix::Superblock;
 
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -21,8 +22,6 @@ use crate::node_sequence::SemanticSequenceIdentity;
 mod tests;
 
 const DEFAULT_CHUNK_BYTES: usize = 512;
-const CHUNKS_PER_PAGE: usize = 16;
-
 static NEXT_POOL_OWNER: AtomicU32 = AtomicU32::new(1);
 static NEXT_ARENA_OWNER: AtomicU32 = AtomicU32::new(1);
 static NEXT_ARENA_LINEAGE: AtomicU32 = AtomicU32::new(1);
@@ -30,15 +29,15 @@ static NEXT_ARENA_LINEAGE: AtomicU32 = AtomicU32::new(1);
 /// Canonical page-material lane used by execution and borrowed typesetting.
 pub enum PageMaterialLane {}
 
-/// Transitional physical identity owned only by the private chunk backend.
+/// Private identity of one exact 64 KiB initialized-prefix payload block.
 ///
-/// Page-list topology never stores or exposes this value. The compact-record
-/// cutover deletes this adapter and resolves the same logical coordinates
-/// through `AcceptedBlockTable<NodeRecord>` instead.
+/// Page-list topology never stores or exposes this value. Logical rows retain
+/// the pool-stable coordinate while this key independently rejects reuse of a
+/// physical block slot.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct RawChunkKey {
+struct DenseBlockKey {
     slot: u32,
-    generation: u32,
+    incarnation: u32,
 }
 
 /// Compact block component of a pool-stable logical position.
@@ -63,7 +62,9 @@ impl LogicalChunkId {
 #[derive(Clone, Copy, Debug)]
 struct LogicalChunkRow {
     incarnation: u32,
-    physical: Option<RawChunkKey>,
+    physical_slot: u32,
+    physical_incarnation: u32,
+    physical_base: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,24 +98,29 @@ const VACANT_CHUNK_LINEAGE: ChunkLineage = ChunkLineage {
     position: usize::MAX,
 };
 
-struct ChunkPage<T> {
-    slots: Box<[Option<T>]>,
+struct DenseBlock<T> {
+    incarnation: u32,
+    live_chunks: u32,
+    block: Superblock<Option<T>>,
 }
 
-/// Stable coarse-page storage shared by typed semantic lanes.
+/// Exact-superblock storage shared by typed semantic lanes.
 ///
-/// A logical chunk is a fixed slot range inside a page allocation. Growing
-/// the pool allocates one page for many chunks, so no chunk owns a heap
-/// allocation and existing payload never moves.
+/// Logical list chunks are cursor ranges packed into the initialized prefix
+/// of an exact 64 KiB block. The semantic chunk boundary therefore neither
+/// allocates nor moves payload, and releasing a chunk never writes a vacancy
+/// representation across its resident values.
 struct ChunkStorage<T> {
     logical_space: u32,
     logical_rows: Vec<LogicalChunkRow>,
     logical_free: Vec<u32>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
-    pages: Vec<ChunkPage<T>>,
+    blocks: Vec<DenseBlock<T>>,
+    free_blocks: Vec<u32>,
+    free_ranges: Vec<(DenseBlockKey, u32)>,
+    tail_block: Option<DenseBlockKey>,
     chunks: Vec<ChunkMeta>,
-    free: Vec<u32>,
     #[cfg(test)]
     validation_reads: core::cell::Cell<u64>,
     #[cfg(test)]
@@ -152,6 +158,7 @@ struct CloneReservation {
     source_offset: u32,
 }
 
+#[allow(dead_code)]
 struct ReservationCompletion {
     placeholder_identity: Option<u64>,
     item_identity: Option<u64>,
@@ -159,18 +166,6 @@ struct ReservationCompletion {
 }
 
 impl<T> ChunkStorage<T> {
-    #[inline]
-    fn initialize_vacant_clone(destination: &mut Option<T>, source: &Option<T>)
-    where
-        T: Clone,
-    {
-        debug_assert!(destination.is_none());
-        let source = source
-            .as_ref()
-            .expect("admitted source coordinate contains its payload");
-        destination.get_or_insert_with(|| source.clone());
-    }
-
     /// Creates a pool whose logical chunk capacity is derived from a byte
     /// budget. At least one value fits even when `T` exceeds that budget.
     #[must_use]
@@ -187,9 +182,11 @@ impl<T> ChunkStorage<T> {
             logical_free: Vec::new(),
             chunk_bytes,
             slots_per_chunk,
-            pages: Vec::new(),
+            blocks: Vec::new(),
+            free_blocks: Vec::new(),
+            free_ranges: Vec::new(),
+            tail_block: None,
             chunks: Vec::new(),
-            free: Vec::new(),
             #[cfg(test)]
             validation_reads: core::cell::Cell::new(0),
             #[cfg(test)]
@@ -207,7 +204,8 @@ impl<T> ChunkStorage<T> {
 
     fn allocate_logical(
         &mut self,
-        physical: RawChunkKey,
+        physical: DenseBlockKey,
+        physical_base: u32,
     ) -> Result<LogicalChunkId, ForkArenaError> {
         if let Some(&ordinal) = self.logical_free.last() {
             let row = self
@@ -221,7 +219,9 @@ impl<T> ChunkStorage<T> {
             self.logical_free.pop();
             *row = LogicalChunkRow {
                 incarnation,
-                physical: Some(physical),
+                physical_slot: physical.slot,
+                physical_incarnation: physical.incarnation,
+                physical_base,
             };
             return Ok(LogicalChunkId {
                 ordinal,
@@ -232,7 +232,9 @@ impl<T> ChunkStorage<T> {
             u32::try_from(self.logical_rows.len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
         self.logical_rows.push(LogicalChunkRow {
             incarnation: 1,
-            physical: Some(physical),
+            physical_slot: physical.slot,
+            physical_incarnation: physical.incarnation,
+            physical_base,
         });
         Ok(LogicalChunkId {
             ordinal,
@@ -240,7 +242,7 @@ impl<T> ChunkStorage<T> {
         })
     }
 
-    fn physical(&self, key: LogicalChunkId) -> Result<RawChunkKey, ForkArenaError> {
+    fn mapping(&self, key: LogicalChunkId) -> Result<(DenseBlockKey, u32), ForkArenaError> {
         let row = self
             .logical_rows
             .get(key.ordinal as usize)
@@ -248,7 +250,20 @@ impl<T> ChunkStorage<T> {
         if row.incarnation != key.incarnation {
             return Err(ForkArenaError::InvalidChunk);
         }
-        row.physical.ok_or(ForkArenaError::InvalidChunk)
+        if row.physical_slot == u32::MAX {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        Ok((
+            DenseBlockKey {
+                slot: row.physical_slot,
+                incarnation: row.physical_incarnation,
+            },
+            row.physical_base,
+        ))
+    }
+
+    fn physical(&self, key: LogicalChunkId) -> Result<DenseBlockKey, ForkArenaError> {
+        self.mapping(key).map(|mapping| mapping.0)
     }
 
     const fn logical_space(&self) -> u32 {
@@ -283,10 +298,12 @@ impl<T> ChunkStorage<T> {
         Ok((key, position.offset()))
     }
 
-    fn release_logical(&mut self, key: LogicalChunkId) -> Result<RawChunkKey, ForkArenaError> {
+    fn release_logical(&mut self, key: LogicalChunkId) -> Result<DenseBlockKey, ForkArenaError> {
         let physical = self.physical(key)?;
         let row = &mut self.logical_rows[key.ordinal as usize];
-        row.physical = None;
+        row.physical_slot = u32::MAX;
+        row.physical_incarnation = 0;
+        row.physical_base = 0;
         self.logical_free.push(key.ordinal);
         Ok(physical)
     }
@@ -333,7 +350,7 @@ impl<T> ChunkStorage<T> {
 
     #[must_use]
     pub fn page_count(&self) -> usize {
-        self.pages.len()
+        self.blocks.len()
     }
 
     #[cfg(test)]
@@ -351,87 +368,156 @@ impl<T> ChunkStorage<T> {
                     .saturating_mul(std::mem::size_of::<u32>()),
             )
             .saturating_add(
-                self.pages
+                self.blocks
                     .capacity()
-                    .saturating_mul(std::mem::size_of::<ChunkPage<T>>())
-                    .saturating_add(self.pages.iter().fold(0_usize, |bytes, page| {
-                        bytes.saturating_add(
-                            page.slots
-                                .len()
-                                .saturating_mul(std::mem::size_of::<Option<T>>()),
-                        )
-                    }))
+                    .saturating_mul(std::mem::size_of::<DenseBlock<T>>())
+                    .saturating_add(
+                        self.blocks
+                            .len()
+                            .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES),
+                    )
                     .saturating_add(
                         self.chunks
                             .capacity()
                             .saturating_mul(std::mem::size_of::<ChunkMeta>()),
                     )
                     .saturating_add(
-                        self.free
+                        self.free_blocks
                             .capacity()
                             .saturating_mul(std::mem::size_of::<u32>()),
+                    )
+                    .saturating_add(
+                        self.free_ranges
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<(DenseBlockKey, u32)>()),
                     ),
             )
     }
 
-    fn add_page(&mut self) -> Result<(), ForkArenaError> {
-        let page_slots = self
-            .slots_per_chunk
-            .checked_mul(CHUNKS_PER_PAGE)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        let start = self.chunks.len();
-        let end = start
-            .checked_add(CHUNKS_PER_PAGE)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        u32::try_from(end).map_err(|_| ForkArenaError::CapacityOverflow)?;
-        let slots = std::iter::repeat_with(|| None)
-            .take(page_slots)
-            .collect::<Box<[_]>>();
-        self.pages.push(ChunkPage { slots });
-        self.chunks.extend((start..end).map(|_| ChunkMeta {
-            generation: 1,
-            arena: 0,
-            lineages: [VACANT_CHUNK_LINEAGE; 2],
+    fn allocate_dense_block(&mut self) -> Result<DenseBlockKey, ForkArenaError> {
+        if let Some(&slot) = self.free_blocks.last() {
+            let entry = self
+                .blocks
+                .get_mut(slot as usize)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            let incarnation = entry
+                .incarnation
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+            debug_assert_eq!(entry.live_chunks, 0);
+            debug_assert!(entry.block.is_empty());
+            self.free_blocks.pop();
+            entry.incarnation = incarnation;
+            return Ok(DenseBlockKey { slot, incarnation });
+        }
+        let slot =
+            u32::try_from(self.blocks.len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let block = Superblock::try_new().map_err(|_| ForkArenaError::CapacityOverflow)?;
+        self.blocks.push(DenseBlock {
+            incarnation: 1,
+            live_chunks: 0,
+            block,
+        });
+        Ok(DenseBlockKey {
+            slot,
+            incarnation: 1,
+        })
+    }
+
+    fn dense_block(&self, key: DenseBlockKey) -> Result<&DenseBlock<T>, ForkArenaError> {
+        let block = self
+            .blocks
+            .get(key.slot as usize)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        if block.incarnation != key.incarnation {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        Ok(block)
+    }
+
+    fn dense_block_mut(
+        &mut self,
+        key: DenseBlockKey,
+    ) -> Result<&mut DenseBlock<T>, ForkArenaError> {
+        let block = self
+            .blocks
+            .get_mut(key.slot as usize)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        if block.incarnation != key.incarnation {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        Ok(block)
+    }
+
+    fn allocate_dense_range(&mut self) -> Result<(DenseBlockKey, u32), ForkArenaError> {
+        while let Some((key, base)) = self.free_ranges.pop() {
+            if let Ok(block) = self.dense_block_mut(key) {
+                block.live_chunks = block
+                    .live_chunks
+                    .checked_add(1)
+                    .ok_or(ForkArenaError::CapacityOverflow)?;
+                return Ok((key, base));
+            }
+        }
+        let capacity = Superblock::<Option<T>>::capacity();
+        let tail = self.tail_block.filter(|key| {
+            self.dense_block(*key).is_ok_and(|block| {
+                block.block.len().saturating_add(self.slots_per_chunk) <= capacity
+            })
+        });
+        let key = match tail {
+            Some(key) => key,
+            None => {
+                let key = self.allocate_dense_block()?;
+                self.tail_block = Some(key);
+                key
+            }
+        };
+        let base = u32::try_from(self.dense_block(key)?.block.len())
+            .map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let slots_per_chunk = self.slots_per_chunk;
+        let block = self.dense_block_mut(key)?;
+        for _ in 0..slots_per_chunk {
+            block
+                .block
+                .push_with(|slot| slot.insert(None))
+                .map_err(|_| ForkArenaError::CapacityOverflow)?;
+        }
+        block.live_chunks += 1;
+        Ok((key, base))
+    }
+
+    fn allocate(&mut self, arena: u32, lineage: u32) -> Result<LogicalChunkId, ForkArenaError> {
+        let (physical, physical_base) = self.allocate_dense_range()?;
+        let key = self.allocate_logical(physical, physical_base)?;
+        let meta = ChunkMeta {
+            generation: key.incarnation,
+            arena,
+            lineages: [
+                ChunkLineage {
+                    id: lineage,
+                    position: usize::MAX,
+                },
+                VACANT_CHUNK_LINEAGE,
+            ],
             used: 0,
-            live: false,
+            live: true,
             sealed: false,
             sequence_summary: None,
             previous_in_list: None,
             dependency_floor: usize::MAX,
             dependency_metadata_complete: true,
-        }));
-        self.free.extend((start..end).rev().map(|slot| slot as u32));
-        Ok(())
-    }
-
-    fn allocate(&mut self, arena: u32, lineage: u32) -> Result<LogicalChunkId, ForkArenaError> {
-        if self.free.is_empty() {
-            self.add_page()?;
-        }
-        let slot = self
-            .free
-            .pop()
-            .expect("page publication supplied free chunks");
-        let meta = &mut self.chunks[slot as usize];
-        debug_assert!(!meta.live && meta.used == 0);
-        meta.live = true;
-        meta.sealed = false;
-        meta.arena = arena;
-        meta.lineages = [
-            ChunkLineage {
-                id: lineage,
-                position: usize::MAX,
-            },
-            VACANT_CHUNK_LINEAGE,
-        ];
-        meta.previous_in_list = None;
-        meta.dependency_floor = usize::MAX;
-        meta.dependency_metadata_complete = true;
-        let physical = RawChunkKey {
-            slot,
-            generation: meta.generation,
         };
-        self.allocate_logical(physical)
+        if key.ordinal as usize == self.chunks.len() {
+            self.chunks.push(meta);
+        } else {
+            let destination = self
+                .chunks
+                .get_mut(key.ordinal as usize)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            *destination = meta;
+        }
+        Ok(key)
     }
 
     fn allocate_list_block(
@@ -449,12 +535,11 @@ impl<T> ChunkStorage<T> {
         #[cfg(test)]
         self.validation_reads
             .set(self.validation_reads.get().saturating_add(1));
-        let physical = self.physical(key)?;
         let meta = self
             .chunks
-            .get(physical.slot as usize)
+            .get(key.ordinal as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if physical.generation != meta.generation || !meta.live || meta.arena != arena {
+        if key.incarnation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -465,12 +550,11 @@ impl<T> ChunkStorage<T> {
         key: LogicalChunkId,
         arena: u32,
     ) -> Result<&mut ChunkMeta, ForkArenaError> {
-        let physical = self.physical(key)?;
         let meta = self
             .chunks
-            .get_mut(physical.slot as usize)
+            .get_mut(key.ordinal as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if physical.generation != meta.generation || !meta.live || meta.arena != arena {
+        if key.incarnation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -558,14 +642,11 @@ impl<T> ChunkStorage<T> {
         if offset >= self.slots_per_chunk {
             return Err(ForkArenaError::InvalidRange);
         }
-        let slot = self.physical(key)?.slot as usize;
-        let page = slot / CHUNKS_PER_PAGE;
-        let chunk = slot % CHUNKS_PER_PAGE;
-        let index = chunk
-            .checked_mul(self.slots_per_chunk)
-            .and_then(|base| base.checked_add(offset))
+        let (physical, base) = self.mapping(key)?;
+        let index = (base as usize)
+            .checked_add(offset)
             .ok_or(ForkArenaError::CapacityOverflow)?;
-        Ok((page, index))
+        Ok((physical.slot as usize, index))
     }
 
     /// Admits and publishes one vacant final slot before returning its place.
@@ -596,7 +677,10 @@ impl<T> ChunkStorage<T> {
             dependency_metadata_complete,
         )?;
         Ok(ReservedChunkSlot {
-            slot: &mut self.pages[page].slots[index],
+            slot: self.blocks[page]
+                .block
+                .get_mut(index)
+                .expect("reserved dense-prefix slot is initialized"),
             offset,
             became_full,
         })
@@ -622,7 +706,11 @@ impl<T> ChunkStorage<T> {
             meta.used
         };
         let (page, index) = self.slot_index(key, used as usize)?;
-        debug_assert!(self.pages[page].slots[index].is_none());
+        let physical = self.physical(key)?;
+        let block = self.dense_block_mut(physical)?;
+        if block.block.get(index).is_none() {
+            return Err(ForkArenaError::InvalidRange);
+        }
         let became_full = used as usize + 1 == self.slots_per_chunk;
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
         meta.used += 1;
@@ -672,7 +760,11 @@ impl<T> ChunkStorage<T> {
             return Err(ForkArenaError::InvalidRange);
         }
         let (source_page, source_index) = self.slot_index(source_key, source_offset as usize)?;
-        if self.pages[source_page].slots[source_index].is_none() {
+        if self.blocks[source_page]
+            .block
+            .get(source_index)
+            .is_none_or(Option::is_none)
+        {
             return Err(ForkArenaError::InvalidRange);
         }
         let ReservedChunkPosition {
@@ -688,28 +780,18 @@ impl<T> ChunkStorage<T> {
             dependency_floor,
             dependency_metadata_complete,
         )?;
-        if source_page == page {
-            let slots = &mut self.pages[page].slots;
-            if source_index < index {
-                let (before, after) = slots.split_at_mut(index);
-                Self::initialize_vacant_clone(&mut after[0], &before[source_index]);
-            } else {
-                let (before, after) = slots.split_at_mut(source_index);
-                Self::initialize_vacant_clone(&mut before[index], &after[0]);
-            }
-        } else if source_page < page {
-            let (before, after) = self.pages.split_at_mut(page);
-            Self::initialize_vacant_clone(
-                &mut after[0].slots[index],
-                &before[source_page].slots[source_index],
-            );
-        } else {
-            let (before, after) = self.pages.split_at_mut(source_page);
-            Self::initialize_vacant_clone(
-                &mut before[page].slots[index],
-                &after[0].slots[source_index],
-            );
-        }
+        let cloned = self.blocks[source_page]
+            .block
+            .get(source_index)
+            .and_then(Option::as_ref)
+            .expect("validated source remains resident")
+            .clone();
+        let destination = self.blocks[page]
+            .block
+            .get_mut(index)
+            .expect("reserved clone destination remains resident");
+        debug_assert!(destination.is_none());
+        *destination = Some(cloned);
         Ok((offset, became_full))
     }
 
@@ -719,7 +801,7 @@ impl<T> ChunkStorage<T> {
             return None;
         }
         let (page, index) = self.slot_index(key, offset as usize).ok()?;
-        self.pages[page].slots[index].as_ref()
+        self.blocks[page].block.get(index)?.as_ref()
     }
 
     fn get_mut(
@@ -736,9 +818,10 @@ impl<T> ChunkStorage<T> {
             return None;
         }
         let (page, index) = self.slot_index(key, offset as usize).ok()?;
-        self.pages[page].slots[index].as_mut()
+        self.blocks[page].block.get_mut(index)?.as_mut()
     }
 
+    #[allow(dead_code)]
     fn complete_reservation(
         &mut self,
         key: LogicalChunkId,
@@ -820,8 +903,13 @@ impl<T> ChunkStorage<T> {
             return Ok(());
         }
         for offset in used..old_used {
-            let (page, index) = self.slot_index(key, offset as usize)?;
-            drop(self.pages[page].slots[index].take());
+            let (block_index, index) = self.slot_index(key, offset as usize)?;
+            drop(
+                self.blocks[block_index]
+                    .block
+                    .get_mut(index)
+                    .and_then(Option::take),
+            );
         }
         let capacity = self.slots_per_chunk;
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
@@ -844,7 +932,7 @@ impl<T> ChunkStorage<T> {
         arena: u32,
         lineage: u32,
     ) -> Result<usize, ForkArenaError> {
-        let physical = self.physical(key)?;
+        let (physical, physical_base) = self.mapping(key)?;
         let used = self.validate(key, arena)?.used;
         let meta = self.validate_mut(key, arena)?;
         let Some(index) = meta.lineages.iter().position(|entry| entry.id == lineage) else {
@@ -860,10 +948,13 @@ impl<T> ChunkStorage<T> {
             return Ok(0);
         }
         for offset in 0..used {
-            let (page, index) = self.slot_index(key, offset as usize)?;
-            // Assignment drops `T` on the slot place and clears the option on
-            // both the normal and unwind paths; `take` first moves `T` out.
-            self.pages[page].slots[index] = None;
+            let (block, index) = self.slot_index(key, offset as usize)?;
+            drop(
+                self.blocks[block]
+                    .block
+                    .get_mut(index)
+                    .and_then(Option::take),
+            );
         }
         let meta = self.validate_mut(key, arena)?;
         meta.live = false;
@@ -873,11 +964,21 @@ impl<T> ChunkStorage<T> {
         meta.used = 0;
         meta.sequence_summary = None;
         meta.previous_in_list = None;
-        meta.generation = meta
-            .generation
-            .checked_add(1)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        self.free.push(physical.slot);
+        let block = self.dense_block_mut(physical)?;
+        block.live_chunks = block
+            .live_chunks
+            .checked_sub(1)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        if block.live_chunks == 0 {
+            block.block.truncate(0);
+            self.free_ranges.retain(|(key, _)| *key != physical);
+            self.free_blocks.push(physical.slot);
+            if self.tail_block == Some(physical) {
+                self.tail_block = None;
+            }
+        } else {
+            self.free_ranges.push((physical, physical_base));
+        }
         self.release_logical(key)?;
         Ok(used as usize)
     }
@@ -900,12 +1001,9 @@ impl<T> ChunkStorage<T> {
     }
 
     fn unindex_from_arena(&mut self, key: LogicalChunkId, arena: u32, lineage: u32) {
-        let Ok(physical) = self.physical(key) else {
-            return;
-        };
-        if let Some(meta) = self.chunks.get_mut(physical.slot as usize)
+        if let Some(meta) = self.chunks.get_mut(key.ordinal as usize)
             && meta.live
-            && meta.generation == physical.generation
+            && meta.generation == key.incarnation
             && meta.arena == arena
             && let Some(entry) = meta.lineages.iter_mut().find(|entry| entry.id == lineage)
         {
@@ -917,9 +1015,9 @@ impl<T> ChunkStorage<T> {
         #[cfg(test)]
         self.arena_position_reads
             .set(self.arena_position_reads.get().saturating_add(1));
-        let physical = self.physical(key).ok()?;
-        let meta = self.chunks.get(physical.slot as usize)?;
-        if !meta.live || meta.generation != physical.generation || meta.arena != arena {
+        self.physical(key).ok()?;
+        let meta = self.chunks.get(key.ordinal as usize)?;
+        if !meta.live || meta.generation != key.incarnation || meta.arena != arena {
             return None;
         }
         let position = meta
@@ -952,13 +1050,13 @@ impl<T> ChunkStorage<T> {
         key: LogicalChunkId,
         lineage: u32,
     ) -> Option<(LogicalChunkId, usize, u32)> {
-        let physical = self.physical(key).ok()?;
-        let meta = self.chunks.get(physical.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == physical.generation);
+        self.physical(key).ok()?;
+        let meta = self.chunks.get(key.ordinal as usize)?;
+        debug_assert!(meta.live && meta.generation == key.incarnation);
         let (previous_key, end) = self.compact_position(meta.previous_in_list?).ok()?;
-        let previous_physical = self.physical(previous_key).ok()?;
-        let previous = self.chunks.get(previous_physical.slot as usize)?;
-        debug_assert!(previous.live && previous.generation == previous_physical.generation);
+        self.physical(previous_key).ok()?;
+        let previous = self.chunks.get(previous_key.ordinal as usize)?;
+        debug_assert!(previous.live && previous.generation == previous_key.incarnation);
         let position = previous
             .lineages
             .iter()
@@ -971,20 +1069,20 @@ impl<T> ChunkStorage<T> {
     }
 
     fn admitted_get(&self, key: LogicalChunkId, offset: u32) -> Option<&T> {
-        let physical = self.physical(key).ok()?;
-        let meta = self.chunks.get(physical.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == physical.generation);
+        self.physical(key).ok()?;
+        let meta = self.chunks.get(key.ordinal as usize)?;
+        debug_assert!(meta.live && meta.generation == key.incarnation);
         if offset >= meta.used {
             return None;
         }
         let (page, index) = self.slot_index(key, offset as usize).ok()?;
-        self.pages.get(page)?.slots.get(index)?.as_ref()
+        self.blocks.get(page)?.block.get(index)?.as_ref()
     }
 
     fn admitted_slice(&self, key: LogicalChunkId, range: Range<u32>) -> Option<&[Option<T>]> {
-        let physical = self.physical(key).ok()?;
-        let meta = self.chunks.get(physical.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == physical.generation);
+        self.physical(key).ok()?;
+        let meta = self.chunks.get(key.ordinal as usize)?;
+        debug_assert!(meta.live && meta.generation == key.incarnation);
         if range.start > range.end || range.end > meta.used {
             return None;
         }
@@ -998,7 +1096,11 @@ impl<T> ChunkStorage<T> {
             }
             end + 1
         };
-        self.pages.get(start_page)?.slots.get(start..end)
+        self.blocks
+            .get(start_page)?
+            .block
+            .initialized()
+            .get(start..end)
     }
 
     fn previous_in_list(
@@ -1140,15 +1242,12 @@ impl<T> ChunkPool<T> {
 
     #[must_use]
     pub fn physical_page_payload_bytes(&self) -> usize {
-        self.payload
-            .slots_per_chunk
-            .saturating_mul(CHUNKS_PER_PAGE)
-            .saturating_mul(std::mem::size_of::<Option<T>>())
+        tex_dense_prefix::SUPERBLOCK_BYTES
     }
 
     #[must_use]
     pub const fn physical_page_metadata_bytes(&self) -> usize {
-        CHUNKS_PER_PAGE * std::mem::size_of::<ChunkMeta>()
+        std::mem::size_of::<DenseBlock<T>>()
     }
 
     /// Heap capacity retained by payload and descriptor pages plus their
@@ -2365,6 +2464,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Clones one cross-arena source cell into its final slot, rewrites that
     /// resident value, then completes identity and child dependency metadata.
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn append_payload_mapped_clone_from_coordinate(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -2444,6 +2544,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// exactly that value, applies the caller's coordinate rewrite, and
     /// immediately appends it to the final list. No whole-list `Vec<T>` or
     /// second payload representation exists between the two arenas.
+    #[cfg(test)]
     pub(crate) fn clone_mapped_list_from(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -2494,6 +2595,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn clone_chunk_prefix_from(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -2740,17 +2842,17 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// and child-region metadata are derived only after that slot contains the
     /// final value. A rejected child coordinate truncates the one unpublished
     /// reservation and restores the active root exactly.
-    pub(crate) fn construct_region_value_active_list<Observation>(
+    pub(crate) fn construct_region_value_active_list<Context, Observation, Dependencies>(
         &mut self,
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         identity_enabled: bool,
-        initialize: impl FnOnce(&mut Option<T>),
-        identity: impl FnOnce(&T) -> u64,
-        observe: impl FnOnce(&T) -> Observation,
+        context: &mut Context,
+        initialize: impl FnOnce(&mut Option<T>, &mut Context),
+        inspect: impl FnOnce(&T, &Context) -> Result<(u64, Observation, Dependencies), ForkArenaError>,
     ) -> Result<(Option<u64>, Observation), ForkArenaError>
     where
-        T: RegionValue<Lane>,
+        Dependencies: RegionValue<Lane>,
     {
         let operation = self.operation_mark(pool);
         let previous_root = self.active_list_open_mut(builder)?.root;
@@ -2768,7 +2870,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 slot.is_none(),
                 "reserved construction destination is vacant"
             );
-            initialize(slot);
+            initialize(slot, context);
             assert!(
                 slot.is_some(),
                 "node initializer fills its reserved destination"
@@ -2783,9 +2885,9 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .get(key, self.owner, offset)
                 .ok_or(ForkArenaError::InvalidRange)?;
-            let dependency_floor = self.region_value_dependency_floor(pool, value)?;
-            let item_identity = identity_enabled.then(|| identity(value));
-            let observation = observe(value);
+            let (identity, observation, dependencies) = inspect(value, context)?;
+            let dependency_floor = self.region_value_dependency_floor(pool, &dependencies)?;
+            let item_identity = identity_enabled.then_some(identity);
             pool.payload.complete_reservation(
                 key,
                 self.owner,
@@ -2836,12 +2938,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &'pool mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
-        value: &T,
+        value: &impl RegionValue<Lane>,
         item_identity: Option<u64>,
-    ) -> Result<&'pool mut Option<T>, ForkArenaError>
-    where
-        T: RegionValue<Lane>,
-    {
+    ) -> Result<&'pool mut Option<T>, ForkArenaError> {
         let dependency_floor = self.region_value_dependency_floor(pool, value)?;
         let mut root = self.active_list_open_mut(builder)?.root;
         let slot = self.reserve_payload_slot_with_dependency(
@@ -2855,14 +2954,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(slot)
     }
 
-    fn region_value_dependency_floor(
+    fn region_value_dependency_floor<U: RegionValue<Lane>>(
         &self,
         pool: &ChunkPool<T>,
-        value: &T,
-    ) -> Result<Option<usize>, ForkArenaError>
-    where
-        T: RegionValue<Lane>,
-    {
+        value: &U,
+    ) -> Result<Option<usize>, ForkArenaError> {
         let mut dependency_floor = usize::MAX;
         let mut valid = true;
         value.visit_region_lists(&mut |list| {
@@ -5485,6 +5581,26 @@ pub struct ForkArenaBuilder<'a, T, Lane> {
 impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
     pub fn push(&mut self, value: T) -> Result<(), ForkArenaError> {
         self.push_with_identity(value, None)
+    }
+
+    pub(crate) fn push_with_dependencies(
+        &mut self,
+        value: T,
+        source: &impl RegionValue<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        let dependency_floor = self
+            .arena
+            .region_value_dependency_floor(self.pool, source)?;
+        let slot = self.arena.reserve_payload_slot_with_dependency(
+            self.pool,
+            &mut self.root,
+            None,
+            dependency_floor,
+            true,
+        )?;
+        assert!(slot.is_none(), "reserved builder destination is vacant");
+        *slot = Some(value);
+        Ok(())
     }
 
     #[cfg(test)]

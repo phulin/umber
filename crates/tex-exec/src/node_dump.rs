@@ -267,7 +267,7 @@ trait DumpNodeCollection<List: Copy, Glue: Copy, Tokens> {
     fn get(&self, index: usize) -> Option<NodeView<'_, List, Glue, Tokens>>;
 }
 
-impl<List: Copy, Glue: Copy, Tokens> DumpNodeCollection<List, Glue, Tokens>
+impl<List: Copy, Glue: Copy, Tokens: Clone> DumpNodeCollection<List, Glue, Tokens>
     for &[Node<List, Glue, Tokens>]
 {
     fn len(&self) -> usize {
@@ -502,7 +502,7 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
                 out,
                 "{} {}",
                 font_identifier(stores, font),
-                dump_ligature(stores, ch, orig, left_hit, right_hit)
+                dump_ligature(stores, ch, &orig, left_hit, right_hit)
             );
         }
         NodeView::Disc {
@@ -519,7 +519,7 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
             depth,
             out,
         ),
-        NodeView::Mark { class, tokens } => dump_mark_projected(stores, class, tokens, out),
+        NodeView::Mark { class, tokens } => dump_mark_projected(stores, class, &tokens, out),
         NodeView::Adjust(adjust) => {
             out.push_str(if adjust.pre {
                 "\\vadjust pre\n"
@@ -560,7 +560,7 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
         NodeView::MathChoice(choice) => dump_math_choice(stores, &choice, config, depth, out),
         NodeView::MathList(list) => dump_math_list(stores, &list, config, depth, out),
         NodeView::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
-        NodeView::Whatsit(whatsit) => dump_whatsit(stores, whatsit, out),
+        NodeView::Whatsit(whatsit) => dump_whatsit(stores, &whatsit, out),
         NodeView::Ins {
             class,
             size,

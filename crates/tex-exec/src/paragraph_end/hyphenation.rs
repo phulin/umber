@@ -108,7 +108,7 @@ impl HyphenationWalk<'_, '_> {
                     .page_node_span_chunk_node(source, chunk, offset)
                     .expect("hyphenation source chunk remains live");
                 debug_assert_eq!(resolved, index);
-                HyphenationScanNode::from_node(node)
+                HyphenationScanNode::from_node(&node)
             };
             match observed {
                 HyphenationScanNode::Language {
@@ -490,7 +490,7 @@ fn physical_pre_break_pending<G>(
             return None;
         };
         let replacement = stores
-            .page_node_list(*replace)
+            .page_node_list(replace)
             .expect("discretionary replacement belongs to the live page arena");
         replacement.len() == 1
             && matches!(
@@ -516,29 +516,18 @@ fn physical_pre_break_pending<G>(
             .ok()?;
         debug_assert_eq!(resolved, index - 1);
         match node {
-            Node::Char { font, ch, origin } => (
-                *font,
-                vec![PendingHChar {
-                    font: *font,
-                    ch: *ch,
-                    origin: *origin,
-                }],
-            ),
+            Node::Char { font, ch, origin } => (font, vec![PendingHChar { font, ch, origin }]),
             Node::Lig {
                 font,
                 orig,
                 origins,
                 ..
             } => (
-                *font,
+                font,
                 orig.iter()
                     .copied()
                     .zip(origins.iter().copied())
-                    .map(|(ch, origin)| PendingHChar {
-                        font: *font,
-                        ch,
-                        origin,
-                    })
+                    .map(|(ch, origin)| PendingHChar { font, ch, origin })
                     .collect(),
             ),
             _ => return None,
@@ -595,9 +584,9 @@ fn update_hyphenation_context(
         right_hyphen_min,
     }) = node
     {
-        *language = *new_language;
-        *left = usize::from((*left_hyphen_min).max(1));
-        *right = usize::from((*right_hyphen_min).max(1));
+        *language = new_language;
+        *left = usize::from(left_hyphen_min.max(1));
+        *right = usize::from(right_hyphen_min.max(1));
     }
 }
 
@@ -790,8 +779,8 @@ fn find_hyphenation_candidate<G>(
                 }
                 tex_state::NodeView::Lig {
                     font: node_font,
-                    orig,
-                    origins,
+                    ref orig,
+                    ref origins,
                     right_hit,
                     ..
                 } if node_font == candidate_font => {

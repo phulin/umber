@@ -1086,7 +1086,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
                 stores,
                 font,
                 code,
-                orig,
+                &orig,
                 width,
                 origins.iter().copied(),
                 output,
@@ -1203,7 +1203,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
         NodeView::Mark { class, tokens } => {
             emission.node([]);
             output.mark_stream(class, |tokens_out| {
-                P::visit_tokens(stores, tokens, |word| {
+                P::visit_tokens(stores, &tokens, |word| {
                     let token = word.semantic_token();
                     match token {
                         Token::Char { ch, cat } => {
@@ -1242,7 +1242,7 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
         }
         NodeView::Whatsit(whatsit) => {
             if let Some(effect_index) =
-                anchor_for_whatsit(whatsit, suppress_deferred_streams, &mut emission.anchor)?
+                anchor_for_whatsit(&whatsit, suppress_deferred_streams, &mut emission.anchor)?
             {
                 emission.node([]);
                 output.whatsit_anchor(effect_index)?;

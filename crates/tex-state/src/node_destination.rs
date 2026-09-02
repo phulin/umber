@@ -18,17 +18,45 @@ use crate::world::{PrintSink, StreamSlot};
 /// This is not a draft or a stored representation. Each method writes one
 /// variant directly into the arena-owned vacancy and consumes the capability.
 pub struct NodeDestination<'a> {
-    slot: &'a mut Option<Node>,
+    slot: NodeDestinationSlot<'a>,
+}
+
+enum NodeDestinationSlot<'a> {
+    #[cfg(test)]
+    Owned(&'a mut Option<Node>),
+    Record {
+        slot: &'a mut Option<crate::node_record::NodeRecord>,
+        annex: &'a mut crate::node_record::NodeAnnexArena,
+    },
 }
 
 impl<'a> NodeDestination<'a> {
+    #[cfg(test)]
     pub(crate) fn new(slot: &'a mut Option<Node>) -> Self {
         assert!(slot.is_none(), "node destination is vacant");
-        Self { slot }
+        Self {
+            slot: NodeDestinationSlot::Owned(slot),
+        }
+    }
+
+    pub(crate) fn new_record(
+        slot: &'a mut Option<crate::node_record::NodeRecord>,
+        annex: &'a mut crate::node_record::NodeAnnexArena,
+    ) -> Self {
+        assert!(slot.is_none(), "node-record destination is vacant");
+        Self {
+            slot: NodeDestinationSlot::Record { slot, annex },
+        }
     }
 
     fn store(self, node: Node) {
-        *self.slot = Some(node);
+        match self.slot {
+            #[cfg(test)]
+            NodeDestinationSlot::Owned(slot) => *slot = Some(node),
+            NodeDestinationSlot::Record { slot, annex } => {
+                *slot = Some(crate::node_record::NodeRecord::encode_owned(node, annex));
+            }
+        }
     }
 
     pub fn char(self, font: FontId, ch: char, origin: OriginId) {
@@ -338,7 +366,7 @@ mod tests {
         else {
             panic!("ligature destination wrote its requested variant");
         };
-        assert_eq!(orig, ['f', 'i']);
+        assert_eq!(orig.as_ref(), ['f', 'i']);
         assert_eq!(orig.len(), origins.len());
         assert!(right_hit);
     }

@@ -850,7 +850,7 @@ fn finish_math_chunk_prefix<G>(
                 .expect("owned math-list source chunk remains live");
             debug_assert_eq!(resolved, index);
             match node {
-                Node::MathList(list) => Some(*list),
+                Node::MathList(list) => Some(list),
                 _ => None,
             }
         };

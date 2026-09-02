@@ -1406,6 +1406,7 @@ dependencies = [
  "tex-arith",
  "tex-content",
  "tex-dense-arena",
+ "tex-dense-prefix",
  "tex-fonts",
  "umber-hot-core-allocator",
  "unicode-width",

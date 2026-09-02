@@ -487,7 +487,6 @@ impl<G> SaveJournal<G> {
         }
         let cell = mutation.cell();
         if mutation.before_save_serial != self.save_serial {
-            let checkpoint_pages = self.checkpoint_pool.page_count();
             #[cfg(feature = "profiling")]
             self.record_profile_growth(
                 self.checkpoint_entries,
@@ -513,9 +512,7 @@ impl<G> SaveJournal<G> {
                 .checkpoint_entries
                 .checked_add(1)
                 .expect("checkpoint journal exceeds usize entries");
-            if self.checkpoint_pool.page_count() != checkpoint_pages {
-                self.refresh_checkpoint_capacity_bytes();
-            }
+            self.refresh_checkpoint_capacity_bytes();
         }
         if mutation.saved_at().is_some() {
             let position = u32::try_from(self.len().saturating_add(1))

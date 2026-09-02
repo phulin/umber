@@ -2573,8 +2573,8 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList
     Lig {
         font: crate::ids::FontId,
         ch: char,
-        orig: &'a [char],
-        origins: &'a [crate::token::OriginId],
+        orig: std::borrow::Cow<'a, [char]>,
+        origins: std::borrow::Cow<'a, [crate::token::OriginId]>,
         left_hit: bool,
         right_hit: bool,
     },
@@ -2611,7 +2611,7 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList
     },
     Mark {
         class: u16,
-        tokens: &'a Tokens,
+        tokens: Tokens,
     },
     Ins {
         class: u16,
@@ -2621,7 +2621,7 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList
         floating_penalty: i32,
         content: List,
     },
-    Whatsit(&'a crate::node::Whatsit<Glue, Tokens>),
+    Whatsit(crate::node::Whatsit<Glue, Tokens>),
     MathOn(crate::scaled::Scaled),
     MathOff(crate::scaled::Scaled),
     Direction(crate::node::Direction),
@@ -2641,7 +2641,7 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList
 pub type NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> =
     NodeView<'a, List, Glue, Tokens>;
 
-impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
+impl<'a, List: Copy, Glue: Copy, Tokens: Clone> From<&'a Node<List, Glue, Tokens>>
     for NodeView<'a, List, Glue, Tokens>
 {
     fn from(node: &'a Node<List, Glue, Tokens>) -> Self {
@@ -2661,8 +2661,8 @@ impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
             } => Self::Lig {
                 font: *font,
                 ch: *ch,
-                orig,
-                origins,
+                orig: std::borrow::Cow::Borrowed(orig),
+                origins: std::borrow::Cow::Borrowed(origins),
                 left_hit: *left_hit,
                 right_hit: *right_hit,
             },
@@ -2714,7 +2714,7 @@ impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
             },
             Node::Mark { class, tokens } => Self::Mark {
                 class: *class,
-                tokens,
+                tokens: tokens.clone(),
             },
             Node::Ins {
                 class,
@@ -2731,7 +2731,7 @@ impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
                 floating_penalty: *floating_penalty,
                 content: *content,
             },
-            Node::Whatsit(value) => Self::Whatsit(value),
+            Node::Whatsit(value) => Self::Whatsit(value.clone()),
             Node::MathOn(value) => Self::MathOn(*value),
             Node::MathOff(value) => Self::MathOff(*value),
             Node::Direction(value) => Self::Direction(*value),
@@ -2742,6 +2742,95 @@ impl<'a, List: Copy, Glue: Copy, Tokens> From<&'a Node<List, Glue, Tokens>>
             Node::MathList(value) => Self::MathList(*value),
             Node::Nonscript => Self::Nonscript,
             Node::Adjust(value) => Self::Adjust(*value),
+        }
+    }
+}
+
+impl NodeView<'static> {
+    pub(crate) fn from_owned(node: Node) -> Self {
+        match node {
+            Node::Char { font, ch, origin } => Self::Char { font, ch, origin },
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+                left_hit,
+                right_hit,
+            } => Self::Lig {
+                font,
+                ch,
+                orig: std::borrow::Cow::Owned(orig),
+                origins: std::borrow::Cow::Owned(origins),
+                left_hit,
+                right_hit,
+            },
+            Node::Kern { amount, kind } => Self::Kern { amount, kind },
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            },
+            Node::Glue { spec, kind, leader } => Self::Glue { spec, kind, leader },
+            Node::Penalty(value) => Self::Penalty(value),
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => Self::Rule {
+                width,
+                height,
+                depth,
+            },
+            Node::HList(value) => Self::HList(value),
+            Node::VList(value) => Self::VList(value),
+            Node::Unset(value) => Self::Unset(value),
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            },
+            Node::Mark { class, tokens } => Self::Mark { class, tokens },
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            },
+            Node::Whatsit(value) => Self::Whatsit(value),
+            Node::MathOn(value) => Self::MathOn(value),
+            Node::MathOff(value) => Self::MathOff(value),
+            Node::Direction(value) => Self::Direction(value),
+            Node::MathNoad(value) => Self::MathNoad(value),
+            Node::FractionNoad(value) => Self::FractionNoad(value),
+            Node::MathStyle(value) => Self::MathStyle(value),
+            Node::MathChoice(value) => Self::MathChoice(value),
+            Node::MathList(value) => Self::MathList(value),
+            Node::Nonscript => Self::Nonscript,
+            Node::Adjust(value) => Self::Adjust(value),
         }
     }
 }
@@ -3040,7 +3129,7 @@ impl NodeView<'_> {
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class: *class,
-                tokens: **tokens,
+                tokens: *tokens,
             },
             Self::Ins {
                 class,
@@ -3096,7 +3185,7 @@ fn visit_node_view<'a>(visit: &mut impl FnMut(NodeView<'a>), node: &'a Node) {
 
 /// Test-only observations which distinguish positional node probes from
 /// linear predecessor-topology traversal.
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NodeTraversalCounters {
     pub index_resolutions: u64,
@@ -3119,7 +3208,14 @@ impl PartialEq for NodeCursor<'_> {
 #[derive(Clone, Copy)]
 enum NodeCursorSource<'a> {
     Slice(&'a [Node]),
-    Fork(crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>),
+    Fork(
+        crate::fork_arena::ArenaListView<
+            'a,
+            crate::node_record::NodeRecord,
+            crate::fork_arena::PageMaterialLane,
+        >,
+        &'a crate::node_record::NodeAnnexArena,
+    ),
 }
 
 impl<'a> NodeCursor<'a> {
@@ -3138,18 +3234,23 @@ impl<'a> NodeCursor<'a> {
         Self::owned(nodes)
     }
     #[must_use]
-    pub const fn fork_arena(
-        view: crate::fork_arena::ArenaListView<'a, Node, crate::fork_arena::PageMaterialLane>,
+    pub(crate) const fn fork_arena(
+        view: crate::fork_arena::ArenaListView<
+            'a,
+            crate::node_record::NodeRecord,
+            crate::fork_arena::PageMaterialLane,
+        >,
+        annex: &'a crate::node_record::NodeAnnexArena,
     ) -> Self {
         Self {
-            source: NodeCursorSource::Fork(view),
+            source: NodeCursorSource::Fork(view, annex),
         }
     }
     #[must_use]
     pub const fn len(&self) -> usize {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.len(),
-            NodeCursorSource::Fork(view) => view.len(),
+            NodeCursorSource::Fork(view, _) => view.len(),
         }
     }
     #[must_use]
@@ -3157,13 +3258,13 @@ impl<'a> NodeCursor<'a> {
         self.len() == 0
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(any(test, feature = "testing"))]
     #[doc(hidden)]
     pub fn testing_traversal_counters(&self) -> NodeTraversalCounters {
         let (index_resolutions, index_predecessor_steps, forward_chunk_crossings) =
             match self.source {
                 NodeCursorSource::Slice(_) => (0, 0, 0),
-                NodeCursorSource::Fork(view) => view.traversal_counters(),
+                NodeCursorSource::Fork(view, _) => view.traversal_counters(),
             };
         NodeTraversalCounters {
             index_resolutions,
@@ -3173,7 +3274,13 @@ impl<'a> NodeCursor<'a> {
     }
     #[must_use]
     pub fn get(&self, index: usize) -> Option<NodeView<'a>> {
-        self.owned_node(index).map(NodeView::from)
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.get(index).map(NodeView::from),
+            NodeCursorSource::Fork(view, annex) => view
+                .get(index)
+                .and_then(|record| record.decode_owned(annex))
+                .map(NodeView::from_owned),
+        }
     }
 
     /// Returns the backing-row address for exact retained-range tests.
@@ -3181,22 +3288,26 @@ impl<'a> NodeCursor<'a> {
     /// This is deliberately unavailable to production consumers: node reads
     /// must use [`NodeView`], while allocation/copy tests may still prove that
     /// a retained span names the same resident rows.
-    #[cfg(feature = "testing")]
     #[doc(hidden)]
     #[must_use]
     pub fn testing_node_address(&self, index: usize) -> Option<*const Node> {
-        self.owned_node(index).map(core::ptr::from_ref)
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.get(index).map(core::ptr::from_ref),
+            NodeCursorSource::Fork(view, _) => view
+                .get(index)
+                .map(|record| core::ptr::from_ref(record).cast()),
+        }
     }
     #[must_use]
     pub(crate) fn owned_node(&self, index: usize) -> Option<&'a Node> {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.get(index),
-            NodeCursorSource::Fork(view) => view.get(index),
+            NodeCursorSource::Fork(_, _) => None,
         }
     }
     #[must_use]
     pub fn first(&self) -> Option<NodeView<'a>> {
-        self.owned_node(0).map(NodeView::from)
+        self.get(0)
     }
     #[must_use]
     pub fn last(&self) -> Option<NodeView<'a>> {
@@ -3231,7 +3342,9 @@ impl<'a> NodeCursor<'a> {
                     .unwrap_or_default()
                     .iter(),
             ),
-            NodeCursorSource::Fork(view) => NodeCursorIter::Fork(view.iter_from(start)),
+            NodeCursorSource::Fork(view, annex) => {
+                NodeCursorIter::Fork(view.iter_from(start), annex)
+            }
         }
     }
 
@@ -3243,7 +3356,11 @@ impl<'a> NodeCursor<'a> {
     pub fn for_each(&self, mut visit: impl FnMut(NodeView<'a>)) {
         match self.source {
             NodeCursorSource::Slice(nodes) => nodes.iter().map(NodeView::from).for_each(visit),
-            NodeCursorSource::Fork(view) => view.for_each(|node| visit_node_view(&mut visit, node)),
+            NodeCursorSource::Fork(view, annex) => view.for_each(|record| {
+                if let Some(node) = record.decode_owned(annex) {
+                    visit(NodeView::from_owned(node));
+                }
+            }),
         }
     }
 
@@ -3273,8 +3390,15 @@ impl<'a> NodeCursor<'a> {
                 }
                 core::ops::ControlFlow::Continue(())
             }
-            NodeCursorSource::Fork(view) => {
-                view.try_for_each_range(selected, |index, node| visit(index, NodeView::from(node)))
+            NodeCursorSource::Fork(view, annex) => {
+                view.try_for_each_range(selected, |index, record| {
+                    record
+                        .decode_owned(annex)
+                        .map(NodeView::from_owned)
+                        .map_or(core::ops::ControlFlow::Continue(()), |node| {
+                            visit(index, node)
+                        })
+                })
             }
         }
     }
@@ -3305,7 +3429,14 @@ impl<'a> IntoIterator for NodeCursor<'a> {
 
 pub enum NodeCursorIter<'a> {
     Slice(core::slice::Iter<'a, Node>),
-    Fork(crate::fork_arena::ArenaListIter<'a, Node, crate::fork_arena::PageMaterialLane>),
+    Fork(
+        crate::fork_arena::ArenaListIter<
+            'a,
+            crate::node_record::NodeRecord,
+            crate::fork_arena::PageMaterialLane,
+        >,
+        &'a crate::node_record::NodeAnnexArena,
+    ),
 }
 
 impl NodeCursorIter<'_> {
@@ -3326,7 +3457,7 @@ impl NodeCursorIter<'_> {
     pub const fn reverse_descriptor_visits(&self) -> usize {
         match self {
             Self::Slice(_) => 0,
-            Self::Fork(nodes) => nodes.reverse_descriptor_visits(),
+            Self::Fork(nodes, _) => nodes.reverse_descriptor_visits(),
         }
     }
 }
@@ -3337,14 +3468,17 @@ impl<'a> Iterator for NodeCursorIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Slice(nodes) => nodes.next().map(NodeView::from),
-            Self::Fork(nodes) => nodes.next().map(NodeView::from),
+            Self::Fork(nodes, annex) => nodes
+                .next()
+                .and_then(|record| record.decode_owned(annex))
+                .map(NodeView::from_owned),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Self::Slice(nodes) => nodes.size_hint(),
-            Self::Fork(nodes) => nodes.size_hint(),
+            Self::Fork(nodes, _) => nodes.size_hint(),
         }
     }
 }
@@ -3355,7 +3489,10 @@ impl<'a> DoubleEndedIterator for NodeCursorIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         match self {
             Self::Slice(nodes) => nodes.next_back().map(NodeView::from),
-            Self::Fork(nodes) => nodes.next_back().map(NodeView::from),
+            Self::Fork(nodes, annex) => nodes
+                .next_back()
+                .and_then(|record| record.decode_owned(annex))
+                .map(NodeView::from_owned),
         }
     }
 }

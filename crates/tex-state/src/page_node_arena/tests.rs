@@ -257,8 +257,7 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
     let source_address = arena
         .list(source)
         .expect("live source")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("source node");
     let mut builder = PageMaterialActiveListBuilder::vacant();
 
@@ -282,8 +281,7 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
         arena
             .list(composed)
             .expect("live composed list")
-            .get(0)
-            .map(std::ptr::from_ref)
+            .testing_node_address(0)
             .expect("composed source node"),
         source_address
     );
@@ -400,8 +398,7 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
         let source_address = arena
             .list(source.list())
             .expect("source list")
-            .get(0)
-            .map(std::ptr::from_ref)
+            .testing_node_address(0)
             .expect("source node");
         let source_mark = arena.operation_mark();
 
@@ -441,8 +438,7 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
             arena
                 .list(source.list())
                 .expect("source remains live")
-                .get(0)
-                .map(std::ptr::from_ref),
+                .testing_node_address(0),
             Some(source_address)
         );
         assert_eq!(
@@ -540,8 +536,7 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
         arena
             .list(source)
             .expect("live source")
-            .get(index)
-            .map(std::ptr::from_ref)
+            .testing_node_address(index)
             .expect("selected source node")
     });
     let mut line = PageMaterialActiveListBuilder::vacant();
@@ -564,8 +559,7 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
     assert_ne!(
         [1, 2].map(|index| {
             line_view
-                .get(index)
-                .map(std::ptr::from_ref)
+                .testing_node_address(index)
                 .expect("borrowed line node")
         }),
         selected_addresses
@@ -586,8 +580,7 @@ fn overlapping_checked_span_composition_counts_its_unavoidable_copy() {
             arena
                 .span_node_cursor(span)
                 .expect("checked source remains live")
-                .owned_node(index)
-                .map(std::ptr::from_ref)
+                .testing_node_address(index)
                 .expect("selected node")
         })
         .collect::<Vec<_>>();
@@ -808,12 +801,7 @@ fn identity_is_preserved_across_build_split_and_compose() {
 #[test]
 fn long_middle_slice_uses_summaries_and_explicit_copy_hashes_each_node_once() {
     const CHUNK_VALUES: usize = 8;
-    page_arena!(
-        arena,
-        pool,
-        region,
-        std::mem::size_of::<Option<PageMaterialNode>>() * CHUNK_VALUES
-    );
+    page_arena!(arena, pool, region, 32 * CHUNK_VALUES);
     arena.enable_semantic_identity();
     let nodes = penalties(&(0..1024).collect::<Vec<_>>());
     let whole = arena
@@ -1014,8 +1002,7 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
     let durable_leaf_address = arena
         .durable_child_list(&durable, box_node.children)
         .expect("durable leaf")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("leaf address");
     let before = arena.counters().source_nodes_copied;
 
@@ -1036,8 +1023,7 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
         arena
             .list(box_node.children)
             .expect("moved leaf")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(durable_leaf_address)
     );
     assert_eq!(arena.counters().source_nodes_copied, before);

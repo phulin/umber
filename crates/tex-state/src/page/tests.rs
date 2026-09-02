@@ -91,25 +91,29 @@ fn page_list_accounting_walks_direct_chunks_once_without_index_recovery() {
     let root = publish_nodes(&mut arena, (0..64).map(Node::Penalty));
     let span = arena.admit_span(root).expect("admit measured span");
     let before = arena
-        .span_list(span)
+        .span_node_cursor(span)
         .expect("measured span remains live")
-        .traversal_counters();
+        .testing_traversal_counters();
     let mut page = PageBuilderState::default();
 
     page.push_current_page_list(&mut arena, root);
 
     let after = arena
-        .span_list(span)
+        .span_node_cursor(span)
         .expect("measured span remains live")
-        .traversal_counters();
-    assert_eq!(after.0 - before.0, 0, "accounting performs no indexing");
+        .testing_traversal_counters();
     assert_eq!(
-        after.1 - before.1,
+        after.index_resolutions - before.index_resolutions,
+        0,
+        "accounting performs no indexing"
+    );
+    assert_eq!(
+        after.index_predecessor_steps - before.index_predecessor_steps,
         0,
         "accounting performs no repeated predecessor recovery"
     );
     assert_eq!(
-        after.2 - before.2,
+        after.forward_chunk_crossings - before.forward_chunk_crossings,
         63,
         "one forward traversal crosses each packed block once"
     );
@@ -688,8 +692,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
         .nodes(&pool)
         .span_list(first_root)
         .expect("first contribution")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("first contribution address");
     let before = region.nodes(&pool).counters();
 
@@ -716,8 +719,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
             .nodes(&pool)
             .span_list(first_root)
             .expect("unchanged prefix remains live")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(first_address),
         "checkpoint publication never relocates the unchanged prefix"
     );
@@ -742,8 +744,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
         .nodes(&pool)
         .span_list(prefix)
         .expect("selected prefix")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("selected prefix address");
     {
         let (mut nodes, page) = region.parts_mut(&mut pool);
@@ -831,8 +832,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
             .nodes(&pool)
             .span_list(prefix)
             .expect("unchanged prefix survives acceptance")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(prefix_address)
     );
     let contribution = region.builder().contribution;
@@ -1255,8 +1255,7 @@ fn production_succession_transfers_complete_page_builder_owner() {
         .nodes_mut()
         .span_list(roots_before.contribution)
         .expect("successor contribution")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("successor contribution address");
     let material_before = history.current().material_counters();
 
@@ -1288,8 +1287,7 @@ fn production_succession_transfers_complete_page_builder_owner() {
             .nodes_mut()
             .span_list(roots.contribution)
             .expect("adopted contribution")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(contribution_address),
         "unique succession keeps payload addresses stable"
     );
@@ -1415,8 +1413,7 @@ fn retained_checkpoint_shares_sealed_successor_prefix() {
         .nodes_mut()
         .span_list(predecessor_contribution)
         .expect("predecessor contribution")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("predecessor contribution address");
 
     history
@@ -1435,8 +1432,7 @@ fn retained_checkpoint_shares_sealed_successor_prefix() {
             .nodes_mut()
             .span_list(roots.contribution)
             .expect("shared contribution")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(old_address)
     );
     let material = history.current().material_counters();
@@ -1870,8 +1866,7 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
         .nodes_mut()
         .list(heldover)
         .expect("heldover list")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("heldover address");
     {
         let (mut nodes, builder) = history.parts_mut();
@@ -1891,8 +1886,7 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
             .nodes_mut()
             .span_list(contribution)
             .expect("moved heldover")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(heldover_address)
     );
     let counters = history.current().counters();
@@ -1908,8 +1902,7 @@ fn production_heldover_copies_only_the_interleaved_prefix_closure() {
         .nodes_mut()
         .list(heldover)
         .expect("prefix heldover list")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("prefix heldover address");
     history.arm_output_successor_build();
     {
@@ -1930,8 +1923,7 @@ fn production_heldover_copies_only_the_interleaved_prefix_closure() {
             .nodes_mut()
             .span_list(contribution)
             .expect("copied heldover")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(old_address)
     );
     let counters = history.current().counters();

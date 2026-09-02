@@ -60,16 +60,15 @@ const _: () = assert!(core::mem::align_of::<AnnexKey<()>>() == 4);
 const _: () = assert!(!core::mem::needs_drop::<AnnexKey<()>>());
 
 struct AnnexBlock {
-    words: Box<[u32]>,
-    initialized: usize,
+    words: tex_dense_prefix::Superblock<u32>,
     logical_incarnation: u32,
 }
 
 impl AnnexBlock {
     fn new(logical_incarnation: u32) -> Self {
         Self {
-            words: vec![0; ANNEX_WORDS_PER_BLOCK].into_boxed_slice(),
-            initialized: 0,
+            words: tex_dense_prefix::Superblock::try_new()
+                .expect("u32 annex superblock layout is valid"),
             logical_incarnation,
         }
     }
@@ -86,13 +85,14 @@ pub(crate) struct NodeAnnexMetrics {
     pub(crate) stale_rejections: u64,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct NodeAnnexMark {
     owner: u32,
     words: usize,
 }
 
-pub(crate) struct NodeAnnexArena {
+pub struct NodeAnnexArena {
     owner: u32,
     blocks: Vec<AnnexBlock>,
     words: usize,
@@ -369,6 +369,7 @@ impl NodeAnnexArena {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn mark(&self) -> NodeAnnexMark {
         NodeAnnexMark {
             owner: self.owner,
@@ -376,12 +377,9 @@ impl NodeAnnexArena {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn metrics(&self) -> NodeAnnexMetrics {
         self.metrics
-    }
-
-    pub(crate) const fn len(&self) -> usize {
-        self.words
     }
 
     fn ensure_block(&mut self, ordinal: usize) {
@@ -441,8 +439,14 @@ impl NodeAnnexArena {
             let offset = position % ANNEX_WORDS_PER_BLOCK;
             self.ensure_block(ordinal);
             let block = &mut self.blocks[ordinal];
-            block.words[offset] = word;
-            block.initialized = block.initialized.max(offset + 1);
+            if offset == block.words.len() {
+                block
+                    .words
+                    .push_with(|slot| slot.insert(word))
+                    .expect("annex superblock capacity");
+            } else {
+                *block.words.get_mut(offset).expect("initialized annex word") = word;
+            }
         }
         self.words = start
             .checked_add(total)
@@ -461,6 +465,7 @@ impl NodeAnnexArena {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn rollback(&mut self, mark: NodeAnnexMark) -> bool {
         if mark.owner != self.owner || mark.words > self.words {
             return false;
@@ -473,15 +478,17 @@ impl NodeAnnexArena {
             self.metrics.superblocks_reclaimed += 1;
         }
         if let Some(block) = self.blocks.last_mut() {
-            block.initialized = self.words % ANNEX_WORDS_PER_BLOCK;
-            if block.initialized == 0 && self.words != 0 {
-                block.initialized = ANNEX_WORDS_PER_BLOCK;
+            let mut initialized = self.words % ANNEX_WORDS_PER_BLOCK;
+            if initialized == 0 && self.words != 0 {
+                initialized = ANNEX_WORDS_PER_BLOCK;
             }
+            block.words.truncate(initialized);
         }
         self.metrics.words_rolled_back += removed as u64;
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve_fixed<Kind>(&mut self, key: AnnexKey<Kind>) -> Option<&[u32]> {
         if key.owner != self.owner || key.word_len == 0 {
             self.metrics.stale_rejections += 1;
@@ -494,7 +501,7 @@ impl NodeAnnexArena {
             block.logical_incarnation == key.logical_block_incarnation
                 && offset
                     .checked_add(len)
-                    .is_some_and(|end| end <= block.initialized)
+                    .is_some_and(|end| end <= block.words.len())
                 && block.words.get(offset).copied() == Some(key.publication_serial)
         });
         if !valid {
@@ -502,7 +509,10 @@ impl NodeAnnexArena {
             return None;
         }
         self.metrics.direct_lookups += 1;
-        self.blocks[ordinal].words.get(offset + 1..offset + len)
+        self.blocks[ordinal]
+            .words
+            .initialized()
+            .get(offset + 1..offset + len)
     }
 
     pub(crate) fn resolve_fixed_shared<Kind>(&self, key: AnnexKey<Kind>) -> Option<&[u32]> {
@@ -513,12 +523,12 @@ impl NodeAnnexArena {
         let offset = key.word_offset as usize;
         let len = key.word_len as usize;
         if block.logical_incarnation != key.logical_block_incarnation
-            || offset.checked_add(len)? > block.initialized
+            || offset.checked_add(len)? > block.words.len()
             || block.words.get(offset).copied()? != key.publication_serial
         {
             return None;
         }
-        block.words.get(offset + 1..offset + len)
+        block.words.initialized().get(offset + 1..offset + len)
     }
 
     pub(crate) fn resolve_word<Kind>(&self, key: AnnexKey<Kind>, index: usize) -> Option<u32> {

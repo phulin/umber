@@ -719,7 +719,7 @@ impl OpenTypeSourceWalk<'_> {
                     .page_node_span_chunk_node(source, &chunk, offset)
                     .expect("OpenType source chunk remains live");
                 debug_assert_eq!(resolved, index);
-                OpenTypeSourceNode::from_node(node)
+                OpenTypeSourceNode::from_node(&node)
             };
             self.visit_node(stores, source, index, observed);
         }

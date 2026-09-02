@@ -1327,9 +1327,9 @@ fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
             let context = universe.command_context().expect("node admission");
             let nodes = context.page_node_list(root).expect("node list").nodes();
             assert!(matches!(
-                nodes.owned_node(0),
-                Some(Node::Char { font: node_font, ch: 'X', .. })
-                    if *node_font == font && nodes.len() == 1
+                nodes.get(0),
+                Some(crate::NodeView::Char { font: node_font, ch: 'X', .. })
+                    if node_font == font && nodes.len() == 1
             ));
             drop(context);
             let context = universe.command_context().expect("PDF admission");

@@ -3469,15 +3469,15 @@ impl<'a, G> CommandContext<'a, G> {
         id: u32,
         target: crate::PdfColorStackTarget,
     ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
-        fn action<'a, List, Glue, Tokens>(
-            node: crate::NodeView<'a, List, Glue, Tokens>,
+        fn action<List, Glue, Tokens>(
+            node: crate::NodeView<'_, List, Glue, Tokens>,
             expected_id: u32,
-        ) -> &'a crate::PdfColorStackAction {
+        ) -> crate::PdfColorStackAction {
             let crate::NodeView::Whatsit(crate::node::Whatsit::PdfColorStack { id, action }) = node
             else {
                 panic!("shipout color source is not a color-stack whatsit")
             };
-            assert_eq!(*id, expected_id, "shipout color source id changed");
+            assert_eq!(id, expected_id, "shipout color source id changed");
             action
         }
 
@@ -3491,7 +3491,7 @@ impl<'a, G> CommandContext<'a, G> {
                         .expect("page shipout color index is live"),
                     id,
                 );
-                self.pdf.apply_color_stack(id, target, action)
+                self.pdf.apply_color_stack(id, target, &action)
             }
             crate::ShipoutListId::Scratch(list) => {
                 let action = action(
@@ -3503,7 +3503,7 @@ impl<'a, G> CommandContext<'a, G> {
                     ),
                     id,
                 );
-                self.pdf.apply_color_stack(id, target, action)
+                self.pdf.apply_color_stack(id, target, &action)
             }
         }
     }
@@ -3995,12 +3995,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Borrows one node from an already-admitted packed chunk without a
     /// logical-index lookup or repeated owner admission.
-    pub fn page_node_span_chunk_node<'b>(
-        &'b self,
+    pub fn page_node_span_chunk_node(
+        &self,
         span: crate::page_node_arena::PageListSpan,
         cursor: &crate::page_node_arena::PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, &'b crate::node::Node), NodeArenaError> {
+    ) -> Result<(usize, crate::node::Node), NodeArenaError> {
         self.page_nodes
             .span_chunk_node(span, cursor, offset)
             .map_err(|_| NodeArenaError::InvalidList)
@@ -4079,10 +4079,10 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::ShipoutTokenSource<G>,
         mut visit: impl FnMut(TokenWord) -> Result<(), E>,
     ) -> Result<(), E> {
-        fn payload<'a, List, Glue, Tokens>(
+        fn payload<'a, List, Glue, Tokens: Copy>(
             node: crate::NodeView<'a, List, Glue, Tokens>,
             field: crate::ShipoutTokenField,
-        ) -> Option<&'a Tokens> {
+        ) -> Option<Tokens> {
             match (node, field) {
                 (
                     crate::NodeView::Whatsit(crate::node::Whatsit::DeferredWrite {
@@ -4106,24 +4106,24 @@ impl<'a, G> CommandContext<'a, G> {
                 (
                     crate::NodeView::Whatsit(crate::node::Whatsit::PdfThread(thread)),
                     crate::ShipoutTokenField::PdfThreadAttributes,
-                ) => Some(&thread.attributes),
+                ) => Some(thread.attributes),
                 _ => None,
             }
         }
 
-        fn identifier<'a, List, Glue, Tokens>(
+        fn identifier<'a, List, Glue, Tokens: Copy>(
             node: crate::NodeView<'a, List, Glue, Tokens>,
             field: crate::ShipoutTokenField,
-        ) -> Option<&'a Tokens> {
+        ) -> Option<Tokens> {
             let identifier = match (node, field) {
                 (
                     crate::NodeView::Whatsit(crate::node::Whatsit::PdfThread(thread)),
                     crate::ShipoutTokenField::PdfThreadIdentifier,
-                ) => &thread.identifier,
+                ) => thread.identifier,
                 (
                     crate::NodeView::Whatsit(crate::node::Whatsit::PdfDestination(destination)),
                     crate::ShipoutTokenField::PdfDestinationIdentifier,
-                ) => &destination.identifier,
+                ) => destination.identifier,
                 _ => return None,
             };
             match identifier {
@@ -4145,7 +4145,7 @@ impl<'a, G> CommandContext<'a, G> {
                     .or_else(|| payload(tokens, source.field))
                     .expect("shipout token field belongs to its page source");
                 self.admitted
-                    .node_token_words(*key)
+                    .node_token_words(key)
                     .expect("page shipout token key belongs to the admitted generation")
                     .iter()
                     .copied()
@@ -4162,7 +4162,7 @@ impl<'a, G> CommandContext<'a, G> {
                     .or_else(|| payload(node, source.field))
                     .expect("shipout token field belongs to its scratch source");
                 self.admitted
-                    .node_token_words(*key)
+                    .node_token_words(key)
                     .expect("scratch shipout token key belongs to the admitted generation")
                     .iter()
                     .copied()
@@ -4207,7 +4207,7 @@ impl<'a, G> CommandContext<'a, G> {
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredPdfLiteral,
-                    ) => *tokens,
+                    ) => tokens,
                     _ => panic!("page shipout token field matches its source node"),
                 };
                 self.admitted
@@ -4240,7 +4240,7 @@ impl<'a, G> CommandContext<'a, G> {
                             ..
                         }),
                         crate::ShipoutTokenField::DeferredPdfLiteral,
-                    ) => *tokens,
+                    ) => tokens,
                     _ => panic!("scratch shipout token field matches its source node"),
                 };
                 self.admitted
@@ -4286,10 +4286,9 @@ impl<'a, G> CommandContext<'a, G> {
         index: usize,
     ) -> Option<*const crate::node::Node> {
         self.page_nodes
-            .list(root)
+            .node_cursor(root)
             .ok()?
-            .get(index)
-            .map(std::ptr::from_ref)
+            .testing_node_address(index)
     }
 
     /// Seals the owner identity after the executor has proved that its mode
@@ -4520,11 +4519,12 @@ impl<'a, G> CommandContext<'a, G> {
         {
             let node = self
                 .page_nodes
-                .list(carrier.list())
+                .node_cursor(carrier.list())
                 .expect("page carrier belongs to the live arena")
                 .get(0)
                 .expect("page carrier contains one node");
-            self.assert_live_node_font_roots(node);
+            let node = node.to_owned_with(std::convert::identity);
+            self.assert_live_node_font_roots(&node);
         }
         self.page
             .push_current_page_carrier(&mut self.page_nodes, carrier);
@@ -4587,11 +4587,12 @@ impl<'a, G> CommandContext<'a, G> {
         {
             let node = self
                 .page_nodes
-                .list(carrier.list())
+                .node_cursor(carrier.list())
                 .expect("page carrier belongs to the live arena")
                 .get(0)
                 .expect("page carrier contains one node");
-            self.assert_live_node_font_roots(node);
+            let node = node.to_owned_with(std::convert::identity);
+            self.assert_live_node_font_roots(&node);
         }
         self.page
             .push_page_discard_carrier(&mut self.page_nodes, carrier);
@@ -5300,10 +5301,10 @@ fn page_list_semantic_id<G>(
         fn list(&mut self, root: PageListId) {
             let list = self
                 .page_nodes
-                .get(root)
+                .node_cursor(root)
                 .expect("PDF form root belongs to the live page arena");
-            self.hasher.usize(list.nodes().len());
-            list.for_each(|node| self.node(crate::NodeView::from(node)));
+            self.hasher.usize(list.len());
+            list.for_each(|node| self.node(node));
         }
 
         fn font(&mut self, font: crate::ids::FontId) {

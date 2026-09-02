@@ -189,7 +189,7 @@ fn update_page_marks_at_fire_up<G>(
         .nodes()
         .iter()
         .filter_map(|node| match node {
-            tex_state::NodeView::Mark { class, tokens } => Some((class, *tokens)),
+            tex_state::NodeView::Mark { class, tokens } => Some((class, tokens)),
             _ => None,
         })
         .collect::<Vec<_>>();

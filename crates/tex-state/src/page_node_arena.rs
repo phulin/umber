@@ -13,6 +13,7 @@ use crate::fork_arena::{
     ForkArenaError, OperationMark, PageMaterialLane, UniqueArenaList,
 };
 use crate::node::Node;
+use crate::node_record::NodeRecord;
 use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
     OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
@@ -20,7 +21,8 @@ use crate::node_region::{
 };
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
-type PageMaterialNode = Node<PageListId>;
+type PageMaterialNode = NodeRecord<PageMaterialLane>;
+type OwnedPageMaterialNode = Node<PageListId>;
 
 /// Scalar publication evidence derived from the completed resident node.
 pub(crate) struct ConstructedNodeMetadata {
@@ -96,9 +98,9 @@ impl PageListId {
     #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 10] {
         let coordinate = self.coordinate.words();
-        let identity = match self.semantic_identity {
-            Some(identity) => identity.get(),
-            None => 0,
+        let identity = match (self.coordinate.is_empty(), self.semantic_identity) {
+            (true, _) | (false, None) => 0,
+            (false, Some(identity)) => identity.get(),
         };
         [
             coordinate[0],
@@ -273,6 +275,51 @@ pub struct PageListSpan {
 pub struct PageListChunkCursor {
     span: PageListSpan,
     inner: AdmittedListChunkCursor<PageMaterialLane>,
+}
+
+/// Cold materialized compatibility view for positional diagnostics and tests.
+/// Routine semantic traversal uses [`crate::node_arena::NodeCursor`] directly
+/// over resident compact records.
+pub struct PageMaterialListView {
+    nodes: Vec<OwnedPageMaterialNode>,
+    #[cfg(test)]
+    resident_addresses: Vec<*const OwnedPageMaterialNode>,
+    #[allow(dead_code)]
+    #[cfg(any(test, feature = "testing"))]
+    traversal_counters: (u64, u64, u64),
+}
+
+impl PageMaterialListView {
+    pub fn nodes(&self) -> &[OwnedPageMaterialNode] {
+        &self.nodes
+    }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+    pub fn get(&self, index: usize) -> Option<&OwnedPageMaterialNode> {
+        self.nodes.get(index)
+    }
+    pub fn iter(&self) -> core::slice::Iter<'_, OwnedPageMaterialNode> {
+        self.nodes.iter()
+    }
+    pub fn for_each(&self, visit: impl FnMut(&OwnedPageMaterialNode)) {
+        self.nodes.iter().for_each(visit);
+    }
+    #[cfg(test)]
+    pub(crate) fn testing_node_address(
+        &self,
+        index: usize,
+    ) -> Option<*const OwnedPageMaterialNode> {
+        self.resident_addresses.get(index).copied()
+    }
+    #[allow(dead_code)]
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) const fn traversal_counters(&self) -> (u64, u64, u64) {
+        self.traversal_counters
+    }
 }
 
 impl PageListChunkCursor {
@@ -646,14 +693,14 @@ impl<'a> PageMaterialArena<'a> {
 
     pub fn publish_owned(
         &mut self,
-        nodes: impl IntoIterator<Item = PageMaterialNode>,
+        nodes: impl IntoIterator<Item = OwnedPageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
         Ok(self.publish_owned_unique(nodes)?.publish())
     }
 
     pub fn publish_owned_unique(
         &mut self,
-        nodes: impl IntoIterator<Item = PageMaterialNode>,
+        nodes: impl IntoIterator<Item = OwnedPageMaterialNode>,
     ) -> Result<UniquePageList, ForkArenaError> {
         let mut builder = PageMaterialActiveListBuilder::vacant();
         self.open_active_list(&mut builder)?;
@@ -669,7 +716,7 @@ impl<'a> PageMaterialArena<'a> {
 
     pub fn publish_owned_span(
         &mut self,
-        nodes: impl IntoIterator<Item = PageMaterialNode>,
+        nodes: impl IntoIterator<Item = OwnedPageMaterialNode>,
     ) -> Result<PageListSpan, ForkArenaError> {
         let list = self.publish_owned(nodes)?;
         self.admit_span(list)
@@ -1111,15 +1158,16 @@ impl<'a> PageMaterialArena<'a> {
     pub fn push_active_list(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
-        node: PageMaterialNode,
+        node: OwnedPageMaterialNode,
     ) -> Result<(), ForkArenaError> {
-        if !node_children_are_live(&self.region.pub_arena, &self.pool.chunks, &node) {
+        if !owned_node_children_are_live(&self.region.pub_arena, &self.pool.chunks, &node) {
             return Err(ForkArenaError::InvalidRegion);
         }
         let item_identity = builder
             .identity
             .as_ref()
             .map(|_| semantic_node_identity(&node));
+        let record = NodeRecord::encode_owned(node.clone(), &mut self.pool.record_annex);
         let slot = self
             .region
             .pub_arena
@@ -1130,7 +1178,7 @@ impl<'a> PageMaterialArena<'a> {
                 item_identity,
             )?;
         assert!(slot.is_none(), "reserved page-node destination is vacant");
-        *slot = Some(node);
+        *slot = Some(record);
         if let Some(item_identity) = item_identity {
             if let Some(identity) = &mut builder.identity {
                 identity.push_back(item_identity);
@@ -1147,13 +1195,17 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         initialize: impl FnOnce(crate::NodeDestination<'_>),
     ) -> Result<ConstructedNodeMetadata, ForkArenaError> {
+        let identity_enabled = builder.identity.is_some();
         let (item_identity, metadata) = self.region.pub_arena.construct_region_value_active_list(
             &mut self.pool.chunks,
             &mut builder.inner,
-            *self.semantic_identity_enabled,
-            |slot| initialize(crate::NodeDestination::new(slot)),
-            semantic_node_identity,
-            |node| {
+            identity_enabled,
+            &mut self.pool.record_annex,
+            |slot, annex| initialize(crate::NodeDestination::new_record(slot, annex)),
+            |record, annex| {
+                let node = record
+                    .decode_owned(annex)
+                    .ok_or(ForkArenaError::InvalidRange)?;
                 let mut font = None;
                 node.visit_fonts(|value| {
                     assert!(
@@ -1161,19 +1213,18 @@ impl<'a> PageMaterialArena<'a> {
                         "one node has at most one direct font"
                     );
                 });
-                ConstructedNodeMetadata {
+                let metadata = ConstructedNodeMetadata {
                     tex82_words: node.tex_memory_words(false),
                     etex_words: node.tex_memory_words(true),
                     font,
-                }
+                };
+                Ok((semantic_node_identity(&node), metadata, node))
             },
         )?;
         if let Some(item_identity) = item_identity {
-            builder
-                .identity
-                .as_mut()
-                .expect("identity-enabled builder has a sequence")
-                .push_back(item_identity);
+            if let Some(identity) = &mut builder.identity {
+                identity.push_back(item_identity);
+            }
             builder.identity_work.hashed_values =
                 builder.identity_work.hashed_values.saturating_add(1);
         }
@@ -1203,7 +1254,7 @@ impl<'a> PageMaterialArena<'a> {
                     &mut builder.inner,
                     span.list.coordinate(),
                     0..span.len(),
-                    semantic_node_identity,
+                    |record| semantic_record_identity(record, &self.pool.record_annex),
                 )?;
             *identity = identity.concat(appended);
             builder.identity_work.hashed_values = builder
@@ -1273,7 +1324,7 @@ impl<'a> PageMaterialArena<'a> {
                     &mut builder.inner,
                     span.list.coordinate(),
                     selected,
-                    semantic_node_identity,
+                    |record| semantic_record_identity(record, &self.pool.record_annex),
                 )?;
             builder.identity_work.hashed_values = builder
                 .identity_work
@@ -1357,7 +1408,7 @@ impl<'a> PageMaterialArena<'a> {
 
     pub fn publish_range(
         &mut self,
-        nodes: Vec<PageMaterialNode>,
+        nodes: Vec<OwnedPageMaterialNode>,
     ) -> Result<PageListId, ForkArenaError> {
         self.publish_owned(nodes)
     }
@@ -1498,7 +1549,7 @@ impl<'a> PageMaterialArena<'a> {
                 list.coordinate(),
                 selected,
                 self.list_scratch,
-                semantic_node_identity,
+                |record| semantic_record_identity(record, &self.pool.record_annex),
             )?;
             self.region.pub_arena.record_identity_work(work);
             Ok(PageListId::from_parts(coordinate, Some(identity)))
@@ -1525,7 +1576,7 @@ impl<'a> PageMaterialArena<'a> {
                     span.list.coordinate(),
                     selected,
                     self.list_scratch,
-                    semantic_node_identity,
+                    |record| semantic_record_identity(record, &self.pool.record_annex),
                 )?;
             self.region.pub_arena.record_identity_work(work);
             PageListId::from_parts(coordinate, Some(identity))
@@ -1541,13 +1592,12 @@ impl<'a> PageMaterialArena<'a> {
         self.admit_span(list)
     }
 
-    pub fn list(
-        &self,
-        list: PageListId,
-    ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.region
+    pub fn list(&self, list: PageListId) -> Result<PageMaterialListView, ForkArenaError> {
+        let view = self
+            .region
             .pub_arena
-            .list(&self.pool.chunks, list.coordinate())
+            .list(&self.pool.chunks, list.coordinate())?;
+        materialize_page_list(view, &self.pool.record_annex)
     }
 
     pub fn admit_span(&self, list: PageListId) -> Result<PageListSpan, ForkArenaError> {
@@ -1557,19 +1607,15 @@ impl<'a> PageMaterialArena<'a> {
         Ok(PageListSpan { list })
     }
 
-    pub fn span_list(
-        &self,
-        span: PageListSpan,
-    ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.region
+    pub fn span_list(&self, span: PageListSpan) -> Result<PageMaterialListView, ForkArenaError> {
+        let view = self
+            .region
             .pub_arena
-            .validated_list(&self.pool.chunks, span.list.coordinate())
+            .validated_list(&self.pool.chunks, span.list.coordinate())?;
+        materialize_page_list(view, &self.pool.record_annex)
     }
 
-    pub fn get(
-        &self,
-        list: PageListId,
-    ) -> Result<ArenaListView<'_, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
+    pub fn get(&self, list: PageListId) -> Result<PageMaterialListView, ForkArenaError> {
         self.list(list)
     }
 
@@ -1585,8 +1631,10 @@ impl<'a> PageMaterialArena<'a> {
         &self,
         span: PageListSpan,
     ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
-        self.span_list(span)
-            .map(crate::node_arena::NodeCursor::fork_arena)
+        self.region
+            .pub_arena
+            .validated_list(&self.pool.chunks, span.list.coordinate())
+            .map(|view| crate::node_arena::NodeCursor::fork_arena(view, &self.pool.record_annex))
     }
 
     /// Starts a mutation-compatible direct chunk walk after one span admission.
@@ -1616,21 +1664,27 @@ impl<'a> PageMaterialArena<'a> {
     }
 
     /// Borrows one node directly from a retained packed-chunk coordinate.
-    pub fn span_chunk_node<'b>(
-        &'b self,
+    pub fn span_chunk_node(
+        &self,
         span: PageListSpan,
         cursor: &PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, &'b PageMaterialNode), ForkArenaError> {
+    ) -> Result<(usize, OwnedPageMaterialNode), ForkArenaError> {
         if cursor.span != span {
             return Err(ForkArenaError::InvalidRange);
         }
-        self.region.pub_arena.admitted_chunk_value(
+        let (index, record) = self.region.pub_arena.admitted_chunk_value(
             &self.pool.chunks,
             span.list.coordinate(),
             &cursor.inner,
             offset,
-        )
+        )?;
+        Ok((
+            index,
+            record
+                .decode_owned(&self.pool.record_annex)
+                .ok_or(ForkArenaError::InvalidRange)?,
+        ))
     }
 
     pub fn get_sequence(
@@ -1717,16 +1771,57 @@ impl<'a> PageMaterialArena<'a> {
     }
 }
 
-fn node_children_are_live(
+fn owned_node_children_are_live(
     arena: &crate::fork_arena::ForkArena<PageMaterialNode, PageMaterialLane>,
     pool: &crate::fork_arena::ChunkPool<PageMaterialNode>,
-    node: &PageMaterialNode,
+    node: &OwnedPageMaterialNode,
 ) -> bool {
     let mut valid = true;
     node.visit_node_lists(|child| {
         valid &= arena.admit_list(pool, child.coordinate()).is_ok();
     });
     valid
+}
+
+fn semantic_record_identity(
+    record: &PageMaterialNode,
+    annex: &crate::node_record::NodeAnnexArena,
+) -> u64 {
+    semantic_node_identity(
+        &record
+            .decode_owned(annex)
+            .expect("published compact node resolves its typed annex"),
+    )
+}
+
+fn materialize_page_list(
+    view: ArenaListView<'_, PageMaterialNode, PageMaterialLane>,
+    annex: &crate::node_record::NodeAnnexArena,
+) -> Result<PageMaterialListView, ForkArenaError> {
+    #[cfg(any(test, feature = "testing"))]
+    let traversal_counters = view.traversal_counters();
+    let mut nodes = Vec::with_capacity(view.len());
+    #[cfg(test)]
+    let mut resident_addresses = Vec::with_capacity(view.len());
+    let mut invalid = false;
+    view.for_each(|record| match record.decode_owned(annex) {
+        Some(node) => {
+            #[cfg(test)]
+            resident_addresses.push(core::ptr::from_ref(record).cast());
+            nodes.push(node);
+        }
+        None => invalid = true,
+    });
+    if invalid {
+        return Err(ForkArenaError::InvalidRange);
+    }
+    Ok(PageMaterialListView {
+        nodes,
+        #[cfg(test)]
+        resident_addresses,
+        #[cfg(any(test, feature = "testing"))]
+        traversal_counters,
+    })
 }
 
 /// Read-only admitted access used by retained history and format capture.
@@ -1772,30 +1867,25 @@ impl<'a> PageMaterialView<'a> {
             .live_payload_values(&self.pool.chunks)
     }
 
-    pub fn list(
-        &self,
-        list: PageListId,
-    ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.state
+    pub fn list(&self, list: PageListId) -> Result<PageMaterialListView, ForkArenaError> {
+        let view = self
+            .state
             .region
             .pub_arena
-            .list(&self.pool.chunks, list.coordinate())
+            .list(&self.pool.chunks, list.coordinate())?;
+        materialize_page_list(view, &self.pool.record_annex)
     }
 
-    pub fn span_list(
-        &self,
-        span: PageListSpan,
-    ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
-        self.state
+    pub fn span_list(&self, span: PageListSpan) -> Result<PageMaterialListView, ForkArenaError> {
+        let view = self
+            .state
             .region
             .pub_arena
-            .validated_list(&self.pool.chunks, span.list.coordinate())
+            .validated_list(&self.pool.chunks, span.list.coordinate())?;
+        materialize_page_list(view, &self.pool.record_annex)
     }
 
-    pub fn get(
-        &self,
-        list: PageListId,
-    ) -> Result<ArenaListView<'a, PageMaterialNode, PageMaterialLane>, ForkArenaError> {
+    pub fn get(&self, list: PageListId) -> Result<PageMaterialListView, ForkArenaError> {
         self.list(list)
     }
 
@@ -1807,7 +1897,7 @@ impl<'a> PageMaterialView<'a> {
             .region
             .pub_arena
             .validated_list(&self.pool.chunks, list.coordinate())
-            .map(crate::node_arena::NodeCursor::fork_arena)
+            .map(|view| crate::node_arena::NodeCursor::fork_arena(view, &self.pool.record_annex))
     }
 
     pub fn span_node_cursor(
@@ -1818,7 +1908,7 @@ impl<'a> PageMaterialView<'a> {
             .region
             .pub_arena
             .validated_list(&self.pool.chunks, span.list.coordinate())
-            .map(crate::node_arena::NodeCursor::fork_arena)
+            .map(|view| crate::node_arena::NodeCursor::fork_arena(view, &self.pool.record_annex))
     }
 
     pub fn get_sequence(

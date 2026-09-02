@@ -268,7 +268,7 @@ fn normalization_work_cursor(
     (active_indices, permutation)
 }
 
-fn normalization_work<List: Copy, Glue: Copy, Tokens>(
+fn normalization_work<List: Copy, Glue: Copy, Tokens: Clone>(
     nodes: &[Node<List, Glue, Tokens>],
     box_lr: tex_state::node::BoxLr,
 ) -> (SmallVec<[usize; 32]>, Option<Vec<usize>>) {
@@ -482,7 +482,7 @@ fn classify_page_node<G>(
         return NormalizeNode::Math(math);
     }
     if let tex_state::node_arena::NodeView::Whatsit(whatsit) = node {
-        return NormalizeNode::Whatsit(prepare_whatsit(whatsit, source, index, |glue| glue));
+        return NormalizeNode::Whatsit(prepare_whatsit(&whatsit, source, index, |glue| glue));
     }
     classify_transient_node(
         &node.to_owned_with(std::convert::identity),
@@ -1375,7 +1375,7 @@ fn lower_color_stack_mode(mode: tex_state::PdfColorStackMode) -> tex_out::PdfLit
     }
 }
 
-pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens>(
+pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens: Clone>(
     nodes: &[Node<List, Glue, Tokens>],
     box_lr: tex_state::node::BoxLr,
 ) -> Option<Vec<usize>> {
@@ -1385,7 +1385,7 @@ pub(super) fn direction_permutation_for_box<List: Copy, Glue: Copy, Tokens>(
     direction_permutation(nodes)
 }
 
-fn direction_permutation<List: Copy, Glue: Copy, Tokens>(
+fn direction_permutation<List: Copy, Glue: Copy, Tokens: Clone>(
     nodes: &[Node<List, Glue, Tokens>],
 ) -> Option<Vec<usize>> {
     direction_permutation_from(

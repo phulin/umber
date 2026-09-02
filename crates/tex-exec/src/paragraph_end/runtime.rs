@@ -1368,7 +1368,7 @@ fn normalize_paragraph_chunk_prefix<G>(
                 Node::Glue { spec, kind, leader }
                     if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
                 {
-                    Some((*spec, *kind, *leader))
+                    Some((spec, kind, leader))
                 }
                 _ => None,
             };

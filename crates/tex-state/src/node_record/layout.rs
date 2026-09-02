@@ -28,6 +28,7 @@ pub(super) fn decode_scaled(value: u32) -> Scaled {
     Scaled::from_raw(value as i32)
 }
 
+#[allow(dead_code)]
 pub(super) fn encode_option_scaled(value: Option<Scaled>) -> [u32; 2] {
     match value {
         Some(value) => [1, scaled_word(value)],
@@ -35,6 +36,7 @@ pub(super) fn encode_option_scaled(value: Option<Scaled>) -> [u32; 2] {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn decode_option_scaled(words: [u32; 2]) -> Option<Option<Scaled>> {
     match words[0] {
         0 if words[1] == 0 => Some(None),
@@ -86,6 +88,7 @@ pub(super) fn take_words<const N: usize>(source: &[u32], cursor: &mut usize) -> 
     Some(words)
 }
 
+#[allow(dead_code)]
 pub(super) fn decode_node_kind(value: u32) -> Option<NodeKind> {
     NodeKind::ALL.get(value as usize).copied()
 }
@@ -245,7 +248,7 @@ pub(super) fn decode_print_sink(value: u32) -> Option<PrintSink> {
 }
 
 #[repr(C)]
-pub(crate) struct NodeRecord<Lane = PageMaterialLane> {
+pub struct NodeRecord<Lane = PageMaterialLane> {
     header: NonZeroU32,
     words: [u32; 7],
     lane: PhantomData<fn(&Lane) -> &Lane>,

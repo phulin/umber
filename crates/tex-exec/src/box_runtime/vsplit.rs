@@ -210,9 +210,9 @@ fn update_split_marks<G>(
             if let tex_state::NodeView::Mark { class, tokens } = node {
                 let (first, bot) = classes.entry(class).or_insert((None, None));
                 if first.is_none() {
-                    *first = Some(*tokens);
+                    *first = Some(tokens);
                 }
-                *bot = Some(*tokens);
+                *bot = Some(tokens);
             }
         });
     for (class, (first, bot)) in classes {

@@ -1,5 +1,4 @@
 //! Private compact resident node and typed word-annex substrate.
-#![allow(dead_code)] // Isolated codec proof remains nonresident until the atomic cutover.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
@@ -29,8 +28,6 @@ mod node_codec;
 mod whatsit_codec;
 
 pub(crate) use annex::{AnnexKey, NodeAnnexArena};
-#[allow(unused_imports)]
-pub(crate) use annex::{NodeAnnexMark, NodeAnnexMetrics};
 pub(crate) use layout::NodeRecord;
 
 use annex::*;

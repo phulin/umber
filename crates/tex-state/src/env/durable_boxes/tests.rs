@@ -145,8 +145,7 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
     let original_address = arena
         .durable_list(&original)
         .expect("original durable list")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("original payload address");
     state
         .assign(
@@ -169,8 +168,7 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
         arena
             .list(page)
             .expect("loaned page list")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(original_address)
     );
     assert_eq!(
@@ -186,8 +184,7 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
         arena
             .durable_list(restored)
             .expect("restored durable list")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(original_address)
     );
     assert_eq!(
