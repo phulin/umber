@@ -670,7 +670,7 @@ fn candidate_accept_preserves_earlier_retained_group_ancestry() {
             .durable_list(state.value(35).expect("restored outer value"))
             .expect("restored outer list")
             .get(0),
-        Some(Node::Penalty(157))
+        Some(crate::NodeView::Penalty(157))
     ));
     assert!(!arena.durable_region_is_live(outer_id));
     state.retire_all(&mut arena);

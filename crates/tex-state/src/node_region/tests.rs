@@ -135,7 +135,7 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
     let moved = transfer_closure_into(&mut pool, &mut closure, &mut destination)
         .expect("whole closure transfer");
     let moved_parent = destination.list(&pool, moved).expect("moved parent");
-    let Node::HList(box_node) = moved_parent.get(0).expect("parent node") else {
+    let crate::NodeView::HList(box_node) = moved_parent.get(0).expect("parent node") else {
         panic!("moved parent lost box shape");
     };
     let moved_child = destination
@@ -300,10 +300,10 @@ fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
         copy_closure_into(&mut pool, &closure, &mut destination, true).expect("recursive copy");
     let after = destination.counters();
     let copied_root = destination.list(&pool, copied).expect("copied root");
-    let Node::Disc { pre, .. } = copied_root.get(0).expect("disc node") else {
+    let crate::NodeView::Disc { pre, .. } = copied_root.get(0).expect("disc node") else {
         panic!("copied root lost discretionary shape");
     };
-    let copied_child = resident_nodes(&destination, &pool, *pre);
+    let copied_child = resident_nodes(&destination, &pool, pre);
     let Node::HList(box_node) = &copied_child[0] else {
         panic!("copied child lost box shape");
     };
@@ -381,13 +381,17 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
             "mapped copy does not move a staged whole RegionNode"
         );
         let copied_list = destination.list(&pool, copied).expect("copied list");
-        let expected_identity = SemanticSequenceIdentity::from_nodes(copied_list.iter());
+        let owned = copied_list
+            .iter()
+            .map(|node| node.to_owned_with(|list| list))
+            .collect::<Vec<_>>();
+        let expected_identity = SemanticSequenceIdentity::from_nodes(owned.iter());
         assert_eq!(
             copied.page_list().semantic_identity(),
             Some(expected_identity.raw())
         );
         for (index, node) in copied_list.iter().enumerate() {
-            assert_eq!(node, &Node::Penalty(index as i32));
+            assert_eq!(node, crate::NodeView::Penalty(index as i32));
         }
         assert_eq!(
             Some(resident_address(&closure.region, &pool, root.list)),
@@ -412,8 +416,7 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
     let address = source
         .list(&pool, root)
         .expect("source list")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("source address");
     let receipt = source
         .consumed_closure_roots_receipt(&mark)
@@ -434,8 +437,7 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
         destination
             .list(&pool, moved)
             .expect("moved list")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(address)
     );
     assert_eq!(destination.counters().source_nodes_copied, 0);
@@ -744,7 +746,7 @@ fn closure_build_transfer_rebrands_nested_suffix_children() {
         .map_err(|failure| failure.error)
         .expect("nested transfer");
     let parent = destination.list(&pool, moved).expect("moved parent");
-    let Node::HList(box_node) = parent.get(0).expect("parent node") else {
+    let crate::NodeView::HList(box_node) = parent.get(0).expect("parent node") else {
         panic!("moved parent lost box shape");
     };
     let moved_child = destination
@@ -795,7 +797,7 @@ fn checkpoint_before_closure_build_does_not_force_a_copy() {
             .list(&pool, prefix)
             .expect("checkpoint prefix remains live")
             .get(0),
-        Some(&Node::Penalty(53))
+        Some(crate::NodeView::Penalty(53))
     );
     assert_eq!(pool.closure_transition_counters().structural_fallbacks, 0);
 }
@@ -813,8 +815,7 @@ fn transient_closure_loan_rolls_back_without_copying() {
     let address = source
         .list(&pool, root)
         .expect("source list")
-        .get(0)
-        .map(std::ptr::from_ref)
+        .testing_node_address(0)
         .expect("source address");
     let receipt = source
         .consumed_closure_roots_receipt(&mark)
@@ -831,8 +832,7 @@ fn transient_closure_loan_rolls_back_without_copying() {
         source
             .list(&pool, root)
             .expect("reattached source")
-            .get(0)
-            .map(std::ptr::from_ref),
+            .testing_node_address(0),
         Some(address)
     );
     assert_eq!(pool.closure_transition_counters().transient_rollbacks, 1);

@@ -993,11 +993,10 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
     let durable = arena
         .copy_page_root_to_durable(root)
         .expect("durable owner");
-    let Node::HList(box_node) = arena
+    let crate::NodeView::HList(box_node) = arena
         .durable_list(&durable)
         .expect("durable root")
         .get(0)
-        .cloned()
         .expect("box node")
     else {
         panic!("durable root lost box shape");

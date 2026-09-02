@@ -2244,6 +2244,19 @@ pub struct SealedBatch<Lane> {
     lists: Vec<ArenaListId<Lane>>,
 }
 
+/// Fixed-size whole-region transfer receipt.
+///
+/// The semantic boundary has either one declared root (the node lane) or no
+/// declared root (its paired annex lane). The arena and pool retain all block
+/// tables and traversal metadata; this receipt carries only scalar frontiers
+/// and the optional list coordinate needed by the caller.
+pub(crate) struct WholeRegionBatch<Lane> {
+    arena: u32,
+    serial: u64,
+    payload_end: u32,
+    root: Option<ArenaListId<Lane>>,
+}
+
 /// A prevalidated whole-chunk suffix temporarily loaned out of its source
 /// arena. The chunk payload remains owned by the source arena until the loan
 /// is either returned or committed into a destination arena.
@@ -5574,6 +5587,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn promote_batch_into<Destination>(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -5641,6 +5655,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(promoted_lists)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn preflight_batch_transfer<Destination>(
         &self,
         pool: &ChunkPool<T>,
@@ -5723,7 +5738,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &ChunkPool<T>,
         destination: &ForkArena<T, Destination>,
-        lists: &[ArenaListId<Lane>],
+        root: Option<ArenaListId<Lane>>,
     ) -> Result<(), ForkArenaError>
     where
         T: RegionValue<Lane>,
@@ -5737,21 +5752,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.next_batch_serial
             .checked_add(1)
             .ok_or(ForkArenaError::CapacityOverflow)?;
-        let boundary = SealedBatch {
-            arena: self.owner,
-            serial: self.next_batch_serial,
-            payload_start: 0,
-            payload_end: self.live_payload_len() as u32,
-            lists: lists.to_vec(),
-        };
-        self.preflight_transfer_coordinates(pool, destination, &boundary)
+        self.preflight_whole_transfer_coordinates(pool, destination, root)
     }
 
-    fn preflight_transfer_coordinates<Destination>(
+    fn preflight_whole_transfer_coordinates<Destination>(
         &self,
         pool: &ChunkPool<T>,
         destination: &ForkArena<T, Destination>,
-        batch: &SealedBatch<Lane>,
+        root: Option<ArenaListId<Lane>>,
     ) -> Result<(), ForkArenaError>
     where
         T: RegionValue<Lane>,
@@ -5761,12 +5769,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.owner == destination.owner || destination.active_builder {
             return Err(ForkArenaError::InvalidRegion);
         }
-        let payload =
-            self.validate_suffix(batch.payload_start as usize, batch.payload_end as usize)?;
-        for list in &batch.lists {
-            self.validate_list_in_suffix(pool, *list, batch.payload_start as usize)?;
+        if let Some(root) = root {
+            self.validate_list_in_suffix(pool, root, 0)?;
         }
-        for key in payload {
+        for position in 0..self.live_payload_len() {
+            let key = self
+                .live_key_at(position)
+                .ok_or(ForkArenaError::InvalidRegion)?;
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 let value = pool
@@ -5775,9 +5784,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .ok_or(ForkArenaError::InvalidChunk)?;
                 let mut valid = true;
                 value.visit_region_lists(&mut |list| {
-                    valid &= self
-                        .validate_list_in_suffix(pool, list, batch.payload_start as usize)
-                        .is_ok();
+                    valid &= self.validate_list_in_suffix(pool, list, 0).is_ok();
                 });
                 if !valid {
                     return Err(ForkArenaError::InvalidRegion);
@@ -5790,8 +5797,8 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub(crate) fn seal_whole_region_batch(
         &mut self,
         pool: &mut ChunkPool<T>,
-        lists: Vec<ArenaListId<Lane>>,
-    ) -> Result<SealedBatch<Lane>, ForkArenaError>
+        root: Option<ArenaListId<Lane>>,
+    ) -> Result<WholeRegionBatch<Lane>, ForkArenaError>
     where
         T: RegionValue<Lane>,
     {
@@ -5812,13 +5819,76 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload_start: 0,
             payload_end: boundary.payload_chunks,
         });
-        Ok(SealedBatch {
+        Ok(WholeRegionBatch {
             arena: self.owner,
             serial,
-            payload_start: 0,
             payload_end: boundary.payload_chunks,
-            lists,
+            root,
         })
+    }
+
+    pub(crate) fn promote_whole_region_into<Destination>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Destination>,
+        batch: WholeRegionBatch<Lane>,
+    ) -> Result<Option<ArenaListId<Destination>>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        if batch.arena != self.owner
+            || self.pending_batch
+                != Some(PendingBatch {
+                    serial: batch.serial,
+                    payload_start: 0,
+                    payload_end: batch.payload_end,
+                })
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.preflight_whole_transfer_coordinates(pool, destination, batch.root)?;
+        self.bind_pool(pool)
+            .expect("whole-region source pool was preflighted");
+        destination
+            .bind_pool(pool)
+            .expect("whole-region destination pool was preflighted");
+        destination
+            .seal_boundary(pool)
+            .expect("whole-region destination boundary was preflighted");
+        let payload = self
+            .detach_suffix(0)
+            .expect("whole-region source suffix was preflighted");
+        for key in &payload {
+            self.unindex_chunk(pool, *key);
+        }
+        for key in &payload {
+            pool.payload
+                .transfer(
+                    *key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("whole-region payload ownership was preflighted");
+        }
+        let promoted = payload.len();
+        let payload_start = destination.live_payload_len();
+        for (offset, key) in payload.iter().copied().enumerate() {
+            destination.index_chunk(pool, key, payload_start + offset);
+        }
+        destination.current_chunks_mut().payload.extend(payload);
+        destination.refresh_live_chunk_frontiers();
+        self.counters.chunks_promoted = self
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        destination.counters.chunks_promoted = destination
+            .counters
+            .chunks_promoted
+            .saturating_add(promoted as u64);
+        self.pending_batch = None;
+        Ok(batch.root.map(|root| rebrand_list(root, destination.owner)))
     }
 
     fn validate_suffix(

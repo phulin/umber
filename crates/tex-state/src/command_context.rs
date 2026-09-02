@@ -1951,7 +1951,7 @@ impl<'a, G> CommandContext<'a, G> {
         }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        match (list.len(), list.get(0).map(crate::NodeView::from)) {
+        match (list.len(), list.get(0)) {
             (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
             (1, Some(crate::NodeView::VList(_))) => Some(CommandBoxKind::Vertical),
             _ => None,
@@ -2025,7 +2025,7 @@ impl<'a, G> CommandContext<'a, G> {
         }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+        let node = match (list.len(), list.get(0)) {
             (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
             _ => return None,
         };
@@ -2043,7 +2043,7 @@ impl<'a, G> CommandContext<'a, G> {
         }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
-        let children = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+        let children = match (list.len(), list.get(0)) {
             (1, Some(crate::NodeView::HList(node))) => self
                 .page_nodes
                 .durable_child_list(owner, node.children)
@@ -2085,12 +2085,10 @@ impl<'a, G> CommandContext<'a, G> {
         let candidate = match side {
             crate::node::MarginKernSide::Left => children
                 .iter()
-                .map(crate::NodeView::from)
                 .find(|node| !skippable(node.clone())),
             crate::node::MarginKernSide::Right => children
                 .iter()
                 .rev()
-                .map(crate::NodeView::from)
                 .find(|node| !skippable(node.clone())),
         };
         Some(match candidate {

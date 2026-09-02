@@ -2,8 +2,8 @@
 //!
 //! Raw list coordinates remain compact implementation details. A
 //! `NodeRegion` owns their chunk envelopes, `RegionRoot` records which region
-//! admits a top-level coordinate, and `RegionList` binds resolution to an
-//! actual borrow of that owner.
+//! admits a top-level coordinate, and `NodeCursor` binds resolution to an
+//! actual borrow of that owner without reconstructing resident nodes.
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -882,32 +882,14 @@ impl<Role> NodeRegion<Role> {
         &'region self,
         pool: &'region NodePool,
         root: RegionRoot<Role>,
-    ) -> Result<RegionList<'region, Role>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
         pool.validate_region(self)?;
         if root.region != self.id {
             return Err(ForkArenaError::InvalidRegion);
         }
         let view = self.pub_arena.list(&pool.chunks, root.list.coordinate())?;
         let annex = NodeAnnexView::new(&pool.annex_chunks, &self.annex_arena);
-        #[cfg(test)]
-        let resident_addresses = view
-            .iter()
-            .map(|record| core::ptr::from_ref(record).cast())
-            .collect();
-        let nodes = view
-            .iter()
-            .map(|record| {
-                record
-                    .decode_owned(annex)
-                    .ok_or(ForkArenaError::InvalidRange)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(RegionList {
-            nodes,
-            #[cfg(test)]
-            resident_addresses,
-            _region: PhantomData,
-        })
+        Ok(crate::node_arena::NodeCursor::fork_arena(view, annex))
     }
 
     #[allow(clippy::result_large_err)] // Validation failure must return the exclusive region owner.
@@ -1085,44 +1067,6 @@ impl<Role> RegionRoot<Role> {
     }
 }
 
-/// Borrowed list capability tied to the matching `NodeRegion` borrow.
-pub struct RegionList<'region, Role> {
-    nodes: Vec<Node<PageListId>>,
-    #[cfg(test)]
-    resident_addresses: Vec<*const Node<PageListId>>,
-    _region: PhantomData<&'region NodeRegion<Role>>,
-}
-
-impl<Role> RegionList<'_, Role> {
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    #[must_use]
-    pub fn get(&self, index: usize) -> Option<&Node<PageListId>> {
-        self.nodes.get(index)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_node_address(&self, index: usize) -> Option<*const Node<PageListId>> {
-        self.resident_addresses.get(index).copied()
-    }
-
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Node<PageListId>> + ExactSizeIterator {
-        self.nodes.iter()
-    }
-
-    pub fn for_each(&self, visit: impl FnMut(&Node<PageListId>)) {
-        self.nodes.iter().for_each(visit);
-    }
-}
-
 /// Move-only owner-plus-root aggregate used by durable and semantic-copy
 /// transitions.
 pub struct OwnedNodeClosure<Role> {
@@ -1139,7 +1083,7 @@ impl<Role> OwnedNodeClosure<Role> {
     pub(crate) fn list<'region>(
         &'region self,
         pool: &'region NodePool,
-    ) -> Result<RegionList<'region, Role>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
         self.region.list(pool, self.root)
     }
 
@@ -1147,7 +1091,7 @@ impl<Role> OwnedNodeClosure<Role> {
         &'region self,
         pool: &'region NodePool,
         list: PageListId,
-    ) -> Result<RegionList<'region, Role>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
         let root = self.region.root(pool, list)?;
         self.region.list(pool, root)
     }
@@ -1259,12 +1203,12 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
             closure.region.pub_arena.preflight_whole_region_transfer(
                 &pool.chunks,
                 &destination.pub_arena,
-                &[closure.root.list.coordinate()],
+                Some(closure.root.list.coordinate()),
             )?;
             closure.region.annex_arena.preflight_whole_region_transfer(
                 &pool.annex_chunks,
                 &destination.annex_arena,
-                &[],
+                None,
             )
         });
     preflight?;
@@ -1272,30 +1216,30 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
     let batch = closure
         .region
         .pub_arena
-        .seal_whole_region_batch(&mut pool.chunks, vec![closure.root.list.coordinate()])
+        .seal_whole_region_batch(&mut pool.chunks, Some(closure.root.list.coordinate()))
         .expect("whole-region transfer was preflighted");
     let annex_batch = closure
         .region
         .annex_arena
-        .seal_whole_region_batch(&mut pool.annex_chunks, Vec::new())
+        .seal_whole_region_batch(&mut pool.annex_chunks, None)
         .expect("whole-region annex transfer was preflighted");
     let destination_node_start = destination.pub_arena.live_payload_chunks();
     let destination_annex_start = destination.annex_arena.live_payload_chunks();
     let promoted = closure
         .region
         .pub_arena
-        .promote_batch_into(&mut pool.chunks, &mut destination.pub_arena, batch)
+        .promote_whole_region_into(&mut pool.chunks, &mut destination.pub_arena, batch)
         .expect("whole-region promotion was preflighted");
     let annex_promoted = closure
         .region
         .annex_arena
-        .promote_batch_into(
+        .promote_whole_region_into(
             &mut pool.annex_chunks,
             &mut destination.annex_arena,
             annex_batch,
         )
         .expect("whole-region annex promotion was preflighted");
-    debug_assert!(annex_promoted.is_empty());
+    debug_assert!(annex_promoted.is_none());
     destination
         .pub_arena
         .rebase_paired_dependency_suffix(
@@ -1305,9 +1249,7 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
             destination_annex_start,
         )
         .expect("paired whole-region transfer preserves relative annex floors");
-    let [coordinate]: [_; 1] = promoted
-        .try_into()
-        .expect("one declared closure root produces one promoted root");
+    let coordinate = promoted.expect("one declared closure root produces one promoted root");
     let root = RegionRoot {
         region: destination.id,
         list: closure.root.list.with_coordinate(coordinate),

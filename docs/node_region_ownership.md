@@ -250,12 +250,12 @@ One suitable API shape is:
 ```rust
 struct NodeRegion<Lane> { /* exclusive chunk envelopes and roots */ }
 struct OwnedNodeClosure<Lane> { region: NodeRegion<Lane>, root: RegionRoot<Lane> }
-struct RegionList<'region, Lane> { /* borrowed coordinate capability */ }
+struct NodeCursor<'region> { /* borrowed admitted coordinate capability */ }
 struct PageRegionCheckpointKey { region: NodeRegionId, boundary: BoundarySerial }
 ```
 
 The exact names may change, but the ownership shape may not. A compile-fail
-gate must reject placing `ArenaListId`, `PageListId`, or `RegionList` in a
+gate must reject placing `ArenaListId`, `PageListId`, or `NodeCursor` in a
 production top-level owner without the matching region.
 
 ## Ordinary construction and list processing
@@ -742,7 +742,7 @@ The implementation must add or adapt these exact test families:
     logical-row, physical-slot, annex-serial, and transferred-envelope reuse
     without ABA aliasing.
 15. a compile-fail test such as `raw_page_list_root_escape_forbidden.rs` proves
-    a raw list coordinate or borrowed `RegionList` cannot become a production
+    a raw list coordinate or borrowed `NodeCursor` cannot become a production
     top-level owner or outlive its `NodeRegion` borrow.
 16. `checkpoint_capture_allocates_and_copies_zero_at_scale` compares 1 and
     4,096 boundaries with exact node, annex, table, and allocator counters.

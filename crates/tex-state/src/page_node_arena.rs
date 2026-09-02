@@ -1296,7 +1296,7 @@ impl<'a> PageMaterialArena<'a> {
     pub(crate) fn durable_list<'b>(
         &'b self,
         closure: &'b DurableNodeClosure,
-    ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'b>, ForkArenaError> {
         closure.list(self.pool)
     }
 
@@ -1304,7 +1304,7 @@ impl<'a> PageMaterialArena<'a> {
         &'b self,
         closure: &'b DurableNodeClosure,
         child: PageListId,
-    ) -> Result<crate::node_region::RegionList<'b, DurableRole>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'b>, ForkArenaError> {
         closure.child_list(self.pool, child)
     }
 
@@ -2310,7 +2310,7 @@ impl<'a> PageMaterialView<'a> {
     pub(crate) fn durable_list(
         &self,
         closure: &'a DurableNodeClosure,
-    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
         closure.list(self.pool)
     }
 
@@ -2318,7 +2318,7 @@ impl<'a> PageMaterialView<'a> {
         &self,
         closure: &'a DurableNodeClosure,
         child: PageListId,
-    ) -> Result<crate::node_region::RegionList<'a, DurableRole>, ForkArenaError> {
+    ) -> Result<crate::node_arena::NodeCursor<'a>, ForkArenaError> {
         closure.child_list(self.pool, child)
     }
 
