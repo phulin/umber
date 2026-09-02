@@ -590,7 +590,7 @@ fn check_embedded_font_case(case: &str) {
             assert!(actual_structure.contains("/Name /customspace"));
             assert!(actual_structure.contains("/Differences [32 /space]"));
             assert!(actual_structure.contains("content /UmberSpace 10 Tf"));
-            assert!(actual_structure.contains("content <0b> Tj"));
+            assert!(actual_structure.contains("content [<0b>] TJ"));
             assert!(reference_structure.contains("PdfTeX-Space"));
         }
         "pk_bitmap_300" => {

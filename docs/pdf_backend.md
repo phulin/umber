@@ -219,7 +219,14 @@ those movements become local `TJ` adjustments instead of accumulating into a
 later interword adjustment. A retained cursor begins at the rounded position
 serialized by `pdf_set_text_pos`, while later `pdf_begin_string` adjustments
 compare the original unrounded TeX anchor against that raster, matching
-pdftex.web §690.
+pdftex.web §690. Text-position operands retain the same exact scaled-coordinate
+state independently of the mapped-font raster. For relative `Td`, pdfTeX
+subtracts the retained scaled positions before `divide_scaled` rounds the
+delta, then advances the retained position by `scaled_out`; subtracting two
+independently rounded PDF coordinates can differ by one final decimal unit.
+Absolute `Tm` establishes that state from its independently rounded scaled
+coordinates. Floating-point values therefore enter only at the typed
+`pdf_writer` call, after canonical coordinate arithmetic is complete.
 
 The selected 0.15.0 source fork is `phulin/pdf-writer` commit
 `030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through

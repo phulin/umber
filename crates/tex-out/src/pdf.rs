@@ -75,15 +75,25 @@ pub struct PdfContentGlyphRaster {
 /// Exact state selected when a mapped-font text matrix starts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PdfContentTextExactRaster {
-    pub serialized_h: i64,
     pub font_size: i64,
     pub expansion_ratio: i16,
+}
+
+/// Exact scaled coordinates consumed by pdfTeX's text-position raster.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfContentTextPosition {
+    pub h: i64,
+    pub v: i64,
+    pub decimal_digits: u8,
 }
 
 /// One absolutely positioned byte-encoded PDF text run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PdfContentTextRun {
     pub x: f32,
+    /// Exact scaled coordinates used to form `Tm` or relative `Td` operands.
+    /// `None` is reserved for independently constructed paint operations.
+    pub exact_position: Option<PdfContentTextPosition>,
     /// Exact pdfTeX raster state. `None` uses the serialized scalar values for
     /// independently constructed content operations.
     pub raster: Option<PdfContentTextRaster>,

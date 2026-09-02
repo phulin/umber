@@ -3,10 +3,10 @@
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
     PdfContentGlyphRaster, PdfContentOperation, PdfContentRectangle, PdfContentTextExactRaster,
-    PdfContentTextRaster, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
-    PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
-    PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
-    PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontMetricsInput,
+    PdfContentTextPosition, PdfContentTextRaster, PdfContentTextRun, PdfDestinationAction,
+    PdfDestinationActionKind, PdfDestinationNameTree, PdfDestinationNameTreeChildren,
+    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView,
+    PdfDictionary, PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontMetricsInput,
     PdfFontProgramInput, PdfImageColorSpace, PdfImageFilter, PdfImageGammaInput,
     PdfImageMetadataInput, PdfImageXObject, PdfIndirectObject, PdfModelError, PdfName,
     PdfNamesObject, PdfNumber, PdfObject, PdfObjectId, PdfOutlineItemObject, PdfOutlineObject,
@@ -675,13 +675,10 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     debug_assert_eq!(page_fonts.get(&resource.resource_number), Some(&font_id));
                     debug_assert_eq!(run.units.len(), run.positions.len());
                     debug_assert_eq!(run.units.len(), run.physical_codes.len());
-                    let baseline = scaled_to_bp_f32(
-                        page_height
-                            .checked_sub(run.baseline)
-                            .and_then(|value| value.checked_sub(record.v_origin()))
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    );
+                    let baseline = page_height
+                        .checked_sub(run.baseline)
+                        .and_then(|value| value.checked_sub(record.v_origin()))
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
                     let font_size = pdftex_font_size(font.at_size);
                     let positioning_font_size = pdftex_font_size_f64(font.at_size);
                     let horizontal_scale = font_horizontal_scale(&font.construction);
@@ -760,8 +757,18 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                                     .ok_or(PdfBuildError::PageGeometryOverflow)?,
                                                 parameters.decimal_digits,
                                             ),
+                                            exact_position: exact_text_position(
+                                                position
+                                                    .checked_add(record.h_origin())
+                                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                                baseline,
+                                                parameters.decimal_digits,
+                                            ),
                                             raster: None,
-                                            baseline,
+                                            baseline: scaled_to_bp_f32(
+                                                baseline,
+                                                parameters.decimal_digits,
+                                            ),
                                             font_name,
                                             font_size: space_size,
                                             horizontal_scale: space_horizontal_scale,
@@ -802,6 +809,17 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 control
                                     .x
                                     .checked_add(record.h_origin())
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                parameters.decimal_digits,
+                            ),
+                            exact_position: exact_text_position(
+                                control
+                                    .x
+                                    .checked_add(record.h_origin())
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                page_height
+                                    .checked_sub(control.y)
+                                    .and_then(|value| value.checked_sub(record.v_origin()))
                                     .ok_or(PdfBuildError::PageGeometryOverflow)?,
                                 parameters.decimal_digits,
                             ),
@@ -1266,6 +1284,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             .collect::<Result<Vec<_>, _>>()?;
                     operations.push(PdfContentOperation::Text(PdfContentTextRun {
                         x: scaled_to_bp_f32(run.x, parameters.decimal_digits),
+                        exact_position: exact_text_position(
+                            run.x,
+                            total_height
+                                .checked_sub(run.baseline)
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
                         raster: None,
                         baseline: scaled_to_bp_f32(
                             total_height
@@ -3001,7 +3026,7 @@ struct MappedTextContext<'a> {
     font_name: &'a [u8],
     h_origin: Scaled,
     decimal_digits: i32,
-    baseline: f32,
+    baseline: Scaled,
     font_size: f32,
     positioning_font_size: f64,
     horizontal_scale: f32,
@@ -3036,14 +3061,15 @@ fn mapped_text_segment(
     );
     Ok(PdfContentOperation::Text(PdfContentTextRun {
         x: scaled_to_bp_f32(anchor, context.decimal_digits),
+        exact_position: exact_text_position(anchor, context.baseline, context.decimal_digits),
         raster: Some(PdfContentTextRaster {
             serialized_x: scaled_to_bp_f64(anchor, context.decimal_digits),
             position_x: scaled_to_bp_unrounded_f64(anchor),
             font_size: context.positioning_font_size,
-            exact: exact_text_raster(anchor, context.font, context.decimal_digits),
+            exact: exact_text_raster(context.font),
             glyphs: glyphs.unwrap_or_default(),
         }),
-        baseline: context.baseline,
+        baseline: scaled_to_bp_f32(context.baseline, context.decimal_digits),
         font_name: context.font_name.to_vec(),
         font_size: context.font_size,
         horizontal_scale: context.horizontal_scale,
@@ -3088,17 +3114,8 @@ fn scalable_glyph_rasters(
         .collect()
 }
 
-fn exact_text_raster(
-    anchor: Scaled,
-    font: &crate::FontResource,
-    decimal_digits: i32,
-) -> Option<PdfContentTextExactRaster> {
+fn exact_text_raster(font: &crate::FontResource) -> Option<PdfContentTextExactRaster> {
     const ONE_HUNDRED_BP: i64 = 6_578_176;
-    let (_, serialized_h) = pdftex_divide_scaled_positive(
-        i64::from(anchor.raw()),
-        ONE_HUNDRED_BP,
-        u32::try_from(decimal_digits).ok()?.checked_add(2)?,
-    )?;
     let (_, font_size) =
         pdftex_divide_scaled_positive(i64::from(font.at_size.raw()), ONE_HUNDRED_BP, 6)?;
     let expansion_ratio = match font.construction {
@@ -3108,9 +3125,20 @@ fn exact_text_raster(
         | crate::FontResourceConstruction::Letterspaced { .. } => 0,
     };
     Some(PdfContentTextExactRaster {
-        serialized_h,
         font_size,
         expansion_ratio,
+    })
+}
+
+fn exact_text_position(
+    h: Scaled,
+    v: Scaled,
+    decimal_digits: i32,
+) -> Option<PdfContentTextPosition> {
+    Some(PdfContentTextPosition {
+        h: i64::from(h.raw()),
+        v: i64::from(v.raw()),
+        decimal_digits: u8::try_from(decimal_digits).ok()?,
     })
 }
 

@@ -66,9 +66,16 @@ struct PdfTextFont {
 
 #[derive(Clone, Copy)]
 struct PdfTextMatrix {
-    x: f32,
-    baseline: f32,
+    x: f64,
+    baseline: f64,
     horizontal_scale: f32,
+    exact: Option<PdfExactTextPosition>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfExactTextPosition {
+    h: i64,
+    v: i64,
 }
 
 enum PdfTextItem {
@@ -185,6 +192,7 @@ impl PdfPainter {
                 x: 0.0,
                 baseline: 0.0,
                 horizontal_scale: 1.0,
+                exact: Some(PdfExactTextPosition { h: 0, v: 0 }),
             });
         }
         let (x, baseline) = self.relative_position(run.x, run.baseline);
@@ -250,7 +258,12 @@ impl PdfPainter {
         }
         self.flush_text();
         self.select_font(run);
-        self.set_text_position(x, baseline, run.horizontal_scale);
+        let start = self.set_text_position(
+            serialized_x,
+            f64::from(baseline),
+            run.horizontal_scale,
+            run.exact_position,
+        );
         let text_unit = run
             .raster
             .as_ref()
@@ -261,8 +274,11 @@ impl PdfPainter {
         let raster_cursor = if has_glyph_raster(run) {
             self.show_rastered_text(
                 run,
-                serialized_x,
-                None,
+                start.x,
+                start.exact_h.map(|tj_start_h| PdfExactTextCursor {
+                    tj_start_h,
+                    delta_h: 0,
+                }),
                 0.0,
                 text_unit,
                 f64::from(self.origin.0),
@@ -275,7 +291,7 @@ impl PdfPainter {
         self.text_cursor = run.advance.map(|advance| PdfTextCursor {
             x: raster_cursor
                 .map(|cursor| cursor.x)
-                .unwrap_or(serialized_x + advance),
+                .unwrap_or(start.x + advance),
             baseline,
             horizontal_scale: run.horizontal_scale,
             exact: raster_cursor.and_then(|cursor| cursor.exact),
@@ -304,10 +320,8 @@ impl PdfPainter {
         let mut cursor_x = cursor_x;
         let mut adjustments = Vec::with_capacity(run.bytes.len());
         let mut exact_cursor = raster.exact.map(|exact| {
-            let mut cursor = exact_cursor.unwrap_or(PdfExactTextCursor {
-                tj_start_h: exact.serialized_h,
-                delta_h: 0,
-            });
+            let mut cursor =
+                exact_cursor.expect("exact text raster has an exact positioned anchor");
             for glyph in &raster.glyphs {
                 let (movement, movement_out) = pdftex_text_movement(
                     glyph.position_raw - (cursor.tj_start_h + cursor.delta_h),
@@ -436,22 +450,67 @@ impl PdfPainter {
         });
     }
 
-    fn set_text_position(&mut self, x: f32, baseline: f32, horizontal_scale: f32) {
+    fn set_text_position(
+        &mut self,
+        x: f64,
+        baseline: f64,
+        horizontal_scale: f32,
+        exact_position: Option<super::PdfContentTextPosition>,
+    ) -> PdfSetTextPosition {
         let matrix = self
             .text_matrix
             .expect("an open PDF text object has a text matrix");
         if horizontal_scale != 1.0 || matrix.horizontal_scale != 1.0 {
-            self.content
-                .set_text_matrix([horizontal_scale, 0.0, 0.0, 1.0, x, baseline]);
+            let (x, baseline, exact) = exact_position
+                .map(pdftex_absolute_text_position)
+                .unwrap_or((x, baseline, None));
+            self.content.set_text_matrix([
+                horizontal_scale,
+                0.0,
+                0.0,
+                1.0,
+                x as f32,
+                baseline as f32,
+            ]);
+            self.text_matrix = Some(PdfTextMatrix {
+                x,
+                baseline,
+                horizontal_scale,
+                exact,
+            });
         } else {
-            self.content
-                .next_line(x - matrix.x, baseline - matrix.baseline);
+            let (dx, dy, exact) = match (matrix.exact, exact_position) {
+                (Some(previous), Some(position)) => {
+                    let (dx, h_out) =
+                        pdftex_text_coordinate(position.h - previous.h, position.decimal_digits);
+                    let (dy, v_out) =
+                        pdftex_text_coordinate(position.v - previous.v, position.decimal_digits);
+                    (
+                        dx,
+                        dy,
+                        Some(PdfExactTextPosition {
+                            h: previous.h + h_out,
+                            v: previous.v + v_out,
+                        }),
+                    )
+                }
+                _ => (x - matrix.x, baseline - matrix.baseline, None),
+            };
+            self.content.next_line(dx as f32, dy as f32);
+            self.text_matrix = Some(PdfTextMatrix {
+                x: matrix.x + dx,
+                baseline: matrix.baseline + dy,
+                horizontal_scale,
+                exact,
+            });
         }
-        self.text_matrix = Some(PdfTextMatrix {
-            x,
-            baseline,
-            horizontal_scale,
-        });
+        let matrix = self
+            .text_matrix
+            .expect("positioning establishes a PDF text matrix");
+        PdfSetTextPosition {
+            x: matrix.x,
+            exact_h: matrix.exact.map(|exact| exact.h),
+        }
     }
 
     fn append_text(&mut self, bytes: &[u8]) {
@@ -520,6 +579,32 @@ fn exact_first_adjustment(run: &super::PdfContentTextRun, cursor: PdfTextCursor)
 struct PdfRasteredTextCursor {
     x: f64,
     exact: Option<PdfExactTextCursor>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfSetTextPosition {
+    x: f64,
+    exact_h: Option<i64>,
+}
+
+fn pdftex_absolute_text_position(
+    position: super::PdfContentTextPosition,
+) -> (f64, f64, Option<PdfExactTextPosition>) {
+    let (x, h) = pdftex_text_coordinate(position.h, position.decimal_digits);
+    let (baseline, v) = pdftex_text_coordinate(position.v, position.decimal_digits);
+    (x, baseline, Some(PdfExactTextPosition { h, v }))
+}
+
+fn pdftex_text_coordinate(delta: i64, decimal_digits: u8) -> (f64, i64) {
+    // pdftex.web §690 (`pdf_begin_string` and `pdf_set_text_pos`) subtracts
+    // retained scaled coordinates first. `divide_scaled` then rounds the
+    // delta and returns both the printed coefficient and the scaled position
+    // actually represented by that coefficient.
+    const ONE_HUNDRED_BP: i64 = 6_578_176;
+    let (coefficient, scaled_out) =
+        pdftex_divide_scaled(delta, ONE_HUNDRED_BP, u32::from(decimal_digits) + 2);
+    let scale = 10_i64.pow(u32::from(decimal_digits)) as f64;
+    (coefficient as f64 / scale, scaled_out)
 }
 
 fn pdftex_text_movement(delta: i64, font_size: i64, expansion_ratio: i16) -> (i64, i64) {

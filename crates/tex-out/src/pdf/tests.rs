@@ -74,6 +74,7 @@ fn begin_text_restores_page_origin_after_an_origin_literal() {
         },
         PdfContentOperation::Text(PdfContentTextRun {
             x: 30.0,
+            exact_position: None,
             raster: None,
             baseline: 40.0,
             font_name: b"F1".to_vec(),
@@ -126,6 +127,7 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
     let text = |bytes: &[u8]| {
         PdfContentOperation::Text(PdfContentTextRun {
             x: 0.0,
+            exact_position: None,
             raster: None,
             baseline: 0.0,
             font_name: b"F1".to_vec(),
@@ -163,6 +165,7 @@ fn mapped_text_keeps_pdftex_tj_position_across_direct_color_operations() {
     let text = |x, byte| {
         PdfContentOperation::Text(PdfContentTextRun {
             x,
+            exact_position: None,
             raster: None,
             baseline: 20.0,
             font_name: b"F1".to_vec(),
@@ -201,6 +204,7 @@ fn mapped_text_uses_td_and_consolidates_adjacent_glyph_and_kern_runs() {
     let run = |x: f64, bytes: &[u8]| {
         PdfContentOperation::Text(PdfContentTextRun {
             x: x as f32,
+            exact_position: None,
             raster: Some(PdfContentTextRaster {
                 serialized_x: x,
                 position_x: x,
@@ -239,6 +243,47 @@ fn mapped_text_uses_td_and_consolidates_adjacent_glyph_and_kern_runs() {
 }
 
 #[test]
+fn td_rounds_the_scaled_delta_instead_of_subtracting_rounded_positions() {
+    // pdftex.web §690: `pdf_begin_string` subtracts retained scaled positions
+    // before `divide_scaled` rounds the relative `Td` operand. These absolute
+    // positions independently round to 714.484 and 702.529, whose difference
+    // is -11.955, while their exact scaled delta canonically rounds to -11.956.
+    let run = |baseline, v, byte| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 0,
+                v,
+                decimal_digits: 3,
+            }),
+            raster: None,
+            baseline,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            horizontal_scale: 1.0,
+            bytes: vec![byte],
+            advance: None,
+        })
+    };
+    let bytes = ordered_page_content(&[
+        run(714.484, 47_000_016, b'A'),
+        run(702.529, 46_213_562, b'B'),
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        concat!(
+            "BT\n",
+            "/F1 10 Tf\n",
+            "0 714.484 Td\n",
+            "(A) Tj\n",
+            "0 -11.956 Td\n",
+            "(B) Tj\n",
+            "ET",
+        )
+    );
+}
+
+#[test]
 fn mapped_text_starts_its_raster_at_the_serialized_position() {
     // pdftex.web §690: `pdf_set_text_pos` assigns `pdf_h` from the rounded
     // position written to the PDF, while the next `pdf_begin_string` compares
@@ -249,6 +294,7 @@ fn mapped_text_starts_its_raster_at_the_serialized_position() {
     let text = |x, serialized_x, position_x, byte| {
         PdfContentOperation::Text(PdfContentTextRun {
             x,
+            exact_position: None,
             raster: Some(PdfContentTextRaster {
                 serialized_x,
                 position_x,
@@ -283,12 +329,16 @@ fn mapped_text_corrects_width_raster_inside_a_contiguous_string() {
     // correction even when adjacent character nodes have no intervening kern.
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 0.0,
+        exact_position: Some(PdfContentTextPosition {
+            h: 0,
+            v: 0,
+            decimal_digits: 3,
+        }),
         raster: Some(PdfContentTextRaster {
             serialized_x: 0.0,
             position_x: 0.0,
             font_size: 10.0,
             exact: Some(PdfContentTextExactRaster {
-                serialized_h: 0,
                 font_size: 10_000,
                 expansion_ratio: 0,
             }),
@@ -333,6 +383,7 @@ fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
     let payload = (u8::MIN..=u8::MAX).collect::<Vec<_>>();
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 0.0,
+        exact_position: None,
         raster: None,
         baseline: 0.0,
         font_name: b"F1".to_vec(),
@@ -367,6 +418,7 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
 
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 12.0,
+        exact_position: None,
         raster: None,
         baseline: 34.0,
         font_name: b"F1".to_vec(),
@@ -426,6 +478,7 @@ fn pdftex_font_size_uses_four_places_for_tf_and_cursor_advances() {
 
     let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
         x: 0.0,
+        exact_position: None,
         raster: None,
         baseline: 0.0,
         font_name: b"F1".to_vec(),

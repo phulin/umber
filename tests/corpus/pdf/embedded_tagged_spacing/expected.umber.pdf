@@ -11,40 +11,40 @@ endobj
 <</Type/Page/Resources 2 0 R/Contents 4 0 R/MediaBox[0 0 119.552 23.91]/Parent 8 0 R>>
 endobj
 4 0 obj
-<</Length 456>>
+<</Length 347>>
 stream
 q
 Q
 BT
 /F1 9.9626 Tf
-1 0 0 1 0 17.103 Tm
-(A) Tj
+0 17.103 Td
+[(A)] TJ
 /UmberSpace 10 Tf
-1 0 0 1 7.472 17.103 Tm
+7.472 0 Td
 ( ) Tj
 /F1 9.9626 Tf
-1 0 0 1 10.793 17.103 Tm
-(B) Tj
+3.321 0 Td
+[(B)] TJ
 /UmberSpace 10 Tf
-1 0 0 1 17.85 17.103 Tm
+7.057 0 Td
 ( ) Tj
 /F1 9.9626 Tf
-1 0 0 1 21.171 17.103 Tm
-(C) Tj
+3.321 0 Td
+[(C)] TJ
 /UmberSpace 10 Tf
-1 0 0 1 28.366 17.103 Tm
+7.195 0 Td
 ( ) Tj
 /F1 9.9626 Tf
-1 0 0 1 28.366 17.103 Tm
-(D) Tj
+0 0 Td
+[(D)] TJ
 /F1 8.9664 Tf
-(\013) Tj
+[(\013)] TJ
 /UmberSpace 10 Tf
-1 0 0 1 41.207 17.103 Tm
+12.841 0 Td
 ( ) Tj
 /F1 8.9664 Tf
-1 0 0 1 44.195 17.103 Tm
-(A) Tj
+2.988 0 Td
+[(A)] TJ
 ET
 endstream
 endobj
@@ -55,20 +55,20 @@ endobj
 <</Type/Page/Resources 5 0 R/Contents 7 0 R/MediaBox[0 0 119.552 23.91]/Parent 8 0 R>>
 endobj
 7 0 obj
-<</Length 145>>
+<</Length 114>>
 stream
 q
 Q
 BT
 /F1 9.9626 Tf
-1 0 0 1 0 17.103 Tm
-(B) Tj
+0 17.103 Td
+[(B)] TJ
 /UmberSpace 10 Tf
-1 0 0 1 7.057 17.103 Tm
+7.057 0 Td
 ( ) Tj
 /F1 9.9626 Tf
-1 0 0 1 10.378 17.103 Tm
-(C) Tj
+3.321 0 Td
+[(C)] TJ
 ET
 endstream
 endobj
@@ -434,18 +434,18 @@ xref
 0000003122 00000 n
 0000003197 00000 n
 0000003299 00000 n
-0000003804 00000 n
-0000003879 00000 n
-0000003981 00000 n
-0000004175 00000 n
-0000004232 00000 n
-0000004277 00000 n
-0000004490 00000 n
-0000004671 00000 n
-0000040494 00000 n
-0000040733 00000 n
+0000003695 00000 n
+0000003770 00000 n
+0000003872 00000 n
+0000004035 00000 n
+0000004092 00000 n
+0000004137 00000 n
+0000004350 00000 n
+0000004531 00000 n
+0000040354 00000 n
+0000040593 00000 n
 trailer
 <</Size 15/Root 9 0 R/Info 10 0 R>>
 startxref
-40798
+40658
 %%EOF
