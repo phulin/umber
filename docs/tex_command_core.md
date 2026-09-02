@@ -2848,9 +2848,10 @@ unreusable leading token literally with its command-owned
 `macro_delimiter_recovery` observation, ignores delimiters below literal brace
 depth, and cancels the raw brace accounting for a matched `#{` delimiter. The
 prefix carries the original delivered-token facts, while the resident writer's
-single lane settlement projects the opening-brace spelling once for both
-first-token grouping and brace-depth accounting and decides whether the
-ordinary paragraph check applies;
+single lane settlement classifies the literal catcode once into a compact
+open, close, or neither brace delta for both first-token grouping and
+brace-depth accounting and decides whether the ordinary paragraph check
+applies;
 when the parameter text contains only compulsory literals and no numbered
 parameter, the same `Matching` semantics run without admitting argument
 scratch or an `ArgumentSet`; it never reclassifies a committed prefix. A

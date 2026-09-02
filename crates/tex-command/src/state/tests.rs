@@ -5,7 +5,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
 use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
+use crate::execution_scratch::ArgumentSetId;
 use crate::processor::AlignmentIdentity;
+use crate::token_collector::ClassifiedToken;
 use crate::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
     AttemptProvenanceId, AttemptTokenListId, CommandObservation, CommandObserver, InputReason,
@@ -15,6 +17,54 @@ use crate::{
 enum ResidentRoot<Attempt, Durable> {
     Attempt(Attempt),
     Durable(Durable),
+}
+
+fn admit_braced_macro_frame<G>(state: &mut CommandState<G>) -> ArgumentSetId<G> {
+    let matching = state.scratch.begin_macro_match().expect("macro match");
+    let mut writer = state
+        .scratch
+        .begin_argument_writer(&matching)
+        .expect("argument writer");
+    for (token, depth) in [
+        (
+            Token::Char {
+                ch: '[',
+                cat: Catcode::BeginGroup,
+            },
+            1,
+        ),
+        (
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            },
+            1,
+        ),
+        (
+            Token::Char {
+                ch: ']',
+                cat: Catcode::EndGroup,
+            },
+            0,
+        ),
+    ] {
+        let word = TracedTokenWord::pack(token, OriginId::UNKNOWN);
+        assert_eq!(
+            state
+                .scratch
+                .append_argument_token(&mut writer, ClassifiedToken::from_word(word, None), true)
+                .expect("argument append"),
+            depth
+        );
+    }
+    state
+        .scratch
+        .publish_argument(writer)
+        .expect("argument publication");
+    state
+        .scratch
+        .commit_macro_match(matching)
+        .expect("sealed macro frame")
 }
 
 struct ResidentPromotion<G> {
@@ -875,14 +925,10 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
 }
 
 #[test]
-fn operation_rollback_restores_the_opening_macro_depth() {
+fn operation_rollback_discards_nested_brace_argument_facts_with_the_frame() {
     let mut state = CommandState::<()>::default();
     let operation = state.begin_attempt_operation();
-    let matching = state.scratch.begin_macro_match().expect("macro match");
-    let _frame = state
-        .scratch
-        .commit_macro_match(matching)
-        .expect("sealed empty frame");
+    let _frame = admit_braced_macro_frame(&mut state);
     assert_eq!(state.scratch.frame_len(), 1);
 
     state
@@ -972,11 +1018,7 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .symbol();
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
-        let matching = state.scratch.begin_macro_match().expect("macro match");
-        let frame = state
-            .scratch
-            .commit_macro_match(matching)
-            .expect("sealed empty frame");
+        let frame = admit_braced_macro_frame(&mut state);
         let body = universe
             .command_context()
             .expect("command context")
@@ -1000,6 +1042,18 @@ fn macro_scratch_descriptor_survives_attempt_suspension_without_an_arena_owner()
             .ok()
             .expect("attempt resumption");
         assert_eq!(request, "resource");
+        let range = state
+            .scratch
+            .argument_range(frame, 1)
+            .expect("resumed macro frame")
+            .expect("resumed argument");
+        assert!(
+            state
+                .scratch
+                .argument_facts(range)
+                .expect("resumed argument facts")
+                .removable_outer_group()
+        );
         state
             .retire_exhausted_input(level)
             .expect("macro body retirement");

@@ -11,7 +11,7 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
 
-use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, TokenWord, TracedTokenWord};
 
 use crate::token_collector::ClassifiedToken;
 
@@ -443,22 +443,36 @@ struct PendingArgumentFacts {
     outer_group_candidate: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i8)]
+enum ArgumentBraceDelta {
+    Close = -1,
+    Neither = 0,
+    Open = 1,
+}
+
+const _: () = assert!(core::mem::size_of::<ArgumentBraceDelta>() == 1);
+
 impl PendingArgumentFacts {
     fn settle(
         &mut self,
         token: ClassifiedToken,
         paragraph_checked: bool,
         brace_depth_before: u32,
-    ) -> bool {
+    ) -> ArgumentBraceDelta {
         self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
-        let begins_group = token.spelling_is_begin_group();
+        let brace_delta = match token.spelling().literal_catcode() {
+            Some(Catcode::BeginGroup) => ArgumentBraceDelta::Open,
+            Some(Catcode::EndGroup) => ArgumentBraceDelta::Close,
+            _ => ArgumentBraceDelta::Neither,
+        };
         if self.word_count == 0 {
-            self.outer_group_candidate = begins_group;
+            self.outer_group_candidate = brace_delta == ArgumentBraceDelta::Open;
         } else if brace_depth_before == 0 {
             self.outer_group_candidate = false;
         }
         self.word_count = self.word_count.saturating_add(1);
-        begins_group
+        brace_delta
     }
 
     const fn seal(self, brace_depth: u32) -> MacroArgumentFacts {
@@ -1530,13 +1544,17 @@ impl<G> ExecutionScratch<G> {
     ) -> Result<u32, ScratchError> {
         self.macro_words
             .append_at(&mut writer.append, token.word())?;
-        let begins_group = writer
+        match writer
             .facts
-            .settle(token, paragraph_checked, writer.brace_depth);
-        if begins_group {
-            writer.brace_depth = writer.brace_depth.saturating_add(1);
-        } else if token.spelling_is_end_group() && writer.brace_depth != 0 {
-            writer.brace_depth -= 1;
+            .settle(token, paragraph_checked, writer.brace_depth)
+        {
+            ArgumentBraceDelta::Open => {
+                writer.brace_depth = writer.brace_depth.saturating_add(1);
+            }
+            ArgumentBraceDelta::Close => {
+                writer.brace_depth = writer.brace_depth.saturating_sub(1);
+            }
+            ArgumentBraceDelta::Neither => {}
         }
         #[cfg(test)]
         {
@@ -2480,7 +2498,7 @@ mod tests {
     }
 
     #[test]
-    fn first_scan_facts_seal_beside_the_range_without_word_rereads() {
+    fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
         let mut scratch = ExecutionScratch::<()>::default();
         let matching = scratch.begin_macro_match().expect("macro match");
         let mut buffer = scratch
@@ -2494,14 +2512,16 @@ mod tests {
             brace('}', Catcode::EndGroup),
         ];
         let paragraph_token = word('p').semantic_token();
-        for word in words {
-            scratch
+        for (word, expected_depth) in words.into_iter().zip([1, 2, 2, 1, 0]) {
+            let depth = scratch
                 .append_argument_token(
                     &mut buffer,
                     ClassifiedToken::from_word(word, Some(TokenWord::pack(paragraph_token))),
                     true,
                 )
                 .expect("argument word");
+            assert_eq!(depth, expected_depth);
+            assert_eq!(buffer.brace_depth(), expected_depth);
         }
         let facts = buffer.facts();
         assert!(facts.rejects_non_long_paragraph());

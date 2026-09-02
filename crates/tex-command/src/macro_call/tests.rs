@@ -1277,6 +1277,61 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
         assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("backed-up paragraph delivery")
+                .expect("backed-up paragraph command")
+                .spelling()
+                .semantic_token(),
+            paragraph
+        );
+    });
+}
+
+#[test]
+fn extra_right_brace_recovery_keeps_inserted_paragraph_ahead_of_backed_closer() {
+    crate::test_harness::with_universe(|universe| {
+        let paragraph = install_par(universe);
+        let macro_token = install_macro(universe, "rightbracerecovery", &[Token::Param(1)]);
+        let closer = Token::Char {
+            ch: ']',
+            cat: Catcode::EndGroup,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [macro_token, closer]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut call = processor
+            .get_next()
+            .expect("macro delivery")
+            .expect("macro command");
+
+        assert_eq!(
+            processor.macro_call(&mut call),
+            Err(crate::CommandError::ParagraphInMacroArgument)
+        );
+        for expected in [paragraph, closer] {
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("recovery delivery")
+                    .expect("recovery command")
+                    .spelling()
+                    .semantic_token(),
+                expected
+            );
+        }
+        assert!(processor.command.scratch.is_quiescent());
     });
 }
 

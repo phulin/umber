@@ -52,9 +52,10 @@ collector (see `src/conditionals.rs`).
   once, then mints the writer's exact fixed-block append position, provenance-
   run boundary, delimiter rollback coordinates, brace depth, and first-scan
   facts. Each accepted delivery writes its packed word at that resident
-  position, classifies its opening-brace spelling once for both first-scan and
-  depth settlement, and advances those scalars exactly once without another
-  frame/slot lookup or processor forwarding helper. Publication validates the frame once
+  position, classifies its literal catcode once into a compact open, close, or
+  neither brace delta for both first-scan and depth settlement, and advances
+  those scalars exactly once without another frame/slot lookup or processor
+  forwarding helper. Publication validates the frame once
   and installs the already-written span and facts directly in the slot;
   delimiter-prefix holdback retains the first classification until commit.
   Sealing changes only the frame role; retirement
