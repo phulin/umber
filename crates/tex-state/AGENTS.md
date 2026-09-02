@@ -246,21 +246,20 @@ All production mutation of live TeX state should pass through `Universe` or simi
   annex codecs, mechanically decomposed into layout, annex, outer-node,
   whatsit/PDF, and private test modules. Its nested `AGENTS.md` keeps logical
   table and aggregate envelope ownership out of the codec tree.
-- `src/logical_node_table.rs` and `src/node_envelope.rs`: Reserved module
-  boundaries for pool-stable logical coordinates, borrowed accepted/candidate
-  views, and paired node+annex marks and transfer receipts. They are design
-  targets, not current production files.
+- Pool-stable logical node coordinates live in `src/fork_arena.rs`; paired
+  node-plus-annex boundaries, checkpoint marks, detached batches, and region
+  transitions live directly in `src/node_region.rs`. Do not add parallel
+  logical-table or envelope taxonomies beside those production paths.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
 - `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
   regions above the shared fixed-chunk pool, generation-checked owner-relative
-  roots and borrows, sealed `ClosureBuildMark` suffix loans, mutation-free
-  recursive transfer preflight, direct mapped cross-region construction into
-  final packed chunks without whole-node staging, address-stable
-  detach/rollback, and reason-counted structural-copy fallback; the compact
-  cutover replaces payload rebranding with unchanged logical coordinates and
-  aggregate node+annex envelope receipts;
+  roots and borrows, paired node/annex checkpoint and closure marks,
+  mutation-free recursive transfer preflight, address-stable aggregate
+  detach/rollback, and reason-counted structural-copy fallback. The resident
+  node enum and annex-word lane settle together today; the compact cutover
+  changes only their physical backing while preserving logical coordinates;
   production durable carrier cutover remains a separate migration stage.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed

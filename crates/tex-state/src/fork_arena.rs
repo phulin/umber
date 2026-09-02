@@ -1932,7 +1932,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .ok_or(ForkArenaError::InvalidChunk)
     }
 
-    fn can_seal_boundary(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+    pub(crate) fn can_seal_boundary(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
@@ -4001,6 +4001,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    pub(crate) fn can_settle_checkpoint_candidate(
+        &self,
+        boundary: &SealedBoundary<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_settlement_boundary(boundary)
+    }
+
     pub fn accept_checkpoint_candidate(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -4499,34 +4506,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         batch: DetachedBatch<Lane>,
     ) -> Result<(), DetachedBatchTransferError<Lane>> {
-        let expected = PendingBatch {
-            serial: batch.serial,
-            payload_start: batch.payload_start,
-            payload_end: batch
-                .payload_start
-                .saturating_add(batch.payload.len() as u32),
-            descriptor_start: batch.descriptor_start,
-            descriptor_end: batch
-                .descriptor_start
-                .saturating_add(batch.descriptors.len() as u32),
-        };
-        let valid = self.validate_pool(pool).and_then(|()| {
-            if batch.arena != self.owner
-                || self.pending_batch != Some(expected)
-                || self.live_payload_len() != batch.payload_start as usize
-                || self.live_descriptor_len() != batch.descriptor_start as usize
-            {
-                return Err(ForkArenaError::InvalidRegion);
-            }
-            for key in &batch.payload {
-                pool.payload.used(*key, self.owner)?;
-            }
-            for key in &batch.descriptors {
-                pool.descriptors.used(*key, self.owner)?;
-            }
-            Ok(())
-        });
-        if let Err(error) = valid {
+        if let Err(error) = self.can_reattach_batch(pool, &batch) {
             return Err(DetachedBatchTransferError { error, batch });
         }
         for (offset, key) in batch.payload.iter().copied().enumerate() {
@@ -4545,6 +4525,40 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    pub(crate) fn can_reattach_batch(
+        &self,
+        pool: &ChunkPool<T>,
+        batch: &DetachedBatch<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        let expected = PendingBatch {
+            serial: batch.serial,
+            payload_start: batch.payload_start,
+            payload_end: batch
+                .payload_start
+                .saturating_add(batch.payload.len() as u32),
+            descriptor_start: batch.descriptor_start,
+            descriptor_end: batch
+                .descriptor_start
+                .saturating_add(batch.descriptors.len() as u32),
+        };
+        self.validate_pool(pool).and_then(|()| {
+            if batch.arena != self.owner
+                || self.pending_batch != Some(expected)
+                || self.live_payload_len() != batch.payload_start as usize
+                || self.live_descriptor_len() != batch.descriptor_start as usize
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            for key in &batch.payload {
+                pool.payload.used(*key, self.owner)?;
+            }
+            for key in &batch.descriptors {
+                pool.descriptors.used(*key, self.owner)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Commits a detached suffix into another arena. All fallible destination
     /// checks precede payload rebranding or chunk-owner mutation.
     #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
@@ -4557,48 +4571,9 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: RegionValue<Lane>,
     {
-        let expected = PendingBatch {
-            serial: batch.serial,
-            payload_start: batch.payload_start,
-            payload_end: batch
-                .payload_start
-                .saturating_add(batch.payload.len() as u32),
-            descriptor_start: batch.descriptor_start,
-            descriptor_end: batch
-                .descriptor_start
-                .saturating_add(batch.descriptors.len() as u32),
-        };
-        let preflight = self.validate_pool(pool).and_then(|()| {
-            destination.validate_pool(pool)?;
-            if batch.arena != self.owner
-                || self.owner == destination.owner
-                || self.pending_batch != Some(expected)
-                || self.live_payload_len() != batch.payload_start as usize
-                || self.live_descriptor_len() != batch.descriptor_start as usize
-                || destination.active_builder
-            {
-                return Err(ForkArenaError::InvalidRegion);
-            }
-            if destination.pending_batch.is_some() {
-                return Err(ForkArenaError::ActiveBatch);
-            }
-            destination.can_seal_boundary(pool)?;
-            for key in &batch.payload {
-                if !pool.payload.is_sealed(*key, self.owner)? {
-                    return Err(ForkArenaError::UnsealedBoundary);
-                }
-            }
-            for key in &batch.descriptors {
-                if !pool.descriptors.is_sealed(*key, self.owner)? {
-                    return Err(ForkArenaError::UnsealedBoundary);
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = preflight {
+        if let Err(error) = self.can_promote_detached_batch_into(pool, destination, &batch) {
             return Err(DetachedBatchTransferError { error, batch });
         }
-
         destination
             .seal_boundary(pool)
             .expect("detached destination boundary was preflighted");
@@ -4655,6 +4630,55 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_add(promoted as u64);
         self.pending_batch = None;
         Ok((promoted_lists, batch.rebrand_values))
+    }
+
+    pub(crate) fn can_promote_detached_batch_into<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        batch: &DetachedBatch<Lane>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        let expected = PendingBatch {
+            serial: batch.serial,
+            payload_start: batch.payload_start,
+            payload_end: batch
+                .payload_start
+                .saturating_add(batch.payload.len() as u32),
+            descriptor_start: batch.descriptor_start,
+            descriptor_end: batch
+                .descriptor_start
+                .saturating_add(batch.descriptors.len() as u32),
+        };
+        self.validate_pool(pool).and_then(|()| {
+            destination.validate_pool(pool)?;
+            if batch.arena != self.owner
+                || self.owner == destination.owner
+                || self.pending_batch != Some(expected)
+                || self.live_payload_len() != batch.payload_start as usize
+                || self.live_descriptor_len() != batch.descriptor_start as usize
+                || destination.active_builder
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            if destination.pending_batch.is_some() {
+                return Err(ForkArenaError::ActiveBatch);
+            }
+            destination.can_seal_boundary(pool)?;
+            for key in &batch.payload {
+                if !pool.payload.is_sealed(*key, self.owner)? {
+                    return Err(ForkArenaError::UnsealedBoundary);
+                }
+            }
+            for key in &batch.descriptors {
+                if !pool.descriptors.is_sealed(*key, self.owner)? {
+                    return Err(ForkArenaError::UnsealedBoundary);
+                }
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn promote_batch_into<Destination>(

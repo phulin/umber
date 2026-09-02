@@ -23,6 +23,15 @@ rewriting its records. The selected design therefore separates three facts:
 - move-only aggregate envelopes say which semantic owner may admit a set of
   node and annex blocks.
 
+The logical-coordinate and aggregate-boundary prerequisites are now in
+production. `NodePool` owns the unchanged resident `Node<PageListId>` backend
+and a separate annex-word pool; every `NodeRegion` carries matching lanes.
+Closure marks, retained checkpoint marks, accepted/candidate settlement,
+history sharing, page succession, page/durable moves, rollback, rootless
+release, and retirement pair those lanes directly. The compact cutover
+replaces the physical payload stores atomically; it does not add a second
+resident node representation or change `PageListId` words.
+
 This is the prerequisite design tracked by `umber2-66p0.8.40.113.5.6`. It does
 not authorize the production record cutover. The cutover remains blocked until
 the explicit approval and implementation children named below land.
@@ -816,12 +825,11 @@ these ownership boundaries and approximate ceilings:
 - `node_record/tests.rs`, split further by codec family if it exceeds roughly
   600 lines.
 
-Logical table and ownership code belongs beside, not inside, that codec tree:
-`logical_node_table.rs` owns logical coordinates and borrowed views;
-`node_envelope.rs` owns aggregate marks and transfer receipts; existing
-`fork_arena.rs` retains list topology; and `node_region.rs` retains semantic
-roles and TeX transitions. The split lands before new behavior so review can
-distinguish mechanical movement from the coordinate and ownership changes.
+Logical table and ownership code belongs beside, not inside, that codec tree.
+`fork_arena.rs` owns logical coordinates and list topology;
+`node_region.rs` pairs the node and annex lanes at semantic boundaries and TeX
+transitions. The split lands before new codec behavior so review can
+distinguish mechanical movement from the backing-store change.
 
 ### Migration and approval boundary
 
@@ -839,9 +847,10 @@ No stage introduces a second resident node representation:
 4. Add the pool-owned logical node/annex tables and exactly-two-view fork API
    below `ForkArena`; replace every physical `RawChunkKey` in list coordinates
    and predecessor metadata while the enum remains the sole resident node.
-5. Add aggregate marks, paired envelope rotation, detach/transfer/rollback
-   receipts, dependency floors, and stale-key controls. Prove page/durable,
-   history, succession, and transient-output moves before changing backing.
+5. Pair node and annex marks at every region boundary, rotate both tails, and
+   settle detach/transfer/rollback, history, succession, and transient-output
+   moves together before changing backing. This stage is implemented with one
+   compact aggregate value and the existing `ForkArena` prepare/commit paths.
 6. In one cutover commit, replace the enum backing with `NodeRecord`, connect
    the typed annex, and delete the owned ligature, token, whatsit, and boxed
    payload fields from resident nodes.

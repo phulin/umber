@@ -9,15 +9,14 @@ use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, CheckpointMark,
-    ForkArenaCounters, ForkArenaError, OperationMark, PageMaterialLane, SealedBoundary,
-    UniqueArenaList,
+    ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, ForkArenaCounters,
+    ForkArenaError, OperationMark, PageMaterialLane, UniqueArenaList,
 };
 use crate::node::Node;
 use crate::node_region::{
-    ClosureBuildMark, DurableRole, NodePool, NodeRegion, OwnedNodeClosure, PageRole,
-    StructuralCopyReason, copy_closure_into, copy_region_root_into, structural_copy_fallback,
-    transfer_closure_into, transfer_sealed_closure_into,
+    ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
+    OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
+    structural_copy_fallback, transfer_closure_into, transfer_sealed_closure_into,
 };
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 
@@ -437,12 +436,9 @@ impl PageMaterialRegion {
     pub(crate) fn release_rootless_suffix(
         &mut self,
         pool: &mut NodePool,
-        retained: Option<CheckpointMark<PageMaterialLane>>,
+        retained: Option<NodeCheckpointMark>,
     ) -> Result<usize, ForkArenaError> {
-        let boundary = self.region.pub_arena.seal_boundary(&mut pool.chunks)?;
-        self.region
-            .pub_arena
-            .release_rootless_current_suffix(&mut pool.chunks, boundary, retained)
+        self.region.release_rootless_suffix(pool, retained)
     }
 
     pub(crate) fn copy_closure_between(
@@ -1674,61 +1670,50 @@ impl<'a> PageMaterialArena<'a> {
         self.region.cancel_closure_build(self.pool, mark)
     }
 
-    pub fn seal_boundary(&mut self) -> Result<SealedBoundary<PageMaterialLane>, ForkArenaError> {
-        self.region.pub_arena.seal_boundary(&mut self.pool.chunks)
+    pub fn seal_boundary(&mut self) -> Result<NodeSealedBoundary, ForkArenaError> {
+        self.region.seal_checkpoint_boundary(self.pool)
     }
 
     pub fn checkpoint_mark(
         &self,
-        boundary: SealedBoundary<PageMaterialLane>,
-    ) -> Result<CheckpointMark<PageMaterialLane>, ForkArenaError> {
-        self.region.pub_arena.checkpoint_mark(boundary)
+        boundary: NodeSealedBoundary,
+    ) -> Result<NodeCheckpointMark, ForkArenaError> {
+        self.region.checkpoint_mark(boundary)
     }
 
     pub fn begin_checkpoint_candidate(
         &mut self,
-        mark: CheckpointMark<PageMaterialLane>,
+        mark: NodeCheckpointMark,
     ) -> Result<(), ForkArenaError> {
-        self.region
-            .pub_arena
-            .begin_checkpoint_candidate(&mut self.pool.chunks, mark)
+        self.region.begin_checkpoint_candidate(self.pool, mark)
     }
 
     #[must_use]
-    pub fn validates_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.region.pub_arena.validates_checkpoint(mark)
+    pub fn validates_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.region.validates_checkpoint(mark)
     }
 
     #[must_use]
-    pub fn can_restore_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.region.pub_arena.can_begin_checkpoint_candidate(mark)
+    pub fn can_restore_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.region.can_begin_checkpoint_candidate(mark)
     }
 
-    pub fn restore_checkpoint(
-        &mut self,
-        mark: CheckpointMark<PageMaterialLane>,
-    ) -> Result<(), ForkArenaError> {
-        self.region
-            .pub_arena
-            .restore_accepted_checkpoint(&mut self.pool.chunks, mark)
+    pub fn restore_checkpoint(&mut self, mark: NodeCheckpointMark) -> Result<(), ForkArenaError> {
+        self.region.restore_checkpoint(self.pool, mark)
     }
 
     pub fn reject_checkpoint_candidate(
         &mut self,
-        boundary: SealedBoundary<PageMaterialLane>,
+        boundary: NodeSealedBoundary,
     ) -> Result<(), ForkArenaError> {
-        self.region
-            .pub_arena
-            .reject_checkpoint_candidate(&mut self.pool.chunks, boundary)
+        self.region.reject_checkpoint_candidate(self.pool, boundary)
     }
 
     pub fn accept_checkpoint_candidate(
         &mut self,
-        boundary: SealedBoundary<PageMaterialLane>,
+        boundary: NodeSealedBoundary,
     ) -> Result<(), ForkArenaError> {
-        self.region
-            .pub_arena
-            .accept_checkpoint_candidate(&mut self.pool.chunks, boundary)
+        self.region.accept_checkpoint_candidate(self.pool, boundary)
     }
 }
 
@@ -1872,23 +1857,20 @@ impl<'a> PageMaterialView<'a> {
     }
 
     #[must_use]
-    pub fn validates_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.state.region.pub_arena.validates_checkpoint(mark)
+    pub fn validates_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.state.region.validates_checkpoint(mark)
     }
 
     #[must_use]
-    pub fn can_restore_checkpoint(&self, mark: CheckpointMark<PageMaterialLane>) -> bool {
-        self.state
-            .region
-            .pub_arena
-            .can_begin_checkpoint_candidate(mark)
+    pub fn can_restore_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.state.region.can_begin_checkpoint_candidate(mark)
     }
 
     pub fn checkpoint_mark(
         &self,
-        boundary: SealedBoundary<PageMaterialLane>,
-    ) -> Result<CheckpointMark<PageMaterialLane>, ForkArenaError> {
-        self.state.region.pub_arena.checkpoint_mark(boundary)
+        boundary: NodeSealedBoundary,
+    ) -> Result<NodeCheckpointMark, ForkArenaError> {
+        self.state.region.checkpoint_mark(boundary)
     }
 }
 

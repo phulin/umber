@@ -10,8 +10,9 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    ArenaListView, BatchMark, ChunkPool, DetachedBatch, ForkArena, ForkArenaCounters,
-    ForkArenaError, PageMaterialLane, RegionValue, SequenceSummaryWork,
+    ArenaListView, BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena,
+    ForkArenaCounters, ForkArenaError, PageMaterialLane, RegionValue, SealedBoundary,
+    SequenceSummaryWork,
 };
 use crate::node::Node;
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
@@ -22,6 +23,24 @@ use crate::page_node_arena::PageListId;
 mod tests;
 
 type RegionNode = Node<PageListId>;
+
+pub(crate) enum NodeAnnexLane {}
+
+pub struct NodeSealedBoundary {
+    nodes: SealedBoundary<PageMaterialLane>,
+    annex: SealedBoundary<NodeAnnexLane>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeCheckpointMark {
+    nodes: CheckpointMark<PageMaterialLane>,
+    annex: CheckpointMark<NodeAnnexLane>,
+}
+
+struct NodeEnvelopeBatch {
+    nodes: DetachedBatch<PageMaterialLane>,
+    annex: DetachedBatch<NodeAnnexLane>,
+}
 
 static NEXT_NODE_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -49,6 +68,7 @@ impl core::fmt::Debug for NodeRegionId {
 struct RegionSlot {
     generation: u32,
     arena: u32,
+    annex_arena: u32,
     live: bool,
 }
 
@@ -63,6 +83,7 @@ struct RegionSlot {
 pub struct NodePool {
     id: u64,
     pub(crate) chunks: ChunkPool<RegionNode>,
+    annex_chunks: ChunkPool<u32>,
     regions: Vec<RegionSlot>,
     free_regions: Vec<u32>,
     closure_transitions: ClosureTransitionCounters,
@@ -108,6 +129,7 @@ impl NodePool {
         Self {
             id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
             chunks: ChunkPool::with_chunk_bytes(chunk_bytes),
+            annex_chunks: ChunkPool::with_chunk_bytes(65_536),
             regions: Vec::new(),
             free_regions: Vec::new(),
             closure_transitions: ClosureTransitionCounters::default(),
@@ -121,14 +143,17 @@ impl NodePool {
 
     pub(crate) fn start_region<Role>(&mut self) -> Result<NodeRegion<Role>, ForkArenaError> {
         let arena = ForkArena::new();
-        self.install_region(arena)
+        let annex_arena = ForkArena::new();
+        self.install_region(arena, annex_arena)
     }
 
     fn install_region<Role>(
         &mut self,
         arena: ForkArena<RegionNode, PageMaterialLane>,
+        annex_arena: ForkArena<u32, NodeAnnexLane>,
     ) -> Result<NodeRegion<Role>, ForkArenaError> {
         let arena_identity = arena.region_identity();
+        let annex_arena_identity = annex_arena.region_identity();
         let (slot, generation) = if let Some(slot) = self.free_regions.pop() {
             let entry = self
                 .regions
@@ -139,6 +164,7 @@ impl NodePool {
             }
             entry.live = true;
             entry.arena = arena_identity;
+            entry.annex_arena = annex_arena_identity;
             (slot, entry.generation)
         } else {
             let slot =
@@ -146,6 +172,7 @@ impl NodePool {
             self.regions.push(RegionSlot {
                 generation: 1,
                 arena: arena_identity,
+                annex_arena: annex_arena_identity,
                 live: true,
             });
             (slot, 1)
@@ -157,6 +184,7 @@ impl NodePool {
                 generation,
             },
             pub_arena: arena,
+            annex_arena,
             next_closure_build: 1,
             _role: PhantomData,
         })
@@ -173,11 +201,21 @@ impl NodePool {
             return Err(ForkArenaError::InvalidRegion);
         }
         let coordinates = roots.map(PageListId::coordinate);
-        let arena =
-            source
-                .pub_arena
-                .share_sealed_prefix(&mut self.chunks, mark.batch, &coordinates)?;
-        self.install_region(arena)
+        source
+            .pub_arena
+            .can_share_sealed_prefix(&self.chunks, &mark.batch, &coordinates)?;
+        source
+            .annex_arena
+            .can_share_sealed_prefix(&self.annex_chunks, &mark.annex_batch, &[])?;
+        let arena = source
+            .pub_arena
+            .share_sealed_prefix(&mut self.chunks, mark.batch, &coordinates)
+            .expect("paired node prefix sharing was preflighted");
+        let annex_arena = source
+            .annex_arena
+            .share_sealed_prefix(&mut self.annex_chunks, mark.annex_batch, &[])
+            .expect("paired annex prefix sharing was preflighted");
+        self.install_region(arena, annex_arena)
     }
 
     fn validate_region<Role>(&self, region: &NodeRegion<Role>) -> Result<(), ForkArenaError> {
@@ -191,6 +229,7 @@ impl NodePool {
         if !entry.live
             || entry.generation != region.id.generation
             || entry.arena != region.pub_arena.region_identity()
+            || entry.annex_arena != region.annex_arena.region_identity()
         {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -244,6 +283,9 @@ impl NodePool {
         if let Err(error) = region.pub_arena.can_retire_region(&self.chunks) {
             return Err((error, region));
         }
+        if let Err(error) = region.annex_arena.can_retire_region(&self.annex_chunks) {
+            return Err((error, region));
+        }
         let next_generation = match region.id.generation.checked_add(1) {
             Some(generation) => generation,
             None => return Err((ForkArenaError::CapacityOverflow, region)),
@@ -252,9 +294,14 @@ impl NodePool {
             .pub_arena
             .retire_region(&mut self.chunks)
             .expect("region retirement was completely preflighted");
+        region
+            .annex_arena
+            .retire_region(&mut self.annex_chunks)
+            .expect("annex retirement was completely preflighted");
         let entry = &mut self.regions[region.id.slot as usize];
         entry.live = false;
         entry.arena = 0;
+        entry.annex_arena = 0;
         entry.generation = next_generation;
         self.free_regions.push(region.id.slot);
         Ok(())
@@ -265,6 +312,7 @@ impl NodePool {
 pub struct NodeRegion<Role> {
     id: NodeRegionId,
     pub(crate) pub_arena: ForkArena<RegionNode, PageMaterialLane>,
+    annex_arena: ForkArena<u32, NodeAnnexLane>,
     next_closure_build: u64,
     _role: PhantomData<fn(Role) -> Role>,
 }
@@ -273,6 +321,131 @@ impl<Role> NodeRegion<Role> {
     #[must_use]
     pub const fn id(&self) -> NodeRegionId {
         self.id
+    }
+
+    pub(crate) fn seal_checkpoint_boundary(
+        &mut self,
+        pool: &mut NodePool,
+    ) -> Result<NodeSealedBoundary, ForkArenaError> {
+        pool.validate_region(self)?;
+        self.pub_arena.can_seal_boundary(&pool.chunks)?;
+        self.annex_arena.can_seal_boundary(&pool.annex_chunks)?;
+        let nodes = self
+            .pub_arena
+            .seal_boundary(&mut pool.chunks)
+            .expect("paired node boundary was preflighted");
+        let annex = self
+            .annex_arena
+            .seal_boundary(&mut pool.annex_chunks)
+            .expect("paired annex boundary was preflighted");
+        Ok(NodeSealedBoundary { nodes, annex })
+    }
+
+    pub(crate) fn checkpoint_mark(
+        &self,
+        boundary: NodeSealedBoundary,
+    ) -> Result<NodeCheckpointMark, ForkArenaError> {
+        let nodes = self.pub_arena.checkpoint_mark(boundary.nodes)?;
+        let annex = self
+            .annex_arena
+            .checkpoint_mark(boundary.annex)
+            .expect("paired annex boundary was sealed");
+        Ok(NodeCheckpointMark { nodes, annex })
+    }
+
+    pub(crate) fn release_rootless_suffix(
+        &mut self,
+        pool: &mut NodePool,
+        retained: Option<NodeCheckpointMark>,
+    ) -> Result<usize, ForkArenaError> {
+        let boundary = self.seal_checkpoint_boundary(pool)?;
+        let nodes = self.pub_arena.release_rootless_current_suffix(
+            &mut pool.chunks,
+            boundary.nodes,
+            retained.map(|mark| mark.nodes),
+        )?;
+        let annex = self
+            .annex_arena
+            .release_rootless_current_suffix(
+                &mut pool.annex_chunks,
+                boundary.annex,
+                retained.map(|mark| mark.annex),
+            )
+            .expect("paired annex rootless suffix was preflighted");
+        Ok(nodes.saturating_add(annex))
+    }
+
+    pub(crate) fn validates_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.pub_arena.validates_checkpoint(mark.nodes)
+            && self.annex_arena.validates_checkpoint(mark.annex)
+    }
+
+    pub(crate) fn can_begin_checkpoint_candidate(&self, mark: NodeCheckpointMark) -> bool {
+        self.pub_arena.can_begin_checkpoint_candidate(mark.nodes)
+            && self.annex_arena.can_begin_checkpoint_candidate(mark.annex)
+    }
+
+    pub(crate) fn begin_checkpoint_candidate(
+        &mut self,
+        pool: &mut NodePool,
+        mark: NodeCheckpointMark,
+    ) -> Result<(), ForkArenaError> {
+        if !self.can_begin_checkpoint_candidate(mark) {
+            return Err(ForkArenaError::InvalidCheckpoint);
+        }
+        self.pub_arena
+            .begin_checkpoint_candidate(&mut pool.chunks, mark.nodes)
+            .expect("paired node checkpoint was preflighted");
+        self.annex_arena
+            .begin_checkpoint_candidate(&mut pool.annex_chunks, mark.annex)
+            .expect("paired annex checkpoint was preflighted");
+        Ok(())
+    }
+
+    pub(crate) fn restore_checkpoint(
+        &mut self,
+        pool: &mut NodePool,
+        mark: NodeCheckpointMark,
+    ) -> Result<(), ForkArenaError> {
+        self.begin_checkpoint_candidate(pool, mark)?;
+        let boundary = self.seal_checkpoint_boundary(pool)?;
+        self.accept_checkpoint_candidate(pool, boundary)
+    }
+
+    pub(crate) fn reject_checkpoint_candidate(
+        &mut self,
+        pool: &mut NodePool,
+        boundary: NodeSealedBoundary,
+    ) -> Result<(), ForkArenaError> {
+        self.pub_arena
+            .can_settle_checkpoint_candidate(&boundary.nodes)?;
+        self.annex_arena
+            .can_settle_checkpoint_candidate(&boundary.annex)?;
+        self.pub_arena
+            .reject_checkpoint_candidate(&mut pool.chunks, boundary.nodes)
+            .expect("paired node rejection was preflighted");
+        self.annex_arena
+            .reject_checkpoint_candidate(&mut pool.annex_chunks, boundary.annex)
+            .expect("paired annex rejection was preflighted");
+        Ok(())
+    }
+
+    pub(crate) fn accept_checkpoint_candidate(
+        &mut self,
+        pool: &mut NodePool,
+        boundary: NodeSealedBoundary,
+    ) -> Result<(), ForkArenaError> {
+        self.pub_arena
+            .can_settle_checkpoint_candidate(&boundary.nodes)?;
+        self.annex_arena
+            .can_settle_checkpoint_candidate(&boundary.annex)?;
+        self.pub_arena
+            .accept_checkpoint_candidate(&mut pool.chunks, boundary.nodes)
+            .expect("paired node acceptance was preflighted");
+        self.annex_arena
+            .accept_checkpoint_candidate(&mut pool.annex_chunks, boundary.annex)
+            .expect("paired annex acceptance was preflighted");
+        Ok(())
     }
 
     #[cfg(test)]
@@ -301,17 +474,29 @@ impl<Role> NodeRegion<Role> {
         pool: &mut NodePool,
     ) -> Result<ClosureBuildMark<Role>, ForkArenaError> {
         pool.validate_region(self)?;
+        self.pub_arena.can_seal_boundary(&pool.chunks)?;
+        self.annex_arena.can_seal_boundary(&pool.annex_chunks)?;
         let serial = self.next_closure_build;
         self.next_closure_build = serial
             .checked_add(1)
             .ok_or(ForkArenaError::CapacityOverflow)?;
-        let batch = self.pub_arena.begin_batch(&mut pool.chunks)?;
+        let batch = self
+            .pub_arena
+            .begin_batch(&mut pool.chunks)
+            .expect("paired node batch was preflighted");
+        let annex_batch = self
+            .annex_arena
+            .begin_batch(&mut pool.annex_chunks)
+            .expect("paired annex batch was preflighted");
         let rollback = self.pub_arena.operation_mark(&pool.chunks);
+        let annex_rollback = self.annex_arena.operation_mark(&pool.annex_chunks);
         Ok(ClosureBuildMark {
             region: self.id,
             serial,
             batch,
+            annex_batch,
             rollback,
+            annex_rollback,
             _role: PhantomData,
         })
     }
@@ -328,7 +513,9 @@ impl<Role> NodeRegion<Role> {
         }
         let coordinates = roots.map(PageListId::coordinate);
         self.pub_arena
-            .can_share_sealed_prefix(&pool.chunks, &mark.batch, &coordinates)
+            .can_share_sealed_prefix(&pool.chunks, &mark.batch, &coordinates)?;
+        self.annex_arena
+            .can_share_sealed_prefix(&pool.annex_chunks, &mark.annex_batch, &[])
     }
 
     pub(crate) fn share_sealed_prefix<const N: usize>(
@@ -350,7 +537,9 @@ impl<Role> NodeRegion<Role> {
             return Err(ForkArenaError::InvalidRegion);
         }
         self.pub_arena
-            .restore_operation(&mut pool.chunks, mark.rollback)
+            .restore_operation(&mut pool.chunks, mark.rollback)?;
+        self.annex_arena
+            .restore_operation(&mut pool.annex_chunks, mark.annex_rollback)
     }
 
     pub(crate) fn build_suffix_contains_any_root<const N: usize>(
@@ -386,8 +575,16 @@ impl<Role> NodeRegion<Role> {
             return Err(ForkArenaError::InvalidRegion);
         }
         let coordinates = roots.map(PageListId::coordinate);
-        self.pub_arena
-            .preflight_unique_successor_adoption(&pool.chunks, &mark.batch, &coordinates)
+        self.pub_arena.preflight_unique_successor_adoption(
+            &pool.chunks,
+            &mark.batch,
+            &coordinates,
+        )?;
+        self.annex_arena.preflight_unique_successor_adoption(
+            &pool.annex_chunks,
+            &mark.annex_batch,
+            &[],
+        )
     }
 
     pub(crate) fn adopt_unique_successor<const N: usize>(
@@ -400,6 +597,9 @@ impl<Role> NodeRegion<Role> {
         let coordinates = roots.map(PageListId::coordinate);
         self.pub_arena
             .adopt_unique_successor_suffix(&mut pool.chunks, mark.batch, &coordinates)?;
+        self.annex_arena
+            .adopt_unique_successor_suffix(&mut pool.annex_chunks, mark.annex_batch, &[])
+            .expect("paired successor annex adoption was preflighted");
         pool.advance_region(self)
             .expect("unique-successor region generation was preflighted");
         Ok(())
@@ -427,6 +627,7 @@ impl<Role> NodeRegion<Role> {
     /// Preflights and detaches one self-contained recursive closure suffix.
     /// Any failure leaves all chunk envelopes attached to this region.
     #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
+    #[allow(clippy::result_large_err)] // Failure returns the sole move-only build authority.
     pub(crate) fn seal_closure(
         &mut self,
         pool: &mut NodePool,
@@ -454,6 +655,12 @@ impl<Role> NodeRegion<Role> {
         ) {
             return Err(ClosureSealError { error, mark });
         }
+        if let Err(error) =
+            self.annex_arena
+                .preflight_batch_closure(&pool.annex_chunks, &mark.annex_batch, &[])
+        {
+            return Err(ClosureSealError { error, mark });
+        }
         let batch = match self.pub_arena.seal_batch(
             &mut pool.chunks,
             mark.batch,
@@ -474,10 +681,21 @@ impl<Role> NodeRegion<Role> {
                 });
             }
         };
+        let annex_batch = self
+            .annex_arena
+            .seal_batch(&mut pool.annex_chunks, mark.annex_batch, Vec::new())
+            .expect("paired empty annex suffix sealing is infallible");
+        let annex_batch = self
+            .annex_arena
+            .detach_batch(&mut pool.annex_chunks, annex_batch)
+            .unwrap_or_else(|_| unreachable!("paired annex suffix was just sealed"));
         Ok(SealedNodeClosure {
             source: self.id,
             root,
-            batch,
+            batch: NodeEnvelopeBatch {
+                nodes: batch,
+                annex: annex_batch,
+            },
         })
     }
 
@@ -495,26 +713,29 @@ impl<Role> NodeRegion<Role> {
                 closure,
             });
         }
-        match self
+        if let Err(error) = self
             .pub_arena
-            .reattach_batch(&mut pool.chunks, closure.batch)
+            .can_reattach_batch(&pool.chunks, &closure.batch.nodes)
         {
-            Ok(()) => {
-                pool.closure_transitions.transient_rollbacks = pool
-                    .closure_transitions
-                    .transient_rollbacks
-                    .saturating_add(1);
-                Ok(())
-            }
-            Err(failure) => Err(SealedNodeClosureError {
-                error: failure.error,
-                closure: SealedNodeClosure {
-                    source: closure.source,
-                    root: closure.root,
-                    batch: failure.batch,
-                },
-            }),
+            return Err(SealedNodeClosureError { error, closure });
         }
+        if let Err(error) = self
+            .annex_arena
+            .can_reattach_batch(&pool.annex_chunks, &closure.batch.annex)
+        {
+            return Err(SealedNodeClosureError { error, closure });
+        }
+        self.pub_arena
+            .reattach_batch(&mut pool.chunks, closure.batch.nodes)
+            .unwrap_or_else(|_| unreachable!("paired node rollback was preflighted"));
+        self.annex_arena
+            .reattach_batch(&mut pool.annex_chunks, closure.batch.annex)
+            .unwrap_or_else(|_| unreachable!("paired annex rollback was preflighted"));
+        pool.closure_transitions.transient_rollbacks = pool
+            .closure_transitions
+            .transient_rollbacks
+            .saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn root(
@@ -580,7 +801,9 @@ pub struct ClosureBuildMark<Role> {
     serial: u64,
     #[allow(dead_code)] // Read by closure sealing once the production carrier cutover lands.
     batch: BatchMark<PageMaterialLane>,
+    annex_batch: BatchMark<NodeAnnexLane>,
     rollback: crate::fork_arena::OperationMark<PageMaterialLane>,
+    annex_rollback: crate::fork_arena::OperationMark<NodeAnnexLane>,
     _role: PhantomData<fn(Role) -> Role>,
 }
 
@@ -614,7 +837,7 @@ pub(crate) struct ConsumedClosureRootsReceipt<Role> {
 pub(crate) struct SealedNodeClosure<Role> {
     source: NodeRegionId,
     root: RegionRoot<Role>,
-    batch: DetachedBatch<PageMaterialLane>,
+    batch: NodeEnvelopeBatch,
 }
 
 #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
@@ -811,36 +1034,52 @@ pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
         });
     }
     let original_root = closure.root;
-    match source.pub_arena.promote_detached_batch_into(
-        &mut pool.chunks,
-        &mut destination.pub_arena,
-        closure.batch,
+    if let Err(error) = source.pub_arena.can_promote_detached_batch_into(
+        &pool.chunks,
+        &destination.pub_arena,
+        &closure.batch.nodes,
     ) {
-        Ok((coordinates, scanned)) => {
-            let [coordinate]: [_; 1] = coordinates
-                .try_into()
-                .expect("one sealed closure root produces one transferred root");
-            pool.closure_transitions.envelope_moves =
-                pool.closure_transitions.envelope_moves.saturating_add(1);
-            pool.closure_transitions.rebrand_scan_nodes = pool
-                .closure_transitions
-                .rebrand_scan_nodes
-                .saturating_add(scanned);
-            Ok(RegionRoot {
-                region: destination.id,
-                list: original_root.list.with_coordinate(coordinate),
-                _role: PhantomData,
-            })
-        }
-        Err(failure) => Err(SealedNodeClosureError {
-            error: failure.error,
-            closure: SealedNodeClosure {
-                source: source.id,
-                root: original_root,
-                batch: failure.batch,
-            },
-        }),
+        return Err(SealedNodeClosureError { error, closure });
     }
+    if let Err(error) = source.annex_arena.can_promote_detached_batch_into(
+        &pool.annex_chunks,
+        &destination.annex_arena,
+        &closure.batch.annex,
+    ) {
+        return Err(SealedNodeClosureError { error, closure });
+    }
+    let (coordinates, scanned) = source
+        .pub_arena
+        .promote_detached_batch_into(
+            &mut pool.chunks,
+            &mut destination.pub_arena,
+            closure.batch.nodes,
+        )
+        .unwrap_or_else(|_| unreachable!("paired node transfer was preflighted"));
+    let (annex_roots, annex_scanned) = source
+        .annex_arena
+        .promote_detached_batch_into(
+            &mut pool.annex_chunks,
+            &mut destination.annex_arena,
+            closure.batch.annex,
+        )
+        .unwrap_or_else(|_| unreachable!("paired annex transfer was preflighted"));
+    debug_assert!(annex_roots.is_empty());
+    debug_assert_eq!(annex_scanned, 0);
+    let [coordinate]: [_; 1] = coordinates
+        .try_into()
+        .expect("one sealed closure root produces one transferred root");
+    pool.closure_transitions.envelope_moves =
+        pool.closure_transitions.envelope_moves.saturating_add(1);
+    pool.closure_transitions.rebrand_scan_nodes = pool
+        .closure_transitions
+        .rebrand_scan_nodes
+        .saturating_add(scanned);
+    Ok(RegionRoot {
+        region: destination.id,
+        list: original_root.list.with_coordinate(coordinate),
+        _role: PhantomData,
+    })
 }
 
 /// Moves a whole self-contained closure envelope and rebrands every nested
@@ -862,6 +1101,11 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
                 &pool.chunks,
                 &destination.pub_arena,
                 &[closure.root.list.coordinate()],
+            )?;
+            closure.region.annex_arena.preflight_whole_region_transfer(
+                &pool.annex_chunks,
+                &destination.annex_arena,
+                &[],
             )
         });
     if let Err(error) = preflight {
@@ -873,11 +1117,26 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         .pub_arena
         .seal_whole_region_batch(&mut pool.chunks, vec![closure.root.list.coordinate()])
         .expect("whole-region transfer was preflighted");
+    let annex_batch = closure
+        .region
+        .annex_arena
+        .seal_whole_region_batch(&mut pool.annex_chunks, Vec::new())
+        .expect("whole-region annex transfer was preflighted");
     let promoted = closure
         .region
         .pub_arena
         .promote_batch_into(&mut pool.chunks, &mut destination.pub_arena, batch)
         .expect("whole-region promotion was preflighted");
+    let annex_promoted = closure
+        .region
+        .annex_arena
+        .promote_batch_into(
+            &mut pool.annex_chunks,
+            &mut destination.annex_arena,
+            annex_batch,
+        )
+        .expect("whole-region annex promotion was preflighted");
+    debug_assert!(annex_promoted.is_empty());
     let [coordinate]: [_; 1] = promoted
         .try_into()
         .expect("one declared closure root produces one promoted root");
@@ -927,6 +1186,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         return Err(ForkArenaError::InvalidRegion);
     }
     let operation = destination.pub_arena.operation_mark(&pool.chunks);
+    let annex_operation = destination.annex_arena.operation_mark(&pool.annex_chunks);
     let copied = copy_list_recursive::<Source, Destination>(
         &mut pool.chunks,
         &source.pub_arena,
@@ -942,6 +1202,10 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
                 .pub_arena
                 .restore_operation(&mut pool.chunks, operation)
                 .expect("copy destination rollback mark remains valid");
+            destination
+                .annex_arena
+                .restore_operation(&mut pool.annex_chunks, annex_operation)
+                .expect("copy annex rollback mark remains valid");
             return Err(error);
         }
     };
@@ -1080,4 +1344,14 @@ impl RegionValue<PageMaterialLane> for RegionNode {
     fn rebrand_region_lists(&mut self, destination_arena: u32) {
         self.visit_node_lists_mut(|list| *list = list.rebrand_arena(destination_arena));
     }
+}
+
+impl RegionValue<NodeAnnexLane> for u32 {
+    fn visit_region_lists(
+        &self,
+        _visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<NodeAnnexLane>),
+    ) {
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }

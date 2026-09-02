@@ -29,6 +29,14 @@ coarse semantic owner and TeX move/copy rule here while replacing physical-key
 admission and payload-rebranding transfers with pool-stable logical
 coordinates and paired node+annex envelope receipts.
 
+Production now couples the unchanged resident node arena and a separate annex
+word arena directly in `NodeRegion`. Checkpoint boundaries, closure-build
+marks, detached suffixes, whole-region moves, history sharing, succession,
+rollback, and retirement consume a single paired value, so neither lane can be
+admitted independently. The downstream compact-record cutover replaces these
+physical payload stores without changing the logical coordinates or semantic
+owner transitions.
+
 The following are explicitly rejected:
 
 - `PageMaterialBatch` dependency graphs and transitive batch counts;
@@ -750,7 +758,7 @@ The compact-record continuation is dependency ordered:
     views in `tex-dense-arena`, then migrate `ForkArena` coordinates and
     predecessors away from `RawChunkKey` while the owned enum remains resident.
 11. Couple node and annex cursors, physical-tail rotation, dependency floors,
-    and prepared detach/transfer/rollback receipts in `NodeRegion`.
+    and detach/transfer/rollback in `NodeRegion`. This stage is implemented.
 12. Resume the atomic enum-to-record cutover only after the explicit logical
     table/envelope approval and focused coordinate/transfer gates pass.
 13. Run the authenticated copy/allocation census and seek the existing final

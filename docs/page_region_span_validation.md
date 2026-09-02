@@ -36,6 +36,11 @@ envelope supplies semantic admission. `PageListSpan` binds both borrowed
 proofs. Exactly those two table views exist during an edit; at rest the
 accepted owner lends the same interface.
 
+The production checkpoint boundary is one opaque node-plus-annex mark.
+Candidate start, acceptance, rejection, history retention, and succession
+settle both lanes together through `NodeRegion`; checkpoint capture and
+acceptance only copy that fixed-size mark and allocate no payload.
+
 ## Validation boundaries
 
 | Boundary                 | Input                                                                                             | Validation and result                                                                                                                                                                                                                                                                                                                                                                      |

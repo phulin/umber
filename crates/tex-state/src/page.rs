@@ -3,13 +3,11 @@
 #[cfg(test)]
 mod state_hash;
 
-use crate::fork_arena::{
-    CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane,
-};
+use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
-use crate::node_region::{NodePool, NodeRegionId, PageClosureBuildMark};
+use crate::node_region::{NodeCheckpointMark, NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::page_node_arena::{PageListSpan, PageMaterialRegion, PageMaterialView};
 use crate::scaled::Scaled;
@@ -890,7 +888,7 @@ pub struct PageRegionCheckpointKey {
 #[derive(Clone, Copy)]
 struct PageRegionCheckpoint {
     key: PageRegionCheckpointKey,
-    nodes: CheckpointMark<PageMaterialLane>,
+    nodes: NodeCheckpointMark,
     builder: PageCheckpointMark,
 }
 
@@ -1184,7 +1182,7 @@ impl PageRegionHistory {
     pub(crate) fn validates_node_checkpoint(
         &self,
         key: PageRegionCheckpointKey,
-        mark: CheckpointMark<PageMaterialLane>,
+        mark: NodeCheckpointMark,
     ) -> bool {
         self.region(key).is_some_and(|region| {
             region.checkpoint(key).is_some_and(|checkpoint| {
@@ -1197,7 +1195,7 @@ impl PageRegionHistory {
     pub(crate) fn arena_checkpoint(
         &self,
         key: PageRegionCheckpointKey,
-    ) -> Option<CheckpointMark<PageMaterialLane>> {
+    ) -> Option<NodeCheckpointMark> {
         self.region(key)
             .and_then(|region| region.arena_checkpoint(key))
     }
@@ -1586,7 +1584,7 @@ impl PageRegion {
     pub(crate) fn arena_checkpoint(
         &self,
         key: PageRegionCheckpointKey,
-    ) -> Option<CheckpointMark<PageMaterialLane>> {
+    ) -> Option<NodeCheckpointMark> {
         self.checkpoint(key).map(|checkpoint| checkpoint.nodes)
     }
 

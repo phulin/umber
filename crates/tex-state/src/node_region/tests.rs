@@ -83,6 +83,19 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
     let parent = source
         .publish_owned(&mut pool, [boxed(child.list)])
         .expect("parent");
+    let mut annex_builder = source
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("whole-region annex builder");
+    annex_builder.push(137).expect("whole-region annex word");
+    let annex = annex_builder.seal().expect("whole-region annex");
+    let annex_address = source
+        .annex_arena
+        .list(&pool.annex_chunks, annex)
+        .expect("source annex")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("source annex address");
     let closure = source
         .into_closure(&pool, parent)
         .map_err(|(error, _)| error)
@@ -111,6 +124,15 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
         "whole-envelope movement preserves payload addresses"
     );
     assert_eq!(destination.counters().source_nodes_copied, 0);
+    let moved_annex = destination
+        .annex_arena
+        .list(&pool.annex_chunks, annex)
+        .expect("moved annex");
+    assert_eq!(moved_annex.iter().copied().collect::<Vec<_>>(), [137]);
+    assert_eq!(
+        moved_annex.get(0).map(std::ptr::from_ref),
+        Some(annex_address)
+    );
 }
 
 #[test]
@@ -429,6 +451,291 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
     assert_eq!(destination.counters().resident_payload_clones, 0);
     assert_eq!(pool.closure_transition_counters().envelope_moves, 1);
     assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 0);
+}
+
+#[test]
+fn closure_transfer_moves_node_and_annex_suffix_together() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("aggregate closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(83)])
+        .expect("node suffix");
+    let mut annex_builder = source
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("annex suffix builder");
+    annex_builder.push(101).expect("first annex word");
+    annex_builder.push(103).expect("second annex word");
+    let annex = annex_builder.seal().expect("annex suffix");
+    let annex_address = source
+        .annex_arena
+        .list(&pool.annex_chunks, annex)
+        .expect("source annex")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("annex address");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("closure roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("sealed aggregate suffix");
+    assert!(source.annex_arena.list(&pool.annex_chunks, annex).is_err());
+
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .map_err(|failure| failure.error)
+        .expect("aggregate transfer");
+    let moved_annex = destination
+        .annex_arena
+        .list(&pool.annex_chunks, annex)
+        .expect("destination annex");
+    assert_eq!(moved_annex.iter().copied().collect::<Vec<_>>(), [101, 103]);
+    assert_eq!(
+        moved_annex.get(0).map(std::ptr::from_ref),
+        Some(annex_address),
+        "annex transfer preserves the physical suffix"
+    );
+    assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 0);
+    assert_eq!(destination.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn annex_preflight_failure_returns_the_whole_closure_for_exact_rollback() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let mark = source
+        .begin_closure_build(&mut pool)
+        .expect("aggregate closure boundary");
+    let root = source
+        .publish_owned(&mut pool, [Node::Penalty(89)])
+        .expect("node suffix");
+    let mut annex_builder = source
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("annex suffix builder");
+    annex_builder.push(107).expect("annex word");
+    let annex = annex_builder.seal().expect("annex suffix");
+    let receipt = source
+        .consumed_closure_roots_receipt(&mark)
+        .expect("closure roots consumed");
+    let closure = source
+        .seal_closure(&mut pool, mark, root, receipt)
+        .expect("sealed aggregate suffix");
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    let mut open_destination_annex =
+        crate::fork_arena::ActiveListBuilder::<u32, NodeAnnexLane>::vacant();
+    destination
+        .annex_arena
+        .open_active_list(&pool.annex_chunks, &mut open_destination_annex)
+        .expect("open destination annex builder");
+
+    let failure = transfer_sealed_closure_into(&mut pool, &mut source, closure, &mut destination)
+        .expect_err("open annex destination must reject before node mutation");
+    assert_eq!(failure.error, ForkArenaError::InvalidRegion);
+    source
+        .rollback_closure(&mut pool, failure.closure)
+        .map_err(|failure| failure.error)
+        .expect("exact aggregate rollback");
+    assert_eq!(source.list(&pool, root).expect("restored nodes").len(), 1);
+    assert_eq!(
+        source
+            .annex_arena
+            .list(&pool.annex_chunks, annex)
+            .expect("restored annex")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [107]
+    );
+}
+
+#[test]
+fn closure_boundary_rotates_node_and_annex_tails() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let prefix = source
+        .publish_owned(&mut pool, [Node::Penalty(109)])
+        .expect("node prefix");
+    let mut prefix_annex_builder = source
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("annex prefix builder");
+    prefix_annex_builder.push(113).expect("annex prefix");
+    let prefix_annex = prefix_annex_builder.seal().expect("annex prefix list");
+    let prefix_node_address = source
+        .list(&pool, prefix)
+        .expect("prefix node")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("prefix node address");
+    let prefix_annex_address = source
+        .annex_arena
+        .list(&pool.annex_chunks, prefix_annex)
+        .expect("prefix annex")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("prefix annex address");
+
+    let _mark = source
+        .begin_closure_build(&mut pool)
+        .expect("paired boundary");
+    let suffix = source
+        .publish_owned(&mut pool, [Node::Penalty(127)])
+        .expect("node suffix");
+    let mut suffix_annex_builder = source
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("annex suffix builder");
+    suffix_annex_builder.push(131).expect("annex suffix");
+    let suffix_annex = suffix_annex_builder.seal().expect("annex suffix list");
+    let suffix_node_address = source
+        .list(&pool, suffix)
+        .expect("suffix node")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("suffix node address");
+    let suffix_annex_address = source
+        .annex_arena
+        .list(&pool.annex_chunks, suffix_annex)
+        .expect("suffix annex")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("suffix annex address");
+
+    assert_ne!(prefix_node_address, suffix_node_address);
+    assert_ne!(prefix_annex_address, suffix_annex_address);
+    assert_eq!(pool.annex_chunks.chunk_byte_budget(), 65_536);
+    assert!(
+        source
+            .annex_arena
+            .payload_chunk_capacity(&pool.annex_chunks)
+            <= 16_384
+    );
+}
+
+#[test]
+fn checkpoint_fork_accepts_or_rejects_node_and_annex_as_one_pair() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut region = pool.start_region::<PageRole>().expect("region");
+    region
+        .publish_owned(&mut pool, [Node::Penalty(139)])
+        .expect("checkpoint prefix node");
+    let mut prefix_annex_builder = region
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("checkpoint prefix annex builder");
+    prefix_annex_builder.push(149).expect("prefix annex word");
+    prefix_annex_builder.seal().expect("prefix annex");
+    let checkpoint = region
+        .seal_checkpoint_boundary(&mut pool)
+        .and_then(|boundary| region.checkpoint_mark(boundary))
+        .expect("aggregate checkpoint");
+
+    let accepted = region
+        .publish_owned(&mut pool, [Node::Penalty(151)])
+        .expect("accepted suffix node");
+    let mut accepted_annex_builder = region
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("accepted suffix annex builder");
+    accepted_annex_builder
+        .push(157)
+        .expect("accepted annex word");
+    let accepted_annex = accepted_annex_builder.seal().expect("accepted annex");
+    let accepted_address = region
+        .annex_arena
+        .list(&pool.annex_chunks, accepted_annex)
+        .expect("accepted annex view")
+        .get(0)
+        .map(std::ptr::from_ref)
+        .expect("accepted annex address");
+
+    region
+        .begin_checkpoint_candidate(&mut pool, checkpoint)
+        .expect("begin paired candidate");
+    let rejected = region
+        .publish_owned(&mut pool, [Node::Penalty(163)])
+        .expect("rejected node");
+    let mut rejected_annex_builder = region
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("rejected annex builder");
+    rejected_annex_builder
+        .push(167)
+        .expect("rejected annex word");
+    let rejected_annex = rejected_annex_builder.seal().expect("rejected annex");
+    let rejection = region
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("rejection boundary");
+    region
+        .reject_checkpoint_candidate(&mut pool, rejection)
+        .expect("reject pair");
+    assert!(region.list(&pool, rejected).is_err());
+    assert!(
+        region
+            .annex_arena
+            .list(&pool.annex_chunks, rejected_annex)
+            .is_err()
+    );
+    assert_eq!(
+        region.list(&pool, accepted).expect("accepted node").len(),
+        1
+    );
+    assert_eq!(
+        region
+            .annex_arena
+            .list(&pool.annex_chunks, accepted_annex)
+            .expect("accepted annex restored")
+            .get(0)
+            .map(std::ptr::from_ref),
+        Some(accepted_address)
+    );
+
+    region
+        .begin_checkpoint_candidate(&mut pool, checkpoint)
+        .expect("begin accepted candidate");
+    let candidate = region
+        .publish_owned(&mut pool, [Node::Penalty(173)])
+        .expect("candidate node");
+    let mut candidate_annex_builder = region
+        .annex_arena
+        .begin_builder(&mut pool.annex_chunks)
+        .expect("candidate annex builder");
+    candidate_annex_builder
+        .push(179)
+        .expect("candidate annex word");
+    let candidate_annex = candidate_annex_builder.seal().expect("candidate annex");
+    let acceptance = region
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("acceptance boundary");
+    region
+        .accept_checkpoint_candidate(&mut pool, acceptance)
+        .expect("accept pair");
+    assert!(region.list(&pool, accepted).is_err());
+    assert!(
+        region
+            .annex_arena
+            .list(&pool.annex_chunks, accepted_annex)
+            .is_err()
+    );
+    assert_eq!(
+        region.list(&pool, candidate).expect("candidate node").len(),
+        1
+    );
+    assert_eq!(
+        region
+            .annex_arena
+            .list(&pool.annex_chunks, candidate_annex)
+            .expect("candidate annex")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [179]
+    );
 }
 
 #[test]

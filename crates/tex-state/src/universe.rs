@@ -14,7 +14,7 @@ use crate::env::{
     DurableBoxState, DurableFormState, StateError,
 };
 use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
-use crate::fork_arena::{CheckpointMark, OperationMark, PageMaterialLane};
+use crate::fork_arena::{OperationMark, PageMaterialLane};
 use crate::generation::{
     CheckpointGenerationOwner, GenerationBrand, GenerationCursor, GenerationOwner, with_generation,
 };
@@ -29,6 +29,7 @@ use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{NodeArenaError, PageListId};
+use crate::node_region::NodeCheckpointMark;
 use crate::page::{
     AcceptedPageRegionHistoryTail, PageCheckpointMark, PageRegionCheckpointKey, PageRegionHistory,
 };
@@ -765,7 +766,7 @@ pub enum NodePromotionError {
 
 /// Fixed-size tex-state portion of a retained aggregate checkpoint.
 pub type StateCheckpointMark<G, Input = DenseStateCursor> =
-    BoundedStateMark<JournalCursor<G>, DurableBoxCursor, CheckpointMark<PageMaterialLane>, Input>;
+    BoundedStateMark<JournalCursor<G>, DurableBoxCursor, NodeCheckpointMark, Input>;
 
 /// Coarse generation owner plus bounded state cursors.
 pub type StateCheckpoint<G, Input = DenseStateCursor> =
@@ -2647,7 +2648,7 @@ impl<G> Universe<G> {
 
     fn state_checkpoint_at(
         &mut self,
-        page: CheckpointMark<PageMaterialLane>,
+        page: NodeCheckpointMark,
     ) -> Result<StateCheckpoint<G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
         let owner = core.checkpoint_generation_owner();
