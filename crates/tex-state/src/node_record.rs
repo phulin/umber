@@ -269,11 +269,18 @@ fn decode_print_sink(value: u32) -> Option<PrintSink> {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct NodeRecord<Lane = PageMaterialLane> {
     header: NonZeroU32,
     words: [u32; 7],
     lane: PhantomData<fn(&Lane) -> &Lane>,
+}
+
+impl<Lane> Copy for NodeRecord<Lane> {}
+
+impl<Lane> Clone for NodeRecord<Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<Lane> NodeRecord<Lane> {
@@ -594,14 +601,16 @@ impl NodeRecord<PageMaterialLane> {
                 let mut payload = Vec::with_capacity(23);
                 encode_page_list(&mut payload, value.numerator);
                 encode_page_list(&mut payload, value.denominator);
-                payload.push(match value.thickness {
-                    FractionThickness::Default => u32::MAX,
-                    FractionThickness::Explicit(value) => scaled_word(value),
-                });
+                let (thickness, default_thickness) = match value.thickness {
+                    FractionThickness::Default => (0, true),
+                    FractionThickness::Explicit(value) => (scaled_word(value), false),
+                };
+                payload.push(thickness);
                 payload.push(value.left_delimiter.unwrap_or_default());
                 payload.push(value.right_delimiter.unwrap_or_default());
                 let flags = bool_word(value.left_delimiter.is_some())
-                    | (bool_word(value.right_delimiter.is_some()) << 1);
+                    | (bool_word(value.right_delimiter.is_some()) << 1)
+                    | (bool_word(default_thickness) << 2);
                 Self::with_key(
                     NodeKind::FractionNoad,
                     0,
@@ -873,7 +882,7 @@ impl NodeRecord<PageMaterialLane> {
                     superscript: decode_math_field(payload, &mut cursor)?,
                 }))
             }
-            NodeKind::FractionNoad if subtype == 0 && flags & !3 == 0 && words[6] == 0 => {
+            NodeKind::FractionNoad if subtype == 0 && flags & !7 == 0 && words[6] == 0 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<FractionPayload>(self))?;
                 if payload.len() != 23 {
@@ -888,7 +897,7 @@ impl NodeRecord<PageMaterialLane> {
                 Some(Node::FractionNoad(MathFraction {
                     numerator,
                     denominator,
-                    thickness: if thickness == u32::MAX {
+                    thickness: if flags & 4 != 0 {
                         FractionThickness::Default
                     } else {
                         FractionThickness::Explicit(decode_scaled(thickness))
@@ -1833,7 +1842,7 @@ fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Option<Node> {
         24 if words[6] == 0 && flags & !0xf == 0 => {
             let payload =
                 annex.resolve_fixed_shared(key_from_record::<PdfThreadPayload>(record))?;
-            if payload.len() != 17 {
+            if payload.len() != 16 {
                 return None;
             }
             Whatsit::PdfThread(Box::new(PdfThreadNode {
@@ -1990,29 +1999,26 @@ impl NodeAnnexArena {
     }
 
     pub(crate) fn resolve_fixed<Kind>(&mut self, key: AnnexKey<Kind>) -> Option<&[u32]> {
-        let reject = |arena: &mut Self| {
-            arena.metrics.stale_rejections += 1;
-            None
-        };
         if key.owner != self.owner || key.word_len == 0 {
-            return reject(self);
+            self.metrics.stale_rejections += 1;
+            return None;
         }
         let ordinal = key.block_ordinal as usize;
         let offset = key.word_offset as usize;
         let len = key.word_len as usize;
-        let Some(block) = self.blocks.get(ordinal) else {
-            return reject(self);
-        };
-        if block.logical_incarnation != key.logical_block_incarnation
-            || offset
-                .checked_add(len)
-                .is_none_or(|end| end > block.initialized)
-            || block.words.get(offset).copied() != Some(key.publication_serial)
-        {
-            return reject(self);
+        let valid = self.blocks.get(ordinal).is_some_and(|block| {
+            block.logical_incarnation == key.logical_block_incarnation
+                && offset
+                    .checked_add(len)
+                    .is_some_and(|end| end <= block.initialized)
+                && block.words.get(offset).copied() == Some(key.publication_serial)
+        });
+        if !valid {
+            self.metrics.stale_rejections += 1;
+            return None;
         }
         self.metrics.direct_lookups += 1;
-        block.words.get(offset + 1..offset + len)
+        self.blocks[ordinal].words.get(offset + 1..offset + len)
     }
 
     pub(crate) fn resolve_fixed_shared<Kind>(&self, key: AnnexKey<Kind>) -> Option<&[u32]> {
