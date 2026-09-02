@@ -367,12 +367,13 @@ the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
 Raw and expanded command delivery uses separate concrete destination loops.
-Each active request
-owns one caller-provided `Option<CurrentCommand<G>>`. Pointer-sized
-`EmptyCommand` reborrows prove that resident input writes only that slot. Each
-source returns only the scalar packed-resolution fact, so no command reference
-crosses the input-top transition. `CommandState` reclaims its original
-destination, consumes the resolver's already-decoded literal catcode for
+Each active request owns one caller-provided `Option<CurrentCommand<G>>`.
+Every concrete resident arm advances its existing storage-domain cursor and
+ends that borrow with only the packed word, origin, position, and source
+scalars. One branch-independent `EmptyCommand::write_resolved_delivery` call
+then writes only that caller-owned slot, so no command reference crosses the
+input-top transition. `CommandState` reclaims its original destination,
+consumes the resolver's already-decoded literal catcode for
 required brace handling, applies one-delivery suppression, and returns only a
 copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
@@ -909,11 +910,11 @@ resident transition reads the `InputStack` top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal resident-
 top enum, repeats no row discrimination, and returns no cursor carrier. Its
 source branch lends the row and resident slot together, while its concrete
-replay, durable, attempt, and macro-argument arms borrow the admitted span
-directly;
-each writes the caller's final command and advances the compact position before
-that top borrow ends. The same transition settles fuel, suppression, alignment,
-or parameter replay and returns only its final status. No cursor/token carrier,
+replay, durable, attempt, macro-body, and macro-argument arms borrow the
+admitted span directly. Each advances only its owning cursor before ending that
+top borrow, then enters the same branch-independent final-command write and
+settlement tail. The same transition settles fuel, suppression, alignment, or
+parameter replay and returns only its final status. No cursor/token carrier,
 intermediate delivery result, second top lookup, or diagnostic revision write
 crosses that boundary. The stored branches have no wrapper or status of their
 own: admission chooses the exact top-row tag once, and the warm branch performs one packed load

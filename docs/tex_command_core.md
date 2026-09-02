@@ -185,12 +185,13 @@ reaching either loop is already a character or a packed stable
 control-sequence identity.
 
 Each loop is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. A reference-only
-`EmptyCommand` lends that slot to the resident input row, which passes its packed word directly to the
-dense meaning lookup, which writes spelling, resolved meaning, and delivery
-facts into the same address and returns only the scalar packed-resolution fact.
-The authoritative `CommandState` resident transition then reclaims its
-original destination: it applies one-delivery
+`Option<CurrentCommand<G>>` slot for that active request. Each concrete
+resident arm advances only its own cursor and yields the packed word, origin,
+position, and source scalars. After that borrow ends, one branch-independent
+`EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
+and delivery facts into the caller's address and returns only the scalar packed-
+resolution fact. The authoritative `CommandState` resident transition then
+reclaims its original destination: it applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
 can require it. That transition reads the semantic top index once, matches the
@@ -213,9 +214,10 @@ authority. A replay completion fence separately names the exact input level
 whose retirement owns publication; ordinary resident delivery never polls it.
 Its storage-lifetime tag becomes the input row's concrete replay, durable, or
 attempt variant when the level is created; delivery dispatches directly from
-that top-row tag, borrows the already-known domain, writes
-the spelling, raw delivery coordinate, only-present provenance, and input
-flags directly into `CurrentCommand`, and advances the fixed frame in place.
+that top-row tag, borrows the already-known domain, and advances the fixed frame
+in place. The common post-borrow tail writes the spelling, raw delivery
+coordinate, only-present provenance, and input flags directly into
+`CurrentCommand`.
 Stored-token, macro-body, and macro-argument delivery does not republish the
 command's compact coordinate into processor state. An uncommon backup or
 handoff proves freshness on demand from that coordinate, the authoritative
@@ -1918,15 +1920,15 @@ restart to an exhausted v-template after §1131's `do_endv` has inspected and
 released its retained boundary. No exhaustion status, second top lookup, or
 repeated owner validation returns through the processor. Terminal token input
 and a v-template still waiting for `do_endv` remain explicit cold token
-boundaries; source EOF remains the cold file-warning/framing boundary. The source branch lends its row and checked slot
-together, tokenizes into the caller's final command slot, and advances the
-row's compact position before ending that borrow. The stored-token branch lends
-its cursor directly, selects its admitted replay, attempt, or durable span,
-loads one packed word, advances its one owning cursor, intercepts `OutParameter` in place,
-and otherwise resolves into that same slot before the top borrow ends. It
-returns no stored-top wrapper or stored-advance result to redispatch. Macro-
-argument branches likewise project their resident packed word and meaning into
-the final slot. `advance_resident_command_into` neither looks the top up
+boundaries; source EOF remains the cold file-warning/framing boundary. The
+source branch lends its row and checked slot together, tokenizes one word, and
+advances the row's compact position before ending that borrow. The stored-token
+branch lends its cursor directly, selects its admitted replay, attempt, or
+durable span, loads one packed word, advances its one owning cursor, and
+intercepts `OutParameter` in place. Macro-body and macro-argument branches
+likewise advance only their resident cursors. Every ordinary arm then reaches
+the same final-slot resolution and settlement tail; no arm owns a separate
+command admission. `advance_resident_command_into` neither looks the top up
 again nor receives a token/cursor carrier. Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the

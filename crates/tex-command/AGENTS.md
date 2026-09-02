@@ -337,11 +337,13 @@ collector (see `src/conditionals.rs`).
   resident replay cursor, including its logical position and run/segment
   coordinate; durable and attempt rows journal their packed-frame position. A
   later cold retirement, limit, or flag mutation records
-  the remaining token state separately in the same ordered history. The three branches share
-  direct final-command writing and common post-borrow settlement, while
-  preserving their distinct storage owners. Source, token-list, and macro-
-  argument cursors therefore share a single top access, matching first-touch
-  transition, direct final-command write, fuel/alignment/parameter settlement,
+  the remaining token state separately in the same ordered history. Every arm
+  ends its storage borrow with only the word, origin, position, and source
+  scalars required by one branch-independent final-command write and common
+  post-borrow settlement, while preserving its distinct cursor owner. Source,
+  token-list, macro-body, and macro-argument cursors therefore share a single
+  top access, matching first-touch transition, direct final-command write,
+  fuel/alignment/parameter settlement,
   restartable exhaustion pop, retirement observation/alignment/replay settlement,
   without a callback, returned exhaustion result, or diagnostic invalidation
   write. A cold diagnostic boundary instead captures the exposed packed frame;

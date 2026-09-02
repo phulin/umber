@@ -187,7 +187,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         1,
         "resident input words must resolve through one final-slot write"
     );
-    assert!(input_history.contains(".write_resolved_delivery("));
+    assert_eq!(
+        input_history.matches(".write_resolved_delivery(").count(),
+        1,
+        "all resident variants must share one final-slot admission tail"
+    );
     assert!(!levels.contains("destination.write_resolved_delivery("));
     for retired in [
         "RawDeliverySlot",
@@ -240,6 +244,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         "let transition = match",
         "match transition",
         "InputTopTransition",
+        "ResidentDeliveryCarrier",
+        "deliver_stored_word",
         "fallback",
         "cache",
         "threshold",
@@ -249,15 +255,18 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert!(resident_front.contains("return self.settle_resident_delivery("));
+    assert_eq!(
+        resident_front
+            .matches("return self.settle_resident_delivery(")
+            .count(),
+        1,
+        "all resident variants must share one settlement tail"
+    );
     let macro_argument_arm = resident_front
         .split("InputLevel::MacroArgument(top) =>")
         .nth(1)
         .expect("locate direct macro-argument arm");
-    assert!(
-        macro_argument_arm
-            .contains("top\n                        .advance_delivery(&self.scratch)")
-    );
+    assert!(macro_argument_arm.contains(".advance_delivery(&self.scratch)"));
     assert!(!macro_argument_arm.contains("top.position()"));
     assert!(!macro_argument_arm.contains("word.token_word()"));
     assert!(!macro_argument_arm.contains("word.origin()"));
