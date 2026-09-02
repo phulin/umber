@@ -187,7 +187,8 @@ impl<'a> PdfValueCursor<'a> {
             PdfObject::Value(value) => Self::value(value),
             PdfObject::Stream { dictionary, .. }
             | PdfObject::EncodedStream { dictionary, .. }
-            | PdfObject::FormXObject { dictionary, .. } => Self::dictionary(dictionary),
+            | PdfObject::FormXObject { dictionary, .. }
+            | PdfObject::ImageXObject { dictionary, .. } => Self::dictionary(dictionary),
             PdfObject::Annotation(_)
             | PdfObject::Destination(_)
             | PdfObject::NamedDestination(_)
@@ -200,8 +201,7 @@ impl<'a> PdfValueCursor<'a> {
             | PdfObject::ThreadList(_)
             | PdfObject::Thread(_)
             | PdfObject::Bead(_)
-            | PdfObject::Raw(_)
-            | PdfObject::ImageXObject { .. } => Self { stack: Vec::new() },
+            | PdfObject::Raw(_) => Self { stack: Vec::new() },
         }
     }
 }

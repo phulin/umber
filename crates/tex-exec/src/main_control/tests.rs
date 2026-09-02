@@ -10874,6 +10874,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
             image.dimensions().depth,
             Scaled::from_raw(3 * Scaled::UNITY)
         );
+        assert_eq!(image.attributes(), b"/Interpolate true");
         assert!(mode_vec(&control, stores).is_empty());
         control
             .capture_checkpoint(
@@ -11008,6 +11009,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 depth: Scaled::from_raw(13),
             },
             0,
+            Vec::new(),
         ))
         .expect("reference target image");
         assert_eq!(image.id().raw(), 1);

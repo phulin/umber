@@ -99,7 +99,7 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
                 concat!(
                     "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
                     "\\pdfobj reserveobjnum\\pdfobj reserveobjnum\\pdfobj reserveobjnum",
-                    "\\pdfximage{figure.pdf}",
+                    "\\pdfximage attr{/Group <</I false /K false /S /Transparency>>}{figure.pdf}",
                     "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
                 )
                 .as_bytes(),
@@ -125,6 +125,10 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
     // identity even when earlier allocations advanced the shared object table.
     assert_eq!(image.id().raw(), 4);
     assert_eq!(image.resource(), 1);
+    assert_eq!(
+        image.attributes(),
+        b"/Group <</I false /K false /S /Transparency>>"
+    );
     assert!(tex_state::SharedBytes::ptr_eq(
         &image.shared_bytes(),
         &acquired
@@ -136,6 +140,7 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
     )
     .expect("external-image finalization input");
     let finalized_image = input.images.values().next().expect("final image input");
+    assert_eq!(finalized_image.attributes, image.attributes());
     assert!(tex_state::SharedBytes::ptr_eq(
         &finalized_image.bytes,
         &acquired
@@ -165,6 +170,26 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
             .expect("image reference")
             .number,
         4
+    );
+    let form = query
+        .dictionary(entries[0].1.referenced_id().expect("image reference"))
+        .expect("imported image is a Form XObject");
+    let group = form
+        .get(b"Group")
+        .and_then(|value| value.as_dictionary())
+        .expect("image attributes preserve the transparency group");
+    let subtype = group
+        .get(b"S")
+        .and_then(|value| value.name())
+        .expect("transparency group has a subtype");
+    assert_eq!(subtype.as_ref(), b"Transparency");
+    assert_eq!(
+        group.get(b"I").and_then(|value| value.boolean()),
+        Some(false)
+    );
+    assert_eq!(
+        group.get(b"K").and_then(|value| value.boolean()),
+        Some(false)
     );
 }
 

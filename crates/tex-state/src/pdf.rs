@@ -363,6 +363,7 @@ pub struct PdfExternalImageRecord {
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
     color_space_object: i32,
+    attributes: SharedBytes,
     bytes: SharedBytes,
     mask_object: Option<u32>,
 }
@@ -659,6 +660,7 @@ struct PdfExternalImageEntry {
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
     color_space_object: i32,
+    attributes: SharedBytes,
     payload: PdfPayloadId,
     mask_object: Option<u32>,
 }
@@ -697,6 +699,11 @@ impl PdfExternalImageRecord {
     #[must_use]
     pub const fn color_space_object(&self) -> i32 {
         self.color_space_object
+    }
+
+    #[must_use]
+    pub fn attributes(&self) -> &[u8] {
+        &self.attributes
     }
 
     #[must_use]
@@ -846,8 +853,64 @@ struct PdfFormatImage {
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
     color_space_object: i32,
+    attributes: Vec<u8>,
     bytes: Vec<u8>,
     mask_object: Option<u32>,
+}
+
+/// Schema-1 image rows lacked `\pdfximage` attributes. Keep the exact old
+/// bincode shape so already-authenticated generated formats remain loadable;
+/// their image list is ordinarily empty, and any retained legacy image has
+/// the only semantics that schema could represent: no attributes.
+#[derive(Deserialize)]
+struct PdfFormatStateV1 {
+    version: u32,
+    enabled: bool,
+    next_object: u32,
+    next_form_resource: u32,
+    raw_objects: Vec<PdfFormatRawObject>,
+    forms: Vec<PdfFormatForm>,
+    external_images: Vec<PdfFormatImageV1>,
+    glyph_to_unicode: Vec<PdfGlyphToUnicode>,
+}
+
+#[derive(Deserialize)]
+struct PdfFormatImageV1 {
+    id: u32,
+    identity: [u8; 32],
+    metadata: PdfExternalImageMetadata,
+    dimensions: PdfExternalImageDimensions,
+    color_space_object: i32,
+    bytes: Vec<u8>,
+    mask_object: Option<u32>,
+}
+
+impl From<PdfFormatStateV1> for PdfFormatState {
+    fn from(format: PdfFormatStateV1) -> Self {
+        Self {
+            version: 2,
+            enabled: format.enabled,
+            next_object: format.next_object,
+            next_form_resource: format.next_form_resource,
+            raw_objects: format.raw_objects,
+            forms: format.forms,
+            external_images: format
+                .external_images
+                .into_iter()
+                .map(|image| PdfFormatImage {
+                    id: image.id,
+                    identity: image.identity,
+                    metadata: image.metadata,
+                    dimensions: image.dimensions,
+                    color_space_object: image.color_space_object,
+                    attributes: Vec::new(),
+                    bytes: image.bytes,
+                    mask_object: image.mask_object,
+                })
+                .collect(),
+            glyph_to_unicode: format.glyph_to_unicode,
+        }
+    }
 }
 
 /// An append-only font-output mutation. The log makes snapshots cheap and
@@ -2686,12 +2749,13 @@ impl<G> PdfState<G> {
                 metadata: image.metadata,
                 dimensions: image.dimensions,
                 color_space_object: image.color_space_object,
+                attributes: image.attributes.to_vec(),
                 bytes: self.payloads.get(image.payload).to_vec(),
                 mask_object: image.mask_object,
             })
             .collect();
         Ok(Some(PdfFormatState {
-            version: 1,
+            version: 2,
             enabled: self.enabled,
             next_object: self.next_object,
             next_form_resource: self.next_form_resource,
@@ -2730,8 +2794,11 @@ impl<G> PdfState<G> {
         import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         import_nodes: impl FnMut(u32, &[u8]) -> Result<StateHashFragment, String>,
     ) -> Result<Self, String> {
-        let format = bincode::deserialize(bytes)
-            .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?;
+        let format = match bincode::deserialize::<PdfFormatStateV1>(bytes) {
+            Ok(legacy) if legacy.version == 1 => legacy.into(),
+            _ => bincode::deserialize::<PdfFormatState>(bytes)
+                .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?,
+        };
         Self::restore_format(format, capacities, import_tokens, import_nodes)
     }
 
@@ -2741,7 +2808,7 @@ impl<G> PdfState<G> {
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         mut import_nodes: impl FnMut(u32, &[u8]) -> Result<StateHashFragment, String>,
     ) -> Result<Self, String> {
-        if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
+        if format.version != 2 || format.next_object == 0 || format.next_form_resource == 0 {
             return Err("unsupported or invalid PDF format resource state".to_owned());
         }
         let retains_pdf_state = format.enabled
@@ -2855,6 +2922,7 @@ impl<G> PdfState<G> {
                     metadata: image.metadata,
                     dimensions: image.dimensions,
                     color_space_object: image.color_space_object,
+                    attributes: image.attributes.into(),
                     payload,
                     mask_object: image.mask_object,
                 });
@@ -3588,6 +3656,7 @@ impl<G> PdfState<G> {
             metadata: entry.metadata,
             dimensions: entry.dimensions,
             color_space_object: entry.color_space_object,
+            attributes: entry.attributes.clone(),
             bytes: self.payloads.shared(entry.payload),
             mask_object: entry.mask_object,
         }
@@ -3598,6 +3667,7 @@ impl<G> PdfState<G> {
         source: PdfExternalImageSource,
         dimensions: PdfExternalImageDimensions,
         color_space_object: i32,
+        attributes: Vec<u8>,
     ) -> Result<PdfExternalImageRecord, PdfObjectCapacityError> {
         let needs_mask = matches!(
             source.metadata,
@@ -3618,6 +3688,7 @@ impl<G> PdfState<G> {
             metadata: source.metadata,
             dimensions,
             color_space_object,
+            attributes: attributes.into(),
             payload,
             mask_object,
         };
@@ -4659,6 +4730,7 @@ fn external_image_fingerprint(
         hasher.i32(record.dimensions.height.raw());
         hasher.i32(record.dimensions.depth.raw());
         hasher.i32(record.color_space_object);
+        hasher.bytes(&record.attributes);
         hasher.bytes(payloads.get(record.payload));
         hasher.bool(record.mask_object.is_some());
         if let Some(mask) = record.mask_object {
@@ -4919,6 +4991,7 @@ pub fn profile_pdf_fork_family(
                         depth: Scaled::from_raw(0),
                     },
                     color_space_object: 0,
+                    attributes: SharedBytes::from(Vec::new()),
                     payload,
                     mask_object: None,
                 }));

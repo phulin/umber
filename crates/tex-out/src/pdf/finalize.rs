@@ -450,7 +450,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
     let mut pdf_image_groups = BTreeMap::<u32, Option<PdfObjectId>>::new();
     let mut pdf_image_objects = BTreeMap::<u32, PdfObjectId>::new();
     let mut lowered_images =
-        HashMap::<(ContentHash, PdfImageMetadataInput, Option<u32>), PdfObjectId>::new();
+        HashMap::<(ContentHash, PdfImageMetadataInput, Option<u32>, Vec<u8>), PdfObjectId>::new();
     let image_import_started = std::time::Instant::now();
     let mut image_telemetry = ImageImportTelemetry::default();
     let mut image_count = 0usize;
@@ -462,7 +462,12 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         image_count += 1;
         image_input_bytes = image_input_bytes.saturating_add(image.bytes.len());
         unique_image_identities.insert(image.identity);
-        let cache_key = (image.identity, image.metadata, image.color_space_object);
+        let cache_key = (
+            image.identity,
+            image.metadata,
+            image.color_space_object,
+            image.attributes.clone(),
+        );
         if matches!(image.metadata, PdfImageMetadataInput::Raster { .. })
             && let Some(&object) = lowered_images.get(&cache_key)
         {
@@ -501,6 +506,8 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     PdfImageColorSpace::IndirectObject(object as i32)
                 });
                 let image_object = object_id(image.object)?;
+                let mut dictionary = PdfDictionary::new();
+                dictionary.set_raw_entries(image.attributes.clone());
                 objects.push(PdfIndirectObject {
                     id: image_object,
                     object: PdfObject::ImageXObject {
@@ -512,6 +519,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             filter,
                             soft_mask: image.mask_object.map(object_id).transpose()?,
                         },
+                        dictionary,
                         data: color_data,
                     },
                 });
@@ -532,6 +540,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 filter: alpha_filter,
                                 soft_mask: None,
                             },
+                            dictionary: PdfDictionary::new(),
                             data: alpha_data,
                         },
                     });
@@ -4850,6 +4859,9 @@ fn import_pdf_page(
     let imported = super::import::import_pdf_page(image.bytes.clone(), page, next_object, limits)
         .map_err(PdfBuildError::InvalidPdfPage)?;
     let mut dictionary = PdfDictionary::new();
+    // pdftex.web §776 emits image attributes before delegating to the
+    // backend that writes the imported page's Form XObject entries.
+    dictionary.set_raw_entries(image.attributes.clone());
     dictionary.insert("FormType", PdfValue::Integer(1))?;
     dictionary.insert("Resources", PdfValue::Dictionary(imported.resources))?;
     if let Some(group) = imported.group {

@@ -266,6 +266,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
                     color_space_object: u32::try_from(image.color_space_object())
                         .ok()
                         .filter(|object| *object != 0),
+                    attributes: image.attributes().to_vec(),
                     mask_object: image.mask_object(),
                     bytes: image.shared_bytes(),
                 },

@@ -331,8 +331,10 @@ fn external_image_payload_keeps_the_acquired_shared_owner() {
                 depth: Scaled::from_raw(0),
             },
             0,
+            b"/Intent /RelativeColorimetric".to_vec(),
         )
         .expect("test fixture is valid");
+    assert_eq!(record.attributes(), b"/Intent /RelativeColorimetric");
     assert_eq!(record.bytes(), &[1, 2, 3]);
     assert!(crate::SharedBytes::ptr_eq(&record.shared_bytes(), &bytes));
     let queried = state
@@ -371,6 +373,7 @@ fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
                 depth: Scaled::from_raw(0),
             },
             0,
+            Vec::new(),
         )
         .expect("image fixture fits");
     state.set_form_artifact(
@@ -431,6 +434,7 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
             depth: Scaled::from_raw(0),
         },
         color_space_object: 0,
+        attributes: crate::SharedBytes::from(Vec::new()),
         payload,
         mask_object: None,
     });
@@ -738,6 +742,7 @@ fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
                     depth: Scaled::from_raw(0),
                 },
                 0,
+                Vec::new(),
             )
             .expect("image fixture fits the object ledger");
         let owner = HotCoreAllocationOwner::GenerationBoundary;
@@ -842,6 +847,32 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
                 true,
             )
             .expect("test fixture is valid");
+        let image = source
+            .allocate_external_image(
+                PdfExternalImageSource {
+                    identity: ContentHash::new([9; 32]),
+                    metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+                        format: PdfRasterFormat::Png,
+                        width: 1,
+                        height: 1,
+                        bits_per_component: 8,
+                        color_space: PdfRasterColorSpace::Gray,
+                        alpha: false,
+                        png_color_type: Some(0),
+                    }),
+                    natural_width: Scaled::from_raw(1),
+                    natural_height: Scaled::from_raw(1),
+                    bytes: vec![1, 2, 3].into(),
+                },
+                PdfExternalImageDimensions {
+                    width: Scaled::from_raw(1),
+                    height: Scaled::from_raw(1),
+                    depth: Scaled::from_raw(0),
+                },
+                0,
+                b"/Intent /RelativeColorimetric".to_vec(),
+            )
+            .expect("test image fits the format ledger");
 
         let bytes = source
             .capture_format_bytes(
@@ -874,6 +905,13 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
                 .expect("test fixture is valid")
                 .data(),
             tokens
+        );
+        assert_eq!(
+            restored
+                .external_image_record(image.id())
+                .expect("format restores external image")
+                .attributes(),
+            b"/Intent /RelativeColorimetric"
         );
 
         assert!(

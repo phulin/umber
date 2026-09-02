@@ -282,9 +282,11 @@ impl PdfDocument {
                     *matrix,
                     options.stream_compression,
                 )?,
-                PdfObject::ImageXObject { image, data } => {
-                    write_image_xobject(&mut pdf, reference, *image, data)?
-                }
+                PdfObject::ImageXObject {
+                    image,
+                    dictionary,
+                    data,
+                } => write_image_xobject(&mut pdf, reference, *image, dictionary, data)?,
             }
         }
 
@@ -360,6 +362,7 @@ fn write_image_xobject(
     pdf: &mut Pdf,
     reference: Ref,
     image: PdfImageXObject,
+    dictionary: &PdfDictionary,
     data: &[u8],
 ) -> Result<(), PdfSerializeError> {
     let width = i32::try_from(image.width)
@@ -406,6 +409,7 @@ fn write_image_xobject(
     if let Some(mask) = image.soft_mask {
         writer.s_mask(writer_ref(mask)?);
     }
+    write_dictionary_entries(&mut writer, dictionary, None)?;
     writer.finish();
     Ok(())
 }

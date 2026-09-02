@@ -1561,8 +1561,20 @@ pub(in crate::main_control) fn apply<G>(
             };
             let dimensions =
                 pdf_image_dimensions(&source, request.width, request.height, request.depth);
+            // pdftex.web §776 prints the `scan_image` attribute token list
+            // verbatim before the image backend contributes its dictionary.
+            let attributes = request
+                .attr
+                .as_ref()
+                .map(|tokens| pdf_graphics_text(tokens.prepared(), stores))
+                .unwrap_or_default();
             stores
-                .allocate_pdf_external_image(source, dimensions, request.color_space_object)
+                .allocate_pdf_external_image(
+                    source,
+                    dimensions,
+                    request.color_space_object,
+                    attributes,
+                )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             Ok(ReplayStep::Continue)
         }

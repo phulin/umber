@@ -471,6 +471,7 @@ pub enum PdfObject {
     /// A typed raster image serialized through `pdf_writer::ImageXObject`.
     ImageXObject {
         image: PdfImageXObject,
+        dictionary: PdfDictionary,
         data: Vec<u8>,
     },
 }
@@ -1210,8 +1211,13 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hasher.bytes(&annotation.raw_entries);
             hash_annotation_action(annotation.action.as_ref(), hasher);
         }
-        PdfObject::ImageXObject { image, data } => {
+        PdfObject::ImageXObject {
+            image,
+            dictionary,
+            data,
+        } => {
             hasher.byte(4);
+            hash_dictionary(dictionary, hasher);
             hasher.u32(image.width);
             hasher.u32(image.height);
             hasher.byte(image.bits_per_component);

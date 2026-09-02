@@ -42,10 +42,12 @@
 /// Version 28 includes the left- and right-boundary-hit vocabulary carried by
 /// ligature nodes.
 /// Version 29 includes the page-region-owned automatic output-box root.
+/// Version 30 includes the verbatim `\pdfximage` attribute fragment in the
+/// external-image identity.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 29;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 30;
 
 mod capacity;
 pub mod cell;

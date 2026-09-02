@@ -189,6 +189,8 @@ pub struct PdfExternalImageInput {
     pub height: Scaled,
     pub depth: Scaled,
     pub color_space_object: Option<u32>,
+    /// Verbatim dictionary entries scanned by pdftex.web §1550's `attr`.
+    pub attributes: Vec<u8>,
     pub mask_object: Option<u32>,
     pub bytes: tex_content::SharedBytes,
 }

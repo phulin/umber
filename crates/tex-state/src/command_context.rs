@@ -3185,10 +3185,14 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::PdfExternalImageSource,
         dimensions: crate::PdfExternalImageDimensions,
         color_space_object: i32,
+        attributes: Vec<u8>,
     ) -> Result<crate::PdfExternalImageRecord, crate::PdfObjectCapacityError> {
-        self.resident
-            .pdf
-            .allocate_external_image(source, dimensions, color_space_object)
+        self.resident.pdf.allocate_external_image(
+            source,
+            dimensions,
+            color_space_object,
+            attributes,
+        )
     }
 
     pub fn reserve_pdf_annotation(

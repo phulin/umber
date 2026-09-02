@@ -209,7 +209,12 @@ mod tests {
             color_space_object: i32,
         ) -> Result<tex_state::PdfExternalImageRecord, tex_state::PdfObjectCapacityError> {
             self.context(|context| {
-                context.allocate_pdf_external_image(source, dimensions, color_space_object)
+                context.allocate_pdf_external_image(
+                    source,
+                    dimensions,
+                    color_space_object,
+                    Vec::new(),
+                )
             })
         }
 
