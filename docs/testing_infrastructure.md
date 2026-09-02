@@ -666,6 +666,22 @@ UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
   scripts/run-stepwise-arxiv-census.sh
 ```
 
+The clean-pdfTeX PDF-success denominator is a separate reference-only tier
+owned by `scripts/survey-pdftex-arxiv-pdf.py`. It selects the rows whose
+archive `00README.json` declares `pdflatex`, materializes each complete locked
+archive into an issue-local row directory, preserves the source-derived
+`\jobname` by never passing `--jobname`, and runs from the archive root with
+normal side files. The command requires explicit clean-oracle, oracle-build,
+paired-format, format-receipt, TeX Live runtime, archive, and output paths.
+After the survey, pass the same arguments with `--verify-only`; that path
+launches no compiler and rehashes the complete source and artifact evidence
+before reproducing the ordered report and totals. The 2026-09-02 capture is
+`docs/arxiv_census/recent-20260902-pdftex-pdf/`: 87 of 94 declared-pdfLaTeX
+rows produced authoritative reference PDFs, six stopped at an undefined
+control sequence, and one hit the 120-second guard with a non-authoritative
+partial PDF. This tier must not invoke Umber, inspect an Umber PDF, or patch a
+paper.
+
 The canonical per-document parity workflow is separate from the census. A
 candidate qualifies only when its complete, unmodified archive compiles
 cleanly with the pinned TeX Live 2026 pdfTeX in both DVI and PDF modes; retain

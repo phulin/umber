@@ -1,0 +1,17 @@
+{
+  "counts": {
+    "PDF-failure": 7,
+    "PDF-success": 87
+  },
+  "expected_declared_pdflatex_rows": 94,
+  "failure_kinds": {
+    "guard-timeout": 1,
+    "undefined-control-sequence": 6
+  },
+  "rows": 94,
+  "schema": 1,
+  "totals_reconcile": true,
+  "umber_invocations": 0,
+  "umber_pdf_inspections": 0,
+  "unique_rows": 94
+}
