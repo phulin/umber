@@ -321,6 +321,8 @@ The same font-finalization boundary owns the generic ToUnicode CMap emitted by
 `tounicode.c::write_tounicode`. Its identity is the TFM name plus the external
 encoding filename without `.enc`, or `builtin` for a Type-1 program encoding.
 It resolves all 256 encoding slots rather than only the subset's used codes,
+strips a glyph suffix and splits composite components before selecting the
+relevant font-scoped or global mapping definitions,
 coalesces consecutive scalar mappings into at most 100-entry `bfrange` groups
 without incrementing a UTF-16 final byte past 255, and writes string mappings
 separately in `bfchar` groups. The DSC prologue, empty groups, CIDSystemInfo,

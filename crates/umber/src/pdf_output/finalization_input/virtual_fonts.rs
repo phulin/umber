@@ -12,7 +12,7 @@ use tex_state::{
     FontArtifactRecipe,
 };
 
-use super::{detached_encoding, detached_font_program, glyph_to_unicode_mapping};
+use super::{detached_encoding, detached_font_program, glyph_to_unicode_mappings};
 use crate::PdfBuildError;
 
 #[derive(Clone, Debug)]
@@ -248,13 +248,8 @@ fn materialize_local_instance(
         if let PdfFontProgramInput::Type1(type1) = &program {
             glyph_names.extend((0..=255).filter_map(|code| type1.builtin_glyph_name(code)));
         }
-        let glyph_to_unicode = glyph_names
-            .into_iter()
-            .filter_map(|glyph_name| {
-                glyph_to_unicode_mapping(glyph_mappings, name.as_bytes(), &glyph_name)
-                    .map(|mapping| (glyph_name, mapping.unicode.clone()))
-            })
-            .collect();
+        let glyph_to_unicode =
+            glyph_to_unicode_mappings(glyph_mappings, name.as_bytes(), glyph_names);
         let metrics = loaded.metrics();
         let widths = *metrics.widths();
         let heights = std::array::from_fn(|code| {

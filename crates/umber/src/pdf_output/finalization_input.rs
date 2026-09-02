@@ -182,13 +182,11 @@ pub fn pdf_finalization_input_with_raw_object_files(
         if let PdfFontProgramInput::Type1(type1) = &program {
             glyph_names.extend((0..=255).filter_map(|code| type1.builtin_glyph_name(code)));
         }
-        let glyph_to_unicode = glyph_names
-            .into_iter()
-            .filter_map(|name| {
-                glyph_to_unicode_mapping(&glyph_mappings, detached.recipe.name.as_bytes(), &name)
-                    .map(|mapping| (name, mapping.unicode.clone()))
-            })
-            .collect();
+        let glyph_to_unicode = glyph_to_unicode_mappings(
+            &glyph_mappings,
+            detached.recipe.name.as_bytes(),
+            glyph_names,
+        );
         fonts.insert(
             identity,
             PdfFontInput {
@@ -397,6 +395,33 @@ fn glyph_to_unicode_mapping<'a>(
                 .find(|mapping| mapping.tfm_name.is_none() && mapping.glyph_name == glyph_name)
                 .copied()
         })
+}
+
+fn glyph_to_unicode_mappings(
+    mappings: &[&tex_state::PdfGlyphToUnicode],
+    tfm_name: &[u8],
+    glyph_names: impl IntoIterator<Item = Vec<u8>>,
+) -> BTreeMap<Vec<u8>, Vec<u32>> {
+    let mut lookup_names = BTreeSet::new();
+    for glyph_name in glyph_names {
+        let base_name = glyph_name
+            .split(|byte| *byte == b'.')
+            .next()
+            .expect("split always yields one glyph-name component");
+        lookup_names.extend(
+            base_name
+                .split(|byte| *byte == b'_')
+                .filter(|component| !component.is_empty())
+                .map(<[u8]>::to_vec),
+        );
+    }
+    lookup_names
+        .into_iter()
+        .filter_map(|name| {
+            glyph_to_unicode_mapping(mappings, tfm_name, &name)
+                .map(|mapping| (name, mapping.unicode.clone()))
+        })
+        .collect()
 }
 
 fn detached_encoding(
@@ -718,7 +743,7 @@ fn annotation_dimensions(dimensions: PdfAnnotationDimensions) -> PdfAnnotationDi
 
 #[cfg(test)]
 mod tests {
-    use super::glyph_to_unicode_mapping;
+    use super::{glyph_to_unicode_mapping, glyph_to_unicode_mappings};
     use tex_state::PdfGlyphToUnicode;
 
     #[test]
@@ -741,6 +766,35 @@ mod tests {
         assert_eq!(
             glyph_to_unicode_mapping(&[&scoped, &later_global], b"cmr7", b"A"),
             Some(&later_global)
+        );
+    }
+
+    #[test]
+    fn tounicode_collects_names_after_pdftex_suffix_and_component_splitting() {
+        // pdftex.web section 32e delegates to tounicode.c::set_glyph_unicode,
+        // which strips suffixes before splitting components and map lookup.
+        let mappings = [
+            (b"quotesinglbase".as_slice(), vec![0x201A]),
+            (b"A".as_slice(), vec![0x0041]),
+            (b"acute".as_slice(), vec![0x0301]),
+        ]
+        .map(|(glyph_name, unicode)| PdfGlyphToUnicode {
+            tfm_name: None,
+            glyph_name: glyph_name.to_vec(),
+            unicode,
+        });
+        let references = mappings.iter().collect::<Vec<_>>();
+
+        assert_eq!(
+            glyph_to_unicode_mappings(
+                &references,
+                b"tcrm1095",
+                [b"quotesinglbase.ts1".to_vec(), b"A_acute.alt".to_vec()],
+            ),
+            mappings
+                .into_iter()
+                .map(|mapping| (mapping.glyph_name, mapping.unicode))
+                .collect()
         );
     }
 }
