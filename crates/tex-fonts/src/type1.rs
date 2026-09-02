@@ -82,10 +82,11 @@ impl PdfType1Program {
     /// CharStrings still produces a genuine, renderable subset without host
     /// PostScript execution.
     ///
-    /// Like pdfTeX's `writet1.c::t1_subset_ascii_part`, the cleartext program
-    /// is line-normalized, its encoding is rebuilt from the requested glyphs,
-    /// and subset-invalid `/UniqueID` entries are omitted. PDF does not need
-    /// the PFB zero trailer, so subset streams end with the eexec segment.
+    /// Like pdfTeX's `writet1.c::t1_subset_ascii_part` and `t1_read_subrs`,
+    /// the cleartext and encrypted private-dictionary prelude are
+    /// line-normalized, their subset-invalid `/UniqueID` entries are omitted,
+    /// and the encoding is rebuilt from the requested glyphs. PDF does not
+    /// need the PFB zero trailer, so subset streams end with the eexec segment.
     pub fn subset(
         &self,
         glyph_names: &BTreeSet<Vec<u8>>,
@@ -105,6 +106,7 @@ impl PdfType1Program {
             .ok_or(PdfType1SubsetError::InvalidSegments)?;
         let clear = subset_ascii_part(self, clear, glyph_names, subset_font_name)?;
         let decrypted = eexec_crypt(encrypted, false);
+        let decrypted = subset_encrypted_prelude(&decrypted)?;
         let subset_plaintext = subset_charstrings(&decrypted, glyph_names)?;
         let encrypted = eexec_crypt(&subset_plaintext, true);
         let mut bytes = Vec::with_capacity(clear.len() + encrypted.len());
@@ -477,6 +479,53 @@ fn eexec_crypt(bytes: &[u8], encrypt: bool) -> Vec<u8> {
         .collect()
 }
 
+/// Applies the line-copying rule from `writet1.c::t1_read_subrs` before the
+/// binary Subrs/CharStrings records begin. `t1_start_eexec` consumes the
+/// source's first four eexec seed bytes and regenerates them as zeros.
+fn subset_encrypted_prelude(plaintext: &[u8]) -> Result<Vec<u8>, PdfType1SubsetError> {
+    plaintext
+        .get(..4)
+        .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
+    let source = plaintext
+        .get(4..)
+        .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
+    let boundary =
+        encrypted_program_boundary(source).ok_or(PdfType1SubsetError::MissingCharStrings)?;
+
+    let normalized = normalize_type1_ascii(&source[..boundary]);
+    let mut subset = Vec::with_capacity(plaintext.len());
+    subset.extend_from_slice(&[0; 4]);
+    append_without_unique_id(&mut subset, &normalized, false);
+    subset.extend_from_slice(&source[boundary..]);
+    Ok(subset)
+}
+
+fn encrypted_program_boundary(source: &[u8]) -> Option<usize> {
+    let mut line_start = 0usize;
+    while line_start < source.len() {
+        let line_end = source[line_start..]
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+            .map_or(source.len(), |offset| line_start + offset);
+        let line = &source[line_start..line_end];
+        if line.starts_with(b"/Subrs")
+            || line
+                .windows(b"/CharStrings".len())
+                .any(|window| window == b"/CharStrings")
+        {
+            return Some(line_start);
+        }
+        line_start = line_end;
+        while source
+            .get(line_start)
+            .is_some_and(|byte| matches!(byte, b'\r' | b'\n'))
+        {
+            line_start += 1;
+        }
+    }
+    None
+}
+
 fn subset_charstrings(
     plaintext: &[u8],
     glyph_names: &BTreeSet<Vec<u8>>,
@@ -716,12 +765,16 @@ mod tests {
     fn subsets_charstrings_separated_by_postscript_carriage_returns() {
         let clear =
             b"%!PS /FontName /Fixture def\r/Encoding StandardEncoding def\rcurrentfile eexec\r";
-        let plaintext = b"/CharStrings 3 dict dup begin\r\
-            /.notdef 1 RD x ND\r\
-            /space 1 RD y ND\r\
-            /A 1 RD z ND\r\
-            end\r";
-        let encrypted = eexec_crypt(plaintext, true);
+        let plaintext = [
+            b"\0\0\0\0".as_slice(),
+            b"/CharStrings 3 dict dup begin\r\
+              /.notdef 1 RD x ND\r\
+              /space 1 RD y ND\r\
+              /A 1 RD z ND\r\
+              end\r",
+        ]
+        .concat();
+        let encrypted = eexec_crypt(&plaintext, true);
         let mut pfb = vec![0x80, 1];
         pfb.extend_from_slice(&(clear.len() as u32).to_le_bytes());
         pfb.extend_from_slice(clear);
@@ -741,6 +794,20 @@ mod tests {
         );
         assert!(decrypted.windows(7).any(|window| window == b"/space "));
         assert!(!decrypted.windows(3).any(|window| window == b"/A "));
+    }
+
+    #[test]
+    fn encrypted_prelude_is_normalized_without_touching_subrs() {
+        let mut plaintext = vec![1, 2, 3, 4];
+        plaintext.extend_from_slice(
+            b"dup\r/Private  8 dict dup begin \r/UniqueID 42 def\r/lenIV 4 def\r/Subrs 1 array\r\0binary",
+        );
+
+        let subset = subset_encrypted_prelude(&plaintext).expect("synthetic encrypted prelude");
+        assert_eq!(
+            subset,
+            b"\0\0\0\0dup\n/Private 8 dict dup begin\n/lenIV 4 def\n/Subrs 1 array\r\0binary",
+        );
     }
 
     #[test]
@@ -780,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn subset_ascii_part_matches_pdftex_and_rejects_the_unfiltered_control() {
+    fn subset_preludes_match_pdftex_and_reject_the_unfiltered_control() {
         let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
         let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
         let glyphs = [b"A".to_vec(), b"B".to_vec(), b"C".to_vec()]
@@ -816,5 +883,36 @@ mod tests {
         assert!(!clear.windows(12).any(|window| window == b"dup 0 /Gamma"));
         assert!(clear.windows(13).any(|window| window == b"dup 65 /A put"));
         assert!(clear.ends_with(b"currentfile eexec\n"));
+
+        let original_encrypted = &program.bytes()
+            [program.length1 as usize..(program.length1 + program.length2) as usize];
+        let original_plaintext = eexec_crypt(original_encrypted, false);
+        let private_unique_id = b"/UniqueID 5000793 def";
+        assert!(
+            original_plaintext
+                .windows(private_unique_id.len())
+                .any(|window| window == private_unique_id),
+            "the unfiltered encrypted prelude is the negative control",
+        );
+
+        let encrypted =
+            &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize];
+        let plaintext = eexec_crypt(encrypted, false);
+        let subrs = plaintext
+            .windows(b"/Subrs".len())
+            .position(|window| window == b"/Subrs")
+            .expect("CMR10 has a Subrs array");
+        let encrypted_prelude = &plaintext[..subrs];
+        assert_eq!(
+            format!("{:x}", md5::Md5::digest(encrypted_prelude)),
+            "d14befc268a732887ef2b44c876b5abc",
+            "encrypted prelude must stay byte-exact with pinned pdfTeX",
+        );
+        assert!(
+            !encrypted_prelude
+                .windows(private_unique_id.len())
+                .any(|window| window == private_unique_id),
+            "pdfTeX suppresses private-dictionary UniqueID while subsetting",
+        );
     }
 }

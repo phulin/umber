@@ -292,6 +292,12 @@ between tokens; it does not execute PostScript. A used code that intentionally
 resolves to `.notdef` remains a valid blank-glyph subset instead of being
 misclassified as a missing requested CharString. Type-1 subset parsing accepts
 PostScript's CR, LF, and CRLF line endings between encrypted CharStrings.
+Before the binary Subrs or CharStrings records begin, subset emission also
+replays pdfTeX's encrypted private-dictionary line reader: it regenerates the
+four eexec seed bytes as zeros, collapses repeated horizontal whitespace,
+normalizes line endings, drops empty lines, and suppresses `/UniqueID`. This
+keeps the private dictionary's subset-invalid identity out of the embedded
+font without interpreting arbitrary binary charstring data as PostScript text.
 This is downstream font-program/PDF finalization behavior, not core TeX or
 pdfTeX primitive semantics; it does not change token processing, execution,
 layout, or committed shipout artifacts.
