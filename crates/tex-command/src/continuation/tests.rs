@@ -135,7 +135,6 @@ fn valid_continuation(with_attempt: bool) -> OwnedCommandContinuation {
         }],
         conditions: Vec::new(),
         align_state: 1_000_000,
-        cumulative_expansions: 17,
     };
     let attempt = with_attempt.then(|| DetachedAttemptRecipe {
         token_lists: vec![words],

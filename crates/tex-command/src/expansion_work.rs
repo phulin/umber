@@ -468,6 +468,7 @@ impl<G> ExpansionWork<G> {
         let crate::state::PendingExpansion {
             command,
             resume,
+            delivery_expanded,
             child,
         } = pending;
         let mut command = Some(command);
@@ -479,6 +480,7 @@ impl<G> ExpansionWork<G> {
                     crate::state::PendingExpansion {
                         command: command.expect("failed command park preserves owner"),
                         resume,
+                        delivery_expanded,
                         child,
                     },
                 ));
@@ -487,6 +489,7 @@ impl<G> ExpansionWork<G> {
         let mut control = Some(ExpansionControl::Suspended {
             command: command_slot,
             resume,
+            delivery_expanded,
             child,
         });
         let root = match self.push_control_from(&mut control) {
@@ -495,8 +498,12 @@ impl<G> ExpansionWork<G> {
                 let command = self
                     .take_command(command_slot)
                     .expect("failed control park restores its top command");
-                let ExpansionControl::Suspended { resume, child, .. } =
-                    control.expect("failed control park preserves owner")
+                let ExpansionControl::Suspended {
+                    resume,
+                    delivery_expanded,
+                    child,
+                    ..
+                } = control.expect("failed control park preserves owner")
                 else {
                     unreachable!("production park builds a suspended root")
                 };
@@ -505,6 +512,7 @@ impl<G> ExpansionWork<G> {
                     crate::state::PendingExpansion {
                         command,
                         resume,
+                        delivery_expanded,
                         child,
                     },
                 ));
@@ -760,7 +768,13 @@ impl<G> ExpansionWork<G> {
         {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let ExpansionControl::Suspended { resume, child, .. } = self.pop_control(root)? else {
+        let ExpansionControl::Suspended {
+            resume,
+            delivery_expanded,
+            child,
+            ..
+        } = self.pop_control(root)?
+        else {
             unreachable!("validated suspended root remains suspended")
         };
         let command = self.take_command(command)?;
@@ -775,6 +789,7 @@ impl<G> ExpansionWork<G> {
         Ok(crate::state::PendingExpansion {
             command,
             resume,
+            delivery_expanded,
             child,
         })
     }

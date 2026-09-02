@@ -71,7 +71,8 @@ collector (see `src/conditionals.rs`).
 - `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
   `src/expansion_work/tests.rs`: current-generation parked-expansion owner used
   only after a real immutable-resource suspension. Fixed command and typed
-  control chunks keep stable addresses; one chunked name lane and complete
+  control chunks keep stable addresses; a suspended control alone retains its
+  enclosing delivery's has-expanded bit. One chunked name lane and complete
   logical marks support exact abort and reuse; move-only owner/serial keys
   reject foreign and ABA-stale access. Ordinary synchronous expansion stays in
   the caller-owned command slot. Structural `expandafter`, `csname`, name-lane,
@@ -156,7 +157,8 @@ collector (see `src/conditionals.rs`).
   that decision. It continues through expansion in place only when needed.
   Undefined commands are reported and discarded before the following command
   returns to the executor. The ordinary driver owns one live
-  current command and lends it through macro and ranked primitive expansion;
+  current command plus one delivery-local has-expanded bit and lends the
+  command through macro and ranked primitive expansion;
   it moves that value into continuation state only after a typed immutable-host
   suspension, and a resumed primitive retains §367's already-emitted trace
   instead of printing the command twice. The same rule covers the typed `\expandafter` operand and

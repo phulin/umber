@@ -70,7 +70,6 @@ impl<G> CommandState<G> {
             return;
         }
         stack ^= self.profile().fingerprint().get();
-        stack = stack.rotate_left(17) ^ self.expansion.cumulative_expansions;
         state.observe_command_projection(
             tex_state::DependencyKey::InputLine,
             tex_state::DependencyValue::Projection {

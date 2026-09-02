@@ -372,6 +372,7 @@ fn failed_production_park_restores_the_exact_pending_owner() {
     let pending = crate::state::PendingExpansion {
         command: empty_command(),
         resume: crate::state::PendingExpansionResume::PdfInsertHeight,
+        delivery_expanded: true,
         child: None,
     };
     let (error, pending) = work
@@ -382,6 +383,7 @@ fn failed_production_park_restores_the_exact_pending_owner() {
         pending.resume,
         crate::state::PendingExpansionResume::PdfInsertHeight
     );
+    assert!(pending.delivery_expanded);
     assert!(pending.child.is_none());
     assert_eq!(pending.command, empty_command());
     assert!(work.is_quiescent());
@@ -404,6 +406,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
         .park_suspension(crate::state::PendingExpansion {
             command: empty_command(),
             resume: crate::state::PendingExpansionResume::The,
+            delivery_expanded: false,
             child: None,
         })
         .expect("outer suspension");
@@ -412,6 +415,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
         .park_suspension(crate::state::PendingExpansion {
             command: empty_command(),
             resume: crate::state::PendingExpansionResume::PdfInsertHeight,
+            delivery_expanded: true,
             child: None,
         })
         .expect("inner suspension");
@@ -426,8 +430,10 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
         inner.resume,
         crate::state::PendingExpansionResume::PdfInsertHeight
     );
+    assert!(inner.delivery_expanded);
     let outer = work.resume_suspension(outer).expect("outer resumes second");
     assert_eq!(outer.resume, crate::state::PendingExpansionResume::The);
+    assert!(!outer.delivery_expanded);
     assert!(work.is_quiescent());
     assert_eq!(work.counters().stale_key_rejections, 1);
 }

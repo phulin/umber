@@ -2266,14 +2266,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
-        self.command
-            .timeline
-            .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
-        self.command.expansion.cumulative_expansions = self
-            .command
-            .expansion
-            .cumulative_expansions
-            .saturating_add(1);
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         // Keep the observation on that same semantic boundary: an empty
         // internal token list contributes no splice transition at all.
@@ -2336,14 +2328,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
         }
-        self.command
-            .timeline
-            .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
-        self.command.expansion.cumulative_expansions = self
-            .command
-            .expansion
-            .cumulative_expansions
-            .saturating_add(1);
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         if !observed.is_empty() {
             observe!(
@@ -2392,14 +2376,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             self.push_scan_toks_word(collector, word)?;
         }
-        self.command
-            .timeline
-            .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
-        self.command.expansion.cumulative_expansions = self
-            .command
-            .expansion
-            .cumulative_expansions
-            .saturating_add(1);
         if !observed.is_empty() {
             observe!(
                 self,

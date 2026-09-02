@@ -685,7 +685,10 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         .nth(1)
         .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
         .expect("locate exact expansion dispatch");
-    assert!(expansion.contains("self.expand_classified_into(destination, dispatch, report_trace)"));
+    assert!(
+        expansion
+            .contains("self.expand_classified_into(destination, dispatch, report_trace, false)")
+    );
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
         "an already-classified delivery must not wrap its dispatch for handoff"

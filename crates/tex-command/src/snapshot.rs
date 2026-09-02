@@ -155,7 +155,6 @@ struct CommandTimelineFork {
 enum CommandRootUndo<G> {
     NameInProgress(bool),
     Afterassignment(Option<crate::state::CommandPayload<G>>),
-    CumulativeExpansions(u64),
     AlignState(i32),
     NextInputLevelIdentity(u64),
     NextSourceIdentity(u64),
@@ -171,7 +170,6 @@ struct PendingInputUndo(Option<crate::ScannedFileName>);
 enum CommandScalarSlot {
     NameInProgress,
     Afterassignment,
-    CumulativeExpansions,
     AlignState,
     NextInputLevelIdentity,
     NextSourceIdentity,
@@ -190,9 +188,6 @@ impl<G> CommandRootUndo<G> {
         match self {
             Self::NameInProgress(value) => std::mem::swap(value, &mut roots.name_in_progress),
             Self::Afterassignment(value) => std::mem::swap(value, &mut roots.afterassignment),
-            Self::CumulativeExpansions(value) => {
-                std::mem::swap(value, &mut roots.expansion.cumulative_expansions);
-            }
             Self::AlignState(value) => std::mem::swap(value, &mut roots.alignment.align_state),
             Self::NextInputLevelIdentity(value) => {
                 std::mem::swap(value, &mut roots.input.next_level_identity);
@@ -636,13 +631,6 @@ impl<G> CommandTimeline<G> {
         self.record_scalar(
             CommandScalarSlot::Afterassignment,
             CommandRootUndo::Afterassignment(old),
-        );
-    }
-
-    pub(crate) fn record_cumulative_expansions(&mut self, old: u64) {
-        self.record_scalar(
-            CommandScalarSlot::CumulativeExpansions,
-            CommandRootUndo::CumulativeExpansions(old),
         );
     }
 

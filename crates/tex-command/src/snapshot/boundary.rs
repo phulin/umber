@@ -543,10 +543,7 @@ impl<G> CommandState<G> {
         }
         let restore = self.resolve_restore(snapshot.generation(), snapshot.cursor())?;
         self.profile()
-            .validate_fingerprint(
-                CommandProfileBoundary::Snapshot,
-                self.expansion.profile.fingerprint(),
-            )
+            .validate_fingerprint(CommandProfileBoundary::Snapshot, self.profile.fingerprint())
             .map_err(CommandRestoreError::Profile)?;
         Ok(restore)
     }
@@ -575,10 +572,7 @@ impl<G> CommandState<G> {
         }
         let restore = self.resolve_restore(&snapshot.generation, snapshot.cursor)?;
         self.profile()
-            .validate_fingerprint(
-                CommandProfileBoundary::Snapshot,
-                self.expansion.profile.fingerprint(),
-            )
+            .validate_fingerprint(CommandProfileBoundary::Snapshot, self.profile.fingerprint())
             .map_err(CommandRestoreError::Profile)?;
         self.apply_prepared_restore(restore)?;
         self.scratch

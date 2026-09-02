@@ -102,7 +102,6 @@ struct OrdinaryDeliveryEvidence {
     token_frame_steps: u64,
     meaning_lookups: u64,
     expanded_deliveries: u64,
-    expansions: u64,
     #[cfg(feature = "profiling")]
     allocations: u64,
     #[cfg(feature = "profiling")]
@@ -167,7 +166,6 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         );
         let before_ownership = crate::command::command_ownership_counters();
         let classifications_before = super::expanded_classifications();
-        let expansions_before = command.expansion.cumulative_expansions;
         let work_before = fuel.work();
 
         #[cfg(feature = "profiling")]
@@ -216,7 +214,6 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             token_frame_steps: work.token_frame_steps - work_before.token_frame_steps,
             meaning_lookups: work.meaning_lookups - work_before.meaning_lookups,
             expanded_deliveries: work.expanded_deliveries - work_before.expanded_deliveries,
-            expansions: command.expansion.cumulative_expansions - expansions_before,
             #[cfg(feature = "profiling")]
             allocations: after_allocations.calls - before_allocations.calls,
             #[cfg(feature = "profiling")]
@@ -239,7 +236,6 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
         assert_eq!(evidence.token_frame_steps, expansions + 1);
         assert_eq!(evidence.meaning_lookups, expansions);
         assert_eq!(evidence.expanded_deliveries, 1);
-        assert_eq!(evidence.expansions, expansions);
         #[cfg(feature = "profiling")]
         {
             assert_eq!(evidence.allocations, 0);
@@ -486,7 +482,7 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
 }
 
 #[test]
-fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix() {
+fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_prefix() {
     crate::test_harness::with_universe(|universe| {
         let ownership_before = crate::command::command_ownership_counters();
         let input = install_static(
@@ -527,15 +523,14 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let mut destination = None;
-            let error = processor
-                .get_x_token_into(&mut destination)
-                .expect_err("unresolved input suspends");
+            let error = match processor.next_alignment_lookahead() {
+                Err(error) => error,
+                Ok(_) => panic!("unresolved input must suspend"),
+            };
             assert!(matches!(
                 error,
                 crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
             ));
-            assert!(destination.is_none());
             let delivery_cursor = processor.delivery_cursor();
             let resume = processor
                 .take_pending_expansion_work()
@@ -565,15 +560,14 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
             );
             processor.resume_delivery_cursor(delivery_cursor);
             processor.install_expansion_resume(resume);
-            let mut destination = None;
-            let error = processor
-                .get_x_token_into(&mut destination)
-                .expect_err("unfulfilled retry resuspends");
+            let error = match processor.next_alignment_lookahead() {
+                Err(error) => error,
+                Ok(_) => panic!("unfulfilled retry must resuspend"),
+            };
             assert!(matches!(
                 error,
                 crate::CommandError::MissingInput { ref name, .. } if name == "child.tex"
             ));
-            assert!(destination.is_none());
             processor
                 .take_pending_expansion_work()
                 .expect("second suspension parks the same sole owner")
@@ -604,19 +598,17 @@ fn input_suspension_moves_the_command_once_and_rollback_replays_the_same_prefix(
             );
             processor.resume_delivery_cursor(delivery_cursor);
             processor.install_expansion_resume(resume);
-            let mut destination = None;
+            let lookahead = processor
+                .next_alignment_lookahead()
+                .expect("resource-backed resume")
+                .expect("resumed source command");
+            assert!(matches!(
+                lookahead,
+                crate::AlignmentLookahead::PendingExpanded(_)
+            ));
+            let delivered = processor.commit_alignment_lookahead_delivery(lookahead);
             assert_eq!(
-                processor
-                    .get_x_token_into(&mut destination)
-                    .expect("resource-backed resume"),
-                crate::DeliveryStatus::Command
-            );
-            assert_eq!(
-                destination
-                    .take()
-                    .expect("resumed source command")
-                    .spelling()
-                    .semantic_token(),
+                delivered.spelling().semantic_token(),
                 Token::Char {
                     ch: 'Q',
                     cat: Catcode::Letter,

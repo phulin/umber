@@ -176,12 +176,14 @@ unchanged while generated math boundaries and layout nodes advance
 The command profile and compiled semantic dispatch are configuration, not
 revision history. Expansion borrows them. Host capabilities are also borrowed
 for an admitted episode; they are not smuggled into tokens or definitions.
-The persistent expansion root contains only the active profile and
-`cumulative_expansions`, whose job-level value still participates in future
-expansion and suspension classification. Recoverable reports live once in the
-canonical semantic-diagnostic queue and transfer to the executor as one owner;
-resource resolution, dependency observation, and semantic barriers have no
-parallel expansion ledger.
+The active profile is a direct immutable command root. Expansion execution has
+no persistent counter or root: one expanded-delivery invocation owns a local
+bit recording whether that delivery expanded, and only an actual resource
+suspension moves the bit into its `PendingExpansion`. Completion drops it.
+Recoverable reports live once in the canonical semantic-diagnostic queue and
+transfer to the executor as one owner; resource resolution, dependency
+observation, semantic barriers, and snapshots have no parallel expansion
+ledger.
 One stack-branded `OperationHostPreparation` remains stationary from host
 preparation through delivery preflight, transaction classification, semantic
 application, and save-stack settlement. The one preflight `CommandContext`
@@ -386,7 +388,10 @@ relay. Nested delivery has its own slot. The expanded fetch/inspect loop
 keeps the initialized value in place while synchronous expansion mutates input, then raw delivery
 overwrites that same value for the next token; it does not clear the `Option`,
 reconstruct an empty command, or redispatch the prior meaning between
-expansions. Each concrete loop returns only its final compact status and moves the command
+expansions. The expanded loop also keeps its one has-expanded bit on the stack;
+only the genuinely suspended expansion frame retains that bit so a resumed
+TeX82 alignment lookahead preserves its deferred-observation decision. Each
+concrete loop returns only its final compact status and moves the command
 only to its final consumer or the exact typed expansion suspension slot. The
 expanded request owns one stack-local cold error slot. The raw entry instead
 writes ordinary command/end results directly into its caller's return slot and
@@ -779,8 +784,8 @@ only an `ExpansionWork` key when a nested scanner still owns the caller route.
 Ordinary synchronous expanded delivery passes its already-selected exact
 dispatch directly into the expansion body; it constructs no optional dispatch
 carrier. Exact `expand` callers classify in their wrapper, and only a genuine
-suspension restores the parked command and typed resume phase before making
-that decision.
+suspension restores the parked command, typed resume phase, and the enclosing
+delivery's one has-expanded bit before making that decision.
 Their backing vectors grow only when a generation reaches a new simultaneous
 high-water mark; freed slots are reused with a new serial, so a stale or
 double-consumed key is rejected.

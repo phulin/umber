@@ -38,7 +38,6 @@ pub use alignment::{
     AlignmentRequestResult, FinishedAlignmentCell, PreparedAlignmentCellTemplates,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
-pub(crate) use expand::ExpansionState;
 pub use expand_render::{
     PrintCommand, append_character_command_text, append_command_token_text,
     append_print_cmd_chr_text, append_print_esc_text, character_command_text, command_token_text,

@@ -140,6 +140,7 @@ pub(crate) enum ExpansionControl<G> {
     Suspended {
         command: ExpansionCommandSlot<G>,
         resume: crate::state::PendingExpansionResume,
+        delivery_expanded: bool,
         child: Option<
             crate::execution_scratch::ChildContinuation<
                 G,

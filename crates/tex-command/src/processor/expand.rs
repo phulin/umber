@@ -9,7 +9,6 @@ use crate::input::{
     InputLevel, InputLevelId, ResidentCommandColdTransition, ResidentCommandInterception,
     SourceNameClass,
 };
-use crate::profile::CommandProfile;
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -856,6 +855,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 })
         });
         let resumed_pending = key.is_some();
+        let mut delivery_expanded = false;
         if let Some(key) = key {
             let mut retained = match self.command.scratch.resume_expansion(key) {
                 Ok(retained) => retained,
@@ -882,6 +882,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.scanner_resume = Some(key);
             }
             self.resumed_expansion = Some(retained.resume);
+            delivery_expanded = retained.delivery_expanded;
             *destination = Some(retained.command);
         }
         if resumed_pending && let Some(command) = &destination {
@@ -900,7 +901,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             undefined,
             observation,
             first_command,
-            resumed_pending,
+            delivery_expanded,
             destination,
             error,
         );
@@ -1129,13 +1130,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         undefined: UndefinedHandling,
         observation: ExpandedObservationPolicy,
         first_command: FirstCommandPolicy,
-        resumed_pending: bool,
+        mut delivery_expanded: bool,
         destination: &mut Option<CurrentCommand<G>>,
         error: &mut DeliveryErrorSlot,
     ) -> Result<DeliveryStatus, DeliveryFailed> {
-        let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
-        let mut suppress_first_expansion_trace = resumed_pending;
+        let mut suppress_first_expansion_trace = delivery_expanded;
         let mut fetch = destination.is_none();
         'delivery: loop {
             if fetch {
@@ -1280,7 +1280,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .as_ref()
                             .expect("expanded destination contains a command"),
                         observation,
-                        expansions_before,
+                        delivery_expanded,
                         alignment_interception,
                     ));
                 }
@@ -1288,25 +1288,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(self.finish_expanded_delivery(
                         command,
                         observation,
-                        expansions_before,
+                        delivery_expanded,
                         alignment_interception,
                     ));
                 }
                 ExpandedCommandAction::Expand(dispatch) => {
+                    delivery_expanded = true;
                     // TeX82 §394 aborts a non-`\long` macro call after its
                     // recovery bookkeeping, then resumes the enclosing
                     // expanded-token loop. A user paragraph has been backed
                     // up for that loop; an EOF recovery paragraph was consumed
                     // by the failed match instead.
                     let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                    let failure =
-                        match self.expand_classified_into(destination, dispatch, report_trace) {
-                            Ok(()) => {
-                                fetch = true;
-                                continue;
-                            }
-                            Err(failure) => failure,
-                        };
+                    let failure = match self.expand_classified_into(
+                        destination,
+                        dispatch,
+                        report_trace,
+                        delivery_expanded,
+                    ) {
+                        Ok(()) => {
+                            fetch = true;
+                            continue;
+                        }
+                        Err(failure) => failure,
+                    };
                     // TeX82 §394 resumes expanded delivery after both an
                     // ordinary runaway paragraph and §23's outer-validity
                     // recovery has aborted a macro match. The latter leaves
@@ -1328,13 +1333,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: &CurrentCommand<G>,
         observation: ExpandedObservationPolicy,
-        expansions_before: u64,
+        delivery_expanded: bool,
         alignment: AlignmentInterceptionPolicy,
     ) -> DeliveryStatus {
         #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
-        let pending = observation == ExpandedObservationPolicy::DeferIfExpanded
-            && self.command.expansion.cumulative_expansions != expansions_before;
+        let pending =
+            observation == ExpandedObservationPolicy::DeferIfExpanded && delivery_expanded;
         if observation == ExpandedObservationPolicy::Commit
             || (observation == ExpandedObservationPolicy::DeferIfExpanded && !pending)
         {
@@ -1482,7 +1487,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             ExpandedCommandAction::Return => return Err(CommandError::input_invariant()),
         };
-        self.expand_classified_into(destination, dispatch, report_trace)
+        self.expand_classified_into(destination, dispatch, report_trace, false)
     }
 
     /// Executes the dispatch selected by the expanded-delivery classifier
@@ -1492,6 +1497,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         dispatch: ExpansionDispatch,
         report_trace: bool,
+        delivery_expanded: bool,
     ) -> Result<(), CommandError> {
         let resumed_here = self.resumed_expansion.is_some();
         let mut expansion_resume = self
@@ -1528,14 +1534,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.write_expansion_depth != 0 {
             self.record_write_expansion();
         }
-        self.command
-            .timeline
-            .record_cumulative_expansions(self.command.expansion.cumulative_expansions);
-        self.command.expansion.cumulative_expansions = self
-            .command
-            .expansion
-            .cumulative_expansions
-            .saturating_add(1);
         // TeX82 §367 traces non-macro expandable commands inside `expand`,
         // before the primitive consumes operands or changes the input stack.
         // Undefined control sequences reach the same branch through §370.
@@ -1881,6 +1879,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 resume: suspended_resume
                     .take()
                     .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
+                delivery_expanded,
                 child,
             };
             return match self.command.scratch.store_expansion_frame(pending) {
@@ -1977,15 +1976,3 @@ pub(crate) fn is_expandable_command<G>(command: &CurrentCommand<G>) -> bool {
 
 #[cfg(test)]
 mod tests;
-
-/// Future-relevant expansion facts.
-///
-/// Resource fuel is deliberately absent: [`crate::CommandFuel`] is a
-/// monotonic owner lent to processor episodes and is not restored with
-/// semantic state. Discardable scratch allocation and profiling likewise
-/// remain outside this state.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct ExpansionState {
-    pub(crate) cumulative_expansions: u64,
-    pub(crate) profile: CommandProfile,
-}

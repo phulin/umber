@@ -20,8 +20,8 @@ use crate::input::{
 };
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
-    AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState,
-    PreparedAlignmentCellTemplates, ScannerState,
+    AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, PreparedAlignmentCellTemplates,
+    ScannerState,
 };
 use crate::profile::{
     CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
@@ -63,7 +63,7 @@ pub struct CommandStateRoots<G> {
     pub(crate) scanner: ScannerState,
     pub(crate) conditions: ConditionStack,
     pub(crate) alignment: AlignmentDeliveryState<G>,
-    pub(crate) expansion: ExpansionState,
+    pub(crate) profile: CommandProfile,
     pub(crate) transient: TransientState,
     /// Executor-owned replay completion fences, each named by the exact input
     /// level whose retirement must publish it. TeX82 §§325/390 transfer the
@@ -290,6 +290,7 @@ pub(crate) struct PendingFileEnquiry {
 pub(crate) struct PendingExpansion<G> {
     pub(crate) command: crate::CurrentCommand<G>,
     pub(crate) resume: PendingExpansionResume,
+    pub(crate) delivery_expanded: bool,
     pub(crate) child:
         Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionChildDestination>>,
 }
@@ -398,7 +399,7 @@ impl<G> Default for CommandStateRoots<G> {
             scanner: ScannerState::default(),
             conditions: ConditionStack::default(),
             alignment: AlignmentDeliveryState::default(),
-            expansion: ExpansionState::default(),
+            profile: CommandProfile::default(),
             transient: TransientState::default(),
             replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
@@ -2124,7 +2125,7 @@ impl<G> CommandState<G> {
     pub fn new(profile: CommandProfile) -> Self {
         let mut state = Self::default();
         state.roots.engine_semantics = CommandEngineSemantics::for_profile(profile);
-        state.roots.expansion.profile = profile;
+        state.roots.profile = profile;
         state
     }
 
@@ -2820,7 +2821,7 @@ impl<G> CommandState<G> {
     /// Returns the immutable profile selected when this job was created.
     #[must_use]
     pub fn profile(&self) -> CommandProfile {
-        self.expansion.profile
+        self.profile
     }
 
     /// Returns the profile component required in portable format identity.

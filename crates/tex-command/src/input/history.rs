@@ -1037,7 +1037,7 @@ impl<G> crate::CommandState<G> {
                         let active_source = top.source.frame.source_context();
                         match top
                             .advance(
-                                self.roots.expansion.profile,
+                                self.roots.profile,
                                 force_eof,
                                 state,
                                 create_control_sequences,

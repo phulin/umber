@@ -1430,7 +1430,7 @@ pub struct CommandState {
     scanner: ScannerState,
     conditions: ConditionStack,
     alignment: AlignmentDeliveryState,
-    expansion: ExpansionState,
+    profile: CommandProfile,
     transient: TransientState,
 }
 ```
@@ -1533,22 +1533,22 @@ to zero there would make the next stray `\cr` insert a brace instead of being
 reported and dropped. `suspend_alignment`/`resume_alignment` consequently save
 only the outer cell, never a second copy of `align_state`.
 
-### 8.6 Expansion state
+### 8.6 Profile and delivery-local expansion state
 
-`ExpansionState` owns only persistent expansion facts:
-
-- cumulative job-level expansion accounting that can affect a future result;
-  and
-- the active profile.
+The immutable `CommandProfile` is a direct command root. Expansion execution
+owns no persistent root or counter. One expanded-delivery invocation keeps a
+stack-local bit recording whether that delivery expanded; only an actual
+resource suspension moves the bit into its `PendingExpansion`, and completion
+drops it. This local fact decides whether TeX82 alignment lookahead must defer
+its terminal expanded-delivery observation.
 
 Recoverable diagnostics live once in the canonical semantic-diagnostic queue,
 which the executor claims after the processor episode. Resource resolution,
 dependency observation, and semantic barriers retain no parallel expansion
 ledger.
 
-Per-request expansion fuel is call-local but shared by nested expansion within
-that request. A resource retry restarts the complete executor step and
-therefore recreates the same budget deterministically.
+Command fuel remains the independent monotonic session ledger shared by nested
+expansion. It is neither this delivery bit nor rollback state.
 
 ### 8.7 Transient state
 
@@ -3733,7 +3733,6 @@ only validated command data:
 - condition frames;
 - quiescent alignment brace state, without active or suspended templates;
 - the portable profile fingerprint and source-allocation high-water marks;
-- persistent expansion counters; and
 - required provenance/source roots.
 
 The live summary reaches those rows only through its retained coarse owner and

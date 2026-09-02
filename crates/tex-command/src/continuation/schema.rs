@@ -276,7 +276,6 @@ pub(crate) struct CommandSummaryRecipe {
     pub(crate) activations: Vec<ActivationRecipe>,
     pub(crate) conditions: Vec<ConditionRecipe>,
     pub(crate) align_state: i32,
-    pub(crate) cumulative_expansions: u64,
 }
 
 /// Integer-only resume coordinates copied from an in-process attempt.
