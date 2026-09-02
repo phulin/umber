@@ -661,7 +661,15 @@ impl MacroWordLane {
         let chunk = absolute / MACRO_WORD_RESERVE;
         let offset = absolute % MACRO_WORD_RESERVE;
         if offset == 0 {
-            self.admit_chunk(chunk)?;
+            // An empty argument can publish without consuming the destination
+            // chunk admitted for its first word. The next argument owns the
+            // same lane tail, so reuse that still-empty chunk instead of
+            // attempting to admit a second physical owner for one coordinate.
+            if chunk == self.active.len() {
+                self.admit_chunk(chunk)?;
+            } else if chunk.checked_add(1) != Some(self.active.len()) {
+                return Err(ScratchError::InvalidCoordinate);
+            }
         } else if chunk >= self.active.len() {
             return Err(ScratchError::InvalidCoordinate);
         }

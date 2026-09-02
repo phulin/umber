@@ -127,6 +127,76 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
         .collect()
 }
 
+#[test]
+fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_macro(
+            universe,
+            "emptydelimited",
+            &[Token::Param(1), other(','), Token::Param(2)],
+        );
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [macro_token, other(','), begin, letter('x'), end],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut call = processor
+            .get_next()
+            .expect("macro delivery")
+            .expect("macro command");
+
+        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        let arguments = processor
+            .command
+            .input
+            .levels
+            .iter()
+            .rev()
+            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
+            .expect("macro argument set");
+        let first = processor
+            .command
+            .scratch
+            .argument_range(arguments, 1)
+            .expect("live frame")
+            .expect("first argument");
+        let second = processor
+            .command
+            .scratch
+            .argument_range(arguments, 2)
+            .expect("live frame")
+            .expect("second argument");
+        assert_eq!(processor.command.scratch.argument_len(first), Ok(0));
+        assert_eq!(processor.command.scratch.argument_len(second), Ok(1));
+        assert_eq!(
+            processor.command.scratch.argument_word(second, 0),
+            Ok(tex_state::token::TracedTokenWord::pack(
+                letter('x'),
+                tex_state::token::OriginId::UNKNOWN,
+            ))
+        );
+    });
+}
+
 /// TeX82 §394 classifies argument braces and leading spaces from `cur_tok`,
 /// not from the resolved `cur_cmd`. A `\let`-style brace alias is therefore
 /// one undelimited control-sequence argument; this is the form used by
