@@ -1722,6 +1722,20 @@ fn retained_charge_tracks_live_node_backing_without_charging_warm_vacancies() {
 }
 
 #[test]
+fn small_page_lists_share_one_physical_node_superblock() {
+    let mut history = PageRegionHistory::default();
+    let first = publish_nodes(&mut history.nodes_mut(), [kern(1)]);
+    let second = publish_nodes(&mut history.nodes_mut(), [kern(2)]);
+
+    assert_ne!(first, second, "logical list identities remain distinct");
+    assert_eq!(
+        history.pool.chunks.live_page_count(),
+        1,
+        "independent logical chunks pack into one stable physical block"
+    );
+}
+
+#[test]
 fn releasing_final_current_checkpoint_immediately_retires_rootless_payload() {
     let mut history = PageRegionHistory::default();
     let chunk_capacity = history.pool.chunks.chunk_capacity();

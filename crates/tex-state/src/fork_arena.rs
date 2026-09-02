@@ -296,6 +296,17 @@ struct ChunkStorage<T> {
     admitted_forward_chunk_crossings: core::cell::Cell<u64>,
 }
 
+/// Profiling-only occupancy of one exact-superblock storage lane.
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChunkStorageLayoutCensus {
+    pub(crate) live_blocks: u64,
+    pub(crate) used_records: u64,
+    pub(crate) stranded_records: u64,
+    pub(crate) partial_blocks: u64,
+    pub(crate) physically_shared_blocks: u64,
+}
+
 /// One admitted final payload slot and the scalar facts needed to publish it.
 struct ReservedChunkSlot<'a, T> {
     slot: &'a mut Option<T>,
@@ -600,6 +611,46 @@ impl<T> ChunkStorage<T> {
                 Some((u64::from(slot) << 32) | u64::from(block.incarnation))
             })
             .collect()
+    }
+
+    #[cfg(feature = "profiling")]
+    fn profiling_layout_census(&self) -> ChunkStorageLayoutCensus {
+        use std::collections::BTreeMap;
+
+        let mut used_by_block = BTreeMap::<u64, u64>::new();
+        for (ordinal, chunk) in self.chunks.iter().enumerate() {
+            if !chunk.live {
+                continue;
+            }
+            let Some(row) = self.logical_rows.get(ordinal) else {
+                continue;
+            };
+            let token = (u64::from(row.physical_slot) << 32) | u64::from(row.physical_incarnation);
+            let used = used_by_block.entry(token).or_default();
+            *used = used.saturating_add(u64::from(chunk.used));
+        }
+        let live_blocks = self.live_page_count() as u64;
+        let used_records = used_by_block.values().copied().sum::<u64>();
+        let records_per_block = match self.layout {
+            ChunkStorageLayout::OptionalSlots => Superblock::<Option<T>>::capacity(),
+            ChunkStorageLayout::PackedCopy => Superblock::<T>::capacity(),
+        } as u64;
+        ChunkStorageLayoutCensus {
+            live_blocks,
+            used_records,
+            stranded_records: live_blocks
+                .saturating_mul(records_per_block)
+                .saturating_sub(used_records),
+            partial_blocks: used_by_block
+                .values()
+                .filter(|&&used| used < records_per_block)
+                .count() as u64,
+            physically_shared_blocks: self
+                .blocks
+                .iter()
+                .filter(|block| block.live_chunks > 1)
+                .count() as u64,
+        }
     }
 
     #[cfg(feature = "profiling")]
@@ -1680,6 +1731,11 @@ impl<T> ChunkPool<T> {
     #[cfg(feature = "profiling")]
     pub(crate) fn profiling_live_physical_tokens(&self) -> Vec<u64> {
         self.payload.profiling_live_physical_tokens()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_layout_census(&self) -> ChunkStorageLayoutCensus {
+        self.payload.profiling_layout_census()
     }
 }
 

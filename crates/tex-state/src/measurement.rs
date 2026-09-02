@@ -12,10 +12,11 @@ pub use hot_core::{
     HotCoreCensus, HotCoreCommandFamily, HotCoreMaterialization, HotCoreMeaningFamily,
     HotCorePageBuilderTransition, HotCorePhase, HotCoreStopReason, NodeGraphCensus,
     NodePoolOwnerCensus, NodePoolOwnerLaneCensus, NodePoolStorageCensus, NodePoolStorageLaneCensus,
-    RetainedGenerationCensus, RetainedGenerationLifetime, SaveJournalCensus,
-    enable_node_pool_owner_census, hot_core_allocation_scope, hot_core_allocation_trace_cursor,
-    hot_core_allocation_trace_entry, hot_core_census, hot_core_thread_allocation_measurement,
-    node_graph_census, node_pool_owner_census, node_pool_storage_census,
+    PageOutputPoolCensus, PageOutputPoolLaneCensus, RetainedGenerationCensus,
+    RetainedGenerationLifetime, SaveJournalCensus, enable_node_pool_owner_census,
+    hot_core_allocation_scope, hot_core_allocation_trace_cursor, hot_core_allocation_trace_entry,
+    hot_core_census, hot_core_thread_allocation_measurement, node_graph_census,
+    node_pool_owner_census, node_pool_storage_census, page_output_pool_census,
     record_hot_core_command_family, record_hot_core_episode, record_hot_core_expandable_opcode,
     record_hot_core_interpreter_construction, record_hot_core_interpreter_operation_entry,
     record_hot_core_macro_expansion, record_hot_core_main_control_meaning,
@@ -30,5 +31,6 @@ pub use hot_core::{
 
 pub(crate) use hot_core::{
     node_pool_owner_census_enabled, record_node_pool_owner_census, record_node_pool_storage,
-    record_save_journal_census,
+    record_page_output_on_demand_promotion, record_page_output_pool_census,
+    record_page_output_zero_copy_take, record_save_journal_census,
 };

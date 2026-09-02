@@ -408,6 +408,28 @@ pub struct NodePoolOwnerCensus {
     pub annexes: NodePoolOwnerLaneCensus,
 }
 
+/// Exact lane occupancy sampled at the largest automatic output-box boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageOutputPoolLaneCensus {
+    pub live_blocks: u64,
+    pub used_records: u64,
+    pub stranded_records: u64,
+    pub partial_blocks: u64,
+    pub physically_shared_blocks: u64,
+    pub output_region_blocks: u64,
+    pub durable_or_other_blocks: u64,
+}
+
+/// Profiling-only proof of the physical ownership transition for box 255.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageOutputPoolCensus {
+    pub installations: u64,
+    pub zero_copy_takes: u64,
+    pub on_demand_promotions: u64,
+    pub nodes: PageOutputPoolLaneCensus,
+    pub annexes: PageOutputPoolLaneCensus,
+}
+
 impl NodeGraphCensus {
     #[must_use]
     pub fn saturating_sub(self, baseline: Self) -> Self {
@@ -672,6 +694,32 @@ static NODE_POOL_OWNER_PEAK: Mutex<NodePoolOwnerCensus> = Mutex::new(NodePoolOwn
         durable_or_other_blocks: 0,
     },
 });
+static PAGE_OUTPUT_INSTALLATIONS: AtomicU64 = AtomicU64::new(0);
+static PAGE_OUTPUT_ZERO_COPY_TAKES: AtomicU64 = AtomicU64::new(0);
+static PAGE_OUTPUT_ON_DEMAND_PROMOTIONS: AtomicU64 = AtomicU64::new(0);
+static PAGE_OUTPUT_POOL_PEAK: Mutex<PageOutputPoolCensus> = Mutex::new(PageOutputPoolCensus {
+    installations: 0,
+    zero_copy_takes: 0,
+    on_demand_promotions: 0,
+    nodes: PageOutputPoolLaneCensus {
+        live_blocks: 0,
+        used_records: 0,
+        stranded_records: 0,
+        partial_blocks: 0,
+        physically_shared_blocks: 0,
+        output_region_blocks: 0,
+        durable_or_other_blocks: 0,
+    },
+    annexes: PageOutputPoolLaneCensus {
+        live_blocks: 0,
+        used_records: 0,
+        stranded_records: 0,
+        partial_blocks: 0,
+        physically_shared_blocks: 0,
+        output_region_blocks: 0,
+        durable_or_other_blocks: 0,
+    },
+});
 
 const fn node_pool_storage_index(class: NodePoolStorageClass) -> usize {
     match class {
@@ -791,6 +839,43 @@ pub fn node_pool_owner_census() -> NodePoolOwnerCensus {
         .lock()
         .expect("node-pool owner census lock is not poisoned");
     census.samples = NODE_POOL_OWNER_SAMPLES.load(Ordering::Relaxed);
+    census
+}
+
+pub(crate) fn record_page_output_pool_census(mut census: PageOutputPoolCensus) {
+    census.installations = PAGE_OUTPUT_INSTALLATIONS.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut peak = PAGE_OUTPUT_POOL_PEAK
+        .lock()
+        .expect("page-output pool census lock is not poisoned");
+    let blocks = census
+        .nodes
+        .live_blocks
+        .saturating_add(census.annexes.live_blocks);
+    let peak_blocks = peak
+        .nodes
+        .live_blocks
+        .saturating_add(peak.annexes.live_blocks);
+    if blocks >= peak_blocks {
+        *peak = census;
+    }
+}
+
+pub(crate) fn record_page_output_zero_copy_take() {
+    PAGE_OUTPUT_ZERO_COPY_TAKES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_page_output_on_demand_promotion() {
+    PAGE_OUTPUT_ON_DEMAND_PROMOTIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn page_output_pool_census() -> PageOutputPoolCensus {
+    let mut census = *PAGE_OUTPUT_POOL_PEAK
+        .lock()
+        .expect("page-output pool census lock is not poisoned");
+    census.installations = PAGE_OUTPUT_INSTALLATIONS.load(Ordering::Relaxed);
+    census.zero_copy_takes = PAGE_OUTPUT_ZERO_COPY_TAKES.load(Ordering::Relaxed);
+    census.on_demand_promotions = PAGE_OUTPUT_ON_DEMAND_PROMOTIONS.load(Ordering::Relaxed);
     census
 }
 

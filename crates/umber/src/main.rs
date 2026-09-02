@@ -305,6 +305,27 @@ impl Drop for HotCoreProfilingReport {
             owners.annexes.page_owner_union_blocks,
             owners.annexes.durable_or_other_blocks,
         );
+        let output = tex_state::measurement::page_output_pool_census();
+        eprintln!(
+            "PAGE_OUTPUT_POOL_CENSUS installations={} zero_copy_takes={} on_demand_promotions={} node_live_blocks={} node_used_records={} node_stranded_records={} node_partial_blocks={} node_physically_shared_blocks={} node_output_region_blocks={} node_durable_or_other_blocks={} annex_live_blocks={} annex_used_records={} annex_stranded_records={} annex_partial_blocks={} annex_physically_shared_blocks={} annex_output_region_blocks={} annex_durable_or_other_blocks={}",
+            output.installations,
+            output.zero_copy_takes,
+            output.on_demand_promotions,
+            output.nodes.live_blocks,
+            output.nodes.used_records,
+            output.nodes.stranded_records,
+            output.nodes.partial_blocks,
+            output.nodes.physically_shared_blocks,
+            output.nodes.output_region_blocks,
+            output.nodes.durable_or_other_blocks,
+            output.annexes.live_blocks,
+            output.annexes.used_records,
+            output.annexes.stranded_records,
+            output.annexes.partial_blocks,
+            output.annexes.physically_shared_blocks,
+            output.annexes.output_region_blocks,
+            output.annexes.durable_or_other_blocks,
+        );
     }
 }
 

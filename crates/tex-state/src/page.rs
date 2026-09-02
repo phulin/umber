@@ -462,6 +462,10 @@ pub(crate) struct PageBuilderState {
     current_page: PageListSpan,
     page_discards: PageListSpan,
     split_discards: PageListSpan,
+    /// TeX82 §1016's automatically packaged box 255. Unlike an ordinary
+    /// register value, this transient root is already owned by the current
+    /// page region and remains there until output consumes or replaces it.
+    output_box: PageListSpan,
     page_goal: Scaled,
     page_total: Scaled,
     page_stretch: Scaled,
@@ -542,6 +546,7 @@ struct PagePayloadRoots {
     current_page: PageListSpan,
     page_discards: PageListSpan,
     split_discards: PageListSpan,
+    output_box: PageListSpan,
 }
 
 struct PageCheckpointFrame {
@@ -588,6 +593,7 @@ enum PageInverse {
     CurrentPage(PageListSpan),
     PageDiscards(PageListSpan),
     SplitDiscards(PageListSpan),
+    OutputBox(PageListSpan),
     InsertionsReplace {
         insertions: Vec<PageInsertion>,
         positions: Vec<Option<u16>>,
@@ -631,7 +637,7 @@ struct PageScalars {
 /// lets the chunk-owned journal swap values in place without moving the
 /// journal out of `PageBuilderState` or creating a second canonical state.
 struct PageInverseTarget<'a> {
-    roots: [&'a mut PageListSpan; 4],
+    roots: [&'a mut PageListSpan; 5],
     dimensions: [&'a mut Scaled; 9],
     contents: &'a mut PageContents,
     last_glue: &'a mut Option<GlueSpec>,
@@ -834,6 +840,10 @@ impl PageInverseTarget<'_> {
             PageInverse::SplitDiscards(mut old) => {
                 std::mem::swap(self.roots[3], &mut old);
                 PageInverse::SplitDiscards(old)
+            }
+            PageInverse::OutputBox(mut old) => {
+                std::mem::swap(self.roots[4], &mut old);
+                PageInverse::OutputBox(old)
             }
             PageInverse::InsertionsReplace {
                 mut insertions,
@@ -1885,6 +1895,7 @@ impl PageRegion {
             roots.current_page,
             roots.page_discards,
             roots.split_discards,
+            roots.output_box,
         ] {
             if PageMaterialView::new(pool, &self.nodes)
                 .span_list(root)
@@ -1903,6 +1914,7 @@ impl PageRegion {
             roots.current_page.list(),
             roots.page_discards.list(),
             roots.split_discards.list(),
+            roots.output_box.list(),
         ];
         let uniquely_adoptable = self.checkpoints.is_empty()
             && build.as_ref().is_some_and(|build| {
@@ -1953,7 +1965,8 @@ impl PageRegion {
             let one_self_contained_root = !roots.contribution.is_empty()
                 && roots.current_page.is_empty()
                 && roots.page_discards.is_empty()
-                && roots.split_discards.is_empty();
+                && roots.split_discards.is_empty()
+                && roots.output_box.is_empty();
             if one_self_contained_root {
                 match PageMaterialRegion::move_built_closure_between(
                     pool,
@@ -1970,6 +1983,7 @@ impl PageRegion {
                             current_page: PageListSpan::empty(),
                             page_discards: PageListSpan::empty(),
                             split_discards: PageListSpan::empty(),
+                            output_box: PageListSpan::empty(),
                         };
                         current.builder = self.builder.successor_with_roots(roots);
                         current.counters = self.counters;
@@ -2020,6 +2034,12 @@ impl PageRegion {
                 &self.nodes,
                 roots.split_discards.list(),
             )?;
+            let output_box = PageMaterialRegion::copy_closure_between(
+                pool,
+                &mut current.nodes,
+                &self.nodes,
+                roots.output_box.list(),
+            )?;
             let spans = {
                 let arena = PageNodeArena::new(pool, &mut current.nodes);
                 (
@@ -2027,6 +2047,7 @@ impl PageRegion {
                     arena.admit_span(current_page.0)?,
                     arena.admit_span(page_discards.0)?,
                     arena.admit_span(split_discards.0)?,
+                    arena.admit_span(output_box.0)?,
                 )
             };
             Ok::<_, ForkArenaError>((
@@ -2035,12 +2056,14 @@ impl PageRegion {
                     current_page: spans.1,
                     page_discards: spans.2,
                     split_discards: spans.3,
+                    output_box: spans.4,
                 },
                 contribution
                     .1
                     .saturating_add(current_page.1)
                     .saturating_add(page_discards.1)
-                    .saturating_add(split_discards.1),
+                    .saturating_add(split_discards.1)
+                    .saturating_add(output_box.1),
             ))
         })();
         let (roots, copied) = match copied {
@@ -2090,6 +2113,7 @@ impl PageRegion {
                 roots.current_page.list(),
                 roots.page_discards.list(),
                 roots.split_discards.list(),
+                roots.output_box.list(),
             ];
             self.nodes
                 .adopt_unique_successor(pool, build, root_lists)
@@ -2122,6 +2146,7 @@ impl PageRegion {
                 roots.current_page.list(),
                 roots.page_discards.list(),
                 roots.split_discards.list(),
+                roots.output_box.list(),
             ];
             let nodes = PageMaterialRegion::share_sealed_prefix_from(
                 pool,
@@ -2271,6 +2296,7 @@ impl Default for PageBuilderState {
             current_page: PageListSpan::empty(),
             page_discards: PageListSpan::empty(),
             split_discards: PageListSpan::empty(),
+            output_box: PageListSpan::empty(),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
             page_stretch: Scaled::from_raw(0),
@@ -2340,6 +2366,7 @@ impl PageBuilderState {
             current_page,
             page_discards,
             split_discards,
+            output_box,
             page_goal,
             page_total,
             page_stretch,
@@ -2381,7 +2408,13 @@ impl PageBuilderState {
         (
             checkpoint_journal,
             PageInverseTarget {
-                roots: [contribution, current_page, page_discards, split_discards],
+                roots: [
+                    contribution,
+                    current_page,
+                    page_discards,
+                    split_discards,
+                    output_box,
+                ],
                 dimensions: [
                     page_goal,
                     page_total,
@@ -2513,16 +2546,18 @@ impl PageBuilderState {
             current_page: self.current_page,
             page_discards: self.page_discards,
             split_discards: self.split_discards,
+            output_box: self.output_box,
         }
     }
 
-    pub(crate) fn payload_root_lists(&self) -> [PageListId; 4] {
+    pub(crate) fn payload_root_lists(&self) -> [PageListId; 5] {
         let roots = self.payload_roots();
         [
             roots.contribution.list(),
             roots.current_page.list(),
             roots.page_discards.list(),
             roots.split_discards.list(),
+            roots.output_box.list(),
         ]
     }
 
@@ -2536,6 +2571,7 @@ impl PageBuilderState {
             current_page: roots.current_page,
             page_discards: roots.page_discards,
             split_discards: roots.split_discards,
+            output_box: roots.output_box,
             ..Self::default()
         };
         successor.restore_scalars(self.scalar_snapshot());
@@ -2644,6 +2680,7 @@ impl PageBuilderState {
             list_identity(self.current_page),
             list_identity(self.page_discards),
             list_identity(self.split_discards),
+            list_identity(self.output_box),
         ] {
             (sequence.len() as u64).hash(&mut hasher);
             sequence.raw().hash(&mut hasher);
@@ -2681,6 +2718,7 @@ impl PageBuilderState {
             current_page: self.current_page,
             page_discards: self.page_discards,
             split_discards: self.split_discards,
+            output_box: self.output_box,
         };
         self.checkpoint_journal
             .frames
@@ -2797,6 +2835,7 @@ impl PageBuilderState {
         self.current_page = mark.roots.current_page;
         self.page_discards = mark.roots.page_discards;
         self.split_discards = mark.roots.split_discards;
+        self.output_box = mark.roots.output_box;
         self.restore_scalars(mark.scalars);
         self.semantic_roots = mark.semantic_roots;
         self.checkpoint_journal
@@ -3107,6 +3146,37 @@ impl PageBuilderState {
             || !self.current_page.is_empty()
             || !self.page_discards.is_empty()
             || !self.split_discards.is_empty()
+            || !self.output_box.is_empty()
+    }
+
+    pub(crate) fn output_box(&self) -> PageListId {
+        self.output_box.list()
+    }
+
+    pub(crate) fn install_output_box(
+        &mut self,
+        arena: &PageNodeArena,
+        root: PageListId,
+    ) -> Result<(), ForkArenaError> {
+        let root = arena.admit_span(root)?;
+        self.record_page_inverse(PageInverse::OutputBox(self.output_box));
+        self.output_box = root;
+        Ok(())
+    }
+
+    pub(crate) fn take_output_box(&mut self) -> PageListId {
+        if self.output_box.is_empty() {
+            return PageListId::empty();
+        }
+        self.record_page_inverse(PageInverse::OutputBox(self.output_box));
+        std::mem::take(&mut self.output_box).list()
+    }
+
+    pub(crate) fn clear_output_box(&mut self) {
+        if !self.output_box.is_empty() {
+            self.record_page_inverse(PageInverse::OutputBox(self.output_box));
+            self.output_box = PageListSpan::empty();
+        }
     }
 
     #[cfg(test)]
@@ -3347,6 +3417,7 @@ impl PageBuilderState {
     pub(crate) fn is_format_empty(&self) -> bool {
         self.contribution.is_empty()
             && self.current_page.is_empty()
+            && self.output_box.is_empty()
             && self.page_goal == Scaled::from_raw(0)
             && self.page_total == Scaled::from_raw(0)
             && self.page_stretch == Scaled::from_raw(0)

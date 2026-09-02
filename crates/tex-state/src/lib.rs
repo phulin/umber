@@ -41,10 +41,11 @@
 /// WEB §53a's three-state `box_lr` identity.
 /// Version 28 includes the left- and right-boundary-hit vocabulary carried by
 /// ligature nodes.
+/// Version 29 includes the page-region-owned automatic output-box root.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 28;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 29;
 
 mod capacity;
 pub mod cell;

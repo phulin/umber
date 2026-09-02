@@ -26,6 +26,17 @@ impl DurableNodeMetadata {
         }
     }
 
+    pub(crate) fn from_page_root(
+        region: NodeRegionId,
+        root: crate::page_node_arena::PageListId,
+    ) -> Self {
+        Self {
+            region,
+            len: root.len(),
+            semantic_identity: root.semantic_identity(),
+        }
+    }
+
     pub const fn region(self) -> NodeRegionId {
         self.region
     }

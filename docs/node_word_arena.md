@@ -783,6 +783,14 @@ and their copied bytes are accounted separately. Fork metadata copy reports
 both physical entries and logical rows; it is never folded into the bounded
 payload tails.
 
+Node lists use 16-record logical chunks packed into those physical
+superblocks. Independent short lists therefore share one 2,048-record backing
+allocation while keeping distinct direct logical coordinates; no compaction or
+relocation is involved. A physical block is reclaimed only after its last
+logical chunk retires, and reuse advances the existing logical and physical
+incarnations. This preserves the one-physical-allocation-per-2,048-record
+contract while bounding an interior logical-tail fork to 15 records.
+
 The deterministic gates report:
 
 - zero `needs_drop` and exact 32/4 size/alignment for every node lane;

@@ -85,8 +85,7 @@ pub(crate) fn resume_page_builder_after_output<G>(
     output_nodes: tex_state::node_arena::PageListId,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.copy_box_to_page(255) {
-        stores.clear_box_preserving_level(255);
+    if let Some(box255) = stores.take_box_to_page(255) {
         report_box255_not_emptied(
             stores,
             diagnostic_effects,
@@ -114,8 +113,7 @@ pub(crate) fn prepare_box255<G>(
     fire_up: PageFireUp,
     diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.copy_box_to_page(255) {
-        stores.clear_box_preserving_level(255);
+    if let Some(box255) = stores.take_box_to_page(255) {
         report_box255_not_void(
             stores,
             diagnostic_effects,
@@ -162,8 +160,8 @@ pub(crate) fn prepare_box255<G>(
     );
     let box255 = stores.construct_page_node(|destination| destination.vlist(packed.node));
     stores
-        .assign_page_box_global(255, box255)
-        .expect("output box stays in admitted page storage");
+        .install_page_output_box(box255)
+        .expect("output box stays in its admitted page region");
     stores.start_page_after_output();
     stores.push_current_page_list(distributed.heldover);
     stores.set_page_integer(

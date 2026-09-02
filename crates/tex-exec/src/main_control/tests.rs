@@ -302,6 +302,30 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
 }
 
 #[test]
+fn automatic_output_box_remains_page_owned_until_shipout() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\output={\shipout\box255}\vsize=5pt\hrule height10pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().artifact_commits().len(), 1);
+        let lifecycle = stores.page_region_counters();
+        assert_eq!(
+            lifecycle.page_to_durable_nodes_copied, 0,
+            "automatic box 255 remains a page-region root"
+        );
+        assert_eq!(
+            lifecycle.history_preservation_nodes_copied, 0,
+            "output handoff and page succession preserve the same coordinates"
+        );
+    });
+}
+
+#[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

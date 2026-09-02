@@ -1513,7 +1513,42 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[inline(always)]
     pub fn box_register(&self, index: u16) -> Option<DurableNodeMetadata> {
+        if index == u8::MAX.into() {
+            let root = self.page.output_box();
+            if !root.is_empty() {
+                return Some(DurableNodeMetadata::from_page_root(
+                    self.page_nodes.region_id(),
+                    root,
+                ));
+            }
+        }
         self.durable_boxes.metadata(index)
+    }
+
+    fn promote_output_box_if_needed(
+        &mut self,
+        index: u16,
+    ) -> Result<(), crate::NodePromotionError> {
+        if index != u8::MAX.into() {
+            return Ok(());
+        }
+        let root = self.page.output_box();
+        if root.is_empty() {
+            return Ok(());
+        }
+        let durable = self
+            .page_nodes
+            .copy_page_root_to_durable(root)
+            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+        self.durable_boxes
+            .replace(&mut self.page_nodes, index, Some(durable))
+            .map_err(|_| {
+                crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed)
+            })?;
+        self.page.clear_output_box();
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_page_output_on_demand_promotion();
+        Ok(())
     }
 
     pub fn assign_page_box(
@@ -1522,6 +1557,7 @@ impl<'a, G> CommandContext<'a, G> {
         value: Option<PageListId>,
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
+        self.promote_output_box_if_needed(index)?;
         let durable = value
             .map(|root| self.page_nodes.copy_page_root_to_durable(root))
             .transpose()
@@ -1581,11 +1617,28 @@ impl<'a, G> CommandContext<'a, G> {
         self.assign_page_box(index, Some(value), AssignmentScope::Global)
     }
 
+    /// Installs TeX82 §1016's automatically packaged box 255 as a root of
+    /// its already-owning page region. Ordinary register assignment remains
+    /// durable; only the page-output handoff uses this zero-copy seam.
+    pub fn install_page_output_box(
+        &mut self,
+        value: PageListId,
+    ) -> Result<(), crate::NodePromotionError> {
+        debug_assert!(self.durable_boxes.metadata(u8::MAX.into()).is_none());
+        self.page
+            .install_output_box(&self.page_nodes, value)
+            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
+        #[cfg(feature = "profiling")]
+        self.page_nodes.record_page_output_pool_census();
+        Ok(())
+    }
+
     pub fn replace_page_box(
         &mut self,
         index: u16,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
+        self.promote_output_box_if_needed(index)?;
         let durable = self
             .page_nodes
             .copy_page_root_to_durable(value)
@@ -1600,18 +1653,34 @@ impl<'a, G> CommandContext<'a, G> {
     /// The durable owner stays in eqtb and the shared recursive walker builds
     /// TeX's independent page-lifetime copy.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
+        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+            self.promote_output_box_if_needed(index)
+                .expect("output-box copy promotion");
+        }
         self.durable_boxes
             .copy_to_page(&mut self.page_nodes, index)
             .expect("box copy allocation")
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
+        if index == u8::MAX.into() {
+            let root = self.page.take_output_box();
+            if !root.is_empty() {
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_page_output_zero_copy_take();
+                return Some(root);
+            }
+        }
         self.durable_boxes
             .take_to_page(&mut self.page_nodes, index)
             .expect("box transfer allocation")
     }
 
     pub fn clear_box_preserving_level(&mut self, index: u16) {
+        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+            self.page.clear_output_box();
+            return;
+        }
         self.durable_boxes
             .replace(&mut self.page_nodes, index, None)
             .expect("void box replacement cannot allocate");
@@ -1872,6 +1941,17 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
+        if index == u8::MAX.into() {
+            let root = self.page.output_box();
+            if !root.is_empty() {
+                let list = self.page_nodes.list(root).ok()?;
+                return match (list.len(), list.get(0).map(crate::NodeView::from)) {
+                    (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
+                    (1, Some(crate::NodeView::VList(_))) => Some(CommandBoxKind::Vertical),
+                    _ => None,
+                };
+            }
+        }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         match (list.len(), list.get(0).map(crate::NodeView::from)) {
@@ -1931,6 +2011,21 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
+        if index == u8::MAX.into() {
+            let root = self.page.output_box();
+            if !root.is_empty() {
+                let list = self.page_nodes.list(root).ok()?;
+                let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+                    (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
+                    _ => return None,
+                };
+                return Some(match dimension {
+                    BoxDimension::Width => node.width,
+                    BoxDimension::Height => node.height,
+                    BoxDimension::Depth => node.depth,
+                });
+            }
+        }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
@@ -1946,6 +2041,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_margin_kern(&self, index: u16, side: crate::node::MarginKernSide) -> Option<Scaled> {
+        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+            return self.page_output_box_margin_kern(side);
+        }
         let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let children = match (list.len(), list.get(0).map(crate::NodeView::from)) {
@@ -2607,6 +2705,51 @@ impl<'a, G> CommandContext<'a, G> {
                     crate::font::CharTag::Extensible(_) => 4,
                 }),
             _ => 0,
+        }
+    }
+
+    fn page_output_box_margin_kern(&self, side: crate::node::MarginKernSide) -> Option<Scaled> {
+        let root = self.page.output_box();
+        let list = self.page_node_list(root).ok()?;
+        let children = match (list.len(), list.nodes().first()) {
+            (1, Some(crate::NodeView::HList(node))) => self.page_node_list(node.children).ok()?,
+            _ => return None,
+        };
+        let skippable = |node: crate::NodeView<'_>| match node {
+            crate::NodeView::Glue { spec, kind, .. } => {
+                spec == crate::glue::GlueSpec::ZERO
+                    || matches!(
+                        (side, kind),
+                        (
+                            crate::node::MarginKernSide::Left,
+                            crate::node::GlueKind::LeftSkip
+                        ) | (
+                            crate::node::MarginKernSide::Right,
+                            crate::node::GlueKind::RightSkip
+                        )
+                    )
+            }
+            crate::NodeView::Penalty(_) | crate::NodeView::Direction(_) => true,
+            _ => false,
+        };
+        let selected = match side {
+            crate::node::MarginKernSide::Left => children
+                .nodes()
+                .iter()
+                .find(|node| !skippable((*node).clone())),
+            crate::node::MarginKernSide::Right => children
+                .nodes()
+                .iter()
+                .rev()
+                .find(|node| !skippable((*node).clone())),
+        }?;
+        match selected {
+            crate::NodeView::MarginKern {
+                amount,
+                side: node_side,
+                ..
+            } if node_side == side => Some(amount),
+            _ => None,
         }
     }
 

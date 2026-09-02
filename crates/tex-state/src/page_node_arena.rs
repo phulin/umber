@@ -599,20 +599,20 @@ impl PageMaterialRegion {
         Ok((copied.page_list(), count))
     }
 
-    pub(crate) fn can_share_sealed_prefix(
+    pub(crate) fn can_share_sealed_prefix<const N: usize>(
         &self,
         pool: &NodePool,
         mark: &ClosureBuildMark<PageRole>,
-        roots: [PageListId; 4],
+        roots: [PageListId; N],
     ) -> Result<(), ForkArenaError> {
         self.region.can_share_sealed_prefix(pool, mark, roots)
     }
 
-    pub(crate) fn share_sealed_prefix_from(
+    pub(crate) fn share_sealed_prefix_from<const N: usize>(
         pool: &mut NodePool,
         source: &mut Self,
         mark: ClosureBuildMark<PageRole>,
-        roots: [PageListId; 4],
+        roots: [PageListId; N],
     ) -> Result<Self, ForkArenaError> {
         let region = source.region.share_sealed_prefix(pool, mark, roots)?;
         Ok(Self {
@@ -681,21 +681,21 @@ impl PageMaterialRegion {
         self.region.cancel_closure_build(pool, mark)
     }
 
-    pub(crate) fn preflight_unique_successor_adoption(
+    pub(crate) fn preflight_unique_successor_adoption<const N: usize>(
         &self,
         pool: &NodePool,
         mark: &ClosureBuildMark<PageRole>,
-        roots: [PageListId; 4],
+        roots: [PageListId; N],
     ) -> Result<(), ForkArenaError> {
         self.region
             .preflight_unique_successor_adoption(pool, mark, roots)
     }
 
-    pub(crate) fn adopt_unique_successor(
+    pub(crate) fn adopt_unique_successor<const N: usize>(
         &mut self,
         pool: &mut NodePool,
         mark: ClosureBuildMark<PageRole>,
-        roots: [PageListId; 4],
+        roots: [PageListId; N],
     ) -> Result<(), ForkArenaError> {
         self.region.adopt_unique_successor(pool, mark, roots)
     }
@@ -723,6 +723,40 @@ impl<'a> PageMaterialArena<'a> {
             "semantic identity demand starts before page-node publication"
         );
         *self.semantic_identity_enabled = true;
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn record_page_output_pool_census(&self) {
+        use std::collections::BTreeSet;
+
+        use crate::measurement::{PageOutputPoolCensus, PageOutputPoolLaneCensus};
+
+        fn lane(
+            layout: crate::fork_arena::ChunkStorageLayoutCensus,
+            current: Vec<u64>,
+            prior: Vec<u64>,
+        ) -> PageOutputPoolLaneCensus {
+            let current = current.into_iter().collect::<BTreeSet<_>>();
+            let prior = prior.into_iter().collect::<BTreeSet<_>>();
+            let page_union = current.union(&prior).copied().collect::<BTreeSet<_>>();
+            PageOutputPoolLaneCensus {
+                live_blocks: layout.live_blocks,
+                used_records: layout.used_records,
+                stranded_records: layout.stranded_records,
+                partial_blocks: layout.partial_blocks,
+                physically_shared_blocks: layout.physically_shared_blocks,
+                output_region_blocks: current.len() as u64,
+                durable_or_other_blocks: layout.live_blocks.saturating_sub(page_union.len() as u64),
+            }
+        }
+
+        let (nodes, annexes) = self.pool.profiling_storage_layout();
+        let owners = self.region.profiling_physical_ownership(self.pool);
+        crate::measurement::record_page_output_pool_census(PageOutputPoolCensus {
+            nodes: lane(nodes, owners.current_nodes, owners.prior_nodes),
+            annexes: lane(annexes, owners.current_annexes, owners.prior_annexes),
+            ..PageOutputPoolCensus::default()
+        });
     }
 
     #[must_use]
@@ -980,11 +1014,11 @@ impl<'a> PageMaterialArena<'a> {
 
     /// Publishes a built closure without detaching a construction-suffix root
     /// still owned by the page builder.
-    pub(crate) fn finish_built_page_root_to_durable_preserving_roots(
+    pub(crate) fn finish_built_page_root_to_durable_preserving_roots<const N: usize>(
         &mut self,
         mark: ClosureBuildMark<PageRole>,
         root: PageListId,
-        retained_roots: [PageListId; 4],
+        retained_roots: [PageListId; N],
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         if !self
             .region

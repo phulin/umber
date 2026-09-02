@@ -14,6 +14,9 @@ use crate::fork_arena::{
     DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, NodePoolStorageClass,
     PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
 };
+
+#[cfg(feature = "profiling")]
+use crate::fork_arena::ChunkStorageLayoutCensus;
 use crate::node::Node;
 #[cfg(test)]
 use crate::node_record::NodeAnnexWriter;
@@ -129,10 +132,11 @@ impl Default for NodePool {
 impl NodePool {
     #[must_use]
     pub fn new() -> Self {
-        // One production logical block is one exact 64 KiB dense superblock:
-        // 2,048 compact node records, with a largest interior-fork tail of
-        // 2,047 records (65,504 bytes).
-        Self::with_chunk_bytes(65_536)
+        // Sixteen-record logical chunks pack into the exact 64-KiB physical
+        // superblocks. Small TeX lists therefore share backing without moving
+        // stable coordinates, while an interior fork copies at most 15 records
+        // and physical allocation remains one block per 2,048 packed records.
+        Self::with_chunk_bytes(512)
     }
 
     #[must_use]
@@ -181,6 +185,16 @@ impl NodePool {
         (
             self.chunks.profiling_live_physical_tokens(),
             self.annex_chunks.profiling_live_physical_tokens(),
+        )
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_storage_layout(
+        &self,
+    ) -> (ChunkStorageLayoutCensus, ChunkStorageLayoutCensus) {
+        (
+            self.chunks.profiling_layout_census(),
+            self.annex_chunks.profiling_layout_census(),
         )
     }
 

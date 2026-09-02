@@ -439,9 +439,14 @@ unconstructible. A successor root
 which crosses the build boundary or was not published through the checked
 dependency-folding seam retains the explicit structural-copy fallback. The
 shipped page, complete old region, and unrelated checkpoint material are never
-copied into the new owner. Page-to-durable box255 publication remains a
-separate lifetime boundary and retains its explicitly counted copy while page
-and durable owners coexist.
+copied into the new owner. Automatic box255 packaging remains a journaled root
+of the owning page region. Default output or `\box255` moves that coordinate
+within the same owner; explicit `\copy255` and ordinary reassignment promote
+or copy on demand under their normal TeX semantics. The output root
+participates in checkpoint, rollback, validation, succession, and retained-root
+preflight exactly like the other page payload roots. Thus page construction
+and output consumption coexist without a second durable closure, while
+speculative failure still restores the exact prior root.
 
 Each arena lane also maintains one constant-size live frontier: its logical
 end position and current tail chunk incarnation. Append, operation rollback,
