@@ -2,12 +2,91 @@
 
 ## Decision
 
-Production approval is **rejected** at commit
-`a094b264a8bc93c757a822ab00b17e0b154082b0`. The required historical
-`ChunkStorage<Node>::release_lineage` row of 3,143,705 calls and 528,142,440
-bytes is absent, but much larger complete-node projection and reconstruction
-traffic replaced it. No architecture change belongs in this assessment.
-Follow-up `umber2-66p0.8.40.113.5.7` owns the one demonstrated defect.
+Production approval remains **rejected** at integrated commit
+`39fda00bdfad2ace3208e2dd34fde73fdf6d2bf0`. The borrowed-node repair now
+satisfies the public-copy criterion: joint calls and bytes are below the
+historical row and all three rejected carrier families remain absent. Peak RSS
+is still 692,832 KiB versus the historical 285,464 KiB, however, so the
+persistent 407,368-KiB or 142.70% regression is not acceptable. Follow-up
+`umber2-klu1` owns the paired `NodePool` node/annex superblock high water. This
+issue remains open and depends on that one retained-memory successor.
+
+## Integrated-base reapproval
+
+Exactly one engine-entering 50-million-command row was run. Its authority was
+commit `39fda00bdfad2ace3208e2dd34fde73fdf6d2bf0`; profiling binary SHA-256
+`c2d98e05ef3348122d4c2c86940cdef8eac152fcae770f2a464a67bba0c87293`
+with ELF build ID `91d9b67cd875775720511305cc6f8e974fb3c932`; and checked
+public-copy probe SHA-256
+`3378f994509f85dac45d1f2c1c41453f3f447facf91a5319e3d2d15f2410b686`.
+It reused arXiv `2606.12566` `ArXiv.tex` SHA-256
+`816440f61d611fa57cef802e6f372b9337beef1cc4e48e5536d4bad1014ec537`,
+schema-12 format SHA-256
+`ddd082db722654fd9c47e1080d8e128d1a5b0cfb3186f9e3bc01f8943f559ad4`,
+ordered 123-key closure SHA-256
+`e4f4113c9057af88c239d40d3041f598871a0a7a895f8bd63f89d7c77682ab7e`,
+source epoch `1787080434`, and preserved distribution manifest SHA-256
+`a68acebc1a83fd4ec0ce8c3baed4e8fe01de9b37e5a878b2f1fc203c2f20662f`
+with aHash64 `df66c327ae636145`.
+
+The guards remained 50,000,000 canonical-command fuel, 100,000,000 executor
+steps, 90 seconds, and 1,536 MiB aggregate RSS. Expected status 1 occurred at
+the exact integrated predecessor vector
+`(50000000,49903532,9457781,15936698,35326903,4203)`. Standard output was
+empty and no PDF was published.
+
+| API       |   Historical calls / bytes |     Current calls / bytes |      Change calls / bytes |
+| --------- | -------------------------: | ------------------------: | ------------------------: |
+| `memcpy`  | 13,581,465 / 2,026,475,309 | 9,585,394 / 1,476,261,497 | -3,996,071 / -550,213,812 |
+| `memmove` |       191,437 / 32,922,922 |        13,974 / 2,671,470 |    -177,463 / -30,251,452 |
+| Joint     | 13,772,902 / 2,059,398,231 | 9,599,368 / 1,478,932,967 | -4,173,534 / -580,465,264 |
+
+Joint calls are 30.30% below the historical row and joint bytes are 28.19%
+below it. All 1,454 `memcpy` and 186 `memmove` caller bins reconcile exactly;
+both tables report zero overflow bytes and zero probe-internal calls. Complete
+symbolization contains no `span_chunk_node`,
+`append_reencoded_chunk_range`, or `copy_list_recursive` frame. The largest
+remaining `memcpy` row is 71,746,752 bytes, so no comparable replacement
+family appeared.
+
+Named allocations were 3,363,130 calls / 27,068,536,606 requested bytes:
+delivery/scan 414,684 / 8,885,236,724; semantic apply 2,765,037 /
+1,139,068,411; evidence publication 3,670 / 1,569,635; cold materialization
+179,074 / 17,040,993,116; and attempt scratch 665 / 1,668,720. Interpreter
+construction, interpreter borrow, generation boundary, and arena growth were
+all zero. This is 14 calls / 32,384 bytes below the integrated `.5.7` row,
+while RSS is 504 KiB higher at 692,832 KiB. The copy repair therefore did not
+own the retained-memory regression.
+
+The save-journal census accounts for only 1,098,880 semantic-live bytes plus
+495,424 spare-capacity bytes, and the one retained generation drops to zero.
+The concrete remaining allocation owner is the paired node and annex
+`ChunkStorage` inside `NodePool`: its own heap accounting charges every entry
+in each `blocks` vector at exactly 65,536 bytes, while `release_lineage`
+truncates an empty `DenseBlock` and parks its slot in `free_blocks` rather than
+removing that allocation from the vector. Thus live and retired regions can
+fall while the exact-superblock high water remains resident. The current
+production census does not split those blocks into live and vacant bytes, so
+successor `umber2-klu1` must publish that split and bound or return the vacant
+capacity before production approval.
+
+The authenticated vector supplies the current semantic result. The focused
+compact-record, annex, node-region, page-arena, and settlement evidence from
+the integrated `.5.7` change remains valid and the run contradicts none of it.
+The preserved Wasm workload remains `stable` at exactly 5,308,416 bytes before
+construction, 5,701,632 after construction, and 629,080,064 after compilation
+and disposal: 623,771,648 bytes or 9,518 pages of growth. Its evidence SHA-256
+is `e9c651469dff3a7d4ea718df9a92c150a2fd9e22f7a469d3e603781f979dfe16`.
+
+Ignored reapproval evidence is under
+`target/umber2-66p0.8.40.113.5.5-reapproval/evidence/`. Raw copy data, complete
+symbolization, timing, and engine stderr have SHA-256 values
+`acacf147c74e26ef26aed1db1669044d57d3359a62a14972ad1ce59173b74b8f`,
+`4b7453f1a1eb9c8917e55d1a73dff5ce5c0b82e4ccb7a3288a03be23081819cb`,
+`c4e4c01966b5fe4a7ef21bd39947820c0982b066edaf4f908a115045f03ea2c9`,
+and `1616a79079ba18be4e155ed4fad08481c3ec6b835a7ffcd192555d991343ae7e`.
+
+## First rejected census
 
 ## Authenticated 50-million-command row
 
