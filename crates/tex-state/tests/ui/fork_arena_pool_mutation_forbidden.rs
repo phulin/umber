@@ -8,7 +8,7 @@ fn main() {
     let list = {
         let mut builder = arena.begin_builder(&mut pool).unwrap();
         builder.push(41).unwrap();
-        builder.seal().unwrap()
+        builder.finish()
     };
     let value = arena.list(&pool, list).unwrap().get(0).unwrap();
     let _builder = arena.begin_builder(&mut pool).unwrap();

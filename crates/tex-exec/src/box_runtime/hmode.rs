@@ -699,23 +699,16 @@ impl OpenTypeSourceWalk<'_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         source: tex_state::page_node_arena::PageListSpan,
-        chunk: tex_state::page_node_arena::PageListChunkCursor,
+        mut chunk: tex_state::page_node_arena::PageListChunkCursor,
     ) {
         if let Some(previous) = stores
-            .page_node_span_previous_chunk(source, &chunk)
+            .page_node_span_previous_chunk(&chunk)
             .expect("OpenType source chunk remains live")
         {
             self.visit_chunk_prefix(stores, source, previous);
         }
-        for offset in 0..chunk.len() {
-            let index = chunk.logical_start() + offset;
-            let observed = {
-                let (resolved, node) = stores
-                    .page_node_span_chunk_node(source, &chunk, offset)
-                    .expect("OpenType source chunk remains live");
-                debug_assert_eq!(resolved, index);
-                OpenTypeSourceNode::from_node(node)
-            };
+        while let Some((index, node)) = stores.page_node_span_next_chunk_node(&mut chunk) {
+            let observed = { OpenTypeSourceNode::from_node(node) };
             self.visit_node(stores, source, index, observed);
         }
     }

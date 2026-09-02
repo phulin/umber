@@ -100,14 +100,14 @@ fn warmed_resident_slot_construction_is_allocation_free() {
 }
 
 #[test]
-fn page_chunk_cursor_rejects_rollback_and_reused_pool_slots() {
+fn page_root_readmission_rejects_rollback_and_reused_pool_slots() {
     page_arena!(arena, pool, state, 32);
     let operation = arena.operation_mark();
     let source = arena
         .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
         .expect("publish cursor source");
     let span = arena.admit_span(source).expect("admit cursor source");
-    let tail = arena
+    let _tail = arena
         .span_tail_chunk(span)
         .expect("resolve direct tail")
         .expect("source is nonempty");
@@ -121,9 +121,9 @@ fn page_chunk_cursor_rejects_rollback_and_reused_pool_slots() {
 
     assert_eq!(replacement.len(), source.len());
     assert_eq!(
-        arena.span_chunk_node(span, &tail, 0).map(|_| ()),
+        arena.admit_span(source).map(|_| ()),
         Err(ForkArenaError::InvalidRange),
-        "a stale direct cursor cannot alias the replacement incarnation"
+        "a stale integer root cannot be readmitted over the replacement incarnation"
     );
     arena
         .restore_operation(operation)

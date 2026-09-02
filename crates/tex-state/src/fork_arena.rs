@@ -180,6 +180,28 @@ impl<T> DenseBlockPayload<T> {
         }
     }
 
+    /// Initializes the next slot of an already-admitted destination block.
+    /// Admission proved both vacancy and initialized-prefix position, so a
+    /// failure here is an internal capability-construction defect rather than
+    /// recoverable input.
+    fn initialize_admitted(&mut self, index: usize, value: T) {
+        match self {
+            Self::Optional(block) => {
+                let slot = block
+                    .get_mut(index)
+                    .expect("admitted optional destination is in bounds");
+                debug_assert!(slot.is_none());
+                *slot = Some(value);
+            }
+            Self::Packed(block) => {
+                debug_assert_eq!(block.len(), index);
+                block
+                    .push_with(|slot| slot.insert(value))
+                    .expect("admitted destination retains exact-block capacity");
+            }
+        }
+    }
+
     fn truncate(&mut self, len: usize) {
         match self {
             Self::Optional(block) => block.truncate(len),
@@ -1156,17 +1178,13 @@ impl<T> ChunkStorage<T> {
         &mut self,
         cursor: &mut AdmittedAppendBlock,
         value: T,
-    ) -> Result<(u32, bool), ForkArenaError> {
+    ) -> (u32, bool) {
         let offset = cursor.offset;
-        let next_offset = offset
-            .checked_add(1)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
+        let next_offset = offset + 1;
         let became_full = next_offset as usize == self.slots_per_chunk;
-        self.blocks
-            .get_mut(cursor.page)
-            .ok_or(ForkArenaError::InvalidChunk)?
+        self.blocks[cursor.page]
             .payload_mut()
-            .insert(cursor.index, value)?;
+            .initialize_admitted(cursor.index, value);
 
         let meta = &mut self.chunks[cursor.key.ordinal as usize];
         debug_assert!(meta.live && meta.generation == cursor.key.incarnation);
@@ -1178,7 +1196,7 @@ impl<T> ChunkStorage<T> {
 
         cursor.index += 1;
         cursor.offset = next_offset;
-        Ok((offset, became_full))
+        (offset, became_full)
     }
 
     /// Clones one admitted source cell into one distinct final reserved cell.
@@ -1316,6 +1334,22 @@ impl<T> ChunkStorage<T> {
         let meta = self.validate_mut(key, arena)?;
         meta.sealed = true;
         Ok(capacity.saturating_sub(meta.used as usize))
+    }
+
+    /// Seals a tail carried by an exclusive construction capability.
+    ///
+    /// The capability was minted only after owner/generation/lineage
+    /// admission and the exclusive borrow prevents lifecycle mutation until
+    /// consumption. Those facts are debug-audited here instead of becoming a
+    /// second fallible publication pass.
+    fn seal_constructed_tail(&mut self, key: LogicalChunkId, arena: u32, lineage: u32) -> usize {
+        let capacity = self.slots_per_chunk;
+        let meta = &mut self.chunks[key.ordinal as usize];
+        debug_assert!(meta.live && meta.generation == key.incarnation);
+        debug_assert_eq!(meta.arena, arena);
+        debug_assert!(meta.lineages.iter().any(|entry| entry.id == lineage));
+        meta.sealed = true;
+        capacity.saturating_sub(meta.used as usize)
     }
 
     fn truncate(
@@ -1544,6 +1578,16 @@ impl<T> ChunkStorage<T> {
             .get(block.page as usize)?
             .payload()
             .value(index as usize)
+    }
+
+    /// Reads through a capability whose block and initialized range were
+    /// admitted already. Safe indexing remains the only executable guard.
+    fn admitted_capability_value(&self, block: AdmittedDenseBlock, offset: u32) -> &T {
+        let index = block.base as usize + offset as usize;
+        self.blocks[block.page as usize]
+            .payload()
+            .value(index)
+            .expect("admitted cursor remains inside the initialized prefix")
     }
 
     fn admitted_slice(
@@ -2971,6 +3015,34 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// Publishes one value appended through an admitted block continuation.
+    /// The continuation is discarded before the `u32` list length is
+    /// exhausted, so only scalar root and counter advancement remains.
+    fn complete_admitted_payload_reservation(
+        &mut self,
+        root: &mut ArenaListId<Lane>,
+        key: LogicalChunkId,
+        offset: u32,
+        became_full: bool,
+        logical_space: u32,
+    ) {
+        if root.is_empty() {
+            *root = ArenaListId::from_root(
+                logical_space,
+                ChunkCursor::new(key, offset),
+                ChunkCursor::new(key, offset + 1),
+                1,
+            );
+        } else {
+            root.tail = ChunkCursor::new(key, offset + 1);
+            root.len += 1;
+        }
+        if became_full {
+            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        }
+        self.counters.new_semantic_nodes += 1;
+    }
+
     /// Clones one same-arena source cell directly into its final packed slot.
     fn append_payload_clone_from_coordinate(
         &mut self,
@@ -3300,6 +3372,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool,
             operation,
             root: ArenaListId::empty(),
+            append_block: None,
+            #[cfg(test)]
             sequence_summary: None,
             finished: false,
         })
@@ -3339,8 +3413,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .as_mut()
                     .expect("append block is admitted before direct publication");
                 let key = append.key;
-                let (offset, became_full) =
-                    pool.payload.append_admitted_untracked(append, value)?;
+                let (offset, became_full) = pool.payload.append_admitted_untracked(append, value);
                 self.complete_payload_reservation(
                     &mut root,
                     key,
@@ -4003,11 +4076,33 @@ impl<T, Lane> ForkArena<T, Lane> {
         builder: &mut ActiveListBuilder<T, Lane>,
     ) -> Result<(), ForkArenaError> {
         let list = self.active_list_open_mut(builder)?.root;
-        self.seal_direct_tail(pool, list)?;
-        self.validate_list(pool, list)?;
+        self.finish_constructed_tail(pool, list);
         self.active_builder = false;
         builder.state = ActiveListBuilderState::Sealed(UniqueArenaList { root: list });
         Ok(())
+    }
+
+    /// Consumes the builder's sole open-owner capability and returns the
+    /// unpublished whole-list capability in one step.
+    ///
+    /// Persistent callers keep the vacant shell for reuse, but the internal
+    /// `OpenActiveList` value is moved out exactly once. The root was formed
+    /// only by admitted appends, so finish seals its final prefix without
+    /// rechecking the root, predecessor chain, generation, or incarnation.
+    pub(crate) fn finish_active_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+    ) -> UniqueArenaList<Lane> {
+        let state = core::mem::replace(&mut builder.state, ActiveListBuilderState::Vacant);
+        let ActiveListBuilderState::Open(open) = state else {
+            unreachable!("active-list admission returned the open owner")
+        };
+        debug_assert!(self.active_builder);
+        debug_assert_eq!(open.arena, self.owner);
+        self.finish_constructed_tail(pool, open.root);
+        self.active_builder = false;
+        UniqueArenaList { root: open.root }
     }
 
     /// Rolls an open active list back to its partial operation mark and
@@ -4371,6 +4466,28 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .unwrap_or(u64::MAX),
         );
         Ok(())
+    }
+
+    /// Consumes a statically exclusive construction tail without
+    /// revalidating its owner, generation, range, or predecessor chain.
+    fn finish_constructed_tail(&mut self, pool: &mut ChunkPool<T>, root: ArenaListId<Lane>) {
+        if root.is_empty() {
+            return;
+        }
+        let key = root.tail.raw;
+        let meta = &pool.payload.chunks[key.ordinal as usize];
+        debug_assert_eq!(meta.used, root.tail.offset);
+        if meta.sealed {
+            return;
+        }
+        let unused = pool
+            .payload
+            .seal_constructed_tail(key, self.owner, self.lineage);
+        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        self.counters.unused_sealed_bytes = self.counters.unused_sealed_bytes.saturating_add(
+            u64::try_from(unused.saturating_mul(pool.payload.resident_slot_bytes()))
+                .unwrap_or(u64::MAX),
+        );
     }
 
     pub fn seal_boundary(
@@ -6142,13 +6259,49 @@ pub struct ForkArenaBuilder<'a, T, Lane> {
     pool: &'a mut ChunkPool<T>,
     operation: OperationMark<Lane>,
     root: ArenaListId<Lane>,
+    append_block: Option<AdmittedAppendBlock>,
+    #[cfg(test)]
     sequence_summary: Option<SemanticSequenceIdentity>,
     finished: bool,
 }
 
 impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
+    #[cfg(test)]
+    fn validation_reads(&self) -> u64 {
+        self.pool.payload.validation_reads()
+    }
+
     pub fn push(&mut self, value: T) -> Result<(), ForkArenaError> {
-        self.push_with_identity(value, None)
+        if self.append_block.is_none() {
+            if self.root.len == u32::MAX {
+                return Err(ForkArenaError::CapacityOverflow);
+            }
+            let key = self
+                .arena
+                .payload_reservation_target(self.pool, &self.root)?;
+            self.append_block = Some(self.pool.payload.admit_untracked_append_block(
+                key,
+                self.arena.owner,
+                self.arena.lineage,
+            )?);
+        }
+        let append = self
+            .append_block
+            .as_mut()
+            .expect("append block is admitted before construction");
+        let key = append.key;
+        let (offset, became_full) = self.pool.payload.append_admitted_untracked(append, value);
+        self.arena.complete_admitted_payload_reservation(
+            &mut self.root,
+            key,
+            offset,
+            became_full,
+            self.pool.payload.logical_space(),
+        );
+        if became_full || self.root.len == u32::MAX {
+            self.append_block = None;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -6157,6 +6310,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         value: T,
         source: &impl RegionValue<Lane>,
     ) -> Result<(), ForkArenaError> {
+        self.append_block = None;
         let dependency_floor = self
             .arena
             .region_value_dependency_floor(self.pool, source)?;
@@ -6207,11 +6361,13 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.push_with_identity(value, Some(item_identity))
     }
 
+    #[cfg(test)]
     fn push_with_identity(
         &mut self,
         value: T,
         item_identity: Option<u64>,
     ) -> Result<(), ForkArenaError> {
+        self.append_block = None;
         self.arena.append_payload_value_with_dependency(
             self.pool,
             &mut self.root,
@@ -6231,18 +6387,23 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         Ok(())
     }
 
-    pub fn seal_unique(mut self) -> Result<UniqueArenaList<Lane>, ForkArenaError> {
-        self.arena.seal_direct_tail(self.pool, self.root)?;
-        self.arena.validate_list(self.pool, self.root)?;
+    /// Finishes the list by consuming its exclusive construction owner.
+    ///
+    /// Every fallible allocation and dynamic coordinate check happened while
+    /// appending. The borrow itself proves the arena/pool pair cannot change,
+    /// and the move consumes the sole predecessor/publication authority, so
+    /// finish is infallible.
+    pub fn finish_unique(mut self) -> UniqueArenaList<Lane> {
+        self.arena.finish_constructed_tail(self.pool, self.root);
         let list = self.root;
         self.arena.active_builder = false;
         self.finished = true;
-        Ok(UniqueArenaList { root: list })
+        UniqueArenaList { root: list }
     }
 
-    /// Seals and publishes a copyable shared root.
-    pub fn seal(self) -> Result<ArenaListId<Lane>, ForkArenaError> {
-        Ok(self.seal_unique()?.publish())
+    /// Finishes and publishes the copyable root exactly once.
+    pub fn finish(self) -> ArenaListId<Lane> {
+        self.finish_unique().publish()
     }
 
     pub fn discard(mut self) -> Result<(), ForkArenaError> {
@@ -6342,15 +6503,16 @@ pub struct ArenaChunkSlice<'a, T> {
 /// source node. The admitted source root remains authoritative: no successor
 /// table, copied index, or second node representation is retained here.
 pub(crate) struct AdmittedListChunkCursor<Lane> {
-    list: ArenaListId<Lane>,
     key: LogicalChunkId,
     block: AdmittedDenseBlock,
     position: usize,
     start: u32,
     end: u32,
+    next: u32,
     logical_start: usize,
     head_position: usize,
     head_offset: u32,
+    _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
 impl<Lane> AdmittedListChunkCursor<Lane> {
@@ -6709,8 +6871,18 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
     ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
         let root = self.admit_owned_root(pool, list)?;
+        Ok(self.admitted_tail_chunk_from_root(list, root))
+    }
+
+    /// Starts traversal from the direct root resolved by an earlier integer
+    /// admission. The owner/incarnation/range proof is carried, not replayed.
+    fn admitted_tail_chunk_from_root(
+        &self,
+        list: ArenaListId<Lane>,
+        root: AdmittedListRoot<Lane>,
+    ) -> Option<AdmittedListChunkCursor<Lane>> {
         if list.is_empty() {
-            return Ok(None);
+            return None;
         }
         let start = if root.tail.position == root.head.position {
             root.head.offset
@@ -6718,17 +6890,18 @@ impl<T, Lane> ForkArena<T, Lane> {
             0
         };
         let chunk_len = (root.tail.offset - start) as usize;
-        Ok(Some(AdmittedListChunkCursor {
-            list,
+        Some(AdmittedListChunkCursor {
             key: list.tail.raw,
             block: root.tail.block,
             position: root.tail.position as usize,
             start,
             end: root.tail.offset,
+            next: start,
             logical_start: list.len() - chunk_len,
             head_position: root.head.position as usize,
             head_offset: root.head.offset,
-        }))
+            _lane: PhantomData,
+        })
     }
 
     /// Follows the sole predecessor edge without resolving a logical index.
@@ -6765,15 +6938,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         #[cfg(any(test, feature = "testing"))]
         self.pool_forward_chunk_crossing(pool);
         Ok(Some(AdmittedListChunkCursor {
-            list: cursor.list,
             key,
             block,
             position,
             start,
             end,
+            next: start,
             logical_start,
             head_position: cursor.head_position,
             head_offset: cursor.head_offset,
+            _lane: PhantomData,
         }))
     }
 
@@ -6787,32 +6961,37 @@ impl<T, Lane> ForkArena<T, Lane> {
         );
     }
 
-    /// Resolves one node inside an already-admitted packed chunk directly.
-    pub(crate) fn admitted_chunk_value<'a>(
+    /// Resolves a caller-proven position inside an admitted packed chunk.
+    pub(crate) fn admitted_chunk_value_at<'a>(
         &'a self,
         pool: &'a ChunkPool<T>,
-        list: ArenaListId<Lane>,
         cursor: &AdmittedListChunkCursor<Lane>,
         offset: usize,
-    ) -> Result<(usize, &'a T), ForkArenaError> {
-        if cursor.list != list || offset >= cursor.len() {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        if self.live_key_at(cursor.position) != Some(cursor.key) {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        let offset = cursor
-            .start
-            .checked_add(u32::try_from(offset).map_err(|_| ForkArenaError::CapacityOverflow)?)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        let value = pool
-            .payload
-            .admitted_dense_value(cursor.block, offset)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        Ok((
+    ) -> (usize, &'a T) {
+        debug_assert!(offset < cursor.len());
+        let offset = cursor.start + offset as u32;
+        let value = pool.payload.admitted_capability_value(cursor.block, offset);
+        (
             cursor.logical_start + (offset - cursor.start) as usize,
             value,
-        ))
+        )
+    }
+
+    /// Advances one admitted chunk cursor. Successful reads are exactly one
+    /// block-table lookup, one payload index, and scalar cursor increments.
+    pub(crate) fn admitted_next_chunk_value<'a>(
+        &'a self,
+        pool: &'a ChunkPool<T>,
+        cursor: &mut AdmittedListChunkCursor<Lane>,
+    ) -> Option<(usize, &'a T)> {
+        if cursor.next == cursor.end {
+            return None;
+        }
+        let offset = cursor.next;
+        let logical = cursor.logical_start + (offset - cursor.start) as usize;
+        let value = pool.payload.admitted_capability_value(cursor.block, offset);
+        cursor.next += 1;
+        Some((logical, value))
     }
 }
 
@@ -6829,9 +7008,8 @@ impl<Lane> ForkArena<u32, Lane> {
     ) -> Result<u64, ForkArenaError> {
         let mut chunk = self.admitted_tail_chunk(pool, list)?;
         let mut checksum = 0_u64;
-        while let Some(current) = chunk {
-            for offset in 0..current.len() {
-                let (_, value) = self.admitted_chunk_value(pool, list, &current, offset)?;
+        while let Some(mut current) = chunk {
+            while let Some((_, value)) = self.admitted_next_chunk_value(pool, &mut current) {
                 checksum = checksum.wrapping_add(u64::from(*value));
             }
             chunk = self.admitted_previous_chunk(pool, &current)?;

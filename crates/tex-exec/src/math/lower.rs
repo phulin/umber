@@ -821,13 +821,13 @@ fn finish_math_chunk_prefix<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     nodes: PageListId,
     source: tex_state::page_node_arena::PageListSpan,
-    chunk: tex_state::page_node_arena::PageListChunkCursor,
+    mut chunk: tex_state::page_node_arena::PageListChunkCursor,
     insert_penalties: bool,
     result: &mut tex_state::page_node_arena::PageListSpan,
     copied_through: &mut usize,
 ) {
     if let Some(previous) = stores
-        .page_node_span_previous_chunk(source, &chunk)
+        .page_node_span_previous_chunk(&chunk)
         .expect("owned math-list source chunk remains live")
     {
         finish_math_chunk_prefix(
@@ -842,15 +842,8 @@ fn finish_math_chunk_prefix<G>(
             copied_through,
         );
     }
-    for offset in 0..chunk.len() {
-        let index = chunk.logical_start() + offset;
-        let list = {
-            let (resolved, node) = stores
-                .page_node_span_chunk_node(source, &chunk, offset)
-                .expect("owned math-list source chunk remains live");
-            debug_assert_eq!(resolved, index);
-            node.math_list()
-        };
+    while let Some((index, node)) = stores.page_node_span_next_chunk_node(&mut chunk) {
+        let list = { node.math_list() };
         let Some(list) = list else {
             continue;
         };

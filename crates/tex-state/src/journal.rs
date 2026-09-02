@@ -505,9 +505,7 @@ impl<G> SaveJournal<G> {
                     alternate_save_serial: mutation.before_save_serial,
                 })
                 .expect("one dense journal cell fits its coarse chunk");
-            let _ = builder
-                .seal()
-                .expect("dense journal cell seals without materialization");
+            let _ = builder.finish();
             self.checkpoint_entries = self
                 .checkpoint_entries
                 .checked_add(1)

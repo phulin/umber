@@ -35,6 +35,18 @@ fn restricted_capabilities_reject_privileged_apis() {
         ],
     );
     assert_compile_fail(
+        "fork-arena-builder-reuse-forbidden",
+        &manifest_dir.join("tests/ui/fork_arena_builder_reuse_forbidden.rs"),
+        &dependencies,
+        &["E0382", "use of moved value: `builder`"],
+    );
+    assert_compile_fail(
+        "fork-arena-single-publication-forbidden",
+        &manifest_dir.join("tests/ui/fork_arena_single_publication_forbidden.rs"),
+        &dependencies,
+        &["E0382", "use of moved value: `unique`"],
+    );
+    assert_compile_fail(
         "durable-token-boundary-forbidden",
         &manifest_dir.join("tests/ui/durable_token_boundary_forbidden.rs"),
         &dependencies,

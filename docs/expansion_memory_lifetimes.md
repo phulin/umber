@@ -143,6 +143,25 @@ the canonical ranges directly. `ParagraphTape`, alignment setting, and
 `LineMaterializer` carry only list roots and compact scalar/index scratch; they
 never own or materialize the source node lane.
 
+The compact production arena applies the same admitted-episode rule used by
+resident command input. A raw stored list coordinate is validated once when a
+borrowed view or mutation-compatible chunk cursor is created. That admission
+resolves the direct typed block coordinate and rejects a stale rollback or
+recycled incarnation. Reads inside the admitted block then perform only the
+block-table lookup, payload index, and cursor increment; a logical predecessor
+crossing resolves the next block once. The cursor is episode-local evidence,
+not a serializable owner or another resident representation.
+
+Construction uses move-only Rust capabilities for the facts already known in
+process. An exclusive `ForkArenaBuilder` borrows its exact arena and pool,
+moves each value into one vacant initialized-prefix slot, and is consumed by
+infallible finish. Its unique result owns the only unpublished predecessor
+authority and consuming publication can occur once. The reusable page-builder
+shell similarly moves out its one private open owner on production finish.
+Dynamic checks remain only for allocation/capacity, admission of stored
+integer roots, semantic child and annex dependencies, block transitions,
+rollback/fork settlement, and cross-region move/copy preflight.
+
 If convergence identity is enabled before publication, original node append
 also maintains one composable whole-chunk summary and descriptor publication
 stores the exact summary of each canonical range. Slice and retained-range

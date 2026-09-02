@@ -260,6 +260,25 @@ production top-level owner without the matching region.
 
 ## Ordinary construction and list processing
 
+Within one admitted construction episode, Rust ownership carries the facts
+which do not need to remain dynamic. The borrowed generic builder owns the
+exclusive arena/pool pair; its `Lane` type establishes semantic-lane
+compatibility; a consumed vacant slot establishes single initialization; the
+move-only unique-list result owns the sole unpublished head-predecessor write;
+and consuming publication makes that write authority unavailable afterward.
+Finishing consumes the builder and cannot fail. Persistent page-list shells
+move their private open owner out on production finish and immediately become
+vacant for reuse, so they do not create a sealed intermediate owner.
+
+The checks that remain dynamic are precisely the facts originating as stored
+integers or host/lifecycle state: pool and region identity at admission,
+logical/physical incarnations after rollback or recycling, initialized
+endpoint prefixes, arithmetic capacity, child/annex dependency admission,
+accepted-versus-candidate selection, and transfer/rollback preflight. After a
+root is admitted into a direct chunk cursor, ordinary values do not repeat
+those checks. They index the admitted typed block and advance the cursor;
+predecessor and physical-block resolution recur only at a real block crossing.
+
 Ordinary list processing is packed-block movement plus append-only output:
 
 - a uniquely owned whole chain is represented by move-only `UniqueArenaList`

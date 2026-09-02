@@ -27,7 +27,7 @@ fn publish_raw(
     for node in nodes {
         builder.push(node).expect("publish test node");
     }
-    builder.seal().expect("seal test list")
+    builder.finish()
 }
 
 fn resident_address<Role>(
@@ -118,7 +118,7 @@ fn whole_closure_transfer_rebrands_nested_children_without_copying() {
         .begin_builder(&mut pool.annex_chunks)
         .expect("whole-region annex builder");
     annex_builder.push(137).expect("whole-region annex word");
-    let annex = annex_builder.seal().expect("whole-region annex");
+    let annex = annex_builder.finish();
     let annex_address = source
         .annex_arena
         .list(&pool.annex_chunks, annex)
@@ -460,7 +460,7 @@ fn closure_transfer_moves_node_and_annex_suffix_together() {
         .expect("annex suffix builder");
     annex_builder.push(101).expect("first annex word");
     annex_builder.push(103).expect("second annex word");
-    let annex = annex_builder.seal().expect("annex suffix");
+    let annex = annex_builder.finish();
     let annex_address = source
         .annex_arena
         .list(&pool.annex_chunks, annex)
@@ -509,7 +509,7 @@ fn annex_preflight_failure_returns_the_whole_closure_for_exact_rollback() {
         .begin_builder(&mut pool.annex_chunks)
         .expect("annex suffix builder");
     annex_builder.push(107).expect("annex word");
-    let annex = annex_builder.seal().expect("annex suffix");
+    let annex = annex_builder.finish();
     let receipt = source
         .consumed_closure_roots_receipt(&mark)
         .expect("closure roots consumed");
@@ -556,7 +556,7 @@ fn closure_boundary_rotates_node_and_annex_tails() {
         .begin_builder(&mut pool.annex_chunks)
         .expect("annex prefix builder");
     prefix_annex_builder.push(113).expect("annex prefix");
-    let prefix_annex = prefix_annex_builder.seal().expect("annex prefix list");
+    let prefix_annex = prefix_annex_builder.finish();
     let prefix_node_address = resident_address(&source, &pool, prefix.list);
     let prefix_annex_address = source
         .annex_arena
@@ -577,7 +577,7 @@ fn closure_boundary_rotates_node_and_annex_tails() {
         .begin_builder(&mut pool.annex_chunks)
         .expect("annex suffix builder");
     suffix_annex_builder.push(131).expect("annex suffix");
-    let suffix_annex = suffix_annex_builder.seal().expect("annex suffix list");
+    let suffix_annex = suffix_annex_builder.finish();
     let suffix_node_address = resident_address(&source, &pool, suffix.list);
     let suffix_annex_address = source
         .annex_arena
@@ -610,7 +610,7 @@ fn checkpoint_fork_accepts_or_rejects_node_and_annex_as_one_pair() {
         .begin_builder(&mut pool.annex_chunks)
         .expect("checkpoint prefix annex builder");
     prefix_annex_builder.push(149).expect("prefix annex word");
-    prefix_annex_builder.seal().expect("prefix annex");
+    prefix_annex_builder.finish();
     let checkpoint = region
         .seal_checkpoint_boundary(&mut pool)
         .and_then(|boundary| region.checkpoint_mark(boundary))
@@ -626,7 +626,7 @@ fn checkpoint_fork_accepts_or_rejects_node_and_annex_as_one_pair() {
     accepted_annex_builder
         .push(157)
         .expect("accepted annex word");
-    let accepted_annex = accepted_annex_builder.seal().expect("accepted annex");
+    let accepted_annex = accepted_annex_builder.finish();
     let accepted_address = region
         .annex_arena
         .list(&pool.annex_chunks, accepted_annex)
@@ -648,7 +648,7 @@ fn checkpoint_fork_accepts_or_rejects_node_and_annex_as_one_pair() {
     rejected_annex_builder
         .push(167)
         .expect("rejected annex word");
-    let rejected_annex = rejected_annex_builder.seal().expect("rejected annex");
+    let rejected_annex = rejected_annex_builder.finish();
     let rejection = region
         .seal_checkpoint_boundary(&mut pool)
         .expect("rejection boundary");
@@ -689,7 +689,7 @@ fn checkpoint_fork_accepts_or_rejects_node_and_annex_as_one_pair() {
     candidate_annex_builder
         .push(179)
         .expect("candidate annex word");
-    let candidate_annex = candidate_annex_builder.seal().expect("candidate annex");
+    let candidate_annex = candidate_annex_builder.finish();
     let acceptance = region
         .seal_checkpoint_boundary(&mut pool)
         .expect("acceptance boundary");

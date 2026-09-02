@@ -685,6 +685,50 @@ Forking therefore changes neither embedded child coordinates nor retained
 
 ### Construction, access, and mutation
 
+The generic construction boundary now separates dynamic admission from a
+statically minimal resident episode. `ForkArenaBuilder<'arena, T, Lane>` holds
+the exclusive arena and pool borrows which minted it. Consequently Rust, not a
+repeated integer check, proves that every append targets that arena, pool,
+lineage, and typed lane until the builder is consumed. Each `push(T)` moves one
+payload into the next one-use `VacantSlot`; there is no API which can initialize
+that slot twice. `finish_unique(self)` consumes the builder and returns the
+sole unpublished predecessor capability, while `UniqueArenaList::publish(self)`
+consumes that capability exactly once. Both properties have compile-fail
+coverage. Finish seals only the already-known initialized prefix and is
+infallible: it does not recheck owner, generation, incarnation, range, list
+length, or predecessor topology.
+
+Persistent page builders retain a reusable vacant shell because their scalar
+state must cross command episodes. Admission moves one private
+`OpenActiveList` owner into that shell. Production finish moves the owner back
+out in one operation, returns the one-use unique list, and restores the shell
+to vacant; it does not pass through a second sealed representation or repeat
+root validation. The runtime arena-instance check occurs when that detached
+shell is admitted, not while its resident root is being finished.
+
+Stored `ArenaListId` integers remain untrusted until admission. Admission
+checks coordinate space, logical and physical incarnations, semantic owner,
+initialized endpoint prefixes, and endpoint ranges once, and resolves the
+head/tail typed-block coordinates. An admitted chunk cursor carries only that
+direct proof and scalar position. Each ordinary value read then performs the
+typed block-table lookup, payload index, and caller cursor increment. It does
+not compare the source root, owner, arena position, logical incarnation, or
+physical incarnation again. A predecessor crossing admits the next logical
+block once. Rollback, transfer, or reuse invalidates the integer root, which is
+rejected the next time a new cursor is admitted; an admitted cursor is not a
+detached durable handle.
+
+The packed annex append path follows the same split. A logical/physical block
+is admitted once at the start of a run or after a genuine block transition.
+Values inside it perform only destination lookup, one final write, initialized-
+prefix publication, metadata/cursor increment, and the list-length increment.
+Logical list boundaries within a block update scalar root bookkeeping only.
+Allocation, warm-block reuse, owner/lineage/incarnation checks, vacancy proof,
+and predecessor installation remain at genuine block admission. Integer
+overflow, allocation failure, foreign/stale ingress, semantic child or annex
+validation, rollback, fork settlement, and cross-region transfer remain the
+deliberately dynamic boundary checks.
+
 Publication is one aggregate transaction:
 
 1. validate source fonts, token keys, and every child `PageListId` under the

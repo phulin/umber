@@ -285,13 +285,13 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
         let mut builder = arena.begin_builder(&mut pool).expect("builder");
         builder.push(3).expect("append");
         builder.push(4).expect("append");
-        builder.seal().expect("list seal")
+        builder.finish()
     };
     let operation = arena.operation_mark(&pool);
     let second = {
         let mut builder = arena.begin_builder(&mut pool).expect("builder");
         builder.push(5).expect("append");
-        builder.seal().expect("list seal")
+        builder.finish()
     };
     assert_eq!(
         arena.list(&pool, second).expect("second view").get(0),
@@ -319,6 +319,59 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
 }
 
 #[test]
+fn consuming_builder_finish_performs_no_dynamic_revalidation() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let mut builder = arena.begin_builder(&mut pool).expect("builder admission");
+    builder.push(1).expect("first initialized destination");
+    let validations_after_admission = builder.validation_reads();
+    builder.push(2).expect("second initialized destination");
+    assert_eq!(
+        builder.validation_reads(),
+        validations_after_admission,
+        "resident appends reuse the admitted destination block"
+    );
+    let validations_before = builder.validation_reads();
+    let root = builder.finish();
+
+    assert_eq!(
+        pool.payload.validation_reads(),
+        validations_before,
+        "consuming finish trusts its arena, generation, range, and predecessor capability"
+    );
+    assert_eq!(arena.list(&pool, root).expect("published root").len(), 2);
+}
+
+#[test]
+fn persistent_builder_finish_consumes_open_owner_without_revalidation() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let mut builder = super::ActiveListBuilder::default();
+    arena
+        .open_active_list(&pool, &mut builder)
+        .expect("active builder admission");
+    arena
+        .push_active_list(&mut pool, &mut builder, 7)
+        .expect("initialized destination");
+    let validations_before = pool.payload.validation_reads();
+    let unique = arena.finish_active_list(&mut pool, &mut builder);
+
+    assert_eq!(
+        pool.payload.validation_reads(),
+        validations_before,
+        "consuming the persistent open owner does not repeat arena admission"
+    );
+    assert!(builder.is_vacant());
+    assert_eq!(
+        arena
+            .list(&pool, unique.publish())
+            .expect("published root")
+            .get(0),
+        Some(&7)
+    );
+}
+
+#[test]
 fn unique_whole_list_capability_splices_once_without_copying_payload() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
@@ -326,7 +379,7 @@ fn unique_whole_list_capability_splices_once_without_copying_payload() {
         let mut builder = arena.begin_builder(&mut pool).expect("right builder");
         builder.push(2).expect("right node");
         builder.push(3).expect("right node");
-        builder.seal_unique().expect("unique right chain")
+        builder.finish_unique()
     };
     let right_root = right.root;
     let right_address = arena
@@ -415,7 +468,7 @@ fn explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes() {
                     })
                     .expect("source node");
             }
-            builder.seal().expect("source list")
+            builder.finish()
         };
         let source_mark = arena.operation_mark(&pool);
 
@@ -513,7 +566,7 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
             for value in 0..chunks {
                 builder.push(value).expect("one-node direct block");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         assert_eq!(arena.counters().direct_blocks_allocated, u64::from(chunks));
 
@@ -617,7 +670,7 @@ fn live_chunk_boundary_validation_work_is_constant_at_required_sizes() {
             for value in 0..chunks {
                 builder.push(value).expect("one-node direct block");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
 
         let reads_before = pool.payload.arena_position_reads();
@@ -641,7 +694,7 @@ fn direct_chunk_visit_is_linear_and_allocation_free_at_one_sixty_four_and_four_t
             for value in 0..chunks {
                 builder.push(value).expect("one-node direct block");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let view = arena.list(&pool, root).expect("admitted view");
         let bytes_before = pool.allocated_heap_bytes();
@@ -679,7 +732,7 @@ fn admitted_endpoint_reads_use_direct_root_cursors() {
         for value in 0..4_096 {
             builder.push(value).expect("one-node direct block");
         }
-        builder.seal().expect("direct root")
+        builder.finish()
     };
     let view = arena.list(&pool, root).expect("admitted view");
     let resolutions_before = pool.payload.admitted_index_resolutions();
@@ -709,7 +762,7 @@ fn admitted_index_lookup_is_allocation_free_and_repeats_no_owner_validation_at_r
             for value in 0..chunks {
                 builder.push(value).expect("one-node direct block");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let view = arena.list(&pool, root).expect("admitted view");
         let validations_before = pool.payload.validation_reads();
@@ -766,7 +819,7 @@ fn admitted_forward_callback_crosses_each_packed_block_once_at_required_sizes() 
             for value in 0..values {
                 builder.push(value).expect("packed direct node");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let view = arena.list(&pool, root).expect("admitted view");
         let expected_blocks = usize::try_from(values)
@@ -828,7 +881,7 @@ fn canonical_forward_range_beats_compatibility_iteration_at_required_chunk_count
             for value in 0..chunks {
                 builder.push(value).expect("one-node packed block");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let view = arena.list(&pool, root).expect("admitted view");
 
@@ -879,8 +932,7 @@ fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation
     fn visit_prefix(
         arena: &ForkArena<u32, ActiveLane>,
         pool: &ChunkPool<u32>,
-        root: super::ArenaListId<ActiveLane>,
-        chunk: super::AdmittedListChunkCursor<ActiveLane>,
+        mut chunk: super::AdmittedListChunkCursor<ActiveLane>,
         checksum: &mut u64,
         visits: &mut usize,
     ) {
@@ -888,12 +940,9 @@ fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation
             .admitted_previous_chunk(pool, &chunk)
             .expect("admitted predecessor")
         {
-            visit_prefix(arena, pool, root, previous, checksum, visits);
+            visit_prefix(arena, pool, previous, checksum, visits);
         }
-        for offset in 0..chunk.len() {
-            let (index, value) = arena
-                .admitted_chunk_value(pool, root, &chunk, offset)
-                .expect("admitted packed value");
+        while let Some((index, value)) = arena.admitted_next_chunk_value(pool, &mut chunk) {
             assert_eq!(index, *visits);
             *checksum += u64::from(*value);
             *visits += 1;
@@ -908,7 +957,7 @@ fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation
             for value in 0..values {
                 builder.push(value).expect("packed direct node");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let expected_blocks = usize::try_from(values)
             .expect("test size fits usize")
@@ -925,7 +974,7 @@ fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation
                 .expect("nonempty root");
             let mut checksum = 0_u64;
             let mut visits = 0;
-            visit_prefix(&arena, &pool, root, tail, &mut checksum, &mut visits);
+            visit_prefix(&arena, &pool, tail, &mut checksum, &mut visits);
             (checksum, visits)
         };
         let allocation_after = thread_measurement(ALLOCATION_OWNER);
@@ -955,12 +1004,12 @@ fn resumable_chunk_cursor_crosses_each_block_once_without_indexing_or_allocation
 }
 
 #[test]
-fn resumable_chunk_cursor_rejects_rolled_back_source_coordinates() {
+fn rolled_back_source_coordinates_are_rejected_on_readmission() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let operation = arena.operation_mark(&pool);
     let root = list(&mut arena, &mut pool, [0; 32]);
-    let tail = arena
+    let _tail = arena
         .admitted_tail_chunk(&pool, root)
         .expect("admitted root")
         .expect("nonempty root");
@@ -972,9 +1021,7 @@ fn resumable_chunk_cursor_rejects_rolled_back_source_coordinates() {
     assert_eq!(replacement.len(), root.len());
 
     assert_eq!(
-        arena
-            .admitted_chunk_value(&pool, root, &tail, 0)
-            .map(|_| ()),
+        arena.admitted_tail_chunk(&pool, root).map(|_| ()),
         Err(ForkArenaError::InvalidRange)
     );
 }
@@ -984,8 +1031,7 @@ fn resumable_chunk_cursor_preserves_shared_prefix_across_append() {
     fn visit_prefix(
         arena: &ForkArena<u32, ActiveLane>,
         pool: &ChunkPool<u32>,
-        root: super::ArenaListId<ActiveLane>,
-        chunk: super::AdmittedListChunkCursor<ActiveLane>,
+        mut chunk: super::AdmittedListChunkCursor<ActiveLane>,
         checksum: &mut u64,
         visits: &mut usize,
     ) {
@@ -993,12 +1039,9 @@ fn resumable_chunk_cursor_preserves_shared_prefix_across_append() {
             .admitted_previous_chunk(pool, &chunk)
             .expect("shared-prefix predecessor")
         {
-            visit_prefix(arena, pool, root, previous, checksum, visits);
+            visit_prefix(arena, pool, previous, checksum, visits);
         }
-        for offset in 0..chunk.len() {
-            let (index, value) = arena
-                .admitted_chunk_value(pool, root, &chunk, offset)
-                .expect("shared-prefix packed value");
+        while let Some((index, value)) = arena.admitted_next_chunk_value(pool, &mut chunk) {
             assert_eq!(index, *visits);
             *checksum += u64::from(*value);
             *visits += 1;
@@ -1023,7 +1066,7 @@ fn resumable_chunk_cursor_preserves_shared_prefix_across_append() {
 
     let mut checksum = 0;
     let mut visits = 0;
-    visit_prefix(&arena, &pool, prefix, tail, &mut checksum, &mut visits);
+    visit_prefix(&arena, &pool, tail, &mut checksum, &mut visits);
     assert_eq!(visits, 37);
     assert_eq!(checksum, 37 * 36 / 2);
     arena
@@ -1040,7 +1083,7 @@ fn admitted_forward_callback_preserves_subrange_and_early_stop_semantics() {
         for value in 0..24 {
             builder.push(value).expect("value");
         }
-        builder.seal().expect("root")
+        builder.finish()
     };
     let view = arena.list(&pool, root).expect("admitted view");
     let mut observed = Vec::new();
@@ -1074,7 +1117,7 @@ fn direct_mapped_clone_clones_each_source_once_and_reuses_warmed_storage() {
             for value in 0..values as u32 {
                 builder.push(CloneTracked(value)).expect("source value");
             }
-            builder.seal().expect("source root")
+            builder.finish()
         };
         let source_address = source
             .list(&pool, source_root)
@@ -1165,7 +1208,7 @@ fn direct_mapped_clone_rewrite_failure_rolls_back_the_partial_destination() {
         for value in 0..32 {
             builder.push(CloneTracked(value)).expect("source value");
         }
-        builder.seal().expect("source root")
+        builder.finish()
     };
     let mut destination = ForkArena::<CloneTracked, ActiveLane>::new();
 
@@ -1185,7 +1228,7 @@ fn direct_mapped_clone_rewrite_failure_rolls_back_the_partial_destination() {
     replacement
         .push(CloneTracked(41))
         .expect("rolled-back destination accepts new work");
-    let replacement = replacement.seal().expect("replacement root");
+    let replacement = replacement.finish();
     assert_eq!(
         destination
             .list(&pool, replacement)
@@ -1214,7 +1257,7 @@ fn direct_mapped_clone_metadata_failure_restores_the_exact_operation_mark() {
                 child: super::ArenaListId::empty(),
             })
             .expect("source value");
-        builder.seal().expect("source root")
+        builder.finish()
     };
     let source_address = source
         .list(&pool, source_root)
@@ -1260,7 +1303,7 @@ fn direct_mapped_clone_metadata_failure_restores_the_exact_operation_mark() {
                 child: super::ArenaListId::empty(),
             })
             .expect("replacement value");
-        builder.seal().expect("replacement root")
+        builder.finish()
     };
     assert_eq!(
         destination
@@ -1322,7 +1365,7 @@ fn reverse_tail_chunk_work_is_independent_of_list_size() {
             for value in 0..size {
                 builder.push(value).expect("node");
             }
-            builder.seal().expect("direct root")
+            builder.finish()
         };
         let view = arena.list(&pool, root).expect("direct view");
         let mut nodes = view.iter();
@@ -1532,7 +1575,7 @@ fn shared_chunk_destructors_run_only_after_the_last_lineage_drops() {
     let _shipped = {
         let mut builder = prior.begin_builder(&mut pool).expect("prefix builder");
         builder.push(tracked(1)).expect("prefix value");
-        builder.seal().expect("prefix")
+        builder.finish()
     };
     let build = prior.begin_batch(&mut pool).expect("successor boundary");
     let retained = region_list(&mut prior, &mut pool, [tracked(2)]);
@@ -1880,7 +1923,7 @@ fn borrowed_node_cursor_traverses_page_material_without_materialization() {
         let mut builder = arena.begin_builder(&mut pool).expect("builder");
         builder.push(Node::Penalty(17)).expect("first node");
         builder.push(Node::Penalty(23)).expect("second node");
-        builder.seal().expect("sealed page list")
+        builder.finish()
     };
     let owned = arena
         .list(&pool, list)
@@ -1992,7 +2035,7 @@ fn shared_active_append_copies_explicitly_and_keeps_the_source_stable() {
         let mut source = arena.begin_builder(&mut pool).expect("source builder");
         source.push(Node::Penalty(11)).expect("source node");
         source.push(Node::Penalty(12)).expect("source node");
-        source.seal().expect("source list")
+        source.finish()
     };
     let source_address = arena
         .list(&pool, source)
@@ -2286,7 +2329,7 @@ fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasure
         for value in 0..prefix_chunks as u32 {
             builder.push(value).expect("filler append");
         }
-        builder.seal().expect("filler root");
+        builder.finish();
     }
 
     let mut source = ForkArena::<u32, ActiveLane>::new();
@@ -2356,7 +2399,7 @@ fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
     for value in 0..256 {
         filler_builder.push(value).expect("filler append");
     }
-    filler_builder.seal().expect("filler root");
+    filler_builder.finish();
 
     let mut source = ForkArena::<u32, ActiveLane>::new();
     let mark = source.begin_batch(&mut pool).expect("transfer boundary");
@@ -2375,7 +2418,7 @@ fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
         .begin_builder(&mut foreign_pool)
         .expect("foreign destination builder");
     foreign_builder.push(99).expect("foreign append");
-    let foreign_root = foreign_builder.seal().expect("foreign root");
+    let foreign_root = foreign_builder.finish();
     let failure = source
         .promote_detached_batch_into(&mut pool, &mut destination, detached)
         .expect_err("foreign-bound destination rejects the transfer");
@@ -2420,7 +2463,7 @@ fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
                 .push_summarized(value, value.wrapping_add(100))
                 .expect("summarized append");
         }
-        builder.seal().expect("source list")
+        builder.finish()
     };
     let batch = active
         .seal_batch(&mut pool, region, vec![source])
@@ -2455,7 +2498,7 @@ fn list<const N: usize>(
     for value in values {
         builder.push(value).expect("append");
     }
-    builder.seal().expect("seal")
+    builder.finish()
 }
 
 fn region_list<T>(

@@ -1330,7 +1330,7 @@ fn normalize_paragraph_infinite_shrink<G>(
 fn normalize_paragraph_chunk_prefix<G>(
     stores: &mut CommandContext<'_, G>,
     source: tex_state::page_node_arena::PageListSpan,
-    chunk: tex_state::page_node_arena::PageListChunkCursor,
+    mut chunk: tex_state::page_node_arena::PageListChunkCursor,
     tracing: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -1339,7 +1339,7 @@ fn normalize_paragraph_chunk_prefix<G>(
     retained_start: &mut usize,
 ) -> Result<(), ExecError> {
     if let Some(previous) = stores
-        .page_node_span_previous_chunk(source, &chunk)
+        .page_node_span_previous_chunk(&chunk)
         .expect("paragraph source chunk remains live")
     {
         normalize_paragraph_chunk_prefix(
@@ -1354,11 +1354,8 @@ fn normalize_paragraph_chunk_prefix<G>(
             retained_start,
         )?;
     }
-    for offset in 0..chunk.len() {
+    while let Some((index, node)) = stores.page_node_span_next_chunk_node(&mut chunk) {
         let (index, replacement) = {
-            let (index, node) = stores
-                .page_node_span_chunk_node(source, &chunk, offset)
-                .expect("paragraph source chunk remains live");
             let replacement = node.glue_spec_kind().and_then(|(spec, kind)| {
                 (spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal)
                     .then(|| (spec, kind, node.glue_leader().flatten()))

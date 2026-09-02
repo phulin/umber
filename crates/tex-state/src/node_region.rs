@@ -570,7 +570,7 @@ impl<Role> NodeRegion<Role> {
         }
         Ok(RegionRoot {
             region: self.id,
-            list: PageListId::from_parts(builder.seal()?, None),
+            list: PageListId::from_parts(builder.finish(), None),
             _role: PhantomData,
         })
     }
@@ -1453,8 +1453,7 @@ fn copy_list_recursive<Source, Destination>(
             annex_pool,
             source,
             source_annex,
-            list.coordinate(),
-            &tail,
+            tail,
             &mut source_children,
         )?;
     }
@@ -1495,14 +1494,12 @@ fn copy_list_recursive<Source, Destination>(
             source_annex,
             destination,
             destination_annex,
-            list.coordinate(),
-            &tail,
+            tail,
             &mut builder,
             &mut copied_children,
         )?;
     }
-    destination.finalize_active_list(pool, &mut builder)?;
-    let coordinate = builder.take_unique_sealed()?.publish();
+    let coordinate = destination.finish_active_list(pool, &mut builder).publish();
     if copied_children.next().is_some() {
         return Err(ForkArenaError::InvalidRegion);
     }
@@ -1530,24 +1527,14 @@ fn collect_copy_children(
     annex_pool: &ChunkPool<u32>,
     source: &ForkArena<RegionNode, PageMaterialLane>,
     source_annex: &ForkArena<u32, NodeAnnexLane>,
-    list: crate::fork_arena::ArenaListId<PageMaterialLane>,
-    cursor: &AdmittedListChunkCursor<PageMaterialLane>,
+    mut cursor: AdmittedListChunkCursor<PageMaterialLane>,
     children: &mut Vec<PageListId>,
 ) -> Result<(), ForkArenaError> {
-    if let Some(previous) = source.admitted_previous_chunk(pool, cursor)? {
-        collect_copy_children(
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            list,
-            &previous,
-            children,
-        )?;
+    if let Some(previous) = source.admitted_previous_chunk(pool, &cursor)? {
+        collect_copy_children(pool, annex_pool, source, source_annex, previous, children)?;
     }
     let annex = NodeAnnexView::new(annex_pool, source_annex);
-    for offset in 0..cursor.len() {
-        let (_, record) = source.admitted_chunk_value(pool, list, cursor, offset)?;
+    while let Some((_, record)) = source.admitted_next_chunk_value(pool, &mut cursor) {
         record
             .visit_node_lists(annex, |child| children.push(child))
             .ok_or(ForkArenaError::InvalidRange)?;
@@ -1563,12 +1550,11 @@ fn copy_record_chunk_prefix(
     source_annex: &ForkArena<u32, NodeAnnexLane>,
     destination: &mut ForkArena<RegionNode, PageMaterialLane>,
     destination_annex: &mut ForkArena<u32, NodeAnnexLane>,
-    list: crate::fork_arena::ArenaListId<PageMaterialLane>,
-    cursor: &AdmittedListChunkCursor<PageMaterialLane>,
+    mut cursor: AdmittedListChunkCursor<PageMaterialLane>,
     builder: &mut ActiveListBuilder<RegionNode, PageMaterialLane>,
     copied_children: &mut impl Iterator<Item = PageListId>,
 ) -> Result<(), ForkArenaError> {
-    if let Some(previous) = source.admitted_previous_chunk(pool, cursor)? {
+    if let Some(previous) = source.admitted_previous_chunk(pool, &cursor)? {
         copy_record_chunk_prefix(
             pool,
             annex_pool,
@@ -1576,14 +1562,13 @@ fn copy_record_chunk_prefix(
             source_annex,
             destination,
             destination_annex,
-            list,
-            &previous,
+            previous,
             builder,
             copied_children,
         )?;
     }
-    for offset in 0..cursor.len() {
-        let record = *source.admitted_chunk_value(pool, list, cursor, offset)?.1;
+    while let Some((_, record)) = source.admitted_next_chunk_value(pool, &mut cursor) {
+        let record = *record;
         let (record, annex_dependency_floor) = record
             .reencode_between_regions(annex_pool, source_annex, destination_annex, |_| {
                 copied_children.next()

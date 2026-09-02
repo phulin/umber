@@ -2988,9 +2988,7 @@ impl PageBuilderState {
             builder
                 .push(inverse)
                 .expect("one page inverse fits its fixed-chunk journal");
-            let _ = builder
-                .seal()
-                .expect("page inverse publishes without materialization");
+            let _ = builder.finish();
             self.checkpoint_journal.applied += 1;
         }
     }

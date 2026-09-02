@@ -1596,8 +1596,7 @@ impl<'a> PageMaterialArena<'a> {
         if let Some(tail) = self.span_tail_chunk(span)? {
             self.append_reencoded_chunk_range(
                 builder,
-                span,
-                &tail,
+                tail,
                 &selected,
                 &mut selected_identity,
                 &mut copied,
@@ -1627,24 +1626,21 @@ impl<'a> PageMaterialArena<'a> {
     fn append_reencoded_chunk_range(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
-        span: PageListSpan,
-        cursor: &PageListChunkCursor,
+        mut cursor: PageListChunkCursor,
         selected: &Range<usize>,
         selected_identity: &mut Option<SemanticSequenceIdentity>,
         copied: &mut usize,
     ) -> Result<(), ForkArenaError> {
-        if let Some(previous) = self.span_previous_chunk(span, cursor)? {
+        if let Some(previous) = self.span_previous_chunk(&cursor)? {
             self.append_reencoded_chunk_range(
                 builder,
-                span,
-                &previous,
+                previous,
                 selected,
                 selected_identity,
                 copied,
             )?;
         }
-        for offset in 0..cursor.len() {
-            let (index, node) = self.span_chunk_node(span, cursor, offset)?;
+        while let Some((index, node)) = self.span_next_chunk_node(&mut cursor) {
             if !selected.contains(&index) {
                 continue;
             }
@@ -1700,10 +1696,10 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<UniquePageList, ForkArenaError> {
-        self.region
+        let coordinate = self
+            .region
             .pub_arena
-            .finalize_active_list(&mut self.pool.chunks, &mut builder.inner)?;
-        let coordinate = builder.inner.take_unique_sealed()?;
+            .finish_active_list(&mut self.pool.chunks, &mut builder.inner);
         self.region.active_annex_operation = None;
         self.region
             .pub_arena
@@ -2019,41 +2015,56 @@ impl<'a> PageMaterialArena<'a> {
     /// Returns the preceding source chunk through its sole persistent edge.
     pub fn span_previous_chunk(
         &self,
-        span: PageListSpan,
         cursor: &PageListChunkCursor,
     ) -> Result<Option<PageListChunkCursor>, ForkArenaError> {
-        if cursor.span != span {
-            return Err(ForkArenaError::InvalidRange);
-        }
         self.region
             .pub_arena
             .admitted_previous_chunk(&self.pool.chunks, &cursor.inner)
-            .map(|previous| previous.map(|inner| PageListChunkCursor { span, inner }))
+            .map(|previous| {
+                previous.map(|inner| PageListChunkCursor {
+                    span: cursor.span,
+                    inner,
+                })
+            })
     }
 
     /// Borrows one node directly from a retained packed-chunk coordinate.
-    pub fn span_chunk_node(
+    pub fn span_chunk_node_at(
         &self,
-        span: PageListSpan,
         cursor: &PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, PageMaterialNodeRef<'_>), ForkArenaError> {
-        if cursor.span != span {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        let (index, record) = self.region.pub_arena.admitted_chunk_value(
-            &self.pool.chunks,
-            span.list.coordinate(),
-            &cursor.inner,
-            offset,
-        )?;
-        Ok((
+    ) -> (usize, PageMaterialNodeRef<'_>) {
+        let (index, record) =
+            self.region
+                .pub_arena
+                .admitted_chunk_value_at(&self.pool.chunks, &cursor.inner, offset);
+        (
             index,
             PageMaterialNodeRef {
                 record,
                 annex: self.annex_view(),
             },
-        ))
+        )
+    }
+
+    /// Advances one admitted packed-chunk cursor without replaying root or
+    /// range validation.
+    pub fn span_next_chunk_node(
+        &self,
+        cursor: &mut PageListChunkCursor,
+    ) -> Option<(usize, PageMaterialNodeRef<'_>)> {
+        self.region
+            .pub_arena
+            .admitted_next_chunk_value(&self.pool.chunks, &mut cursor.inner)
+            .map(|(index, record)| {
+                (
+                    index,
+                    PageMaterialNodeRef {
+                        record,
+                        annex: self.annex_view(),
+                    },
+                )
+            })
     }
 
     pub fn get_sequence(

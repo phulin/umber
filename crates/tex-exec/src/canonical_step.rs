@@ -199,9 +199,7 @@ impl OutputLedger {
                 .push(page)
                 .expect("prepared output page fits the fixed-chunk arena");
         }
-        let _ = builder
-            .seal()
-            .expect("prepared output page batch seals canonically");
+        let _ = builder.finish();
         self.prepared_page_count = self.prepared_page_count.saturating_add(added);
     }
 

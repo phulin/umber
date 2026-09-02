@@ -82,12 +82,12 @@ impl HyphenationWalk<'_, '_> {
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Result<(), ExecError> {
         if let Some(previous) = stores
-            .page_node_span_previous_chunk(source, &chunk)
+            .page_node_span_previous_chunk(&chunk)
             .expect("hyphenation source chunk remains live")
         {
             self.visit_chunk_prefix(stores, source, previous, diagnostic_effects)?;
         }
-        self.visit_chunk(stores, source, &chunk, diagnostic_effects)
+        self.visit_chunk(stores, source, chunk, diagnostic_effects)
     }
 
     #[inline(never)]
@@ -95,21 +95,14 @@ impl HyphenationWalk<'_, '_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         source: tex_state::page_node_arena::PageListSpan,
-        chunk: &tex_state::page_node_arena::PageListChunkCursor,
+        mut chunk: tex_state::page_node_arena::PageListChunkCursor,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Result<(), ExecError> {
-        for offset in 0..chunk.len() {
-            let index = chunk.logical_start() + offset;
+        while let Some((index, node)) = stores.page_node_span_next_chunk_node(&mut chunk) {
             if index < self.skip_until {
                 continue;
             }
-            let observed = {
-                let (resolved, node) = stores
-                    .page_node_span_chunk_node(source, chunk, offset)
-                    .expect("hyphenation source chunk remains live");
-                debug_assert_eq!(resolved, index);
-                HyphenationScanNode::from_node(node)
-            };
+            let observed = { HyphenationScanNode::from_node(node) };
             match observed {
                 HyphenationScanNode::Language {
                     language,
@@ -387,7 +380,7 @@ fn project_physical_chunk_prefix<G>(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::page_node_arena::PageListChunkCursor, ExecError> {
     let previous = stores
-        .page_node_span_previous_chunk(semantic, &chunk)
+        .page_node_span_previous_chunk(&chunk)
         .expect("hyphenated paragraph source chunk remains live");
     let previous = if let Some(previous) = previous {
         Some(project_physical_chunk_prefix(
@@ -410,8 +403,7 @@ fn project_physical_chunk_prefix<G>(
         let post_override = (post_overrides.get(*override_index).map(|entry| entry.0)
             == Some(index))
         .then(|| post_overrides[*override_index].1);
-        let pre_pending =
-            physical_pre_break_pending(stores, semantic, previous.as_ref(), &chunk, offset);
+        let pre_pending = physical_pre_break_pending(stores, previous.as_ref(), &chunk, offset);
         if (post_override.is_some() || pre_pending.is_some()) && *retained_start < index {
             stores.append_page_active_span_range(physical, semantic, *retained_start..index);
         }
@@ -441,9 +433,7 @@ fn project_physical_chunk_prefix<G>(
         };
         if post_override.is_some() || pre_projection.is_some() {
             let (kind, mut pre, mut post, replace, physical_replace_count) = {
-                let (resolved, node) = stores
-                    .page_node_span_chunk_node(semantic, &chunk, offset)
-                    .expect("hyphenated paragraph source chunk remains live");
+                let (resolved, node) = stores.page_node_span_chunk_node(&chunk, offset);
                 debug_assert_eq!(resolved, index);
                 node.discretionary()
                     .expect("physical projection targets a discretionary")
@@ -473,7 +463,6 @@ fn project_physical_chunk_prefix<G>(
 
 fn physical_pre_break_pending<G>(
     stores: &CommandContext<'_, G>,
-    semantic: tex_state::page_node_arena::PageListSpan,
     previous_chunk: Option<&tex_state::page_node_arena::PageListChunkCursor>,
     chunk: &tex_state::page_node_arena::PageListChunkCursor,
     offset: usize,
@@ -483,9 +472,7 @@ fn physical_pre_break_pending<G>(
         return None;
     }
     let qualifies = {
-        let (resolved, node) = stores
-            .page_node_span_chunk_node(semantic, chunk, offset)
-            .ok()?;
+        let (resolved, node) = stores.page_node_span_chunk_node(chunk, offset);
         debug_assert_eq!(resolved, index);
         let Some((DiscKind::AutomaticHyphen, _, _, replace, 2)) = node.discretionary() else {
             return None;
@@ -512,9 +499,7 @@ fn physical_pre_break_pending<G>(
         } else {
             (chunk, offset - 1)
         };
-        let (resolved, node) = stores
-            .page_node_span_chunk_node(semantic, previous, previous_offset)
-            .ok()?;
+        let (resolved, node) = stores.page_node_span_chunk_node(previous, previous_offset);
         debug_assert_eq!(resolved, index - 1);
         if let Some((font, ch, origin)) = node.character() {
             (font, vec![PendingHChar { font, ch, origin }])

@@ -4199,11 +4199,10 @@ impl<'a, G> CommandContext<'a, G> {
     /// Follows one admitted page span's predecessor topology directly.
     pub fn page_node_span_previous_chunk(
         &self,
-        span: crate::page_node_arena::PageListSpan,
         cursor: &crate::page_node_arena::PageListChunkCursor,
     ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
         self.page_nodes
-            .span_previous_chunk(span, cursor)
+            .span_previous_chunk(cursor)
             .map_err(|_| NodeArenaError::InvalidList)
     }
 
@@ -4211,13 +4210,18 @@ impl<'a, G> CommandContext<'a, G> {
     /// logical-index lookup or repeated owner admission.
     pub fn page_node_span_chunk_node(
         &self,
-        span: crate::page_node_arena::PageListSpan,
         cursor: &crate::page_node_arena::PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, crate::page_node_arena::PageMaterialNodeRef<'_>), NodeArenaError> {
-        self.page_nodes
-            .span_chunk_node(span, cursor, offset)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> (usize, crate::page_node_arena::PageMaterialNodeRef<'_>) {
+        self.page_nodes.span_chunk_node_at(cursor, offset)
+    }
+
+    /// Advances one admitted page chunk by one resident record.
+    pub fn page_node_span_next_chunk_node(
+        &self,
+        cursor: &mut crate::page_node_arena::PageListChunkCursor,
+    ) -> Option<(usize, crate::page_node_arena::PageMaterialNodeRef<'_>)> {
+        self.page_nodes.span_next_chunk_node(cursor)
     }
 
     pub fn page_node_sequence(
