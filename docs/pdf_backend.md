@@ -298,6 +298,15 @@ four eexec seed bytes as zeros, collapses repeated horizontal whitespace,
 normalizes line endings, drops empty lines, and suppresses `/UniqueID`. This
 keeps the private dictionary's subset-invalid identity out of the embedded
 font without interpreting arbitrary binary charstring data as PostScript text.
+The bounded Type-1 charstring reader then follows `writet1.c::cs_mark`,
+`t1_mark_glyphs`, and `t1_flush_cs`: `.notdef`, requested glyphs, and any
+StandardEncoding components reached by `seac` are selected; their `callsubr`
+operands discover the callable Subrs transitively. Subrs 0 through 3 are always
+retained as the conventional Type-1 flex/hint helpers. pdfTeX does not remap
+Subr indices or rewrite operands: it emits the original numeric order through
+the highest used index and replaces unused holes in that prefix with a
+deterministically encrypted `return` CharString. Entries above that prefix are
+omitted.
 This is downstream font-program/PDF finalization behavior, not core TeX or
 pdfTeX primitive semantics; it does not change token processing, execution,
 layout, or committed shipout artifacts.

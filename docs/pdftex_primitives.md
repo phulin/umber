@@ -488,7 +488,11 @@ object numbers are allocated at enquiry or first shipout use and survive
 checkpoint rollback exactly. Finalization projects the union of committed page
 glyph use and `\pdfincludechars` through the selected encoding. Type-1 eexec
 programs are decrypted, reduced to the named CharStrings plus `.notdef`, and
-deterministically re-encrypted. Their cleartext segment follows
+deterministically re-encrypted. Callable Type-1 Subrs are found by bounded
+CharString interpretation, including transitive `callsubr` edges. The first
+four conventional Subrs are retained; original indices and call operands stay
+unchanged; unused holes below the highest selected index become encrypted
+`return` programs; and the unused suffix is omitted. Their cleartext segment follows
 `writet1.c::t1_subset_ascii_part`: whitespace is normalized line by line,
 subset-invalid `/UniqueID` definitions are omitted, a built-in encoding is
 rebuilt from the requested glyph names, and the unnecessary PFB zero trailer
