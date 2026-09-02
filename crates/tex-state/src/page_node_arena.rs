@@ -171,16 +171,10 @@ impl PageListId {
         self.coordinate
     }
 
-    #[must_use]
-    pub(crate) const fn belongs_to_arena(self, arena: u32) -> bool {
-        self.is_empty() || self.coordinate.arena_identity() == arena
-    }
-
-    pub(crate) fn rebrand_arena(self, arena: u32) -> Self {
-        Self {
-            coordinate: self.coordinate.rebrand_arena(arena),
-            semantic_identity: self.semantic_identity,
-        }
+    pub(crate) const fn rebrand_arena(self, _arena: u32) -> Self {
+        // Page-list identity is pool-stable. Semantic transfer changes the
+        // admitting NodeRegion, never the stored coordinate.
+        self
     }
 
     pub(crate) fn with_coordinate(self, coordinate: ArenaListId<PageMaterialLane>) -> Self {
@@ -1745,8 +1739,7 @@ fn node_children_are_live(
 ) -> bool {
     let mut valid = true;
     node.visit_node_lists(|child| {
-        valid &= child.belongs_to_arena(arena.region_identity())
-            && arena.admit_list(pool, child.coordinate()).is_ok();
+        valid &= arena.admit_list(pool, child.coordinate()).is_ok();
     });
     valid
 }

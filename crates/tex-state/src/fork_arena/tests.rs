@@ -36,8 +36,8 @@ impl super::RegionValue<ActiveLane> for ChildTracked {
         visit(self.child);
     }
 
-    fn rebrand_region_lists(&mut self, destination_arena: u32) {
-        self.child = self.child.rebrand_arena(destination_arena);
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {
+        // Pool-stable logical coordinates survive semantic-owner transfer.
     }
 }
 
@@ -122,8 +122,8 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
     let stale = keys[0];
     assert_eq!(pool.payload.release(stale, 7), Ok(1));
     let replacement = pool.payload.allocate(7, 9).expect("reused chunk");
-    assert_eq!(replacement.slot, stale.slot);
-    assert_ne!(replacement.generation, stale.generation);
+    assert_eq!(replacement.ordinal, stale.ordinal);
+    assert_ne!(replacement.incarnation, stale.incarnation);
     assert_eq!(pool.payload.get(stale, 7, 0), None);
 }
 
@@ -157,8 +157,8 @@ fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     assert_eq!(*drops.borrow(), vec![1, 2, 3]);
 
     let replacement = pool.payload.allocate(7, 9).expect("reused chunk");
-    assert_eq!(replacement.slot, key.slot);
-    assert_ne!(replacement.generation, key.generation);
+    assert_eq!(replacement.ordinal, key.ordinal);
+    assert_ne!(replacement.incarnation, key.incarnation);
     assert!(pool.payload.get(key, 7, 0).is_none());
 }
 
@@ -176,6 +176,7 @@ fn block_byte_budgets_report_payload_and_metadata_overhead() {
             pool.physical_page_metadata_bytes(),
             super::CHUNKS_PER_PAGE * pool.logical_block_metadata_bytes()
         );
+        assert_eq!(pool.logical_mapping_row_bytes(), 16);
         assert!(
             pool.physical_page_metadata_bytes() < pool.physical_page_payload_bytes(),
             "the supported block classes keep chain metadata below payload capacity"
@@ -1466,8 +1467,11 @@ fn shared_chunk_current_first_drop_keeps_prior_and_reuses_only_after_last_drop()
 
     let mut replacement = ForkArena::<DropTracked, ActiveLane>::new();
     let replacement_list = region_list(&mut replacement, &mut pool, [tracked(3)]);
-    assert_eq!(replacement_list.head.raw.slot, shared_key.slot);
-    assert_ne!(replacement_list.head.raw.generation, shared_key.generation);
+    assert_eq!(replacement_list.head.raw.ordinal, shared_key.ordinal);
+    assert_ne!(
+        replacement_list.head.raw.incarnation,
+        shared_key.incarnation
+    );
     replacement
         .retire_region(&mut pool)
         .expect("drop replacement");
@@ -2090,6 +2094,8 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
         .expect("exclusive batch region");
     let left = list(&mut active, &mut pool, [1, 2]);
     let right = list(&mut active, &mut pool, [3, 4, 5]);
+    let left_logical_words = left.words();
+    let right_logical_words = right.words();
     let batch = active
         .seal_batch(&mut pool, region, vec![left, right])
         .expect("sealed batch");
@@ -2100,6 +2106,8 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
     let promoted = active
         .promote_batch_into(&mut pool, &mut page, batch)
         .expect("whole-chunk promotion");
+    assert_eq!(promoted[0].words(), left_logical_words);
+    assert_eq!(promoted[1].words(), right_logical_words);
     assert_eq!(promoted.len(), 2);
     assert_eq!(
         page.list(&pool, promoted[0])
@@ -2117,6 +2125,36 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
     );
     assert!(page.counters().chunks_promoted > 0);
     assert_eq!(page.counters().source_nodes_copied, 0);
+}
+
+#[test]
+fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let root = list(&mut arena, &mut pool, [10, 20, 30]);
+    let words = root.words();
+    assert_eq!(words[0], pool.payload.logical_space());
+    assert_eq!(
+        root.head_position().expect("logical head").block().space(),
+        words[0]
+    );
+    assert_eq!(
+        root.tail_position().expect("logical tail").block().space(),
+        words[0]
+    );
+
+    let mut foreign_pool = ChunkPool::<u32>::with_chunk_bytes(16);
+    let mut foreign_arena = ForkArena::<u32, ActiveLane>::new();
+    let foreign = list(&mut foreign_arena, &mut foreign_pool, [99]);
+    let mut forged_words = words;
+    forged_words[0] = foreign.words()[0];
+    let forged = super::ArenaListId::from_words(forged_words).expect("structural logical root");
+    assert_eq!(
+        arena
+            .list(&pool, forged)
+            .expect_err("foreign logical space"),
+        ForkArenaError::ForeignArena
+    );
 }
 
 fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasurement {
@@ -2154,7 +2192,7 @@ fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasure
     };
     let after = thread_measurement(ALLOCATION_OWNER);
 
-    assert_eq!(scanned, 1, "promotion visits the one moved payload value");
+    assert_eq!(scanned, 0, "promotion rewrites no moved payload value");
     assert_eq!(destination.counters().source_nodes_copied, 0);
     assert_eq!(promoted.len(), 1);
     assert_eq!(

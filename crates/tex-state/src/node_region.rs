@@ -52,10 +52,14 @@ struct RegionSlot {
     live: bool,
 }
 
-/// The one physical page pool shared by all node regions.
+/// The one pool-stable logical node space shared by all node regions.
 ///
-/// Pool capacity is charged once here. Regions own only their chunk envelopes
-/// and canonical descriptors.
+/// During the owned-enum transition, `ChunkPool` is a private resolver from
+/// logical positions to the existing stable chunk allocation. No page root,
+/// child, predecessor, checkpoint, format, or output value can observe its
+/// physical key. The atomic compact-record cutover replaces that adapter with
+/// one `BlockStore<NodeRecord>` and `AcceptedBlockTable<NodeRecord>`; it does
+/// not add another resident node representation.
 pub struct NodePool {
     id: u64,
     pub(crate) chunks: ChunkPool<RegionNode>,

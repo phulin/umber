@@ -428,7 +428,7 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
     assert_eq!(destination.counters().source_nodes_copied, 0);
     assert_eq!(destination.counters().resident_payload_clones, 0);
     assert_eq!(pool.closure_transition_counters().envelope_moves, 1);
-    assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 2);
+    assert_eq!(pool.closure_transition_counters().rebrand_scan_nodes, 0);
 }
 
 #[test]

@@ -12,6 +12,7 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering};
+use tex_dense_arena::{AcceptedBlockTable, LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
 
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -29,11 +30,40 @@ static NEXT_ARENA_LINEAGE: AtomicU32 = AtomicU32::new(1);
 /// Canonical page-material lane used by execution and borrowed typesetting.
 pub enum PageMaterialLane {}
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[doc(hidden)]
-pub struct RawChunkKey {
+/// Transitional physical identity owned only by the private chunk backend.
+///
+/// Page-list topology never stores or exposes this value. The compact-record
+/// cutover deletes this adapter and resolves the same logical coordinates
+/// through `AcceptedBlockTable<NodeRecord>` instead.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct RawChunkKey {
     slot: u32,
     generation: u32,
+}
+
+/// Compact block component of a pool-stable logical position.
+///
+/// The enclosing list stores the coordinate-space id once, allowing both
+/// endpoints plus the list length to remain 32 bytes. Resolution reconstructs
+/// the canonical `tex_dense_arena::LogicalPosition` before consulting the
+/// selected storage view.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct LogicalChunkId {
+    ordinal: u32,
+    incarnation: u32,
+}
+
+impl LogicalChunkId {
+    fn block(self, space: u32) -> Result<DenseLogicalBlockId, ForkArenaError> {
+        DenseLogicalBlockId::from_parts(space, self.ordinal, self.incarnation)
+            .ok_or(ForkArenaError::InvalidChunk)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LogicalChunkRow {
+    incarnation: u32,
+    physical: Option<RawChunkKey>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,7 +79,7 @@ struct ChunkMeta {
     live: bool,
     sealed: bool,
     sequence_summary: Option<SemanticSequenceIdentity>,
-    previous_in_list: Option<(RawChunkKey, u32)>,
+    previous_in_list: Option<LogicalPosition>,
     /// Lowest owner-relative payload-chunk position named by any child list
     /// stored in this chunk. `usize::MAX` means no child coordinate.
     dependency_floor: usize,
@@ -77,6 +107,9 @@ struct ChunkPage<T> {
 /// the pool allocates one page for many chunks, so no chunk owns a heap
 /// allocation and existing payload never moves.
 struct ChunkStorage<T> {
+    logical_space: u32,
+    logical_rows: Vec<LogicalChunkRow>,
+    logical_free: Vec<u32>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
     pages: Vec<ChunkPage<T>>,
@@ -115,7 +148,7 @@ struct CloneReservation {
     dependency_floor: Option<usize>,
     dependency_metadata_complete: bool,
     source_arena: u32,
-    source_key: RawChunkKey,
+    source_key: LogicalChunkId,
     source_offset: u32,
 }
 
@@ -146,6 +179,12 @@ impl<T> ChunkStorage<T> {
         let slot_bytes = std::mem::size_of::<Option<T>>().max(1);
         let slots_per_chunk = (chunk_bytes / slot_bytes).max(1);
         Self {
+            // Reuse the workspace's canonical space allocator and coordinate
+            // vocabulary. Payload resolution remains in this transitional
+            // adapter until the NodeRecord table cutover.
+            logical_space: AcceptedBlockTable::<u8>::new().space(),
+            logical_rows: Vec::new(),
+            logical_free: Vec::new(),
             chunk_bytes,
             slots_per_chunk,
             pages: Vec::new(),
@@ -164,6 +203,92 @@ impl<T> ChunkStorage<T> {
             #[cfg(any(test, feature = "testing"))]
             admitted_forward_chunk_crossings: core::cell::Cell::new(0),
         }
+    }
+
+    fn allocate_logical(
+        &mut self,
+        physical: RawChunkKey,
+    ) -> Result<LogicalChunkId, ForkArenaError> {
+        if let Some(&ordinal) = self.logical_free.last() {
+            let row = self
+                .logical_rows
+                .get_mut(ordinal as usize)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            let incarnation = row
+                .incarnation
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+            self.logical_free.pop();
+            *row = LogicalChunkRow {
+                incarnation,
+                physical: Some(physical),
+            };
+            return Ok(LogicalChunkId {
+                ordinal,
+                incarnation,
+            });
+        }
+        let ordinal =
+            u32::try_from(self.logical_rows.len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        self.logical_rows.push(LogicalChunkRow {
+            incarnation: 1,
+            physical: Some(physical),
+        });
+        Ok(LogicalChunkId {
+            ordinal,
+            incarnation: 1,
+        })
+    }
+
+    fn physical(&self, key: LogicalChunkId) -> Result<RawChunkKey, ForkArenaError> {
+        let row = self
+            .logical_rows
+            .get(key.ordinal as usize)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        if row.incarnation != key.incarnation {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        row.physical.ok_or(ForkArenaError::InvalidChunk)
+    }
+
+    const fn logical_space(&self) -> u32 {
+        self.logical_space
+    }
+
+    fn logical_position(
+        &self,
+        key: LogicalChunkId,
+        offset: u32,
+    ) -> Result<LogicalPosition, ForkArenaError> {
+        self.physical(key)?;
+        Ok(LogicalPosition::from_parts(
+            key.block(self.logical_space)?,
+            offset,
+        ))
+    }
+
+    fn compact_position(
+        &self,
+        position: LogicalPosition,
+    ) -> Result<(LogicalChunkId, u32), ForkArenaError> {
+        let block = position.block();
+        if block.space() != self.logical_space {
+            return Err(ForkArenaError::InvalidChunk);
+        }
+        let key = LogicalChunkId {
+            ordinal: block.ordinal(),
+            incarnation: block.incarnation(),
+        };
+        self.physical(key)?;
+        Ok((key, position.offset()))
+    }
+
+    fn release_logical(&mut self, key: LogicalChunkId) -> Result<RawChunkKey, ForkArenaError> {
+        let physical = self.physical(key)?;
+        let row = &mut self.logical_rows[key.ordinal as usize];
+        row.physical = None;
+        self.logical_free.push(key.ordinal);
+        Ok(physical)
     }
 
     #[cfg(test)]
@@ -217,25 +342,35 @@ impl<T> ChunkStorage<T> {
     }
 
     fn allocated_heap_bytes(&self) -> usize {
-        self.pages
+        self.logical_rows
             .capacity()
-            .saturating_mul(std::mem::size_of::<ChunkPage<T>>())
-            .saturating_add(self.pages.iter().fold(0_usize, |bytes, page| {
-                bytes.saturating_add(
-                    page.slots
-                        .len()
-                        .saturating_mul(std::mem::size_of::<Option<T>>()),
-                )
-            }))
+            .saturating_mul(std::mem::size_of::<LogicalChunkRow>())
             .saturating_add(
-                self.chunks
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ChunkMeta>()),
-            )
-            .saturating_add(
-                self.free
+                self.logical_free
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(
+                self.pages
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ChunkPage<T>>())
+                    .saturating_add(self.pages.iter().fold(0_usize, |bytes, page| {
+                        bytes.saturating_add(
+                            page.slots
+                                .len()
+                                .saturating_mul(std::mem::size_of::<Option<T>>()),
+                        )
+                    }))
+                    .saturating_add(
+                        self.chunks
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<ChunkMeta>()),
+                    )
+                    .saturating_add(
+                        self.free
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<u32>()),
+                    ),
             )
     }
 
@@ -269,7 +404,7 @@ impl<T> ChunkStorage<T> {
         Ok(())
     }
 
-    fn allocate(&mut self, arena: u32, lineage: u32) -> Result<RawChunkKey, ForkArenaError> {
+    fn allocate(&mut self, arena: u32, lineage: u32) -> Result<LogicalChunkId, ForkArenaError> {
         if self.free.is_empty() {
             self.add_page()?;
         }
@@ -292,32 +427,34 @@ impl<T> ChunkStorage<T> {
         meta.previous_in_list = None;
         meta.dependency_floor = usize::MAX;
         meta.dependency_metadata_complete = true;
-        Ok(RawChunkKey {
+        let physical = RawChunkKey {
             slot,
             generation: meta.generation,
-        })
+        };
+        self.allocate_logical(physical)
     }
 
     fn allocate_list_block(
         &mut self,
         arena: u32,
         lineage: u32,
-        previous_in_list: Option<(RawChunkKey, u32)>,
-    ) -> Result<RawChunkKey, ForkArenaError> {
+        previous_in_list: Option<(LogicalChunkId, u32)>,
+    ) -> Result<LogicalChunkId, ForkArenaError> {
         let key = self.allocate(arena, lineage)?;
         self.set_previous_in_list(key, arena, lineage, previous_in_list)?;
         Ok(key)
     }
 
-    fn validate(&self, key: RawChunkKey, arena: u32) -> Result<&ChunkMeta, ForkArenaError> {
+    fn validate(&self, key: LogicalChunkId, arena: u32) -> Result<&ChunkMeta, ForkArenaError> {
         #[cfg(test)]
         self.validation_reads
             .set(self.validation_reads.get().saturating_add(1));
+        let physical = self.physical(key)?;
         let meta = self
             .chunks
-            .get(key.slot as usize)
+            .get(physical.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if key.generation != meta.generation || !meta.live || meta.arena != arena {
+        if physical.generation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -325,14 +462,15 @@ impl<T> ChunkStorage<T> {
 
     fn validate_mut(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
     ) -> Result<&mut ChunkMeta, ForkArenaError> {
+        let physical = self.physical(key)?;
         let meta = self
             .chunks
-            .get_mut(key.slot as usize)
+            .get_mut(physical.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if key.generation != meta.generation || !meta.live || meta.arena != arena {
+        if physical.generation != meta.generation || !meta.live || meta.arena != arena {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(meta)
@@ -340,7 +478,7 @@ impl<T> ChunkStorage<T> {
 
     fn validate_lineage(
         &self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
     ) -> Result<&ChunkMeta, ForkArenaError> {
@@ -354,7 +492,7 @@ impl<T> ChunkStorage<T> {
 
     fn validate_exclusive_lineage_mut(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
     ) -> Result<&mut ChunkMeta, ForkArenaError> {
@@ -369,7 +507,7 @@ impl<T> ChunkStorage<T> {
 
     fn share_with_lineage(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         source_lineage: u32,
         destination_lineage: u32,
@@ -399,11 +537,14 @@ impl<T> ChunkStorage<T> {
 
     fn set_previous_in_list(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
-        previous: Option<(RawChunkKey, u32)>,
+        previous: Option<(LogicalChunkId, u32)>,
     ) -> Result<(), ForkArenaError> {
+        let previous = previous
+            .map(|(key, offset)| self.logical_position(key, offset))
+            .transpose()?;
         self.validate_exclusive_lineage_mut(key, arena, lineage)?
             .previous_in_list = previous;
         Ok(())
@@ -411,13 +552,13 @@ impl<T> ChunkStorage<T> {
 
     fn slot_index(
         &self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         offset: usize,
     ) -> Result<(usize, usize), ForkArenaError> {
         if offset >= self.slots_per_chunk {
             return Err(ForkArenaError::InvalidRange);
         }
-        let slot = key.slot as usize;
+        let slot = self.physical(key)?.slot as usize;
         let page = slot / CHUNKS_PER_PAGE;
         let chunk = slot % CHUNKS_PER_PAGE;
         let index = chunk
@@ -434,7 +575,7 @@ impl<T> ChunkStorage<T> {
     /// carrying `T` through generic arena return values or callbacks.
     fn reserve(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         item_identity: Option<u64>,
@@ -463,7 +604,7 @@ impl<T> ChunkStorage<T> {
 
     fn reserve_position(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         item_identity: Option<u64>,
@@ -507,7 +648,7 @@ impl<T> ChunkStorage<T> {
     /// Clones one admitted source cell into one distinct final reserved cell.
     fn reserve_clone_from(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         reservation: CloneReservation,
@@ -572,7 +713,7 @@ impl<T> ChunkStorage<T> {
         Ok((offset, became_full))
     }
 
-    fn get(&self, key: RawChunkKey, arena: u32, offset: u32) -> Option<&T> {
+    fn get(&self, key: LogicalChunkId, arena: u32, offset: u32) -> Option<&T> {
         let meta = self.validate(key, arena).ok()?;
         if offset >= meta.used {
             return None;
@@ -583,7 +724,7 @@ impl<T> ChunkStorage<T> {
 
     fn get_mut(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         offset: u32,
@@ -600,7 +741,7 @@ impl<T> ChunkStorage<T> {
 
     fn complete_reservation(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         offset: u32,
@@ -631,23 +772,23 @@ impl<T> ChunkStorage<T> {
         Ok(())
     }
 
-    fn used(&self, key: RawChunkKey, arena: u32) -> Result<u32, ForkArenaError> {
+    fn used(&self, key: LogicalChunkId, arena: u32) -> Result<u32, ForkArenaError> {
         Ok(self.validate(key, arena)?.used)
     }
 
     fn sequence_summary(
         &self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
     ) -> Result<Option<SemanticSequenceIdentity>, ForkArenaError> {
         Ok(self.validate(key, arena)?.sequence_summary)
     }
 
-    fn is_sealed(&self, key: RawChunkKey, arena: u32) -> Result<bool, ForkArenaError> {
+    fn is_sealed(&self, key: LogicalChunkId, arena: u32) -> Result<bool, ForkArenaError> {
         Ok(self.validate(key, arena)?.sealed)
     }
 
-    fn seal(&mut self, key: RawChunkKey, arena: u32) -> Result<usize, ForkArenaError> {
+    fn seal(&mut self, key: LogicalChunkId, arena: u32) -> Result<usize, ForkArenaError> {
         let capacity = self.slots_per_chunk;
         let meta = self.validate_mut(key, arena)?;
         meta.sealed = true;
@@ -656,7 +797,7 @@ impl<T> ChunkStorage<T> {
 
     fn truncate(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         used: u32,
@@ -693,16 +834,17 @@ impl<T> ChunkStorage<T> {
     }
 
     #[cfg(test)]
-    fn release(&mut self, key: RawChunkKey, arena: u32) -> Result<usize, ForkArenaError> {
+    fn release(&mut self, key: LogicalChunkId, arena: u32) -> Result<usize, ForkArenaError> {
         self.release_lineage(key, arena, self.validate(key, arena)?.lineages[0].id)
     }
 
     fn release_lineage(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
     ) -> Result<usize, ForkArenaError> {
+        let physical = self.physical(key)?;
         let used = self.validate(key, arena)?.used;
         let meta = self.validate_mut(key, arena)?;
         let Some(index) = meta.lineages.iter().position(|entry| entry.id == lineage) else {
@@ -735,13 +877,14 @@ impl<T> ChunkStorage<T> {
             .generation
             .checked_add(1)
             .ok_or(ForkArenaError::CapacityOverflow)?;
-        self.free.push(key.slot);
+        self.free.push(physical.slot);
+        self.release_logical(key)?;
         Ok(used as usize)
     }
 
     fn index_in_arena(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
         lineage: u32,
         position: usize,
@@ -756,10 +899,13 @@ impl<T> ChunkStorage<T> {
         Ok(())
     }
 
-    fn unindex_from_arena(&mut self, key: RawChunkKey, arena: u32, lineage: u32) {
-        if let Some(meta) = self.chunks.get_mut(key.slot as usize)
+    fn unindex_from_arena(&mut self, key: LogicalChunkId, arena: u32, lineage: u32) {
+        let Ok(physical) = self.physical(key) else {
+            return;
+        };
+        if let Some(meta) = self.chunks.get_mut(physical.slot as usize)
             && meta.live
-            && meta.generation == key.generation
+            && meta.generation == physical.generation
             && meta.arena == arena
             && let Some(entry) = meta.lineages.iter_mut().find(|entry| entry.id == lineage)
         {
@@ -767,12 +913,13 @@ impl<T> ChunkStorage<T> {
         }
     }
 
-    fn arena_position(&self, key: RawChunkKey, arena: u32, lineage: u32) -> Option<usize> {
+    fn arena_position(&self, key: LogicalChunkId, arena: u32, lineage: u32) -> Option<usize> {
         #[cfg(test)]
         self.arena_position_reads
             .set(self.arena_position_reads.get().saturating_add(1));
-        let meta = self.chunks.get(key.slot as usize)?;
-        if !meta.live || meta.generation != key.generation || meta.arena != arena {
+        let physical = self.physical(key).ok()?;
+        let meta = self.chunks.get(physical.slot as usize)?;
+        if !meta.live || meta.generation != physical.generation || meta.arena != arena {
             return None;
         }
         let position = meta
@@ -790,7 +937,11 @@ impl<T> ChunkStorage<T> {
     /// excludes release, transfer, rollback, and incarnation reuse for the
     /// lifetime of the view, so ordinary traversal need not repeat those
     /// ownership checks at every block crossing.
-    fn admitted_previous_position(&self, key: RawChunkKey, lineage: u32) -> Option<(usize, u32)> {
+    fn admitted_previous_position(
+        &self,
+        key: LogicalChunkId,
+        lineage: u32,
+    ) -> Option<(usize, u32)> {
         self.admitted_previous_coordinate(key, lineage)
             .map(|(_, position, end)| (position, end))
     }
@@ -798,14 +949,16 @@ impl<T> ChunkStorage<T> {
     /// Resolves the predecessor incarnation and its admitted arena position.
     fn admitted_previous_coordinate(
         &self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         lineage: u32,
-    ) -> Option<(RawChunkKey, usize, u32)> {
-        let meta = self.chunks.get(key.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == key.generation);
-        let (previous_key, end) = meta.previous_in_list?;
-        let previous = self.chunks.get(previous_key.slot as usize)?;
-        debug_assert!(previous.live && previous.generation == previous_key.generation);
+    ) -> Option<(LogicalChunkId, usize, u32)> {
+        let physical = self.physical(key).ok()?;
+        let meta = self.chunks.get(physical.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == physical.generation);
+        let (previous_key, end) = self.compact_position(meta.previous_in_list?).ok()?;
+        let previous_physical = self.physical(previous_key).ok()?;
+        let previous = self.chunks.get(previous_physical.slot as usize)?;
+        debug_assert!(previous.live && previous.generation == previous_physical.generation);
         let position = previous
             .lineages
             .iter()
@@ -817,9 +970,10 @@ impl<T> ChunkStorage<T> {
         Some((previous_key, position, end))
     }
 
-    fn admitted_get(&self, key: RawChunkKey, offset: u32) -> Option<&T> {
-        let meta = self.chunks.get(key.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == key.generation);
+    fn admitted_get(&self, key: LogicalChunkId, offset: u32) -> Option<&T> {
+        let physical = self.physical(key).ok()?;
+        let meta = self.chunks.get(physical.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == physical.generation);
         if offset >= meta.used {
             return None;
         }
@@ -827,9 +981,10 @@ impl<T> ChunkStorage<T> {
         self.pages.get(page)?.slots.get(index)?.as_ref()
     }
 
-    fn admitted_slice(&self, key: RawChunkKey, range: Range<u32>) -> Option<&[Option<T>]> {
-        let meta = self.chunks.get(key.slot as usize)?;
-        debug_assert!(meta.live && meta.generation == key.generation);
+    fn admitted_slice(&self, key: LogicalChunkId, range: Range<u32>) -> Option<&[Option<T>]> {
+        let physical = self.physical(key).ok()?;
+        let meta = self.chunks.get(physical.slot as usize)?;
+        debug_assert!(meta.live && meta.generation == physical.generation);
         if range.start > range.end || range.end > meta.used {
             return None;
         }
@@ -848,18 +1003,21 @@ impl<T> ChunkStorage<T> {
 
     fn previous_in_list(
         &self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         arena: u32,
-    ) -> Result<Option<(RawChunkKey, u32)>, ForkArenaError> {
+    ) -> Result<Option<(LogicalChunkId, u32)>, ForkArenaError> {
         #[cfg(test)]
         self.previous_link_reads
             .set(self.previous_link_reads.get().saturating_add(1));
-        Ok(self.validate(key, arena)?.previous_in_list)
+        self.validate(key, arena)?
+            .previous_in_list
+            .map(|position| self.compact_position(position))
+            .transpose()
     }
 
     fn transfer(
         &mut self,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         source: u32,
         source_lineage: u32,
         destination: u32,
@@ -876,6 +1034,45 @@ impl<T> ChunkStorage<T> {
             .expect("exclusive lineage validation retained its source")
             .id = destination_lineage;
         Ok(())
+    }
+}
+
+/// Storage-agnostic borrowed resolver selected by the semantic fork owner.
+///
+/// Both variants use the same transitional owned-Node adapter today. The
+/// compact cutover replaces only these constructors with
+/// `AcceptedBlockView<NodeRecord>` and `CandidateBlockView<NodeRecord>`; list
+/// coordinates, predecessors, and traversal code remain unchanged.
+enum LogicalBlockView<'a, T> {
+    Accepted(&'a ChunkStorage<T>),
+    Candidate(&'a ChunkStorage<T>),
+}
+
+impl<T> Clone for LogicalBlockView<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for LogicalBlockView<'_, T> {}
+
+impl<'a, T> LogicalBlockView<'a, T> {
+    fn storage(self) -> &'a ChunkStorage<T> {
+        match self {
+            Self::Accepted(storage) | Self::Candidate(storage) => storage,
+        }
+    }
+
+    fn get(self, position: LogicalPosition) -> Option<&'a T> {
+        let storage = self.storage();
+        let (key, offset) = storage.compact_position(position).ok()?;
+        storage.admitted_get(key, offset)
+    }
+
+    fn slice(self, first: LogicalPosition, end: u32) -> Option<&'a [Option<T>]> {
+        let storage = self.storage();
+        let (key, start) = storage.compact_position(first).ok()?;
+        storage.admitted_slice(key, start..end)
     }
 }
 
@@ -934,6 +1131,13 @@ impl<T> ChunkPool<T> {
         std::mem::size_of::<ChunkMeta>()
     }
 
+    /// Transitional logical-to-physical adapter row size. This row disappears
+    /// when `AcceptedBlockTable<NodeRecord>` becomes the production resolver.
+    #[must_use]
+    pub const fn logical_mapping_row_bytes(&self) -> usize {
+        std::mem::size_of::<LogicalChunkRow>()
+    }
+
     #[must_use]
     pub fn physical_page_payload_bytes(&self) -> usize {
         self.payload
@@ -959,7 +1163,7 @@ impl<T> ChunkPool<T> {
 
 /// Direct cursor into one packed logical-list block.
 pub struct ChunkCursor<Lane> {
-    raw: RawChunkKey,
+    raw: LogicalChunkId,
     offset: u32,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
@@ -998,20 +1202,27 @@ impl<Lane> Hash for ChunkCursor<Lane> {
 
 impl<Lane> ChunkCursor<Lane> {
     const EMPTY: Self = Self {
-        raw: RawChunkKey {
-            slot: 0,
-            generation: 0,
+        raw: LogicalChunkId {
+            ordinal: 0,
+            incarnation: 0,
         },
         offset: 0,
         _lane: PhantomData,
     };
 
-    const fn new(raw: RawChunkKey, offset: u32) -> Self {
+    const fn new(raw: LogicalChunkId, offset: u32) -> Self {
         Self {
             raw,
             offset,
             _lane: PhantomData,
         }
+    }
+
+    fn logical_position(self, space: u32) -> Result<LogicalPosition, ForkArenaError> {
+        Ok(LogicalPosition::from_parts(
+            self.raw.block(space)?,
+            self.offset,
+        ))
     }
 }
 
@@ -1020,7 +1231,8 @@ impl<Lane> ChunkCursor<Lane> {
 /// The head offset is inclusive and the tail offset is exclusive. Every
 /// nonempty root therefore reaches its last node without a descriptor lookup.
 pub struct ArenaListId<Lane> {
-    arena: u32,
+    /// Pool-stable logical coordinate space, not a semantic arena owner.
+    space: u32,
     head: ChunkCursor<Lane>,
     tail: ChunkCursor<Lane>,
     len: u32,
@@ -1073,7 +1285,7 @@ impl<Lane> core::fmt::Debug for ArenaListId<Lane> {
 }
 impl<Lane> PartialEq for ArenaListId<Lane> {
     fn eq(&self, other: &Self) -> bool {
-        self.arena == other.arena
+        self.space == other.space
             && self.head == other.head
             && self.tail == other.tail
             && self.len == other.len
@@ -1083,7 +1295,7 @@ impl<Lane> Eq for ArenaListId<Lane> {}
 
 impl<Lane> Hash for ArenaListId<Lane> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.arena.hash(state);
+        self.space.hash(state);
         self.head.hash(state);
         self.tail.hash(state);
         self.len.hash(state);
@@ -1091,15 +1303,23 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    fn head_position(self) -> Result<LogicalPosition, ForkArenaError> {
+        self.head.logical_position(self.space)
+    }
+
+    fn tail_position(self) -> Result<LogicalPosition, ForkArenaError> {
+        self.tail.logical_position(self.space)
+    }
+
     #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 8] {
         [
-            self.arena,
-            self.head.raw.slot,
-            self.head.raw.generation,
+            self.space,
+            self.head.raw.ordinal,
+            self.head.raw.incarnation,
             self.head.offset,
-            self.tail.raw.slot,
-            self.tail.raw.generation,
+            self.tail.raw.ordinal,
+            self.tail.raw.incarnation,
             self.tail.offset,
             self.len,
         ]
@@ -1128,18 +1348,18 @@ impl<Lane> ArenaListId<Lane> {
             return None;
         }
         Some(Self {
-            arena: words[0],
+            space: words[0],
             head: ChunkCursor::new(
-                RawChunkKey {
-                    slot: words[1],
-                    generation: words[2],
+                LogicalChunkId {
+                    ordinal: words[1],
+                    incarnation: words[2],
                 },
                 words[3],
             ),
             tail: ChunkCursor::new(
-                RawChunkKey {
-                    slot: words[4],
-                    generation: words[5],
+                LogicalChunkId {
+                    ordinal: words[4],
+                    incarnation: words[5],
                 },
                 words[6],
             ),
@@ -1147,16 +1367,11 @@ impl<Lane> ArenaListId<Lane> {
         })
     }
 
-    #[must_use]
-    pub(crate) const fn arena_identity(self) -> u32 {
-        self.arena
-    }
-
     /// Returns the owner-independent canonical empty-list coordinate.
     #[must_use]
     pub const fn empty() -> Self {
         Self {
-            arena: 0,
+            space: 0,
             head: ChunkCursor::EMPTY,
             tail: ChunkCursor::EMPTY,
             len: 0,
@@ -1173,27 +1388,22 @@ impl<Lane> ArenaListId<Lane> {
         self.len() == 0
     }
 
-    #[must_use]
-    pub(crate) fn rebrand_arena(self, arena: u32) -> Self {
-        rebrand_list(self, arena)
-    }
-
     const fn from_root(
-        arena: u32,
+        space: u32,
         head: ChunkCursor<Lane>,
         tail: ChunkCursor<Lane>,
         len: u32,
     ) -> Self {
-        debug_assert!(arena != 0);
+        debug_assert!(space != 0);
         debug_assert!(len != 0);
-        debug_assert!(head.raw.generation != 0 && tail.raw.generation != 0);
+        debug_assert!(head.raw.incarnation != 0 && tail.raw.incarnation != 0);
         debug_assert!(
-            head.raw.slot != tail.raw.slot
-                || head.raw.generation != tail.raw.generation
+            head.raw.ordinal != tail.raw.ordinal
+                || head.raw.incarnation != tail.raw.incarnation
                 || head.offset < tail.offset
         );
         Self {
-            arena,
+            space,
             head,
             tail,
             len,
@@ -1205,8 +1415,8 @@ const _: () = assert!(core::mem::size_of::<ArenaListId<PageMaterialLane>>() <= 3
 
 #[derive(Clone, Default)]
 struct ChunkSet {
-    payload: Vec<RawChunkKey>,
-    descriptors: Vec<RawChunkKey>,
+    payload: Vec<LogicalChunkId>,
+    descriptors: Vec<LogicalChunkId>,
 }
 
 /// Constant-size authentication for one arena lane's indexed live suffix.
@@ -1218,7 +1428,7 @@ struct ChunkSet {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct LiveChunkFrontier {
     end: usize,
-    tail: Option<RawChunkKey>,
+    tail: Option<LogicalChunkId>,
 }
 
 enum ForkOwnership {
@@ -1267,8 +1477,8 @@ pub struct SealedBoundary<Lane> {
     arena: u32,
     payload_chunks: u32,
     descriptor_chunks: u32,
-    payload_tail: Option<RawChunkKey>,
-    descriptor_tail: Option<RawChunkKey>,
+    payload_tail: Option<LogicalChunkId>,
+    descriptor_tail: Option<LogicalChunkId>,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
@@ -1277,8 +1487,8 @@ pub struct CheckpointMark<Lane> {
     arena: u32,
     payload_chunks: u32,
     descriptor_chunks: u32,
-    payload_tail: Option<RawChunkKey>,
-    descriptor_tail: Option<RawChunkKey>,
+    payload_tail: Option<LogicalChunkId>,
+    descriptor_tail: Option<LogicalChunkId>,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
@@ -1327,8 +1537,8 @@ pub(crate) struct DetachedBatch<Lane> {
     serial: u64,
     payload_start: u32,
     descriptor_start: u32,
-    payload: Vec<RawChunkKey>,
-    descriptors: Vec<RawChunkKey>,
+    payload: Vec<LogicalChunkId>,
+    descriptors: Vec<LogicalChunkId>,
     lists: Vec<ArenaListId<Lane>>,
     rebrand_values: u64,
 }
@@ -1543,6 +1753,13 @@ impl<T, Lane> Default for ForkArena<T, Lane> {
 }
 
 impl<T, Lane> ForkArena<T, Lane> {
+    fn logical_payload_view<'a>(&self, pool: &'a ChunkPool<T>) -> LogicalBlockView<'a, T> {
+        match self.ownership {
+            ForkOwnership::Accepted(_) => LogicalBlockView::Accepted(&pool.payload),
+            ForkOwnership::Forked { .. } => LogicalBlockView::Candidate(&pool.payload),
+        }
+    }
+
     #[must_use]
     pub fn new() -> Self {
         let owner = NEXT_ARENA_OWNER.fetch_add(1, Ordering::Relaxed);
@@ -1909,7 +2126,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    fn live_key_at(&self, descriptor: bool, index: usize) -> Option<RawChunkKey> {
+    fn live_key_at(&self, descriptor: bool, index: usize) -> Option<LogicalChunkId> {
         let base = if descriptor {
             self.base_descriptor_chunks as usize
         } else {
@@ -1954,7 +2171,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &mut ChunkPool<T>,
         descriptor: bool,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         position: usize,
     ) {
         let result = if descriptor {
@@ -1967,7 +2184,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         result.expect("arena index names its live owned chunk");
     }
 
-    fn unindex_chunk(&self, pool: &mut ChunkPool<T>, descriptor: bool, key: RawChunkKey) {
+    fn unindex_chunk(&self, pool: &mut ChunkPool<T>, descriptor: bool, key: LogicalChunkId) {
         if descriptor {
             pool.descriptors
                 .unindex_from_arena(key, self.owner, self.lineage);
@@ -1981,7 +2198,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &ChunkPool<T>,
         descriptor: bool,
-        key: RawChunkKey,
+        key: LogicalChunkId,
     ) -> Option<usize> {
         if descriptor {
             pool.descriptors
@@ -2010,6 +2227,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         dependency_metadata_complete: bool,
     ) -> Result<&'pool mut Option<T>, ForkArenaError> {
         let key = self.payload_reservation_target(pool, root)?;
+        let logical_space = pool.payload.logical_space();
         let ReservedChunkSlot {
             slot,
             offset,
@@ -2022,7 +2240,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             dependency_floor,
             dependency_metadata_complete,
         )?;
-        self.complete_payload_reservation(root, key, offset, became_full)?;
+        self.complete_payload_reservation(root, key, offset, became_full, logical_space)?;
         Ok(slot)
     }
 
@@ -2030,8 +2248,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         root: &ArenaListId<Lane>,
-    ) -> Result<RawChunkKey, ForkArenaError> {
-        if !root.is_empty() && root.arena != self.owner {
+    ) -> Result<LogicalChunkId, ForkArenaError> {
+        if !root.is_empty() && root.space != pool.payload.logical_space() {
             return Err(ForkArenaError::ForeignArena);
         }
         let current_tail = self.current_chunks_mut().payload.last().copied();
@@ -2072,13 +2290,14 @@ impl<T, Lane> ForkArena<T, Lane> {
     fn complete_payload_reservation(
         &mut self,
         root: &mut ArenaListId<Lane>,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         offset: u32,
         became_full: bool,
+        logical_space: u32,
     ) -> Result<(), ForkArenaError> {
         if root.is_empty() {
             *root = ArenaListId::from_root(
-                self.owner,
+                logical_space,
                 ChunkCursor::new(key, offset),
                 ChunkCursor::new(key, offset + 1),
                 1,
@@ -2102,7 +2321,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         root: &mut ArenaListId<Lane>,
-        source_key: RawChunkKey,
+        source_key: LogicalChunkId,
         source_offset: u32,
         item_identity: Option<u64>,
     ) -> Result<(), ForkArenaError>
@@ -2130,7 +2349,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 source_offset,
             },
         )?;
-        self.complete_payload_reservation(root, key, offset, became_full)?;
+        self.complete_payload_reservation(
+            root,
+            key,
+            offset,
+            became_full,
+            pool.payload.logical_space(),
+        )?;
         self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
         self.counters.resident_payload_clones =
             self.counters.resident_payload_clones.saturating_add(1);
@@ -2145,7 +2370,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         root: &mut ArenaListId<Lane>,
         source_arena: u32,
-        source_key: RawChunkKey,
+        source_key: LogicalChunkId,
         source_offset: u32,
         identity_enabled: bool,
         rewrite: &mut impl FnMut(&mut T) -> Result<Option<u64>, ForkArenaError>,
@@ -2168,7 +2393,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 source_offset,
             },
         )?;
-        self.complete_payload_reservation(root, key, offset, became_full)?;
+        self.complete_payload_reservation(
+            root,
+            key,
+            offset,
+            became_full,
+            pool.payload.logical_space(),
+        )?;
         self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
         self.counters.resident_payload_clones =
             self.counters.resident_payload_clones.saturating_add(1);
@@ -2268,7 +2499,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         source: &ForkArena<T, Lane>,
         list: ArenaListId<Lane>,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         end: u32,
         root: &mut ArenaListId<Lane>,
         identity_enabled: bool,
@@ -2924,7 +3155,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
         };
         Ok(ArenaListId::from_root(
-            self.owner,
+            list.space,
             head,
             tail,
             u32::try_from(selected.len()).map_err(|_| ForkArenaError::CapacityOverflow)?,
@@ -3008,8 +3239,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         right: UniqueArenaList<Lane>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
         let right = right.root;
-        if (!left.is_empty() && left.arena != self.owner)
-            || (!right.is_empty() && right.arena != self.owner)
+        if (!left.is_empty() && left.space != pool.payload.logical_space())
+            || (!right.is_empty() && right.space != pool.payload.logical_space())
         {
             return Err(ForkArenaError::ForeignArena);
         }
@@ -3041,7 +3272,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .len
             .checked_add(right.len)
             .ok_or(ForkArenaError::CapacityOverflow)?;
-        let root = ArenaListId::from_root(self.owner, left.head, right.tail, len);
+        let root = ArenaListId::from_root(left.space, left.head, right.tail, len);
         Ok(root)
     }
 
@@ -3135,7 +3366,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
-        key: RawChunkKey,
+        key: LogicalChunkId,
         end: u32,
         copy: &mut ArenaListId<Lane>,
         summary: &mut SemanticSequenceIdentity,
@@ -3588,7 +3819,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .get(payload, self.owner, 0)
             .ok_or(ForkArenaError::InvalidRange)?;
         let list = ArenaListId::from_root(
-            self.owner,
+            pool.payload.logical_space(),
             ChunkCursor::new(payload, 0),
             ChunkCursor::new(payload, 1),
             1,
@@ -3916,11 +4147,19 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         mark: BatchMark<Lane>,
         lists: Vec<ArenaListId<Lane>>,
-    ) -> Result<SealedBatch<Lane>, ForkArenaError> {
+    ) -> Result<SealedBatch<Lane>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
         if mark.arena != self.owner {
             return Err(ForkArenaError::InvalidRegion);
         }
         let boundary = self.seal_boundary(pool)?;
+        self.complete_legacy_suffix_dependencies(
+            pool,
+            mark.payload_start as usize,
+            boundary.payload_chunks as usize,
+        )?;
         for list in &lists {
             self.validate_list_in_suffix(
                 pool,
@@ -3949,6 +4188,56 @@ impl<T, Lane> ForkArena<T, Lane> {
             descriptor_end: boundary.descriptor_chunks,
             lists,
         })
+    }
+
+    /// Completes metadata for the old generic value-returning builder.
+    ///
+    /// Production page nodes publish dependency floors beside their final
+    /// resident slot and never enter this compatibility path. Generic arena
+    /// tests may still use `ForkArenaBuilder::push`; scanning that freshly
+    /// sealed construction suffix once keeps transfer and lookup metadata-only
+    /// without introducing another node representation.
+    fn complete_legacy_suffix_dependencies(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        start: usize,
+        end: usize,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        for position in start..end {
+            let key = self
+                .live_key_at(false, position)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            if pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?
+                .dependency_metadata_complete
+            {
+                continue;
+            }
+            let used = pool.payload.used(key, self.owner)?;
+            let mut dependency_floor = None;
+            for offset in 0..used {
+                let value = pool
+                    .payload
+                    .get(key, self.owner, offset)
+                    .ok_or(ForkArenaError::InvalidChunk)?;
+                if let Some(floor) = self.region_value_dependency_floor(pool, value)? {
+                    dependency_floor =
+                        Some(dependency_floor.map_or(floor, |old: usize| old.min(floor)));
+                }
+            }
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            if let Some(floor) = dependency_floor {
+                meta.dependency_floor = meta.dependency_floor.min(floor);
+            }
+            meta.dependency_metadata_complete = true;
+        }
+        Ok(())
     }
 
     /// Mutation-free closure preflight for a build suffix whose final tails
@@ -4314,18 +4603,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .seal_boundary(pool)
             .expect("detached destination boundary was preflighted");
         for key in &batch.payload {
-            let used = pool
-                .payload
-                .used(*key, self.owner)
-                .expect("detached payload owner was preflighted");
-            for offset in 0..used {
-                pool.payload
-                    .get_mut(*key, self.owner, self.lineage, offset)
-                    .expect("detached payload cell was preflighted")
-                    .rebrand_region_lists(destination.owner);
-            }
-        }
-        for key in &batch.payload {
             pool.payload
                 .transfer(
                     *key,
@@ -4406,31 +4683,18 @@ impl<T, Lane> ForkArena<T, Lane> {
         destination
             .seal_boundary(pool)
             .expect("batch destination boundary was preflighted");
-        let payload = self
-            .validate_suffix(
-                false,
-                batch.payload_start as usize,
-                batch.payload_end as usize,
-            )
-            .expect("batch payload suffix was preflighted");
+        self.validate_suffix(
+            false,
+            batch.payload_start as usize,
+            batch.payload_end as usize,
+        )
+        .expect("batch payload suffix was preflighted");
         self.validate_suffix(
             true,
             batch.descriptor_start as usize,
             batch.descriptor_end as usize,
         )
         .expect("batch descriptor suffix was preflighted");
-        for key in &payload {
-            let used = pool
-                .payload
-                .used(*key, self.owner)
-                .expect("batch payload was preflighted");
-            for offset in 0..used {
-                pool.payload
-                    .get_mut(*key, self.owner, self.lineage, offset)
-                    .expect("batch payload cell was preflighted")
-                    .rebrand_region_lists(destination.owner);
-            }
-        }
         let payload = self
             .detach_suffix(false, batch.payload_start as usize)
             .expect("batch payload detachment was preflighted");
@@ -4577,36 +4841,19 @@ impl<T, Lane> ForkArena<T, Lane> {
                 batch.descriptor_start as usize,
             )?;
         }
-        let mut visited = 0_u64;
         for key in &payload {
-            let used = pool.payload.used(*key, self.owner)?;
-            for offset in 0..used {
-                let value = pool
-                    .payload
-                    .get(*key, self.owner, offset)
-                    .ok_or(ForkArenaError::InvalidChunk)?;
-                visited = visited.saturating_add(1);
-                let mut invalid = None;
-                value.visit_region_lists(&mut |list| {
-                    if invalid.is_none()
-                        && self
-                            .validate_list_in_suffix(
-                                pool,
-                                list,
-                                batch.payload_start as usize,
-                                batch.descriptor_start as usize,
-                            )
-                            .is_err()
-                    {
-                        invalid = Some(ForkArenaError::InvalidRegion);
-                    }
-                });
-                if let Some(error) = invalid {
-                    return Err(error);
-                }
+            let meta = pool
+                .payload
+                .validate_lineage(*key, self.owner, self.lineage)?;
+            if !meta.dependency_metadata_complete
+                || meta.dependency_floor < batch.payload_start as usize
+            {
+                return Err(ForkArenaError::InvalidRegion);
             }
         }
-        Ok(visited)
+        // Coordinates are pool-stable, so successful transfer rewrites and
+        // scans zero resident values.
+        Ok(0)
     }
 
     pub(crate) fn preflight_whole_region_transfer<Destination>(
@@ -4701,7 +4948,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         lists: Vec<ArenaListId<Lane>>,
-    ) -> Result<SealedBatch<Lane>, ForkArenaError> {
+    ) -> Result<SealedBatch<Lane>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
         if self.active_builder || self.pending_batch.is_some() {
             return Err(ForkArenaError::ActiveBuilder);
         }
@@ -4709,6 +4959,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::AlreadyForked);
         }
         let boundary = self.seal_boundary(pool)?;
+        self.complete_legacy_suffix_dependencies(pool, 0, boundary.payload_chunks as usize)?;
         let serial = self.next_batch_serial;
         self.next_batch_serial = serial
             .checked_add(1)
@@ -4736,7 +4987,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         descriptor: bool,
         start: usize,
         end: usize,
-    ) -> Result<Vec<RawChunkKey>, ForkArenaError> {
+    ) -> Result<Vec<LogicalChunkId>, ForkArenaError> {
         let live_len = if descriptor {
             self.live_descriptor_len()
         } else {
@@ -4757,7 +5008,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         descriptor: bool,
         start: usize,
-    ) -> Result<Vec<RawChunkKey>, ForkArenaError> {
+    ) -> Result<Vec<LogicalChunkId>, ForkArenaError> {
         let base = if descriptor {
             self.base_descriptor_chunks as usize
         } else {
@@ -4985,6 +5236,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool,
             list,
             root,
+            payload: self.logical_payload_view(pool),
         })
     }
 
@@ -5025,8 +5277,23 @@ impl<T, Lane> ForkArena<T, Lane> {
                 })
                 .ok_or(ForkArenaError::InvalidRange);
         }
-        if list.arena != self.owner {
+        if list.space != pool.payload.logical_space() {
             return Err(ForkArenaError::ForeignArena);
+        }
+        let (head_key, head_offset) = pool
+            .payload
+            .compact_position(list.head_position()?)
+            .map_err(|_| ForkArenaError::InvalidRange)?;
+        let (tail_key, tail_offset) = pool
+            .payload
+            .compact_position(list.tail_position()?)
+            .map_err(|_| ForkArenaError::InvalidRange)?;
+        if head_key != list.head.raw
+            || head_offset != list.head.offset
+            || tail_key != list.tail.raw
+            || tail_offset != list.tail.offset
+        {
+            return Err(ForkArenaError::InvalidRange);
         }
         let head_position = self
             .resolved_position(pool, false, list.head.raw)
@@ -5066,6 +5333,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool,
             list,
             root,
+            payload: self.logical_payload_view(pool),
         })
     }
 
@@ -5165,13 +5433,13 @@ impl<T, Lane> ForkArena<T, Lane> {
 
 fn rebrand_list<Source, Destination>(
     list: ArenaListId<Source>,
-    arena: u32,
+    _arena: u32,
 ) -> ArenaListId<Destination> {
     if list.is_empty() {
         ArenaListId::empty()
     } else {
         ArenaListId::from_root(
-            arena,
+            list.space,
             ChunkCursor::new(list.head.raw, list.head.offset),
             ChunkCursor::new(list.tail.raw, list.tail.offset),
             list.len,
@@ -5264,6 +5532,7 @@ pub struct ArenaListView<'a, T, Lane> {
     pool: &'a ChunkPool<T>,
     list: ArenaListId<Lane>,
     root: AdmittedListRoot<Lane>,
+    payload: LogicalBlockView<'a, T>,
 }
 
 /// Owner-relative cursor valid for one immutable admitted view.
@@ -5333,7 +5602,7 @@ pub struct ArenaChunkSlice<'a, T> {
 /// table, copied index, or second node representation is retained here.
 pub(crate) struct AdmittedListChunkCursor<Lane> {
     list: ArenaListId<Lane>,
-    key: RawChunkKey,
+    key: LogicalChunkId,
     position: usize,
     start: u32,
     end: u32,
@@ -5476,13 +5745,17 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         }
     }
 
-    fn key_at(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<RawChunkKey> {
+    fn key_at(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<LogicalChunkId> {
         self.arena.live_key_at(false, cursor.position)
     }
 
     fn get_cursor(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<&'a T> {
         let key = self.key_at(cursor)?;
-        self.pool.payload.admitted_get(key, cursor.offset)
+        self.payload.get(
+            ChunkCursor::<Lane>::new(key, cursor.offset)
+                .logical_position(self.list.space)
+                .ok()?,
+        )
     }
 
     fn previous_cursor(
@@ -5632,10 +5905,10 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                         .map_err(|_| ForkArenaError::CapacityOverflow)?,
                 )
                 .ok_or(ForkArenaError::CapacityOverflow)?;
+            let first = ChunkCursor::<Lane>::new(key, first).logical_position(self.list.space)?;
             let cells = self
-                .pool
                 .payload
-                .admitted_slice(key, first..last)
+                .slice(first, last)
                 .ok_or(ForkArenaError::InvalidRange)?;
             for (offset, cell) in cells.iter().enumerate() {
                 let value = cell.as_ref().ok_or(ForkArenaError::InvalidRange)?;
@@ -5663,10 +5936,10 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             0
         };
         let key = self.key_at(cursor).ok_or(ForkArenaError::InvalidRange)?;
+        let start = ChunkCursor::<Lane>::new(key, start).logical_position(self.list.space)?;
         let cells = self
-            .pool
             .payload
-            .admitted_slice(key, start..cursor.offset)
+            .slice(start, cursor.offset)
             .ok_or(ForkArenaError::InvalidRange)?;
         visit(ArenaChunkSlice { cells });
         Ok(())

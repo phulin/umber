@@ -483,6 +483,12 @@ fn source_copy_counter_has_a_real_negative_control() {
 fn destination_construction_is_warmed_and_linear_across_chunks() {
     page_arena!(arena, pool, state, 512);
     assert_eq!(core::mem::size_of::<Node>(), 168);
+    assert_eq!(core::mem::size_of::<PageListId>(), 40);
+    assert_eq!(
+        core::mem::size_of::<crate::fork_arena::ArenaListId<crate::fork_arena::PageMaterialLane>>(),
+        32
+    );
+    assert_eq!(core::mem::size_of::<tex_dense_arena::LogicalPosition>(), 16);
 
     fn construct(arena: &mut PageMaterialArena<'_>, count: usize) {
         let mut builder = PageMaterialActiveListBuilder::vacant();

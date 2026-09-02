@@ -21,6 +21,24 @@ pub struct LogicalBlockId {
 }
 
 impl LogicalBlockId {
+    /// Reconstructs an opaque logical coordinate received from a trusted
+    /// storage adapter or validated wire codec.
+    ///
+    /// This does not admit the coordinate. A borrowed table view still checks
+    /// the space, ordinal, incarnation, physical mapping, and initialized
+    /// prefix before returning a payload reference.
+    #[must_use]
+    pub const fn from_parts(space: u32, ordinal: u32, incarnation: u32) -> Option<Self> {
+        if space == 0 || incarnation == 0 {
+            return None;
+        }
+        Some(Self {
+            space,
+            ordinal,
+            incarnation,
+        })
+    }
+
     #[must_use]
     pub const fn space(self) -> u32 {
         self.space
@@ -44,6 +62,15 @@ pub struct LogicalPosition {
 }
 
 impl LogicalPosition {
+    /// Reconstructs one position in an opaque logical block.
+    ///
+    /// Resolution through an accepted or candidate view remains the
+    /// admission boundary for the position and its offset.
+    #[must_use]
+    pub const fn from_parts(block: LogicalBlockId, offset: u32) -> Self {
+        Self { block, offset }
+    }
+
     #[must_use]
     pub const fn block(self) -> LogicalBlockId {
         self.block
