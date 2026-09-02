@@ -1183,7 +1183,11 @@ fn run_tfm_ligature_machine<G>(
     }
 
     let mut out = Vec::with_capacity(work.nodes.len() * 2);
-    let mut pending_disc = None;
+    // A literal hyphen discretionary belongs to the output list, but its
+    // position is known only after any following auto kerns. Carry that
+    // pending decision as a scalar until the position is known instead of
+    // moving a full `Node` through temporary owners.
+    let mut pending_literal_hyphen_disc = false;
     let mut index = work.head;
     while let Some(current) = index {
         let item = work.nodes[current].item.clone();
@@ -1194,8 +1198,10 @@ fn run_tfm_ligature_machine<G>(
                 kind: KernKind::Auto,
                 ..
             }
-        ) {
-            out.extend(pending_disc.take());
+        ) && pending_literal_hyphen_disc
+        {
+            out.push(literal_hyphen_disc_node());
+            pending_literal_hyphen_disc = false;
         }
         match item {
             LigatureWorkItem::Boundary(_) => {}
@@ -1212,14 +1218,16 @@ fn run_tfm_ligature_machine<G>(
                     );
                     continue;
                 }
-                let disc = literal_hyphen_disc(stores, &glyph, insert_hyphen_discs);
+                pending_literal_hyphen_disc =
+                    literal_hyphen_disc_enabled(stores, &glyph, insert_hyphen_discs);
                 out.push(rechar_node(glyph));
-                pending_disc = disc;
             }
             LigatureWorkItem::Kern { amount, kind } => out.push(Node::Kern { amount, kind }),
         }
     }
-    out.extend(pending_disc);
+    if pending_literal_hyphen_disc {
+        out.push(literal_hyphen_disc_node());
+    }
     Ok(out)
 }
 
@@ -1391,25 +1399,25 @@ pub(crate) fn rechar_node(current: PendingHRunChar) -> Node {
     }
 }
 
-pub(crate) fn literal_hyphen_disc<G>(
+fn literal_hyphen_disc_enabled<G>(
     stores: &mut CommandContext<'_, G>,
     current: &PendingHRunChar,
     enabled: bool,
-) -> Option<Node> {
-    if !enabled
-        || stores.font_hyphen_char(current.font)
-            != current.orig.last().copied().unwrap_or(current.ch) as i32
-    {
-        return None;
-    }
+) -> bool {
+    enabled
+        && stores.font_hyphen_char(current.font)
+            == current.orig.last().copied().unwrap_or(current.ch) as i32
+}
+
+fn literal_hyphen_disc_node() -> Node {
     let empty = tex_state::node_arena::PageListId::empty();
-    Some(Node::Disc {
+    Node::Disc {
         kind: DiscKind::ExplicitHyphen,
         pre: empty,
         post: empty,
         replace: empty,
         physical_replace_count: 0,
-    })
+    }
 }
 
 pub(crate) fn update_space_factor<G>(
