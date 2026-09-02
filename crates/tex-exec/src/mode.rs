@@ -490,14 +490,6 @@ impl ModeList {
         self.pending_hchars.as_ref()
     }
 
-    pub(crate) fn set_pending_hchars(&mut self, mut pending: PendingHRun) {
-        if self.identity_enabled {
-            pending.enable_semantic_identity();
-        }
-        self.component_roots.pending_hchars = pending.semantic_identity_root;
-        self.pending_hchars = Some(pending);
-    }
-
     pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
         let value = self.pending_hchars.take();
         self.component_roots.pending_hchars = 0;
@@ -929,24 +921,20 @@ impl ModeListMutation<'_> {
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
-    pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
-        if self.journal_is_active() {
-            let old = self.list.take_pending_hchars();
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_pending_owned(old);
-            }
+    /// Retires the pending word after its output has been built successfully.
+    ///
+    /// The word remains borrowed in place while TFM shaping can fail. Only the
+    /// successful edge moves its sole owner into the rollback journal, so the
+    /// journal retains a move-only receipt rather than a cloned `Vec` owner.
+    pub(crate) fn clear_pending_hchars(&mut self) -> bool {
+        let old = self.list.take_pending_hchars();
+        let present = old.is_some();
+        if self.journal_is_active()
+            && let Some(mut journal) = self.list_journal()
+        {
+            journal.record_pending_owned(old);
         }
-        self.list.set_pending_hchars(pending);
-    }
-
-    pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
-        let old = self
-            .journal_is_active()
-            .then(|| self.list.pending_hchars.clone());
-        if let (Some(old), Some(mut journal)) = (old, self.list_journal()) {
-            journal.record_pending_value(old.as_ref());
-        }
-        self.list.take_pending_hchars()
+        present
     }
 
     #[cfg(test)]
@@ -1447,8 +1435,6 @@ pub struct PendingHChar {
 /// Streaming state for the unresolved tail of one horizontal character run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingHRun {
-    pub(crate) first: PendingHChar,
-    pub(crate) current: PendingHRunChar,
     /// Absolute position in this mode list where a left-boundary node belongs.
     pub(crate) insertion_index: usize,
     pub(crate) source: Vec<PendingHChar>,
@@ -1462,8 +1448,6 @@ impl PendingHRun {
     pub(crate) fn new(font: FontId, ch: char, origin: OriginId, insertion_index: usize) -> Self {
         let first = PendingHChar { font, ch, origin };
         Self {
-            first: first.clone(),
-            current: PendingHRunChar::new(font, ch, origin),
             insertion_index,
             source: vec![first],
             script: tex_fonts::character_script(ch),
@@ -1492,7 +1476,6 @@ impl PendingHRun {
                 .wrapping_add(pending_char_identity(&source));
         }
         self.source.push(source);
-        self.current = PendingHRunChar::new(font, ch, origin);
         self.refresh_semantic_identity_root();
     }
 
@@ -1501,11 +1484,21 @@ impl PendingHRun {
             return;
         }
         let mut hasher = mode_identity_hasher(b"umber-mode-pending-run-v1");
-        pending_char_identity(&self.first).hash(&mut hasher);
+        pending_char_identity(
+            self.source
+                .first()
+                .expect("a pending run owns its first source character"),
+        )
+        .hash(&mut hasher);
         (self.insertion_index as u64).hash(&mut hasher);
         (self.source.len() as u64).hash(&mut hasher);
         self.source_identity_root.hash(&mut hasher);
-        pending_current_identity(&self.current).hash(&mut hasher);
+        pending_source_current_identity(
+            self.source
+                .last()
+                .expect("a pending run owns its current source character"),
+        )
+        .hash(&mut hasher);
         (self.script as u32).hash(&mut hasher);
         self.semantic_identity_root = hasher.finish();
     }
@@ -1871,21 +1864,27 @@ fn hash_mode_list<G>(
     match &list.pending_hchars {
         Some(pending) => {
             projection.bool(true);
-            projection.font(pending.first.font);
-            projection.u32(pending.first.ch as u32);
+            let first = pending
+                .source
+                .first()
+                .expect("a pending run owns its first source character");
+            projection.font(first.font);
+            projection.u32(first.ch as u32);
             projection.usize(pending.insertion_index);
             projection.usize(pending.source.len());
             for source in &pending.source {
                 projection.font(source.font);
                 projection.u32(source.ch as u32);
             }
-            projection.font(pending.current.font);
-            projection.u32(pending.current.ch as u32);
-            projection.usize(pending.current.orig.len());
-            for ch in &pending.current.orig {
-                projection.u32(*ch as u32);
-            }
-            projection.bool(pending.current.ligature_present);
+            let current = pending
+                .source
+                .last()
+                .expect("a pending run owns its current source character");
+            projection.font(current.font);
+            projection.u32(current.ch as u32);
+            projection.usize(1);
+            projection.u32(current.ch as u32);
+            projection.bool(false);
         }
         None => projection.bool(false),
     }
@@ -2056,17 +2055,15 @@ fn pending_char_identity(value: &PendingHChar) -> u64 {
     hasher.finish()
 }
 
-fn pending_current_identity(value: &PendingHRunChar) -> u64 {
+fn pending_source_current_identity(value: &PendingHChar) -> u64 {
     let mut hasher = mode_identity_hasher(b"umber-mode-pending-current-v1");
     value.font.hash(&mut hasher);
     (value.ch as u32).hash(&mut hasher);
-    (value.orig.len() as u64).hash(&mut hasher);
-    for &ch in &value.orig {
-        (ch as u32).hash(&mut hasher);
-    }
-    value.ligature_present.hash(&mut hasher);
-    value.left_hit.hash(&mut hasher);
-    value.right_hit.hash(&mut hasher);
+    1_u64.hash(&mut hasher);
+    (value.ch as u32).hash(&mut hasher);
+    false.hash(&mut hasher);
+    false.hash(&mut hasher);
+    false.hash(&mut hasher);
     hasher.finish()
 }
 

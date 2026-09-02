@@ -46,10 +46,8 @@ impl ListProjection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(super) struct PendingHRunProjection {
-    first: super::PendingHChar,
-    current: super::PendingHRunChar,
     insertion_index: usize,
     source_len: usize,
     script: tex_fonts::Script,
@@ -60,8 +58,6 @@ pub(super) struct PendingHRunProjection {
 impl PendingHRunProjection {
     pub(super) fn capture(run: &super::PendingHRun) -> Self {
         Self {
-            first: run.first.clone(),
-            current: run.current.clone(),
             insertion_index: run.insertion_index,
             source_len: run.source.len(),
             script: run.script,
@@ -71,8 +67,6 @@ impl PendingHRunProjection {
     }
 
     fn restore(self, run: &mut super::PendingHRun) {
-        run.first = self.first;
-        run.current = self.current;
         run.insertion_index = self.insertion_index;
         run.source.truncate(self.source_len);
         run.script = self.script;
@@ -464,17 +458,6 @@ impl ListJournal<'_> {
             // transition separately so reverse replay first reinstates that run
             // and can then apply the earlier narrow projection.
             self.push_pending_value(old);
-        }
-    }
-
-    pub(super) fn record_pending_value(&mut self, old: Option<&super::PendingHRun>) {
-        let position = self.inverse_positions[PENDING_HCHARS];
-        if position == UNRECORDED {
-            self.push_pending_value(old.cloned());
-            return;
-        }
-        if self.inverses[position].kind == InverseKind::PendingProjection {
-            self.push_pending_value(old.cloned());
         }
     }
 

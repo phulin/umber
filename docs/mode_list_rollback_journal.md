@@ -106,14 +106,14 @@ stream remains the sole ordering authority and field marks and frame cursors
 remain O(1). The lanes are inline journal owners with warmed capacity, not
 per-entry boxes or a second list representation; they are cleared immediately
 after the outermost commit and consumed in stack order by rollback. This keeps
-the 840-byte popped-level value from inflating every unrelated scalar or list
+the 688-byte popped-level value from inflating every unrelated scalar or list
 inverse without adding compaction, a whole-list snapshot, or a retained cache.
 
 On the 64-bit native test target the descriptor is 16 bytes. The payload lanes
-are 48 bytes for a page-list root, 128 for test-only alignment state, 72 for an
-incomplete fraction, 160 for a display interrupt, 56 for an equation number,
-8 for previous depth, 152 for a pending-run projection, 168 for an owned
-pending-run value, and 840 for a popped level. Boolean, integer, hyphen-context,
+are 40 bytes for a page-list root, 128 for test-only alignment state, 64 for an
+incomplete fraction, 144 for a display interrupt, 48 for an equation number,
+8 for previous depth, 40 for a pending-run projection, 56 for an owned
+pending-run value, and 688 for a popped level. Boolean, integer, hyphen-context,
 push, and absent-pending inverses add no lane payload. The exact-layout test
 pins these values and charges representative records as descriptor plus only
 their named payload.
@@ -122,10 +122,12 @@ The audited mutation boundary is exhaustive. `push`, `append`, `take_nodes`,
 `append_unique_list`, `take_span`, `pop_last_node`, `remove_node_range`,
 `with_node_mut`, `with_last_node_mut`, the test-only reconstitution operations,
 and display-alignment root transfers use the page-list-root lane. Pending-run
-begin, append, and test mutation use absent or projection descriptors;
-`set_pending_hchars` and `take_pending_hchars` use the owned-value lane, with a
-separate destructive descriptor when an earlier projection must replay after
-the run is reinstated. Space factor, no-boundary, hyphen context, previous
+begin, append, and test mutation use absent or scalar projection descriptors.
+TFM and OpenType word building borrow the live source run while failure remains
+possible; successful retirement then moves its sole owner into the owned-value
+lane. A separate destructive descriptor lets an earlier projection replay
+after that move-only receipt reinstates the run. Space factor, no-boundary,
+hyphen context, previous
 depth, previous paragraph lines, incomplete fraction, display interrupt,
 equation number, display alignment, test-only alignment state, and mode-level
 push/pop each map to their correspondingly named descriptor or lane. There is

@@ -214,11 +214,6 @@ fn warmed_long_pending_run_mutation_and_rollback_allocate_nothing() {
                         ch: 'b',
                         origin: tex_state::token::OriginId::UNKNOWN,
                     });
-                    pending.current = super::PendingHRunChar::new(
-                        FontId::testing_new(2),
-                        'b',
-                        tex_state::token::OriginId::UNKNOWN,
-                    );
                 })
                 .expect("pending run");
             nest.rollback_journal(cursor).expect("journal rollback");
@@ -642,7 +637,7 @@ fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
     let layout = super::journal::inverse_layout_for_test();
     assert_eq!(
         layout,
-        [16, 40, 128, 64, 144, 48, 8, 152, 168, 800],
+        [16, 40, 128, 64, 144, 48, 8, 40, 56, 688],
         "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, pending projection, pending value, and popped level layouts"
     );
     let [
@@ -737,14 +732,13 @@ fn pending_projection_and_later_ownership_transfer_replay_in_reverse_order() {
         tex_state::token::OriginId::UNKNOWN,
         None,
     );
-    nest.current_list_mutation()
-        .set_pending_hchars(super::PendingHRun::new(
-            FontId::testing_new(3),
-            'x',
-            tex_state::token::OriginId::UNKNOWN,
-            0,
-        ));
-    assert!(nest.current_list_mutation().take_pending_hchars().is_some());
+    assert!(nest.current_list_mutation().clear_pending_hchars());
+    nest.current_list_mutation().begin_pending_hchars(
+        FontId::testing_new(3),
+        'x',
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    assert!(nest.current_list_mutation().clear_pending_hchars());
     assert_eq!(
         nest.journal_inverse_len_for_test(),
         2,

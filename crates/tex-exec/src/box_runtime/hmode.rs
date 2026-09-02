@@ -156,10 +156,15 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     suppress_right_boundary: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let Some(pending) = nest.current_list_mutation().take_pending_hchars() else {
+    let Some(pending) = nest.current_list().pending_hchars() else {
         return Ok(());
     };
-    if is_ltr_shaping_font(stores, pending.first.font) && is_supported_script(pending.script) {
+    let first_font = pending
+        .source
+        .first()
+        .expect("a pending horizontal run owns its first source character")
+        .font;
+    let nodes = if is_ltr_shaping_font(stores, first_font) && is_supported_script(pending.script) {
         let language = nest.current_list().hyphen_language();
         let breaks = if insert_hyphen_discs {
             candidate_positions_for_chars(
@@ -172,33 +177,26 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
         } else {
             Vec::new()
         };
-        let shaped = shape_open_type_chars(stores, &pending.source, &breaks);
-        let mut list = nest.current_list_mutation();
-        list.set_no_boundary(false);
-        list.append(stores, shaped);
-        return Ok(());
-    }
-    let no_boundary = nest.current_list().no_boundary();
-    let nodes = match run_tfm_ligature_machine(
-        stores,
-        diagnostic_effects,
-        &pending.source,
-        no_boundary,
-        if suppress_right_boundary {
-            LigatureRightBoundary::Suppressed
-        } else {
-            LigatureRightBoundary::Font
-        },
-        insert_hyphen_discs,
-        fuel,
-    ) {
-        Ok(nodes) => nodes,
-        Err(error) => {
-            nest.current_list_mutation().set_pending_hchars(pending);
-            return Err(ExecError::Command(error));
-        }
+        shape_open_type_chars(stores, &pending.source, &breaks)
+    } else {
+        let no_boundary = nest.current_list().no_boundary();
+        run_tfm_ligature_machine(
+            stores,
+            diagnostic_effects,
+            &pending.source,
+            no_boundary,
+            if suppress_right_boundary {
+                LigatureRightBoundary::Suppressed
+            } else {
+                LigatureRightBoundary::Font
+            },
+            insert_hyphen_discs,
+            fuel,
+        )
+        .map_err(ExecError::Command)?
     };
     let mut list = nest.current_list_mutation();
+    assert!(list.clear_pending_hchars());
     list.set_no_boundary(false);
     list.append(stores, nodes);
     Ok(())
@@ -338,8 +336,9 @@ pub(crate) fn append_hchar_with_fuel<G>(
     if character_exists || false_boundary_character {
         let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
             (font_is_ltr_shaping
-                || (pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)))
-                && (pending.first.font != font
+                || (pending.source[0].font != font
+                    && is_ltr_shaping_font(stores, pending.source[0].font)))
+                && (pending.source[0].font != font
                     || !scripts_compatible(pending.script, tex_fonts::character_script(ch)))
         });
         if flush_incompatible_run {
