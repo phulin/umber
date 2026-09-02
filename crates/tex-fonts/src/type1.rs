@@ -721,7 +721,10 @@ fn subset_charstrings_and_subrs(
         .first()
         .map(|(_, entry)| entry.start)
         .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
-    subset.extend_from_slice(&plaintext[count_end..first_entry]);
+    // `writet1.c::t1_subset_charstrings` saves this dictionary header from
+    // `t1_getline`, so its textual suffix is normalized before any binary
+    // CharString is read.
+    append_normalized_type1_line(&mut subset, &plaintext[count_end..first_entry]);
     for (name, entry) in kept {
         subset.extend_from_slice(b"/");
         subset.extend_from_slice(name);
@@ -879,7 +882,11 @@ fn append_type1_string_tail(output: &mut Vec<u8>, entry: &Type1StringEntry<'_>) 
     output.push(b' ');
     output.extend_from_slice(entry.charstring);
 
-    for source in entry.line_suffix {
+    append_normalized_type1_line(output, entry.line_suffix);
+}
+
+fn append_normalized_type1_line(output: &mut Vec<u8>, source_line: &[u8]) {
+    for source in source_line {
         let byte = match source {
             b'\t' => b' ',
             b'\r' => b'\n',
@@ -1483,7 +1490,7 @@ mod tests {
             b"%!PS /FontName /Fixture def\r/Encoding StandardEncoding def\rcurrentfile eexec\r";
         let plaintext = [
             b"\0\0\0\0".as_slice(),
-            b"/CharStrings 3 dict dup begin\r\
+            b"/CharStrings 3 dict dup begin \t\r\
               /.notdef 1 RD x ND\r\
               /space 1 RD y ND\r\
               /A 1 RD z ND\r\
@@ -1507,6 +1514,18 @@ mod tests {
         let decrypted = eexec_crypt(
             &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize],
             false,
+        );
+        assert!(
+            decrypted
+                .windows(b"/CharStrings 2 dict dup begin\n".len())
+                .any(|window| window == b"/CharStrings 2 dict dup begin\n"),
+            "the saved CharStrings dictionary header passes through t1_getline",
+        );
+        assert!(
+            !decrypted
+                .windows(b"dict dup begin \n".len())
+                .any(|window| window == b"dict dup begin \n"),
+            "trailing header whitespace must not reach the eexec program",
         );
         assert!(decrypted.windows(7).any(|window| window == b"/space "));
         assert!(!decrypted.windows(3).any(|window| window == b"/A "));
