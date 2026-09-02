@@ -1,7 +1,7 @@
 //! Session epoch plus one admitted revision-generation state core.
 
 use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
-use crate::command_context::{CommandContext, CommandContextParts};
+use crate::command_context::CommandContext;
 use crate::definition_arena::{DefinitionAllocationError, DefinitionRef};
 use crate::dependency::{
     AcceptedDependencyTail, DependencyRegionError, DependencyRegionToken, DependencyRuntime,
@@ -127,7 +127,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
     }
 
     pub fn font(&mut self, id: crate::ids::FontId) {
-        let recipe = self.universe.fonts.artifact_recipe(id);
+        let recipe = self.universe.command.resident.fonts.artifact_recipe(id);
         // The artifact recipe is owned and handle-free. Its Debug vocabulary
         // is fixed by the executable build, while the surrounding state hash
         // is explicitly an in-process convergence aid rather than a durable
@@ -138,7 +138,11 @@ impl<G> EngineBoundaryHasher<'_, G> {
             .as_ref()
             .expect("live boundary generation")
             .state()
-            .hash_font_runtime(id, self.universe.fonts.get(id), &mut self.hasher)
+            .hash_font_runtime(
+                id,
+                self.universe.command.resident.fonts.get(id),
+                &mut self.hasher,
+            )
             .expect("live font has runtime state");
     }
 
@@ -207,9 +211,9 @@ struct ShipoutRollback<G> {
     engine_usage: crate::command_context::EngineUsageOperationMark,
 }
 
-struct PrimitiveRegistry<G> {
-    names: Vec<String>,
-    meanings: Vec<MeaningWord<G>>,
+pub(super) struct PrimitiveRegistry<G> {
+    pub(super) names: Vec<String>,
+    pub(super) meanings: Vec<MeaningWord<G>>,
 }
 
 impl<G> Default for PrimitiveRegistry<G> {
@@ -561,29 +565,38 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
     fn drop(&mut self) {
         if let Some(rollback) = self.rollback.take() {
             self.universe
+                .command
                 .page_region
                 .builder_mut()
                 .rollback_transaction(rollback.page);
             let form_count = rollback.pdf.form_count();
-            self.universe.pdf.rollback(rollback.pdf);
+            self.universe.command.resident.pdf.rollback(rollback.pdf);
+            self.universe.command.resident.durable_forms.truncate(
+                &mut self.universe.command.page_region.nodes_mut(),
+                form_count,
+            );
             self.universe
-                .durable_forms
-                .truncate(&mut self.universe.page_region.nodes_mut(), form_count);
-            self.universe.world.rollback(&rollback.world);
-            self.universe.prepared_mag = rollback.prepared_mag;
+                .command
+                .resident
+                .world
+                .rollback(&rollback.world);
+            self.universe.command.resident.prepared_mag = rollback.prepared_mag;
             self.universe
+                .command
+                .resident
                 .engine_usage
                 .rollback_operation(rollback.engine_usage);
             self.universe
                 .restore_state(rollback.state)
                 .expect("validated shipout rollback remains restorable");
             self.universe
+                .command
                 .page_region
                 .nodes_mut()
                 .restore_operation(rollback.page_nodes)
                 .expect("shipout page cursor remains valid");
         }
-        self.universe.shipout_scratch.reset(
+        self.universe.command.resident.shipout_scratch.reset(
             self.scratch
                 .take()
                 .expect("shipout transaction owns one scratch suffix"),
@@ -820,30 +833,59 @@ impl From<NodeArenaError> for UniverseError {
     }
 }
 
-/// Coarse owner of one session interning epoch and current generation.
-pub struct Universe<G> {
-    pub(crate) interner: Option<InternerLease>,
-    pub(crate) core: Option<StateCore<G>>,
+/// Resident command-visible owners for one live Universe.
+///
+/// This is actual state, not a cached context or alias. A command admission
+/// splits its page owner into the existing checked page views and lends the
+/// remaining resident owner directly for the duration of the episode.
+pub(crate) struct CommandVisibleState<G> {
+    pub(super) resident: ResidentCommandState<G>,
     pub(crate) page_region: PageRegionHistory,
+}
+
+pub(crate) struct ResidentCommandState<G> {
+    pub(crate) interner: Option<InternerLease>,
     pub(crate) durable_boxes: DurableBoxState,
     pub(crate) durable_forms: DurableFormState,
-    checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
-    shipout_scratch: ShipoutScratchArena<G>,
+    pub(crate) shipout_scratch: ShipoutScratchArena<G>,
     pub(crate) fonts: FontStore,
-    page_lent_to_candidate: bool,
     pub(crate) pdf: PdfStateSlot<G>,
-    sources: SourceMap,
+    pub(crate) sources: SourceMap,
     pub(crate) hyphenation: HyphenationTable,
     pub(crate) world: World,
-    dependencies: DependencyRuntime,
+    pub(crate) dependencies: DependencyRuntime,
     pub(crate) interaction_mode: InteractionMode,
     /// TeX82 §288's job-level `mag_set`; deliberately absent from formats.
-    prepared_mag: Option<i32>,
-    error_context_widths: ErrorContextWidths,
+    pub(crate) prepared_mag: Option<i32>,
+    pub(crate) error_context_widths: ErrorContextWidths,
     pub(crate) engine_usage: crate::command_context::EngineUsageRuntime,
+    pub(super) primitive_registry: Rc<PrimitiveRegistry<G>>,
+}
+
+impl<G> ResidentCommandState<G> {
+    #[inline(always)]
+    pub(crate) fn interner(&self) -> &Interner {
+        self.interner
+            .as_ref()
+            .expect("live Universe has an admitted session epoch")
+    }
+
+    #[inline(always)]
+    pub(crate) fn interner_mut(&mut self) -> &mut Interner {
+        self.interner
+            .as_mut()
+            .expect("live Universe has an admitted session epoch")
+    }
+}
+
+/// Coarse owner of one session interning epoch and current generation.
+pub struct Universe<G> {
+    pub(crate) command: CommandVisibleState<G>,
+    pub(crate) core: Option<StateCore<G>>,
+    checkpoint_candidate: Option<CheckpointStateCandidate<G>>,
+    page_lent_to_candidate: bool,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
     pub(crate) provenance_budgets: crate::ProvenanceBudgets,
-    primitive_registry: Rc<PrimitiveRegistry<G>>,
     command_generation_owner: Option<GenerationOwner<G>>,
     /// Driver-requested cache policy consumed exactly once by MainControl.
     pure_memo_config: Option<crate::PureMemoConfig>,
@@ -875,7 +917,9 @@ impl<G> Universe<G> {
     fn checkpoint_state_is_ready(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
         self.checkpoint_state_is_ready_with_durable(
             checkpoint,
-            self.durable_boxes
+            self.command
+                .resident
+                .durable_boxes
                 .validates_cursor(*checkpoint.state.mark().durable()),
         )
     }
@@ -895,6 +939,7 @@ impl<G> Universe<G> {
             && durable_ready
             && core.validates_generation_cursor(checkpoint.generation)
             && self
+                .command
                 .page_region
                 .validates_node_checkpoint(checkpoint.page, *mark.page())
     }
@@ -910,8 +955,10 @@ impl<G> Universe<G> {
             core.state_mut().restore_checkpoint_cursor(*mark.input());
             core.restore_generation_cursor(checkpoint.generation);
         }
-        self.durable_boxes
-            .restore(&mut self.page_region.nodes_mut(), *mark.durable());
+        self.command
+            .resident
+            .durable_boxes
+            .restore(&mut self.command.page_region.nodes_mut(), *mark.durable());
         Ok(())
     }
 
@@ -923,15 +970,20 @@ impl<G> Universe<G> {
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<[u64; 6], UniverseError> {
-        if !self.page_region.validates_checkpoint(checkpoint.page) {
+        if !self
+            .command
+            .page_region
+            .validates_checkpoint(checkpoint.page)
+        {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        let before = self.page_region.builder().checkpoint_replay_work();
+        let before = self.command.page_region.builder().checkpoint_replay_work();
         let tail = self
+            .command
             .page_region
             .begin_checkpoint_candidate(checkpoint.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
-        let (mut page_nodes, page) = self.page_region.parts_mut();
+        let (mut page_nodes, page) = self.command.page_region.parts_mut();
         page.push_contribution(&mut page_nodes, crate::node::Node::Penalty(19));
         let contribution = if let Some(carrier) = page.pop_contribution_front(&mut page_nodes) {
             page.discard_carrier(carrier);
@@ -951,10 +1003,12 @@ impl<G> Universe<G> {
             7,
             crate::node::NodeTokenKey::default(),
         );
-        self.page_region
+        self.command
+            .page_region
             .reject_checkpoint_candidate(tail)
             .expect("profile page candidate rejects");
         let replay = self
+            .command
             .page_region
             .builder()
             .checkpoint_replay_work()
@@ -963,12 +1017,12 @@ impl<G> Universe<G> {
     }
     #[doc(hidden)]
     pub fn prune_pdf_history(&mut self, low_water: (u64, u64)) {
-        self.pdf.prune_history(low_water);
+        self.command.resident.pdf.prune_history(low_water);
     }
 
     #[doc(hidden)]
     pub fn pdf_history_head(&self) -> (u64, u64) {
-        self.pdf.history_head()
+        self.command.resident.pdf.history_head()
     }
 
     /// Direct PDF mark loop used by the focused profiling gate. Other
@@ -978,7 +1032,7 @@ impl<G> Universe<G> {
     pub fn profile_pdf_checkpoint_capture(&self, iterations: usize) -> u64 {
         let mut checksum = 0_u64;
         for _ in 0..iterations {
-            let mark = std::hint::black_box(self.pdf.snapshot());
+            let mark = std::hint::black_box(self.command.resident.pdf.snapshot());
             let position = mark.history_position();
             checksum ^= position.0 ^ position.1.rotate_left(17);
         }
@@ -988,11 +1042,11 @@ impl<G> Universe<G> {
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
     pub fn profile_pdf_checkpoint_restore(&mut self, iterations: usize) -> u64 {
-        let mark = self.pdf.snapshot();
+        let mark = self.command.resident.pdf.snapshot();
         let mut checksum = 0_u64;
         for _ in 0..iterations {
-            self.pdf.rollback(mark.clone());
-            checksum ^= self.pdf.history_head().0;
+            self.command.resident.pdf.rollback(mark.clone());
+            checksum ^= self.command.resident.pdf.history_head().0;
         }
         checksum
     }
@@ -1000,7 +1054,7 @@ impl<G> Universe<G> {
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
     pub fn profile_pdf_payload_bytes(&self) -> usize {
-        self.pdf.payload_bytes()
+        self.command.resident.pdf.payload_bytes()
     }
 
     /// Exercises only the definition-region group substrate for allocator
@@ -1040,14 +1094,27 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<Self, UniverseError> {
         let mark = checkpoint.state.mark();
-        if !self.world.snapshot_is_forkable(&checkpoint.world)
-            || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
-            || !self.fonts.validates(checkpoint.fonts)
-            || !self.sources.validates(checkpoint.sources)
+        if !self
+            .command
+            .resident
+            .world
+            .snapshot_is_forkable(&checkpoint.world)
             || !self
+                .command
+                .resident
+                .pdf
+                .snapshot_is_retained(&checkpoint.pdf)
+            || !self.command.resident.fonts.validates(checkpoint.fonts)
+            || !self.command.resident.sources.validates(checkpoint.sources)
+            || !self
+                .command
+                .resident
                 .hyphenation
                 .validates_checkpoint(&checkpoint.hyphenation)
-            || !self.page_region.validates_checkpoint(checkpoint.page)
+            || !self
+                .command
+                .page_region
+                .validates_checkpoint(checkpoint.page)
             || !self.checkpoint_state_is_ready(checkpoint)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
@@ -1059,49 +1126,92 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .begin_checkpoint_candidate(*mark.journal(), *mark.input(), checkpoint.generation)?;
         let durable_box_tail = self
+            .command
+            .resident
             .durable_boxes
-            .begin_checkpoint_candidate(&mut self.page_region.nodes_mut(), *mark.durable())
+            .begin_checkpoint_candidate(&mut self.command.page_region.nodes_mut(), *mark.durable())
             .map_err(StateError::Bank)?;
-        self.durable_forms
+        self.command
+            .resident
+            .durable_forms
             .begin_candidate(checkpoint.pdf.form_count());
         // PageBuilder roots must select the checkpoint prefix while every
         // accepted page-material chunk is still attached. The arena selection
         // was prevalidated above, so detachment is infallible after this root
         // rewind.
         let page_tail = self
+            .command
             .page_region
             .begin_checkpoint_candidate(checkpoint.page)
             .expect("prevalidated page region can detach atomically");
-        let world_tail = self.world.begin_checkpoint_candidate(&checkpoint.world);
+        let world_tail = self
+            .command
+            .resident
+            .world
+            .begin_checkpoint_candidate(&checkpoint.world);
         let dependency_tail = self
+            .command
+            .resident
             .dependencies
             .begin_checkpoint_candidate(&checkpoint.dependencies);
-        let source_tail = self.sources.begin_checkpoint_candidate(checkpoint.sources);
-        let font_tail = self.fonts.begin_checkpoint_candidate(checkpoint.fonts);
+        let source_tail = self
+            .command
+            .resident
+            .sources
+            .begin_checkpoint_candidate(checkpoint.sources);
+        let font_tail = self
+            .command
+            .resident
+            .fonts
+            .begin_checkpoint_candidate(checkpoint.fonts);
         let hyphenation_tail = self
+            .command
+            .resident
             .hyphenation
             .begin_checkpoint_candidate(&checkpoint.hyphenation);
-        let mut engine_usage = std::mem::take(&mut self.engine_usage);
+        let mut engine_usage = std::mem::take(&mut self.command.resident.engine_usage);
         let engine_usage_tail = engine_usage.begin_checkpoint_candidate(checkpoint.engine_usage);
         let core = self
             .core
             .take()
             .expect("validated source owns its state core");
-        let page_region = std::mem::take(&mut self.page_region);
-        let sources = std::mem::take(&mut self.sources);
-        let fonts = std::mem::take(&mut self.fonts);
-        let world = std::mem::take(&mut self.world);
-        let dependencies = std::mem::take(&mut self.dependencies);
-        let hyphenation = std::mem::take(&mut self.hyphenation);
+        let page_region = std::mem::take(&mut self.command.page_region);
+        let sources = std::mem::take(&mut self.command.resident.sources);
+        let fonts = std::mem::take(&mut self.command.resident.fonts);
+        let world = std::mem::take(&mut self.command.resident.world);
+        let dependencies = std::mem::take(&mut self.command.resident.dependencies);
+        let hyphenation = std::mem::take(&mut self.command.resident.hyphenation);
         let destination_owner = core.generation_owner();
-        let pdf = self.pdf.take_candidate(&checkpoint.pdf);
+        let pdf = self.command.resident.pdf.take_candidate(&checkpoint.pdf);
         self.page_lent_to_candidate = true;
         let fork = Self {
-            interner: None,
+            command: CommandVisibleState {
+                resident: ResidentCommandState {
+                    interner: None,
+                    durable_boxes: std::mem::replace(
+                        &mut self.command.resident.durable_boxes,
+                        DurableBoxState::new(),
+                    ),
+                    durable_forms: std::mem::replace(
+                        &mut self.command.resident.durable_forms,
+                        DurableFormState::new(),
+                    ),
+                    shipout_scratch: ShipoutScratchArena::default(),
+                    fonts,
+                    pdf,
+                    sources,
+                    hyphenation,
+                    world,
+                    dependencies,
+                    interaction_mode: checkpoint.interaction_mode,
+                    prepared_mag: checkpoint.prepared_mag,
+                    error_context_widths: self.command.resident.error_context_widths,
+                    engine_usage,
+                    primitive_registry: Rc::clone(&self.command.resident.primitive_registry),
+                },
+                page_region,
+            },
             core: Some(core),
-            page_region,
-            durable_boxes: std::mem::replace(&mut self.durable_boxes, DurableBoxState::new()),
-            durable_forms: std::mem::replace(&mut self.durable_forms, DurableFormState::new()),
             checkpoint_candidate: Some(CheckpointStateCandidate {
                 mark: *mark,
                 generation: checkpoint.generation,
@@ -1118,21 +1228,9 @@ impl<G> Universe<G> {
                 hyphenation: hyphenation_tail,
                 engine_usage: engine_usage_tail,
             }),
-            shipout_scratch: ShipoutScratchArena::default(),
-            fonts,
             page_lent_to_candidate: false,
-            pdf,
-            sources,
-            hyphenation,
-            world,
-            dependencies,
-            interaction_mode: checkpoint.interaction_mode,
-            prepared_mag: checkpoint.prepared_mag,
-            error_context_widths: self.error_context_widths,
-            engine_usage,
             provenance_demand: self.provenance_demand,
             provenance_budgets: self.provenance_budgets,
-            primitive_registry: Rc::clone(&self.primitive_registry),
             command_generation_owner: Some(destination_owner),
             pure_memo_config: self.pure_memo_config,
             pure_memo_capability: self.pure_memo_capability.clone(),
@@ -1151,35 +1249,54 @@ impl<G> Universe<G> {
         };
         let mark = transaction.mark;
         candidate
+            .command
             .page_region
             .reject_checkpoint_candidate(transaction.page)
             .expect("candidate page region can atomically restore roots and accepted chunks");
         candidate
+            .command
+            .resident
             .fonts
             .reject_checkpoint_candidate(transaction.font_mark, transaction.fonts);
         candidate
+            .command
+            .resident
             .sources
             .reject_checkpoint_candidate(transaction.source_mark, transaction.sources);
         candidate
+            .command
+            .resident
             .dependencies
             .reject_checkpoint_candidate(transaction.dependencies);
         candidate
+            .command
+            .resident
             .hyphenation
             .reject_checkpoint_candidate(transaction.hyphenation);
         candidate
+            .command
+            .resident
             .world
             .reject_checkpoint_candidate(&transaction.world_mark, transaction.world);
         candidate
+            .command
+            .resident
             .engine_usage
             .reject_checkpoint_candidate(transaction.engine_usage);
-        candidate.durable_boxes.reject_checkpoint_candidate(
-            &mut candidate.page_region.nodes_mut(),
-            *mark.durable(),
-            transaction.durable_boxes,
-        );
         candidate
+            .command
+            .resident
+            .durable_boxes
+            .reject_checkpoint_candidate(
+                &mut candidate.command.page_region.nodes_mut(),
+                *mark.durable(),
+                transaction.durable_boxes,
+            );
+        candidate
+            .command
+            .resident
             .durable_forms
-            .reject_candidate(&mut candidate.page_region.nodes_mut());
+            .reject_candidate(&mut candidate.command.page_region.nodes_mut());
         let mut core = candidate
             .core
             .take()
@@ -1192,18 +1309,28 @@ impl<G> Universe<G> {
         )
         .expect("validated candidate state can undo and redo");
         self.core = Some(core);
-        self.page_region = std::mem::take(&mut candidate.page_region);
-        self.durable_boxes =
-            std::mem::replace(&mut candidate.durable_boxes, DurableBoxState::new());
-        self.durable_forms =
-            std::mem::replace(&mut candidate.durable_forms, DurableFormState::new());
-        self.sources = std::mem::take(&mut candidate.sources);
-        self.fonts = std::mem::take(&mut candidate.fonts);
-        self.world = std::mem::take(&mut candidate.world);
-        self.dependencies = std::mem::take(&mut candidate.dependencies);
-        self.hyphenation = std::mem::take(&mut candidate.hyphenation);
-        self.engine_usage = std::mem::take(&mut candidate.engine_usage);
-        self.pdf.return_rejected(&mut candidate.pdf);
+        self.command.page_region = std::mem::take(&mut candidate.command.page_region);
+        self.command.resident.durable_boxes = std::mem::replace(
+            &mut candidate.command.resident.durable_boxes,
+            DurableBoxState::new(),
+        );
+        self.command.resident.durable_forms = std::mem::replace(
+            &mut candidate.command.resident.durable_forms,
+            DurableFormState::new(),
+        );
+        self.command.resident.sources = std::mem::take(&mut candidate.command.resident.sources);
+        self.command.resident.fonts = std::mem::take(&mut candidate.command.resident.fonts);
+        self.command.resident.world = std::mem::take(&mut candidate.command.resident.world);
+        self.command.resident.dependencies =
+            std::mem::take(&mut candidate.command.resident.dependencies);
+        self.command.resident.hyphenation =
+            std::mem::take(&mut candidate.command.resident.hyphenation);
+        self.command.resident.engine_usage =
+            std::mem::take(&mut candidate.command.resident.engine_usage);
+        self.command
+            .resident
+            .pdf
+            .return_rejected(&mut candidate.command.resident.pdf);
         self.page_lent_to_candidate = false;
     }
 
@@ -1212,28 +1339,46 @@ impl<G> Universe<G> {
             .checkpoint_candidate
             .take()
             .expect("the current lineage owns one rooted state transaction");
-        self.page_region
+        self.command
+            .page_region
             .accept_checkpoint_candidate(transaction.page)
             .expect("candidate page region can atomically prune roots and accepted chunks");
         self.core
             .as_mut()
             .expect("the current lineage owns the direct state core")
             .accept_checkpoint_candidate(transaction.core);
-        self.durable_boxes.accept_checkpoint_candidate(
-            &mut self.page_region.nodes_mut(),
-            transaction.durable_boxes,
-        );
-        self.durable_forms
-            .accept_candidate(&mut self.page_region.nodes_mut());
-        self.world.accept_checkpoint_candidate(transaction.world);
-        self.dependencies
+        self.command
+            .resident
+            .durable_boxes
+            .accept_checkpoint_candidate(
+                &mut self.command.page_region.nodes_mut(),
+                transaction.durable_boxes,
+            );
+        self.command
+            .resident
+            .durable_forms
+            .accept_candidate(&mut self.command.page_region.nodes_mut());
+        self.command
+            .resident
+            .world
+            .accept_checkpoint_candidate(transaction.world);
+        self.command
+            .resident
+            .dependencies
             .accept_checkpoint_candidate(transaction.dependencies);
-        self.hyphenation
+        self.command
+            .resident
+            .hyphenation
             .accept_checkpoint_candidate(transaction.hyphenation);
-        self.sources
+        self.command
+            .resident
+            .sources
             .accept_checkpoint_candidate(transaction.sources);
-        self.fonts.accept_checkpoint_candidate(transaction.fonts);
-        self.pdf.commit_candidate();
+        self.command
+            .resident
+            .fonts
+            .accept_checkpoint_candidate(transaction.fonts);
+        self.command.resident.pdf.commit_candidate();
     }
 
     #[doc(hidden)]
@@ -1242,27 +1387,25 @@ impl<G> Universe<G> {
         self.accept_checkpoint_candidate();
     }
 
-    pub(crate) fn interner(&self) -> &Interner {
-        self.interner
-            .as_deref()
-            .expect("live Universe has an admitted session epoch")
-    }
-
     pub(crate) fn interner_mut(&mut self) -> &mut Interner {
-        self.interner
+        self.command
+            .resident
+            .interner
             .as_deref_mut()
             .expect("live Universe has an admitted session epoch")
     }
 
     pub(crate) fn release_session_epoch(&mut self) -> InternerLease {
-        self.interner
+        self.command
+            .resident
+            .interner
             .take()
             .expect("retained generation releases one admitted session epoch")
     }
 
     pub(crate) fn admit_session_epoch(&mut self, interner: InternerLease) {
         assert!(
-            self.interner.replace(interner).is_none(),
+            self.command.resident.interner.replace(interner).is_none(),
             "retained generation admits its session epoch exactly once"
         );
     }
@@ -1282,7 +1425,7 @@ impl<G> Universe<G> {
             .state_mut()
             .install_fresh_parameter_profile(profile, defaults)?;
         if profile == crate::FreshParameterProfile::Etex26 {
-            self.engine_usage.select_etex26_profile();
+            self.command.resident.engine_usage.select_etex26_profile();
         }
         Ok(installation)
     }
@@ -1290,7 +1433,7 @@ impl<G> Universe<G> {
     /// Refreshes tex.web §241's four volatile clock parameters from the
     /// current host world without changing any restored format-owned cell.
     pub fn refresh_job_clock_parameters(&mut self) -> Result<(), UniverseError> {
-        let clock = self.world.job_clock();
+        let clock = self.command.resident.world.job_clock();
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
@@ -1348,7 +1491,7 @@ impl<G> Universe<G> {
     pub fn begin_dependency_region(
         &mut self,
     ) -> Result<DependencyRegionToken, DependencyRegionError> {
-        self.dependencies.begin_region()
+        self.command.resident.dependencies.begin_region()
     }
 
     /// Publishes detached dependency evidence after a command episode.
@@ -1356,7 +1499,7 @@ impl<G> Universe<G> {
         &mut self,
         token: DependencyRegionToken,
     ) -> Result<Vec<ObservedDependency>, DependencyRegionError> {
-        self.dependencies.finish_region(token)
+        self.command.resident.dependencies.finish_region(token)
     }
 
     /// Discards an incomplete dependency episode without publishing it.
@@ -1364,12 +1507,12 @@ impl<G> Universe<G> {
         &mut self,
         token: DependencyRegionToken,
     ) -> Result<(), DependencyRegionError> {
-        self.dependencies.abandon_region(token)
+        self.command.resident.dependencies.abandon_region(token)
     }
 
     /// Records why the active dependency episode cannot be memoized.
     pub fn poison_dependency_region(&mut self, barrier: TrackedRegionBarrier) {
-        self.dependencies.poison(barrier);
+        self.command.resident.dependencies.poison(barrier);
     }
 
     pub(crate) fn new(interner: InternerLease, mut core: StateCore<G>) -> Self {
@@ -1387,27 +1530,31 @@ impl<G> Universe<G> {
         let page_region = PageRegionHistory::default();
         let command_generation_owner = core.generation_owner();
         Self {
-            interner: Some(interner),
+            command: CommandVisibleState {
+                resident: ResidentCommandState {
+                    interner: Some(interner),
+                    durable_boxes: DurableBoxState::new(),
+                    durable_forms: DurableFormState::new(),
+                    shipout_scratch: ShipoutScratchArena::default(),
+                    fonts,
+                    pdf: PdfStateSlot::default(),
+                    sources: SourceMap::default(),
+                    hyphenation: HyphenationTable::new(),
+                    world: World::default(),
+                    dependencies: DependencyRuntime::default(),
+                    interaction_mode: InteractionMode::default(),
+                    prepared_mag: None,
+                    error_context_widths: ErrorContextWidths::default(),
+                    engine_usage: crate::command_context::EngineUsageRuntime::default(),
+                    primitive_registry: Rc::new(PrimitiveRegistry::default()),
+                },
+                page_region,
+            },
             core: Some(core),
-            page_region,
-            durable_boxes: DurableBoxState::new(),
-            durable_forms: DurableFormState::new(),
             checkpoint_candidate: None,
-            shipout_scratch: ShipoutScratchArena::default(),
-            fonts,
             page_lent_to_candidate: false,
-            pdf: PdfStateSlot::default(),
-            sources: SourceMap::default(),
-            hyphenation: HyphenationTable::new(),
-            world: World::default(),
-            dependencies: DependencyRuntime::default(),
-            interaction_mode: InteractionMode::default(),
-            prepared_mag: None,
-            error_context_widths: ErrorContextWidths::default(),
-            engine_usage: crate::command_context::EngineUsageRuntime::default(),
             provenance_demand: crate::ProvenanceDemand::default(),
             provenance_budgets: crate::ProvenanceBudgets::default(),
-            primitive_registry: Rc::new(PrimitiveRegistry::default()),
             command_generation_owner: Some(command_generation_owner),
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
@@ -1428,9 +1575,13 @@ impl<G> Universe<G> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
-        let (symbol, created) = self.interner_mut().intern_hash_with_status(name)?;
+        let (symbol, created) = self
+            .command
+            .resident
+            .interner_mut()
+            .intern_hash_with_status(name)?;
         if created && name.chars().nth(1).is_some() {
-            self.engine_usage.make_string(name);
+            self.command.resident.engine_usage.make_string(name);
         }
         self.core
             .as_mut()
@@ -1442,32 +1593,32 @@ impl<G> Universe<G> {
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, UniverseError> {
-        Ok(self.interner().resolve_id(symbol)?)
+        Ok(self.command.resident.interner().resolve_id(symbol)?)
     }
 
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> Option<&str> {
-        self.interner().resolve_local(symbol)
+        self.command.resident.interner().resolve_local(symbol)
     }
 
     #[must_use]
     pub fn qualify_symbol(&self, symbol: Symbol) -> Option<SymbolId> {
-        self.interner().qualify_local(symbol)
+        self.command.resident.interner().qualify_local(symbol)
     }
 
     #[must_use]
     pub fn control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
         self.qualify_symbol(symbol)
-            .and_then(|id| self.interner().kind_id(id).ok())
+            .and_then(|id| self.command.resident.interner().kind_id(id).ok())
     }
 
     #[must_use]
     pub fn active_character_symbol(&self, ch: char) -> Option<SymbolId> {
-        self.interner().active(ch)
+        self.command.resident.interner().active(ch)
     }
 
     pub fn intern_active_character(&mut self, ch: char) -> Result<SymbolId, UniverseError> {
-        let symbol = self.interner_mut().intern_active(ch)?;
+        let symbol = self.command.resident.interner_mut().intern_active(ch)?;
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
@@ -1486,20 +1637,25 @@ impl<G> Universe<G> {
     pub fn register_primitive_word(&mut self, name: &str, meaning: MeaningWord<G>) {
         if let Some(font) = meaning.font() {
             assert!(
-                self.fonts.contains(font),
+                self.command.resident.fonts.contains(font),
                 "frozen font meaning retains a live Universe font"
             );
         }
         if let Some(index) = self
+            .command
+            .resident
             .primitive_registry
             .names
             .iter()
             .position(|candidate| candidate == name)
         {
-            assert_eq!(self.primitive_registry.meanings[index], meaning);
+            assert_eq!(
+                self.command.resident.primitive_registry.meanings[index],
+                meaning
+            );
             return;
         }
-        let registry = Rc::get_mut(&mut self.primitive_registry)
+        let registry = Rc::get_mut(&mut self.command.resident.primitive_registry)
             .expect("primitive registration completes before a checkpoint shares the registry");
         let index = registry.names.len();
         assert!(
@@ -1526,16 +1682,18 @@ impl<G> Universe<G> {
 
     #[must_use]
     pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
-        self.primitive_registry
+        self.command
+            .resident
+            .primitive_registry
             .names
             .iter()
             .position(|candidate| candidate == name)
-            .and_then(
-                |index| match self.primitive_registry.meanings[index].resolve() {
+            .and_then(|index| {
+                match self.command.resident.primitive_registry.meanings[index].resolve() {
                     crate::ResolvedMeaning::Static(meaning) => Some(meaning),
                     crate::ResolvedMeaning::Macro { .. } => None,
-                },
-            )
+                }
+            })
     }
 
     /// Resolves one immutable primitive row once into a packed direct handle.
@@ -1546,27 +1704,31 @@ impl<G> Universe<G> {
     #[must_use]
     pub fn primitive_handle(&self, name: &str) -> Option<crate::PrimitiveHandle<G>> {
         let index = self
+            .command
+            .resident
             .primitive_registry
             .names
             .iter()
             .position(|candidate| candidate == name)?;
-        self.primitive_registry.meanings[index].static_meaning()?;
+        self.command.resident.primitive_registry.meanings[index].static_meaning()?;
         Some(crate::PrimitiveHandle::new(
-            self.interner().epoch_identity(),
+            self.command.resident.interner().epoch_identity(),
             u16::try_from(index).ok()?,
-            u16::try_from(self.primitive_registry.meanings.len()).ok()?,
+            u16::try_from(self.command.resident.primitive_registry.meanings.len()).ok()?,
         ))
     }
 
     /// Resolves a packed immutable primitive handle by direct indexing.
     #[must_use]
     pub fn resolve_primitive_handle(&self, handle: crate::PrimitiveHandle<G>) -> Option<Meaning> {
-        if handle.session_epoch() != self.interner().epoch_identity()
-            || handle.registry_len() != self.primitive_registry.meanings.len()
+        if handle.session_epoch() != self.command.resident.interner().epoch_identity()
+            || handle.registry_len() != self.command.resident.primitive_registry.meanings.len()
         {
             return None;
         }
-        self.primitive_registry
+        self.command
+            .resident
+            .primitive_registry
             .meanings
             .get(handle.index())?
             .static_meaning()
@@ -1576,23 +1738,25 @@ impl<G> Universe<G> {
     #[doc(hidden)]
     #[must_use]
     pub fn primitive_registry_len(&self) -> usize {
-        self.primitive_registry.meanings.len()
+        self.command.resident.primitive_registry.meanings.len()
     }
 
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
-        self.primitive_registry
+        self.command.resident.primitive_registry
             .meanings
             .iter()
             .position(|candidate| {
                 matches!(candidate.resolve(), crate::ResolvedMeaning::Static(value) if value == meaning)
             })
-            .map(|index| self.primitive_registry.names[index].as_str())
+            .map(|index| self.command.resident.primitive_registry.names[index].as_str())
     }
 
     #[must_use]
     pub fn primitive_token(&self, name: &str) -> Option<crate::token::Token> {
         let index = self
+            .command
+            .resident
             .primitive_registry
             .names
             .iter()
@@ -1613,7 +1777,9 @@ impl<G> Universe<G> {
         if token.is_frozen_relax() {
             return Some("relax");
         }
-        self.primitive_registry
+        self.command
+            .resident
+            .primitive_registry
             .names
             .get(usize::from(frozen.primitive_index()?))
             .map(String::as_str)
@@ -1635,7 +1801,9 @@ impl<G> Universe<G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.primitive_registry
+        self.command
+            .resident
+            .primitive_registry
             .meanings
             .get(usize::from(frozen.primitive_index()?))
             .cloned()
@@ -1664,7 +1832,9 @@ impl<G> Universe<G> {
         &self,
         symbol: Symbol,
     ) -> Result<crate::meaning::ResolvedMeaning<G>, UniverseError> {
-        self.interner()
+        self.command
+            .resident
+            .interner()
             .resolve_local(symbol)
             .ok_or(UniverseError::State(StateError::ForeignSession))?;
         Ok(self
@@ -1677,17 +1847,17 @@ impl<G> Universe<G> {
 
     #[must_use]
     pub const fn world(&self) -> &World {
-        &self.world
+        &self.command.resident.world
     }
 
     pub const fn world_mut(&mut self) -> &mut World {
-        &mut self.world
+        &mut self.command.resident.world
     }
 
     /// Captures an opaque cursor into this job's retained terminal input.
     #[must_use]
     pub fn capture_terminal_input_position(&self) -> crate::TerminalInputPosition {
-        self.world.terminal_input_position()
+        self.command.resident.world.terminal_input_position()
     }
 
     /// Restores a cursor only when it belongs to this exact caller World.
@@ -1696,22 +1866,25 @@ impl<G> Universe<G> {
         &mut self,
         position: crate::TerminalInputPosition,
     ) -> Result<(), crate::WorldError> {
-        self.world.restore_terminal_input_position(position)
+        self.command
+            .resident
+            .world
+            .restore_terminal_input_position(position)
     }
 
     #[must_use]
     pub const fn interaction_mode(&self) -> InteractionMode {
-        self.interaction_mode
+        self.command.resident.interaction_mode
     }
 
     pub const fn set_interaction_mode(&mut self, mode: InteractionMode) {
-        self.interaction_mode = mode;
+        self.command.resident.interaction_mode = mode;
     }
 
     /// Opens a rollback-capable execution timeline whose effects are detached
     /// at an outer completion barrier instead of touching the host eagerly.
     pub fn begin_retained_session(&mut self) -> Result<(), crate::WorldError> {
-        self.world.begin_retained_session()
+        self.command.resident.world.begin_retained_session()
     }
 
     /// Restores the sole fresh-INITEX distinction erased by portable format
@@ -1719,20 +1892,22 @@ impl<G> Universe<G> {
     /// root job starts. Nonempty format-owned hyphenation is never reopened.
     #[doc(hidden)]
     pub fn reopen_empty_hyphenation_patterns_for_initex_job_start(&mut self) -> bool {
-        self.hyphenation
+        self.command
+            .resident
+            .hyphenation
             .reopen_empty_patterns_for_initex_job_start()
     }
 
     /// Materializes a retained destination after its detached completion has
     /// been accepted. The effect cursor remains solely World-owned.
     pub fn export_retained_effects(&mut self) -> Result<(), crate::WorldError> {
-        self.world.export_retained_effects()
+        self.command.resident.world.export_retained_effects()
     }
 
     /// Enables the pdfTeX document ledger for a PDF-producing engine binary.
     /// Output mode remains controlled by the ordinary `\pdfoutput` parameter.
     pub fn enable_pdf_output(&mut self) {
-        self.pdf.enable();
+        self.command.resident.pdf.enable();
     }
 
     /// Requests a bounded execution-owned pure-query cache.
@@ -1773,7 +1948,7 @@ impl<G> Universe<G> {
     /// Returns the PDF controls frozen by the first committed page.
     #[must_use]
     pub fn fixed_pdf_output_parameters(&self) -> Option<crate::PdfOutputParameters> {
-        self.pdf.output_parameters()
+        self.command.resident.pdf.output_parameters()
     }
 
     /// Projects executor-owned semantic roots into one deterministic,
@@ -1877,19 +2052,19 @@ impl<G> Universe<G> {
             page_attr: token_parameter(TokParam::PDF_PAGE_ATTR),
             resources: token_parameter(TokParam::PDF_PAGE_RESOURCES),
             omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
-            space_font_name: self.pdf.current_space_font_name_id(),
+            space_font_name: self.command.resident.pdf.current_space_font_name_id(),
         }
     }
 
     /// Returns the process-selected tex.web §3 display widths.
     #[must_use]
     pub const fn error_context_widths(&self) -> ErrorContextWidths {
-        self.error_context_widths
+        self.command.resident.error_context_widths
     }
 
     /// Replaces operational error-display widths outside semantic state.
     pub const fn set_error_context_widths(&mut self, widths: ErrorContextWidths) {
-        self.error_context_widths = widths;
+        self.command.resident.error_context_widths = widths;
     }
 
     #[must_use]
@@ -2031,7 +2206,7 @@ impl<G> Universe<G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
-        if !self.fonts.contains(value) {
+        if !self.command.resident.fonts.contains(value) {
             return Err(UniverseError::State(StateError::ForeignSession));
         }
         self.live_state_mut()?.assign_current_font(value, scope)?;
@@ -2046,7 +2221,7 @@ impl<G> Universe<G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
-        if !self.fonts.contains(value) {
+        if !self.command.resident.fonts.contains(value) {
             return Err(UniverseError::State(StateError::ForeignSession));
         }
         let index = u8::try_from(size.index())
@@ -2069,7 +2244,7 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
             .allocate_definition(parameter_text, replacement_text)?;
-        self.engine_usage.observe_transient_memory(
+        self.command.resident.engine_usage.observe_transient_memory(
             0,
             parameter_text
                 .len()
@@ -2103,7 +2278,7 @@ impl<G> Universe<G> {
             })?
             .allocate_definition_from_iter(parameter_text, replacement_text)
             .map_err(PromotionError::from)?;
-        self.engine_usage.observe_transient_memory(
+        self.command.resident.engine_usage.observe_transient_memory(
             0,
             parameter_words
                 .saturating_add(replacement_words)
@@ -2135,7 +2310,9 @@ impl<G> Universe<G> {
             })?
             .publish_definition_builder(builder)
             .map_err(PromotionError::from)?;
-        self.engine_usage
+        self.command
+            .resident
+            .engine_usage
             .observe_transient_memory(0, transient_words);
         Ok(id)
     }
@@ -2167,7 +2344,9 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
             .allocate_token_list(words)?;
-        self.engine_usage
+        self.command
+            .resident
+            .engine_usage
             .observe_transient_memory(0, words.len().saturating_add(1));
         Ok(id)
     }
@@ -2179,7 +2358,10 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
             .allocate_glue(value)?;
-        self.engine_usage.observe_transient_memory(4, 0);
+        self.command
+            .resident
+            .engine_usage
+            .observe_transient_memory(4, 0);
         Ok(id)
     }
 
@@ -2261,21 +2443,28 @@ impl<G> Universe<G> {
 
     /// Publishes a page-lifetime node list by moving the caller's buffer.
     pub fn publish_page_nodes_owned(&mut self, nodes: Vec<Node>) -> PageListId {
-        let words = tex_memory_words(&nodes, self.engine_usage.uses_etex_node_sizes());
+        let words = tex_memory_words(
+            &nodes,
+            self.command.resident.engine_usage.uses_etex_node_sizes(),
+        );
         for node in &nodes {
             node.visit_fonts(|font| {
                 assert!(
-                    self.fonts.contains(font),
+                    self.command.resident.fonts.contains(font),
                     "published page node retains a live Universe font"
                 );
             });
         }
         let list = self
+            .command
             .page_region
             .nodes_mut()
             .publish_owned(nodes)
             .expect("page construction contains only live page-arena children");
-        self.engine_usage.observe_transient_memory(words.0, words.1);
+        self.command
+            .resident
+            .engine_usage
+            .observe_transient_memory(words.0, words.1);
         list
     }
 
@@ -2289,7 +2478,8 @@ impl<G> Universe<G> {
         &self,
         id: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_region
+        self.command
+            .page_region
             .nodes()
             .node_cursor(id)
             .map_err(|_| NodeArenaError::InvalidList)
@@ -2297,7 +2487,7 @@ impl<G> Universe<G> {
 
     /// Opens one final shipout-scratch row for direct construction.
     pub fn begin_shipout_scratch_list(&mut self) -> ShipoutScratchListId {
-        self.shipout_scratch.begin_list()
+        self.command.resident.shipout_scratch.begin_list()
     }
 
     /// Appends directly into a final shipout-scratch row.
@@ -2306,22 +2496,22 @@ impl<G> Universe<G> {
         list: ShipoutScratchListId,
         node: ShipoutScratchNode,
     ) {
-        self.shipout_scratch.push(list, node);
+        self.command.resident.shipout_scratch.push(list, node);
     }
 
     /// Resolves one live shipout-only scratch row.
     pub fn shipout_scratch_nodes(&self, id: ShipoutScratchListId) -> Option<&[ShipoutScratchNode]> {
-        self.shipout_scratch.get(id)
+        self.command.resident.shipout_scratch.get(id)
     }
 
     #[cfg(test)]
     pub(crate) fn shipout_scratch_high_water(&self) -> (usize, Vec<usize>) {
-        self.shipout_scratch.high_water()
+        self.command.resident.shipout_scratch.high_water()
     }
 
     #[cfg(test)]
     pub(crate) fn page_node_rows(&self) -> usize {
-        self.page_region.nodes().len()
+        self.command.page_region.nodes().len()
     }
 
     /// Captures the page-arena suffix for operation rollback.
@@ -2331,7 +2521,7 @@ impl<G> Universe<G> {
     /// root before calling [`Self::truncate_page_nodes`].
     #[must_use]
     pub fn page_node_cursor(&self) -> OperationMark<PageMaterialLane> {
-        self.page_region.nodes().operation_mark()
+        self.command.page_region.nodes().operation_mark()
     }
 
     /// Opens one nested page-storage suffix owned by a structural box or
@@ -2340,7 +2530,8 @@ impl<G> Universe<G> {
     pub fn begin_page_node_region(
         &mut self,
     ) -> crate::node_region::ClosureBuildMark<crate::node_region::PageRole> {
-        self.page_region
+        self.command
+            .page_region
             .nodes_mut()
             .begin_closure_build()
             .expect("page closure-build boundary is available")
@@ -2352,7 +2543,8 @@ impl<G> Universe<G> {
         &mut self,
         region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
     ) -> Result<(), NodeArenaError> {
-        self.page_region
+        self.command
+            .page_region
             .nodes_mut()
             .cancel_closure_build(region)
             .map_err(|_| NodeArenaError::ForeignCursor)
@@ -2366,7 +2558,8 @@ impl<G> Universe<G> {
         &mut self,
         cursor: OperationMark<PageMaterialLane>,
     ) -> Result<(), NodeArenaError> {
-        self.page_region
+        self.command
+            .page_region
             .nodes_mut()
             .restore_operation(cursor)
             .map_err(|_| NodeArenaError::ForeignCursor)
@@ -2384,8 +2577,11 @@ impl<G> Universe<G> {
         value: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
-        self.interner().resolve_id(symbol)?;
-        if value.font().is_some_and(|font| !self.fonts.contains(font)) {
+        self.command.resident.interner().resolve_id(symbol)?;
+        if value
+            .font()
+            .is_some_and(|font| !self.command.resident.fonts.contains(font))
+        {
             return Err(UniverseError::State(StateError::ForeignSession));
         }
         self.core
@@ -2459,7 +2655,12 @@ impl<G> Universe<G> {
         scope: AssignmentScope,
     ) -> Result<(), NodePromotionError> {
         let durable = value
-            .map(|root| self.page_region.nodes_mut().copy_page_root_to_durable(root))
+            .map(|root| {
+                self.command
+                    .page_region
+                    .nodes_mut()
+                    .copy_page_root_to_durable(root)
+            })
             .transpose()
             .map_err(|_| NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         let current_level = self
@@ -2468,9 +2669,11 @@ impl<G> Universe<G> {
             .ok_or(NodePromotionError::Values(PromotionError::Retired))?
             .state()
             .current_level();
-        self.durable_boxes
+        self.command
+            .resident
+            .durable_boxes
             .assign(
-                &mut self.page_region.nodes_mut(),
+                &mut self.command.page_region.nodes_mut(),
                 index,
                 durable,
                 scope,
@@ -2503,12 +2706,19 @@ impl<G> Universe<G> {
     /// Promotes and replaces a box while retaining its current eq level.
     pub fn replace_page_box(&mut self, index: u16, value: PageListId) {
         let durable = self
+            .command
             .page_region
             .nodes_mut()
             .copy_page_root_to_durable(value)
             .expect("live page box copy must succeed");
-        self.durable_boxes
-            .replace(&mut self.page_region.nodes_mut(), index, Some(durable))
+        self.command
+            .resident
+            .durable_boxes
+            .replace(
+                &mut self.command.page_region.nodes_mut(),
+                index,
+                Some(durable),
+            )
             .expect("box register index is admitted")
     }
 
@@ -2518,33 +2728,41 @@ impl<G> Universe<G> {
     /// their coordinate. A box loaded from a detached format is materialized
     /// once into the destination arena on first use.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        self.durable_boxes
-            .copy_to_page(&mut self.page_region.nodes_mut(), index)
+        self.command
+            .resident
+            .durable_boxes
+            .copy_to_page(&mut self.command.page_region.nodes_mut(), index)
             .expect("box copy must succeed")
     }
 
     /// Moves a box-register closure into page storage while preserving the
     /// register's TeX eq level.
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        self.durable_boxes
-            .take_to_page(&mut self.page_region.nodes_mut(), index)
+        self.command
+            .resident
+            .durable_boxes
+            .take_to_page(&mut self.command.page_region.nodes_mut(), index)
             .expect("box transfer must succeed")
     }
 
     /// Voids one register without changing its TeX eq level.
     pub fn clear_box_preserving_level(&mut self, index: u16) {
-        self.durable_boxes
-            .replace(&mut self.page_region.nodes_mut(), index, None)
+        self.command
+            .resident
+            .durable_boxes
+            .replace(&mut self.command.page_region.nodes_mut(), index, None)
             .expect("box register index is admitted")
     }
 
     pub fn box_register(&self, index: u16) -> Option<crate::env::DurableNodeMetadata> {
-        self.durable_boxes.metadata(index)
+        self.command.resident.durable_boxes.metadata(index)
     }
 
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
-        self.durable_forms
-            .copy_to_page(&mut self.page_region.nodes_mut(), object)
+        self.command
+            .resident
+            .durable_forms
+            .copy_to_page(&mut self.command.page_region.nodes_mut(), object)
             .expect("PDF form copy must succeed")
     }
 
@@ -2553,7 +2771,8 @@ impl<G> Universe<G> {
         &self,
         id: PageListId,
     ) -> Result<crate::node_arena::NodeCursor<'_>, UniverseError> {
-        self.page_region
+        self.command
+            .page_region
             .nodes()
             .node_cursor(id)
             .map_err(|_| UniverseError::NodeArena(NodeArenaError::InvalidList))
@@ -2588,7 +2807,7 @@ impl<G> Universe<G> {
 
     pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
         let mut operation = self.live_state_mut()?.begin_state_operation();
-        operation.attach_durable_box(self.durable_boxes.begin_operation());
+        operation.attach_durable_box(self.command.resident.durable_boxes.begin_operation());
         Ok(operation)
     }
 
@@ -2597,8 +2816,10 @@ impl<G> Universe<G> {
         mut operation: StateOperation<G>,
     ) -> Result<(), UniverseError> {
         let durable = operation.take_durable_box();
-        self.durable_boxes
-            .commit_operation(&mut self.page_region.nodes_mut(), durable);
+        self.command
+            .resident
+            .durable_boxes
+            .commit_operation(&mut self.command.page_region.nodes_mut(), durable);
         self.live_state_mut()?.commit_state_operation(operation);
         Ok(())
     }
@@ -2620,8 +2841,10 @@ impl<G> Universe<G> {
 
     pub fn restore_state(&mut self, mut operation: StateOperation<G>) -> Result<(), UniverseError> {
         let durable = operation.take_durable_box();
-        self.durable_boxes
-            .rollback_operation(&mut self.page_region.nodes_mut(), durable);
+        self.command
+            .resident
+            .durable_boxes
+            .rollback_operation(&mut self.command.page_region.nodes_mut(), durable);
         self.live_state_mut()?.rollback_state_operation(operation)?;
         Ok(())
     }
@@ -2634,11 +2857,13 @@ impl<G> Universe<G> {
     /// retained page bound; incidental rootless allocation is not history.
     pub fn state_checkpoint(&mut self) -> Result<StateCheckpoint<G>, UniverseError> {
         let boundary = self
+            .command
             .page_region
             .nodes_mut()
             .seal_boundary()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         let page = self
+            .command
             .page_region
             .nodes()
             .checkpoint_mark(boundary)
@@ -2656,7 +2881,12 @@ impl<G> Universe<G> {
         let dense = core.state().checkpoint_cursor();
         Ok(GenerationCheckpoint::new(
             owner,
-            BoundedStateMark::new(journal, self.durable_boxes.checkpoint_cursor(), page, dense),
+            BoundedStateMark::new(
+                journal,
+                self.command.resident.durable_boxes.checkpoint_cursor(),
+                page,
+                dense,
+            ),
         ))
     }
 
@@ -2675,16 +2905,44 @@ impl<G> Universe<G> {
             .core
             .as_mut()
             .is_some_and(StateCore::enable_reachable_state_identity);
-        let boxes = self.durable_boxes.enable_semantic_identity();
-        let world = self.world.enable_reachable_state_identity();
-        let hyphenation = self.hyphenation.enable_reachable_state_identity();
-        let dependencies = self.dependencies.enable_reachable_state_identity();
-        let sources = self.sources.enable_reachable_state_identity();
-        let fonts = self.fonts.enable_reachable_state_identity();
-        self.page_region
+        let boxes = self
+            .command
+            .resident
+            .durable_boxes
+            .enable_semantic_identity();
+        let world = self
+            .command
+            .resident
+            .world
+            .enable_reachable_state_identity();
+        let hyphenation = self
+            .command
+            .resident
+            .hyphenation
+            .enable_reachable_state_identity();
+        let dependencies = self
+            .command
+            .resident
+            .dependencies
+            .enable_reachable_state_identity();
+        let sources = self
+            .command
+            .resident
+            .sources
+            .enable_reachable_state_identity();
+        let fonts = self
+            .command
+            .resident
+            .fonts
+            .enable_reachable_state_identity();
+        self.command
+            .page_region
             .builder_mut()
             .enable_reachable_state_identity();
-        self.page_region.nodes_mut().enable_semantic_identity();
+        self.command
+            .page_region
+            .nodes_mut()
+            .enable_semantic_identity();
         core && boxes && world && hyphenation && dependencies && sources && fonts
     }
 
@@ -2706,33 +2964,45 @@ impl<G> Universe<G> {
         external_page_roots: bool,
         wants_reachable_state_identity: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
-        if !(external_page_roots || self.page_region.builder().retains_page_node_handles()) {
+        if !(external_page_roots
+            || self
+                .command
+                .page_region
+                .builder()
+                .retains_page_node_handles())
+        {
             self.release_unretained_page_suffix()?;
         }
         let page = self
+            .command
             .page_region
             .seal_checkpoint()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         #[cfg(feature = "profiling")]
-        self.page_region.record_node_owner_census();
+        self.command.page_region.record_node_owner_census();
         let page_arena = self
+            .command
             .page_region
             .arena_checkpoint(page)
             .expect("new page-region checkpoint row owns its sealed arena mark");
         let live_state = self.state_checkpoint_at(page_arena)?;
         let live_mark = *live_state.mark();
-        let font_mark = self.fonts.watermark();
+        let font_mark = self.command.resident.fonts.watermark();
         let live_core = self.core.as_ref().ok_or(UniverseError::Retired)?;
         let core_retained_bytes = live_core
             .checkpoint_retained_bytes()
             .saturating_add(
-                self.primitive_registry
+                self.command
+                    .resident
+                    .primitive_registry
                     .names
                     .len()
                     .saturating_mul(std::mem::size_of::<String>()),
             )
             .saturating_add(
-                self.primitive_registry
+                self.command
+                    .resident
+                    .primitive_registry
                     .meanings
                     .len()
                     .saturating_mul(std::mem::size_of::<MeaningWord<G>>()),
@@ -2746,35 +3016,50 @@ impl<G> Universe<G> {
         let owner = live_core.checkpoint_generation_owner();
         let core_owner = owner.checkpoint_owner_id();
         let generation = live_core.generation_cursor();
-        let source_mark = self.sources.watermark();
+        let source_mark = self.command.resident.sources.watermark();
         let retention = RuntimeCheckpointRetention {
             core_owner,
-            page_owner: crate::CheckpointOwnerId::from_owner(&self.page_region),
-            world_owner: crate::CheckpointOwnerId::from_owner(&self.world),
-            hyphenation_owner: crate::CheckpointOwnerId::from_owner(&self.hyphenation),
-            pdf_owner: crate::CheckpointOwnerId::from_owner(&self.pdf),
-            dependency_owner: crate::CheckpointOwnerId::from_owner(&self.dependencies),
-            source_font_owner: crate::CheckpointOwnerId::from_owner(&self.sources),
+            page_owner: crate::CheckpointOwnerId::from_owner(&self.command.page_region),
+            world_owner: crate::CheckpointOwnerId::from_owner(&self.command.resident.world),
+            hyphenation_owner: crate::CheckpointOwnerId::from_owner(
+                &self.command.resident.hyphenation,
+            ),
+            pdf_owner: crate::CheckpointOwnerId::from_owner(&self.command.resident.pdf),
+            dependency_owner: crate::CheckpointOwnerId::from_owner(
+                &self.command.resident.dependencies,
+            ),
+            source_font_owner: crate::CheckpointOwnerId::from_owner(&self.command.resident.sources),
             core: core_retained_bytes,
-            page: self.page_region.retained_bytes(),
-            world: self.world.checkpoint_retained_bytes(),
-            hyphenation: self.hyphenation.checkpoint_retained_bytes(),
-            pdf: self.pdf.checkpoint_retained_bytes(),
-            dependency: self.dependencies.checkpoint_retained_bytes(),
-            source_font: source_mark
-                .checkpoint_retained_bytes()
-                .saturating_add(self.fonts.checkpoint_retained_bytes(font_mark)),
+            page: self.command.page_region.retained_bytes(),
+            world: self.command.resident.world.checkpoint_retained_bytes(),
+            hyphenation: self
+                .command
+                .resident
+                .hyphenation
+                .checkpoint_retained_bytes(),
+            pdf: self.command.resident.pdf.checkpoint_retained_bytes(),
+            dependency: self
+                .command
+                .resident
+                .dependencies
+                .checkpoint_retained_bytes(),
+            source_font: source_mark.checkpoint_retained_bytes().saturating_add(
+                self.command
+                    .resident
+                    .fonts
+                    .checkpoint_retained_bytes(font_mark),
+            ),
         };
-        let pdf = self.pdf.snapshot();
+        let pdf = self.command.resident.pdf.snapshot();
         let core_identity = live_core
             .reachable_state_identity_root()
-            .zip(self.durable_boxes.semantic_identity_root())
+            .zip(self.command.resident.durable_boxes.semantic_identity_root())
             .map(|(core, boxes)| {
                 crate::state_hash::semantic_scalar_root(0x636f_7265_5f61_6767, |hasher| {
                     hasher.u64(core);
                     hasher.u64(boxes);
-                    hasher.u8(self.interaction_mode as u8);
-                    match self.prepared_mag {
+                    hasher.u8(self.command.resident.interaction_mode as u8);
+                    match self.command.resident.prepared_mag {
                         Some(mag) => {
                             hasher.bool(true);
                             hasher.i32(mag);
@@ -2785,24 +3070,39 @@ impl<G> Universe<G> {
             });
         let identity_roots = RuntimeCheckpointIdentityRoots {
             page: wants_reachable_state_identity
-                .then(|| self.page_region.checkpoint_identity_root(page))
+                .then(|| self.command.page_region.checkpoint_identity_root(page))
                 .flatten()
                 .flatten(),
             pdf: wants_reachable_state_identity.then(|| pdf.reachable_state_identity_root()),
             world: wants_reachable_state_identity
-                .then(|| self.world.reachable_state_identity_root())
+                .then(|| self.command.resident.world.reachable_state_identity_root())
                 .flatten(),
             hyphenation: wants_reachable_state_identity
-                .then(|| self.hyphenation.reachable_state_identity_root())
+                .then(|| {
+                    self.command
+                        .resident
+                        .hyphenation
+                        .reachable_state_identity_root()
+                })
                 .flatten(),
             dependency: wants_reachable_state_identity
-                .then(|| self.dependencies.reachable_state_identity_root())
+                .then(|| {
+                    self.command
+                        .resident
+                        .dependencies
+                        .reachable_state_identity_root()
+                })
                 .flatten(),
             source: wants_reachable_state_identity
-                .then(|| self.sources.reachable_state_identity_root())
+                .then(|| {
+                    self.command
+                        .resident
+                        .sources
+                        .reachable_state_identity_root()
+                })
                 .flatten(),
             font: wants_reachable_state_identity
-                .then(|| self.fonts.reachable_state_identity_root())
+                .then(|| self.command.resident.fonts.reachable_state_identity_root())
                 .flatten(),
             core: wants_reachable_state_identity
                 .then_some(core_identity)
@@ -2813,14 +3113,14 @@ impl<G> Universe<G> {
             generation,
             page,
             pdf,
-            world: self.world.snapshot(),
+            world: self.command.resident.world.snapshot(),
             fonts: font_mark,
             sources: source_mark,
-            hyphenation: self.hyphenation.checkpoint(),
-            dependencies: self.dependencies.snapshot_tracker(),
-            interaction_mode: self.interaction_mode,
-            prepared_mag: self.prepared_mag,
-            engine_usage: self.engine_usage.checkpoint(),
+            hyphenation: self.command.resident.hyphenation.checkpoint(),
+            dependencies: self.command.resident.dependencies.snapshot_tracker(),
+            interaction_mode: self.command.resident.interaction_mode,
+            prepared_mag: self.command.resident.prepared_mag,
+            engine_usage: self.command.resident.engine_usage.checkpoint(),
             // Component owners publish roots here. No aggregate fallback is
             // allowed: missing hooks remain explicit until their mutation
             // journals maintain a complete canonical semantic root.
@@ -2843,18 +3143,32 @@ impl<G> Universe<G> {
         oldest_retained: Option<&RuntimeCheckpoint<G>>,
     ) -> Result<(), UniverseError> {
         let retained = |checkpoint: &RuntimeCheckpoint<G>| {
-            let durable_ready = self.durable_boxes.validates_cursor_for_release(
-                *checkpoint.state.mark().durable(),
-                self.checkpoint_candidate
-                    .as_ref()
-                    .map(|candidate| &candidate.durable_boxes),
-            );
-            self.world.snapshot_is_retained(&checkpoint.world)
-                && self.pdf.snapshot_is_retained(&checkpoint.pdf)
-                && self.fonts.validates(checkpoint.fonts)
-                && self.sources.validates(checkpoint.sources)
+            let durable_ready = self
+                .command
+                .resident
+                .durable_boxes
+                .validates_cursor_for_release(
+                    *checkpoint.state.mark().durable(),
+                    self.checkpoint_candidate
+                        .as_ref()
+                        .map(|candidate| &candidate.durable_boxes),
+                );
+            self.command
+                .resident
+                .world
+                .snapshot_is_retained(&checkpoint.world)
+                && self
+                    .command
+                    .resident
+                    .pdf
+                    .snapshot_is_retained(&checkpoint.pdf)
+                && self.command.resident.fonts.validates(checkpoint.fonts)
+                && self.command.resident.sources.validates(checkpoint.sources)
                 && self.checkpoint_state_is_ready_with_durable(checkpoint, durable_ready)
-                && self.page_region.validates_checkpoint(checkpoint.page)
+                && self
+                    .command
+                    .page_region
+                    .validates_checkpoint(checkpoint.page)
         };
         if !retained(released) || oldest_retained.is_some_and(|checkpoint| !retained(checkpoint)) {
             return Err(UniverseError::State(StateError::InvalidCursor));
@@ -2865,6 +3179,8 @@ impl<G> Universe<G> {
             .as_ref()
             .map(|candidate| &candidate.durable_boxes);
         if !self
+            .command
+            .resident
             .durable_boxes
             .validates_checkpoint_prefix_release(oldest_durable, accepted_durable)
         {
@@ -2892,14 +3208,17 @@ impl<G> Universe<G> {
             .checkpoint_candidate
             .as_mut()
             .map(|candidate| &mut candidate.durable_boxes);
-        self.durable_boxes
+        self.command
+            .resident
+            .durable_boxes
             .release_checkpoint_prefix(
-                &mut self.page_region.nodes_mut(),
+                &mut self.command.page_region.nodes_mut(),
                 oldest_durable,
                 accepted_durable,
             )
             .expect("runtime release prevalidated durable history");
-        self.page_region
+        self.command
+            .page_region
             .release_checkpoint(released.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
@@ -2913,7 +3232,8 @@ impl<G> Universe<G> {
         &mut self,
         released: &RuntimeCheckpoint<G>,
     ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
-        self.page_region
+        self.command
+            .page_region
             .release_checkpoint(released.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
@@ -2921,7 +3241,8 @@ impl<G> Universe<G> {
     /// Releases only rootless page rows above the generation's monotonic
     /// retained checkpoint prefix.
     pub fn release_unretained_page_suffix(&mut self) -> Result<(), UniverseError> {
-        self.page_region
+        self.command
+            .page_region
             .release_rootless_current_suffix()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
         Ok(())
@@ -2934,7 +3255,13 @@ impl<G> Universe<G> {
         &mut self,
         external_page_roots: bool,
     ) -> Result<bool, UniverseError> {
-        if external_page_roots || self.page_region.builder().retains_page_node_handles() {
+        if external_page_roots
+            || self
+                .command
+                .page_region
+                .builder()
+                .retains_page_node_handles()
+        {
             return Ok(false);
         }
         self.release_unretained_page_suffix()?;
@@ -2959,64 +3286,91 @@ impl<G> Universe<G> {
         generation_fork: bool,
     ) -> Result<(), UniverseError> {
         if !(if generation_fork {
-            self.world.snapshot_is_forkable(&checkpoint.world)
+            self.command
+                .resident
+                .world
+                .snapshot_is_forkable(&checkpoint.world)
         } else {
-            self.world.snapshot_is_retained(&checkpoint.world)
-        }) || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
-            || !self.fonts.validates(checkpoint.fonts)
-            || !self.sources.validates(checkpoint.sources)
+            self.command
+                .resident
+                .world
+                .snapshot_is_retained(&checkpoint.world)
+        }) || !self
+            .command
+            .resident
+            .pdf
+            .snapshot_is_retained(&checkpoint.pdf)
+            || !self.command.resident.fonts.validates(checkpoint.fonts)
+            || !self.command.resident.sources.validates(checkpoint.sources)
             || !self.checkpoint_state_is_ready(checkpoint)
-            || !self.page_region.validates_checkpoint(checkpoint.page)
+            || !self
+                .command
+                .page_region
+                .validates_checkpoint(checkpoint.page)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         self.activate_checkpoint_state(checkpoint)?;
-        self.page_region
+        self.command
+            .page_region
             .restore_checkpoint(checkpoint.page)
             .expect("runtime restore prevalidated the page-region checkpoint");
         if !generation_fork {
             let form_count = checkpoint.pdf.form_count();
-            self.pdf.rollback(checkpoint.pdf.clone());
-            self.durable_forms
-                .truncate(&mut self.page_region.nodes_mut(), form_count);
+            self.command.resident.pdf.rollback(checkpoint.pdf.clone());
+            self.command
+                .resident
+                .durable_forms
+                .truncate(&mut self.command.page_region.nodes_mut(), form_count);
         }
         if !generation_fork {
-            self.world.rollback(&checkpoint.world);
+            self.command.resident.world.rollback(&checkpoint.world);
         }
         if !generation_fork {
-            self.hyphenation.restore_checkpoint(&checkpoint.hyphenation);
+            self.command
+                .resident
+                .hyphenation
+                .restore_checkpoint(&checkpoint.hyphenation);
         }
-        self.dependencies.restore_tracker(&checkpoint.dependencies);
-        self.interaction_mode = checkpoint.interaction_mode;
-        self.prepared_mag = checkpoint.prepared_mag;
-        self.engine_usage
+        self.command
+            .resident
+            .dependencies
+            .restore_tracker(&checkpoint.dependencies);
+        self.command.resident.interaction_mode = checkpoint.interaction_mode;
+        self.command.resident.prepared_mag = checkpoint.prepared_mag;
+        self.command
+            .resident
+            .engine_usage
             .restore_checkpoint(checkpoint.engine_usage);
         transfer_external_roots();
-        self.fonts.truncate_to(checkpoint.fonts);
-        self.sources.truncate_to(checkpoint.sources);
+        self.command.resident.fonts.truncate_to(checkpoint.fonts);
+        self.command
+            .resident
+            .sources
+            .truncate_to(checkpoint.sources);
         Ok(())
     }
 
     /// Begins one exclusive, rollback-capable artifact publication.
     #[must_use]
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
-        let engine_usage = self.engine_usage.begin_operation();
+        let engine_usage = self.command.resident.engine_usage.begin_operation();
         let rollback = ShipoutRollback {
             state: self
                 .begin_state_operation()
                 .expect("live shipout generation has an operation journal"),
-            page_nodes: self.page_region.nodes().operation_mark(),
-            page: self.page_region.builder_mut().checkpoint_mark(),
-            pdf: self.pdf.snapshot(),
-            world: self.world.snapshot(),
-            prepared_mag: self.prepared_mag,
+            page_nodes: self.command.page_region.nodes().operation_mark(),
+            page: self.command.page_region.builder_mut().checkpoint_mark(),
+            pdf: self.command.resident.pdf.snapshot(),
+            world: self.command.resident.world.snapshot(),
+            prepared_mag: self.command.resident.prepared_mag,
             engine_usage,
         };
         let empty_tokens = self
             .allocate_token_list(&[])
             .expect("shipout can allocate its canonical empty token root");
         ShipoutTransaction {
-            scratch: Some(self.shipout_scratch.mark()),
+            scratch: Some(self.command.resident.shipout_scratch.mark()),
             universe: self,
             rollback: Some(rollback),
             empty_tokens,
@@ -3030,10 +3384,10 @@ impl<G> Universe<G> {
         &mut self,
         effect_pos: crate::EffectPos,
     ) -> Result<(), crate::WorldError> {
-        if self.world.commit_mode() == crate::WorldCommitMode::Retained {
+        if self.command.resident.world.commit_mode() == crate::WorldCommitMode::Retained {
             return Ok(());
         }
-        self.world.commit_effects(effect_pos)
+        self.command.resident.world.commit_effects(effect_pos)
     }
 
     /// Publishes already-verified replay bytes through the ordinary shipout
@@ -3055,16 +3409,20 @@ impl<G> Universe<G> {
         ),
         crate::WorldError,
     > {
-        let effect_pos = self.world.effect_pos();
-        let effect_index = self.world.effect_records().len();
+        let effect_pos = self.command.resident.world.effect_pos();
+        let effect_index = self.command.resident.world.effect_records().len();
         let reservation = self
+            .command
+            .resident
             .world
             .reserve_active_artifact_publication_at(effect_index, receipt);
         let transaction = self.begin_shipout();
         let (hash, publication) =
             transaction.commit(crate::VerifiedArtifact::new(bytes), effect_pos, reservation)?;
-        let effect_publication = self.world.reserve_effect_publication();
-        self.world
+        let effect_publication = self.command.resident.world.reserve_effect_publication();
+        self.command
+            .resident
+            .world
             .link_artifact_effect_publication(publication.publication(), effect_publication);
         let publication = publication.with_effect_publication(effect_publication);
         Ok((
@@ -3106,7 +3464,10 @@ impl<G> Universe<G> {
                 return Err(error.into());
             }
         };
-        self.durable_boxes.begin_group(frame.level());
+        self.command
+            .resident
+            .durable_boxes
+            .begin_group(frame.level());
         Ok(frame)
     }
 
@@ -3128,8 +3489,13 @@ impl<G> Universe<G> {
             .state()
             .group_restoration_trace_state()?;
         let durable = self
+            .command
+            .resident
             .durable_boxes
-            .end_group(&mut self.page_region.nodes_mut(), receipt.frame().level())
+            .end_group(
+                &mut self.command.page_region.nodes_mut(),
+                receipt.frame().level(),
+            )
             .map_err(StateError::Bank)?;
         receipt.append_durable(durable, trace);
         Ok(receipt)
@@ -3138,68 +3504,29 @@ impl<G> Universe<G> {
     /// Admits matching coarse owners once for a command episode.
     pub fn command_context(&mut self) -> Result<CommandContext<'_, G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let (page_nodes, page) = self.page_region.parts_mut();
-        Ok(CommandContext::new(CommandContextParts {
-            interner: self
-                .interner
-                .as_mut()
-                .expect("live Universe has an admitted session epoch"),
-            admitted: core.admit_mut()?,
-            primitive_names: &self.primitive_registry.names,
-            primitive_meanings: &self.primitive_registry.meanings,
-            world: &mut self.world,
-            dependencies: &mut self.dependencies,
-            fonts: &mut self.fonts,
+        let command = &mut self.command;
+        let (page_nodes, page) = command.page_region.parts_mut();
+        Ok(CommandContext::new(
+            &mut command.resident,
+            core.admit_mut()?,
             page_nodes,
-            durable_boxes: &mut self.durable_boxes,
-            durable_forms: &mut self.durable_forms,
-            shipout_scratch: &mut self.shipout_scratch,
             page,
-            pdf: &mut self.pdf,
-            sources: &mut self.sources,
-            hyphenation: &mut self.hyphenation,
-            interaction_mode: &mut self.interaction_mode,
-            prepared_mag: &mut self.prepared_mag,
-            error_context_widths: self.error_context_widths,
-            engine_usage: &mut self.engine_usage,
-        }))
+        ))
     }
 
-    /// Admits one command context directly in the callee's stack slot.
+    /// Lends the resident command state for one callback-scoped admission.
     ///
     /// The callback form is for hot boundaries that consume the admitted
-    /// facade locally and must not return its large reference aggregate by
-    /// value. The borrow cannot escape the callback.
+    /// capability locally. The borrow cannot escape the callback.
     pub fn with_command_context<R>(
         &mut self,
         visit: impl FnOnce(&mut CommandContext<'_, G>) -> R,
     ) -> Result<R, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let (page_nodes, page) = self.page_region.parts_mut();
-        let mut context = CommandContext::new(CommandContextParts {
-            interner: self
-                .interner
-                .as_mut()
-                .expect("live Universe has an admitted session epoch"),
-            admitted: core.admit_mut()?,
-            primitive_names: &self.primitive_registry.names,
-            primitive_meanings: &self.primitive_registry.meanings,
-            world: &mut self.world,
-            dependencies: &mut self.dependencies,
-            fonts: &mut self.fonts,
-            page_nodes,
-            durable_boxes: &mut self.durable_boxes,
-            durable_forms: &mut self.durable_forms,
-            shipout_scratch: &mut self.shipout_scratch,
-            page,
-            pdf: &mut self.pdf,
-            sources: &mut self.sources,
-            hyphenation: &mut self.hyphenation,
-            interaction_mode: &mut self.interaction_mode,
-            prepared_mag: &mut self.prepared_mag,
-            error_context_widths: self.error_context_widths,
-            engine_usage: &mut self.engine_usage,
-        });
+        let command = &mut self.command;
+        let (page_nodes, page) = command.page_region.parts_mut();
+        let mut context =
+            CommandContext::new(&mut command.resident, core.admit_mut()?, page_nodes, page);
         Ok(visit(&mut context))
     }
 
@@ -3213,35 +3540,37 @@ impl<G> Universe<G> {
         &mut self,
         modes: crate::page::ModeListRegionPreflight,
     ) -> Result<(), UniverseError> {
-        if modes.region != self.page_region.current().id() {
+        if modes.region != self.command.page_region.current().id() {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        self.page_region
+        self.command
+            .page_region
             .prepare_production_shipout()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
 
     pub fn commit_page_region_after_output(&mut self) -> Result<(), UniverseError> {
-        self.page_region
+        self.command
+            .page_region
             .commit_prepared_shipout()
             .map(drop)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))
     }
 
     pub fn cancel_page_region_after_output(&mut self) {
-        self.page_region.cancel_prepared_shipout();
+        self.command.page_region.cancel_prepared_shipout();
     }
 
     /// Demand-free ownership-transition counters for lifecycle gates.
     #[must_use]
     pub fn page_region_counters(&self) -> crate::page::PageRegionCounters {
-        self.page_region.current().counters()
+        self.command.page_region.current().counters()
     }
 
     /// Demand-free page-material ownership counters for lifecycle gates.
     #[must_use]
     pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
-        self.page_region.current().material_counters()
+        self.command.page_region.current().material_counters()
     }
 
     /// Demand-free PageBuilder publication and candidate-settlement work.
@@ -3249,7 +3578,7 @@ impl<G> Universe<G> {
     pub fn page_candidate_settlement_counters(
         &self,
     ) -> crate::page::PageCandidateSettlementCounters {
-        self.page_region.candidate_settlement_counters()
+        self.command.page_region.candidate_settlement_counters()
     }
 
     /// Selects every capacity owned by the executable process profile.
@@ -3258,8 +3587,13 @@ impl<G> Universe<G> {
     /// retained string-pool coordinates. Executable framing may retain that
     /// profile or expand it to the pdfTeX process before the first command.
     pub fn set_engine_capacity_profile(&mut self, profile: crate::EngineCapacityProfile) {
-        self.engine_usage.select_capacity_profile(profile);
-        self.hyphenation
+        self.command
+            .resident
+            .engine_usage
+            .select_capacity_profile(profile);
+        self.command
+            .resident
+            .hyphenation
             .set_trie_capacity(profile.configuration().trie_nodes);
     }
 
@@ -3269,7 +3603,10 @@ impl<G> Universe<G> {
     /// as a format compatibility constant, and §1334 reports the selected
     /// value. Web2C `tex.ch` [51.1332] makes the bound process-configurable.
     pub fn set_hyphenation_exception_capacity(&mut self, capacity: usize) {
-        self.hyphenation.set_exception_capacity(capacity);
+        self.command
+            .resident
+            .hyphenation
+            .set_exception_capacity(capacity);
     }
 
     /// Retains the complete immutable generation across an in-process
@@ -3309,6 +3646,8 @@ impl<G> Universe<G> {
     /// aggregate remains only as a typed retired shell which rejects reuse.
     pub fn retire(&mut self) -> Result<UniverseRetirement, UniverseError> {
         if !self
+            .command
+            .resident
             .interner
             .as_ref()
             .expect("live Universe has an admitted session epoch")
@@ -3323,7 +3662,7 @@ impl<G> Universe<G> {
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
-        let interner = self.interner_mut().retire()?;
+        let interner = self.command.resident.interner_mut().retire()?;
         Ok(UniverseRetirement {
             interner,
             state: self.retire_generation()?,
@@ -3347,10 +3686,16 @@ impl<G> Universe<G> {
                 .take()
                 .expect("live generation has one command authority"),
         );
-        std::mem::replace(&mut self.durable_boxes, DurableBoxState::new())
-            .retire_all(&mut self.page_region.nodes_mut());
-        std::mem::replace(&mut self.durable_forms, DurableFormState::new())
-            .retire_all(&mut self.page_region.nodes_mut());
+        std::mem::replace(
+            &mut self.command.resident.durable_boxes,
+            DurableBoxState::new(),
+        )
+        .retire_all(&mut self.command.page_region.nodes_mut());
+        std::mem::replace(
+            &mut self.command.resident.durable_forms,
+            DurableFormState::new(),
+        )
+        .retire_all(&mut self.command.page_region.nodes_mut());
         self.core.take().map_or_else(
             || Ok(StateCoreRetirement::transferred()),
             |core| core.retire().map_err(UniverseError::State),
@@ -3382,10 +3727,13 @@ impl<G> ShipoutTransaction<'_, G> {
             .commit_state_operation(rollback.state)
             .expect("shipout owns the active state operation");
         self.universe
+            .command
             .page_region
             .builder_mut()
             .commit_transaction(rollback.page);
         self.universe
+            .command
+            .resident
             .engine_usage
             .commit_operation(rollback.engine_usage);
     }
@@ -3411,12 +3759,18 @@ impl<G> ShipoutTransaction<'_, G> {
                 .expect("PDF token parameter is admitted")
                 .unwrap_or_else(|| self.empty_tokens.clone()),
         );
-        self.pdf
+        self.command
+            .resident
+            .pdf
             .ensure_page_capacity(output_parameters)
             .map_err(|()| crate::WorldError::pdf_object_ids_exhausted())?;
-        let hash = self.world.store_verified_artifact(&artifact)?;
-        if self.world.commit_mode() != crate::WorldCommitMode::Retained
-            && let Err(error) = self.world.commit_effects(effect_pos)
+        let hash = self
+            .command
+            .resident
+            .world
+            .store_verified_artifact(&artifact)?;
+        if self.command.resident.world.commit_mode() != crate::WorldCommitMode::Retained
+            && let Err(error) = self.command.resident.world.commit_effects(effect_pos)
         {
             // A partially materialized effect prefix is irreversible. Preserve
             // that canonical state and prevent Drop from pretending rollback
@@ -3425,21 +3779,24 @@ impl<G> ShipoutTransaction<'_, G> {
             return Err(error);
         }
         self.universe
+            .command
             .page_region
             .builder_mut()
             .set_integer(crate::page::PageInteger::DeadCycles, 0);
-        self.pdf
+        self.command
+            .resident
+            .pdf
             .commit_page(hash, output_parameters, page_parameters, pk_mode);
         let record = reservation.record();
         let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
-        self.world.record_artifact_commit(
+        self.command.resident.world.record_artifact_commit(
             hash,
             bytes,
             render_provenance,
             open_out_occurrences,
             reservation,
         );
-        self.world.finish_page_effect_interval();
+        self.command.resident.world.finish_page_effect_interval();
         self.commit_state_operation();
         Ok((hash, record))
     }
@@ -3462,10 +3819,16 @@ impl<G> RestoreTarget<CheckpointGenerationOwner<G>, StateCheckpointMark<G>> for 
         if !core.state().validate_checkpoint_cursor(*mark.input()) {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        if !self.durable_boxes.validates_cursor(*mark.durable()) {
+        if !self
+            .command
+            .resident
+            .durable_boxes
+            .validates_cursor(*mark.durable())
+        {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
         if !self
+            .command
             .page_region
             .nodes()
             .can_restore_checkpoint(*mark.page())
@@ -3501,9 +3864,12 @@ impl<G> RestoreTarget<CheckpointGenerationOwner<G>, StateCheckpointMark<G>> for 
             .as_mut()
             .expect("restore plan validated a live state core");
         core.state_mut().restore_checkpoint_cursor(*mark.input());
-        self.durable_boxes
-            .restore(&mut self.page_region.nodes_mut(), *mark.durable());
-        self.page_region
+        self.command
+            .resident
+            .durable_boxes
+            .restore(&mut self.command.page_region.nodes_mut(), *mark.durable());
+        self.command
+            .page_region
             .nodes_mut()
             .restore_checkpoint(*mark.page())
             .expect("restore plan prevalidated page-material settlement");
@@ -3518,7 +3884,6 @@ impl<G> RestoreTarget<CheckpointGenerationOwner<G>, StateCheckpointMark<G>> for 
     }
 }
 
-/// Evidence from whole-session/coarse-generation retirement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UniverseRetirement {
     interner: InternerRetirement,

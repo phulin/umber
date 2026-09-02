@@ -295,7 +295,7 @@ impl DetachedFormatImage {
     }
 
     pub(crate) fn capture<G>(universe: &Universe<G>) -> Result<Self, FormatError> {
-        let captured_names = universe.interner().capture_format_names();
+        let captured_names = universe.command.resident.interner().capture_format_names();
         let names = encode_rows(captured_names.clone())?;
         let names_lookup =
             crate::frozen_lookup::encode(captured_names.iter().enumerate().map(|(slot, name)| {
@@ -313,6 +313,8 @@ impl DetachedFormatImage {
         let mut pdf_token_roots = Vec::new();
         let mut pdf_node_roots = Vec::new();
         let pdf_is_capturable = universe
+            .command
+            .resident
             .pdf
             .capture_format(
                 |tokens| {
@@ -336,16 +338,20 @@ impl DetachedFormatImage {
         let (definitions, definition_rows, mut token_lists, mut glue) =
             core.capture_format_values(pdf_roots);
         let fonts = universe
+            .command
+            .resident
             .fonts
             .capture_format_fonts(|font| core.state().capture_format_font_runtime(font))
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         let mut node_lists = FormatNodeCollector::new(
             core,
-            universe.page_region.nodes(),
+            universe.command.page_region.nodes(),
             &mut token_lists,
             &mut glue,
         );
         let pdf = universe
+            .command
+            .resident
             .pdf
             .capture_format_bytes(
                 |tokens| {
@@ -354,6 +360,8 @@ impl DetachedFormatImage {
                 },
                 |nodes| {
                     let owner = universe
+                        .command
+                        .resident
                         .durable_forms
                         .owner(nodes)
                         .ok_or_else(|| "PDF form node owner is not live".to_owned())?;
@@ -377,9 +385,13 @@ impl DetachedFormatImage {
             )
             .map_err(FormatError::InvalidState)?;
         let mut box_cells = Vec::new();
-        universe.durable_boxes.visit_current(|index, owner| {
-            box_cells.push((index, node_lists.capture_owner(owner)));
-        });
+        universe
+            .command
+            .resident
+            .durable_boxes
+            .visit_current(|index, owner| {
+                box_cells.push((index, node_lists.capture_owner(owner)));
+            });
         for (index, row) in box_cells {
             cells.push(FormatCell::BoxRegister(
                 index,
@@ -447,12 +459,18 @@ impl DetachedFormatImage {
             &glue,
             &node_lists,
             &cells,
-            universe.engine_usage.uses_etex_node_sizes(),
+            universe
+                .command
+                .resident
+                .engine_usage
+                .uses_etex_node_sizes(),
         )?;
         let metadata = bincode::serialize(&FormatMetadata {
             version: SECTION_VERSION,
-            interaction_mode: encode_interaction_mode(universe.interaction_mode),
+            interaction_mode: encode_interaction_mode(universe.command.resident.interaction_mode),
             string_pool: universe
+                .command
+                .resident
                 .engine_usage
                 .capture_format_state(variable_memory_words, dynamic_memory_words),
             pdf,
@@ -463,7 +481,7 @@ impl DetachedFormatImage {
         let glue = encode_rows(glue)?;
         let fonts = encode_rows(fonts)?;
         let codes = encode_rows(codes)?;
-        let hyphenation = encode_rows(universe.hyphenation.clone())?;
+        let hyphenation = encode_rows(universe.command.resident.hyphenation.clone())?;
         let node_lists = encode_rows(node_lists)?;
         let cells = encode_rows(cells)?;
         let empty = empty_section();
@@ -1211,7 +1229,7 @@ impl<G> FormatDestination<G> {
         drop(bytes);
         let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
         universe.install_format_logical_rows(decoded)?;
-        universe.interaction_mode = interaction_mode;
+        universe.command.resident.interaction_mode = interaction_mode;
         universe.set_format_provenance(self.provenance);
         Ok(FormatStaging {
             destination: self.identity,
@@ -1229,7 +1247,7 @@ impl<G> FormatDestination<G> {
             return Err(FormatPublicationError::ForeignDestination);
         }
         let mut universe = staging.universe;
-        universe.world = self
+        universe.command.resident.world = self
             .world
             .take()
             .expect("matching destination publishes its caller World once");
@@ -1343,14 +1361,18 @@ pub(crate) fn materialize_retained_format<G>(
                 "format semantic-identity destination is not empty".to_owned(),
             ));
         }
-        universe.page_region.nodes_mut().enable_semantic_identity();
+        universe
+            .command
+            .page_region
+            .nodes_mut()
+            .enable_semantic_identity();
     }
     let DetachedFormatImage { bytes, decoded } = image;
     drop(bytes);
     let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
     universe.install_format_logical_rows(decoded)?;
-    universe.interaction_mode = interaction_mode;
-    universe.world = world;
+    universe.command.resident.interaction_mode = interaction_mode;
+    universe.command.resident.world = world;
     universe.refresh_job_clock_parameters().map_err(|error| {
         FormatError::InvalidState(format!("retained format clock refresh failed: {error:?}"))
     })?;
@@ -1373,7 +1395,7 @@ impl<G> Universe<G> {
         if depth != 0 {
             return Err(FormatError::OpenGroups(depth));
         }
-        if !self.page_region.builder().is_format_empty() {
+        if !self.command.page_region.builder().is_format_empty() {
             return Err(FormatError::NonEmptyPage);
         }
         Ok(())
@@ -1395,7 +1417,7 @@ impl<G> Universe<G> {
         let mut owners = Vec::new();
         let pdf = PdfState::restore_format_bytes(
             bytes,
-            self.engine_usage.capacities().pdf,
+            self.command.resident.engine_usage.capacities().pdf,
             |recipe| {
                 let row: u32 = bincode::deserialize(recipe)
                     .map_err(|error| format!("invalid PDF token root: {error}"))?;
@@ -1431,6 +1453,7 @@ impl<G> Universe<G> {
                     .ok_or_else(|| "PDF node root is out of range".to_owned())?
                     .to_owned();
                 let owner = self
+                    .command
                     .page_region
                     .nodes_mut()
                     .copy_page_root_to_durable(root)
@@ -1443,9 +1466,9 @@ impl<G> Universe<G> {
             },
         )
         .map_err(FormatError::InvalidState)?;
-        self.pdf = crate::pdf::PdfStateSlot::Owned(Box::new(pdf));
+        self.command.resident.pdf = crate::pdf::PdfStateSlot::Owned(Box::new(pdf));
         for (object, owner) in owners {
-            self.durable_forms.insert(object, owner);
+            self.command.resident.durable_forms.insert(object, owner);
         }
         Ok(())
     }
@@ -1462,7 +1485,7 @@ impl<G> Universe<G> {
             node_lists: format_node_lists,
             cells,
         } = format;
-        self.engine_usage =
+        self.command.resident.engine_usage =
             crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
                 .map_err(FormatError::InvalidState)?;
         for (slot, row) in names.iter().enumerate() {
@@ -1480,13 +1503,17 @@ impl<G> Universe<G> {
             }
         }
         drop(names);
-        let (fonts, font_runtimes) =
-            crate::font::FontStore::restore_format_fonts(format_fonts, self.interner())
-                .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
-        self.fonts = fonts;
-        let fonts = (0..self.fonts.len())
+        let (fonts, font_runtimes) = crate::font::FontStore::restore_format_fonts(
+            format_fonts,
+            self.command.resident.interner(),
+        )
+        .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        self.command.resident.fonts = fonts;
+        let fonts = (0..self.command.resident.fonts.len())
             .map(|slot| {
-                self.fonts
+                self.command
+                    .resident
+                    .fonts
                     .id_at(slot as u32)
                     .expect("restored format font prefix is dense")
             })
@@ -1546,13 +1573,16 @@ impl<G> Universe<G> {
                 FormatError::InvalidState("format box row is out of range".into())
             })?;
             let owner = self
+                .command
                 .page_region
                 .nodes_mut()
                 .copy_page_root_to_durable(root)
                 .map_err(|_| FormatError::AllocationFailed)?;
-            self.durable_boxes
+            self.command
+                .resident
+                .durable_boxes
                 .assign(
-                    &mut self.page_region.nodes_mut(),
+                    &mut self.command.page_region.nodes_mut(),
                     index,
                     Some(owner),
                     crate::AssignmentScope::Global,
@@ -1561,7 +1591,7 @@ impl<G> Universe<G> {
                 .map_err(|_| FormatError::AllocationFailed)?;
         }
         drop(cells);
-        self.hyphenation = hyphenation;
+        self.command.resident.hyphenation = hyphenation;
         self.install_format_pdf(&metadata.pdf, &promoted.token_lists, &node_lists)?;
         Ok(())
     }
@@ -1609,6 +1639,7 @@ impl<G> Universe<G> {
                     .collect::<Result<Vec<_>, FormatError>>()?
             };
             let id = self
+                .command
                 .page_region
                 .nodes_mut()
                 .publish_owned(nodes)

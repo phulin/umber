@@ -2,30 +2,26 @@
 
 use crate::InteractionMode;
 use crate::definition_arena::{DefinitionRef, DefinitionView, ResidentMacroBody};
-use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
+use crate::dependency::{DependencyKey, DependencyValue, TrackedRegionBarrier};
 use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::banks::IntParam;
-use crate::env::{
-    AssignmentScope, CodeTableKind, DurableBoxState, DurableFormState, DurableNodeMetadata,
-    StateError,
-};
+use crate::env::{AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
-use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
-use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
+use crate::hyphenation::{ExceptionSpec, PatternSpec};
+use crate::interner::{ControlSequenceKind, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
-use crate::pdf::PdfState;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
-use crate::shipout_scratch::{ShipoutScratchArena, ShipoutScratchListId};
-use crate::source_map::SourceMap;
+use crate::shipout_scratch::ShipoutScratchListId;
 use crate::stores::AdmittedStateMut;
 use crate::token::TokenWord;
-use crate::world::{JobClock, World};
+use crate::universe::ResidentCommandState;
+use crate::world::JobClock;
 
 /// The two line sources reachable by command delivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -650,128 +646,66 @@ impl EngineUsageRuntime {
 /// Admission validates coarse owners once. Meaning reads and definition
 /// resolution then index the dense bank and definition arena directly.
 pub struct CommandContext<'a, G> {
-    interner: &'a mut Interner,
+    resident: &'a mut ResidentCommandState<G>,
     admitted: AdmittedStateMut<'a, G>,
-    primitive_names: &'a [String],
-    primitive_meanings: &'a [MeaningWord<G>],
-    world: &'a mut World,
-    dependencies: &'a mut DependencyRuntime,
-    fonts: &'a mut FontStore,
     page_nodes: PageNodeArena<'a>,
-    durable_boxes: &'a mut DurableBoxState,
-    durable_forms: &'a mut DurableFormState,
-    shipout_scratch: &'a mut ShipoutScratchArena<G>,
     page: &'a mut PageBuilderState,
-    pdf: &'a mut PdfState<G>,
-    sources: &'a mut SourceMap,
-    hyphenation: &'a mut HyphenationTable,
-    interaction_mode: &'a mut InteractionMode,
-    prepared_mag: &'a mut Option<i32>,
-    error_context_widths: crate::print::ErrorContextWidths,
-    engine_usage: &'a mut EngineUsageRuntime,
-}
-
-pub(super) struct CommandContextParts<'a, G> {
-    pub interner: &'a mut Interner,
-    pub admitted: AdmittedStateMut<'a, G>,
-    pub primitive_names: &'a [String],
-    pub primitive_meanings: &'a [MeaningWord<G>],
-    pub world: &'a mut World,
-    pub dependencies: &'a mut DependencyRuntime,
-    pub fonts: &'a mut FontStore,
-    pub page_nodes: PageNodeArena<'a>,
-    pub durable_boxes: &'a mut DurableBoxState,
-    pub durable_forms: &'a mut DurableFormState,
-    pub shipout_scratch: &'a mut ShipoutScratchArena<G>,
-    pub page: &'a mut PageBuilderState,
-    pub pdf: &'a mut PdfState<G>,
-    pub sources: &'a mut SourceMap,
-    pub hyphenation: &'a mut HyphenationTable,
-    pub interaction_mode: &'a mut InteractionMode,
-    pub prepared_mag: &'a mut Option<i32>,
-    pub error_context_widths: crate::print::ErrorContextWidths,
-    pub engine_usage: &'a mut EngineUsageRuntime,
 }
 
 impl<'a, G> CommandContext<'a, G> {
-    pub(super) fn new(parts: CommandContextParts<'a, G>) -> Self {
-        let CommandContextParts {
-            interner,
-            admitted,
-            primitive_names,
-            primitive_meanings,
-            world,
-            dependencies,
-            fonts,
-            page_nodes,
-            durable_boxes,
-            durable_forms,
-            shipout_scratch,
-            page,
-            pdf,
-            sources,
-            hyphenation,
-            interaction_mode,
-            prepared_mag,
-            error_context_widths,
-            engine_usage,
-        } = parts;
+    pub(super) fn new(
+        resident: &'a mut ResidentCommandState<G>,
+        admitted: AdmittedStateMut<'a, G>,
+        page_nodes: PageNodeArena<'a>,
+        page: &'a mut PageBuilderState,
+    ) -> Self {
         Self {
-            interner,
+            resident,
             admitted,
-            primitive_names,
-            primitive_meanings,
-            world,
-            dependencies,
-            fonts,
             page_nodes,
-            durable_boxes,
-            durable_forms,
-            shipout_scratch,
             page,
-            pdf,
-            sources,
-            hyphenation,
-            interaction_mode,
-            prepared_mag,
-            error_context_widths,
-            engine_usage,
         }
     }
 
     /// Records scanner-owned one-word nodes while their owners coexist.
     pub fn observe_transient_token_words(&mut self, words: usize) {
-        self.engine_usage.observe_transient_memory(0, words);
+        self.resident
+            .engine_usage
+            .observe_transient_memory(0, words);
     }
 
     /// Detaches the state-owned portion of TeX82's terminal usage report.
     #[must_use]
     pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {
-        let fonts = self.fonts.len();
+        let fonts = self.resident.fonts.len();
         let font_parameter_words = self.admitted.state_ref().font_parameter_words();
-        let font_info_words = self.fonts.font_info_words(font_parameter_words);
-        let hyphenation = self.hyphenation.exception_usage();
+        let font_info_words = self.resident.fonts.font_info_words(font_parameter_words);
+        let hyphenation = self.resident.hyphenation.exception_usage();
         EngineUsageStatistics {
-            capacity_profile: self.engine_usage.capacity_profile(),
+            capacity_profile: self.resident.engine_usage.capacity_profile(),
             strings: self
+                .resident
                 .engine_usage
                 .strings
-                .saturating_sub(self.engine_usage.init_str_ptr),
+                .saturating_sub(self.resident.engine_usage.init_str_ptr),
             string_capacity: self
+                .resident
                 .engine_usage
                 .max_strings
-                .saturating_sub(self.engine_usage.init_str_ptr),
+                .saturating_sub(self.resident.engine_usage.init_str_ptr),
             string_characters: self
+                .resident
                 .engine_usage
                 .characters
-                .saturating_sub(self.engine_usage.init_pool_ptr),
+                .saturating_sub(self.resident.engine_usage.init_pool_ptr),
             string_character_capacity: self
+                .resident
                 .engine_usage
                 .pool_size
-                .saturating_sub(self.engine_usage.init_pool_ptr),
-            memory_words: self.engine_usage.memory.reported_words(),
-            memory_word_capacity: self.engine_usage.memory.capacity,
-            control_sequences: self.interner.multiletter_len(),
+                .saturating_sub(self.resident.engine_usage.init_pool_ptr),
+            memory_words: self.resident.engine_usage.memory.reported_words(),
+            memory_word_capacity: self.resident.engine_usage.memory.capacity,
+            control_sequences: self.resident.interner().multiletter_len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
             hyphenation_exceptions: hyphenation.occupied,
@@ -785,12 +719,13 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, InternerAccessError> {
-        self.interner.resolve_id(symbol)
+        self.resident.interner().resolve_id(symbol)
     }
 
     #[inline(always)]
     pub fn meaning(&self, symbol: Symbol) -> ResolvedMeaning<G> {
-        self.interner
+        self.resident
+            .interner()
             .resolve_local(symbol)
             .expect("command symbols belong to the admitted session");
         self.compact_control_sequence_meaning(symbol)
@@ -843,7 +778,8 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     fn validate_font_root(&self, font: crate::ids::FontId) -> Result<(), StateError> {
-        self.fonts
+        self.resident
+            .fonts
             .contains(font)
             .then_some(())
             .ok_or(StateError::ForeignSession)
@@ -852,7 +788,7 @@ impl<'a, G> CommandContext<'a, G> {
     fn assert_live_node_font_roots(&self, node: &crate::node::Node) {
         node.visit_fonts(|font| {
             assert!(
-                self.fonts.contains(font),
+                self.resident.fonts.contains(font),
                 "durable node contains a font outside the admitted timeline"
             );
         });
@@ -862,28 +798,31 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn meaning_id(&self, symbol: SymbolId) -> Result<ResolvedMeaning<G>, StateError> {
         // `resolve_id` is the admission check. The compact slot is then a
         // direct index for the lifetime of this context.
-        self.interner
+        self.resident
+            .interner()
             .resolve_id(symbol)
             .map_err(|_| StateError::ForeignSession)?;
         self.admitted.state_ref().meaning(symbol.symbol())
     }
 
     pub fn resolve(&self, symbol: Symbol) -> &str {
-        self.interner
+        self.resident
+            .interner()
             .resolve_local(symbol)
             .expect("command symbols belong to the admitted session")
     }
 
     pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        self.interner
+        self.resident
+            .interner()
             .qualify_local(symbol)
-            .and_then(|id| self.interner.kind_id(id).ok())
+            .and_then(|id| self.resident.interner().kind_id(id).ok())
             .expect("command symbols belong to the admitted session")
     }
 
     #[must_use]
     pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
-        self.interner.active(ch).map(SymbolId::symbol)
+        self.resident.interner().active(ch).map(SymbolId::symbol)
     }
 
     /// Interns TeX82's `active_base + c` definition cell on first use.
@@ -893,7 +832,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// the cell addressable even when the active character has never had a
     /// meaning before.
     pub fn intern_active_character(&mut self, ch: char) -> Symbol {
-        let id = self.interner.intern_active(ch);
+        let id = self.resident.interner_mut().intern_active(ch);
         self.intern_symbol(id)
     }
 
@@ -913,7 +852,9 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.primitive_meanings
+        self.resident
+            .primitive_registry
+            .meanings
             .get(usize::from(frozen.primitive_index()?))
             .map(MeaningWord::resolve)
     }
@@ -926,37 +867,43 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.primitive_meanings
+        self.resident
+            .primitive_registry
+            .meanings
             .get(usize::from(frozen.primitive_index()?))
     }
 
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
-        self.primitive_meanings
+        self.resident.primitive_registry.meanings
             .iter()
             .position(|candidate| {
                 matches!(candidate.resolve(), ResolvedMeaning::Static(value) if value == meaning)
             })
-            .map(|index| self.primitive_names[index].as_str())
+            .map(|index| self.resident.primitive_registry.names[index].as_str())
     }
 
     #[must_use]
     pub fn primitive_resolved(&self, name: &str) -> Option<ResolvedMeaning<G>> {
-        self.primitive_names
+        self.resident
+            .primitive_registry
+            .names
             .iter()
             .position(|candidate| candidate == name)
-            .map(|index| self.primitive_meanings[index].resolve())
+            .map(|index| self.resident.primitive_registry.meanings[index].resolve())
     }
 
     /// Resolves a previously bound immutable primitive by direct indexing.
     #[must_use]
     pub fn resolve_primitive_handle(&self, handle: crate::PrimitiveHandle<G>) -> Option<Meaning> {
-        if handle.session_epoch() != self.interner.epoch_identity()
-            || handle.registry_len() != self.primitive_meanings.len()
+        if handle.session_epoch() != self.resident.interner().epoch_identity()
+            || handle.registry_len() != self.resident.primitive_registry.meanings.len()
         {
             return None;
         }
-        self.primitive_meanings
+        self.resident
+            .primitive_registry
+            .meanings
             .get(handle.index())?
             .static_meaning()
     }
@@ -1095,7 +1042,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, DurableAllocationError> {
         let id = self.admitted.allocate_glue(value)?;
-        self.engine_usage.observe_transient_memory(4, 0);
+        self.resident.engine_usage.observe_transient_memory(4, 0);
         Ok(id)
     }
 
@@ -1104,7 +1051,8 @@ impl<'a, G> CommandContext<'a, G> {
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, DurableAllocationError> {
         let id = self.admitted.allocate_token_list(words)?;
-        self.engine_usage
+        self.resident
+            .engine_usage
             .observe_transient_memory(0, words.len().saturating_add(1));
         Ok(id)
     }
@@ -1155,7 +1103,8 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<TokenListId<G>, DurableAllocationError> {
         let id = self.admitted.seal_token_list_builder(builder)?;
         let words = self.admitted.token_list(id.clone()).len();
-        self.engine_usage
+        self.resident
+            .engine_usage
             .observe_transient_memory(0, words.saturating_add(1));
         Ok(id)
     }
@@ -1192,14 +1141,14 @@ impl<'a, G> CommandContext<'a, G> {
                 }
             }
             crate::token::OriginEncoding::DirectSource(position) => {
-                let region = self.sources.region_for_backed_position(position);
+                let region = self.resident.sources.region_for_backed_position(position);
                 let span = region
                     .and_then(|region| {
                         let next = position.raw().checked_add(1)?;
                         (next <= region.anchor().raw())
                             .then(|| crate::source_map::SourcePos::from_raw_for_store(next))
                     })
-                    .and_then(|hi| self.sources.span(position, hi).ok());
+                    .and_then(|hi| self.resident.sources.span(position, hi).ok());
                 self.admitted.allocate_provenance(
                     span.map_or(OriginRecord::UnknownBootstrap, OriginRecord::SourceSpan),
                 )?
@@ -1230,10 +1179,11 @@ impl<'a, G> CommandContext<'a, G> {
                 .provenance_coordinate_at(index)
                 .map(|coordinate| self.admitted.provenance(coordinate))?,
             crate::token::OriginEncoding::DirectSource(position) => {
-                let region = self.sources.region_for_backed_position(position)?;
+                let region = self.resident.sources.region_for_backed_position(position)?;
                 let end = position.raw().checked_add(1)?.min(region.anchor().raw());
                 OriginRecord::SourceSpan(
-                    self.sources
+                    self.resident
+                        .sources
                         .span(
                             position,
                             crate::source_map::SourcePos::from_raw_for_store(end),
@@ -1246,12 +1196,15 @@ impl<'a, G> CommandContext<'a, G> {
         };
         let (registration, start, end) = match record {
             OriginRecord::Source(source) => {
-                let registration = self.sources.registration_for_source(source.source())?;
+                let registration = self
+                    .resident
+                    .sources
+                    .registration_for_source(source.source())?;
                 let start = source.byte_offset();
                 (registration, start, start.saturating_add(1))
             }
             OriginRecord::SourceSpan(span) => {
-                let registration = self.sources.registration_for_span(span)?;
+                let registration = self.resident.sources.registration_for_span(span)?;
                 let region = registration.region();
                 (
                     registration,
@@ -1263,7 +1216,7 @@ impl<'a, G> CommandContext<'a, G> {
         };
         let (content, logical_path) = match registration.descriptor() {
             crate::source_map::SourceDescriptor::World { input_record, .. } => {
-                let input = self.world.input_record(*input_record)?;
+                let input = self.resident.world.input_record(*input_record)?;
                 (input.hash(), input.path().to_string_lossy().into_owned())
             }
             crate::source_map::SourceDescriptor::Generated(source) => (
@@ -1295,10 +1248,11 @@ impl<'a, G> CommandContext<'a, G> {
                 .provenance_coordinate_at(index)
                 .map(|coordinate| self.admitted.provenance(coordinate))?,
             crate::token::OriginEncoding::DirectSource(position) => {
-                let region = self.sources.region_for_backed_position(position)?;
+                let region = self.resident.sources.region_for_backed_position(position)?;
                 let end = position.raw().checked_add(1)?.min(region.anchor().raw());
                 OriginRecord::SourceSpan(
-                    self.sources
+                    self.resident
+                        .sources
                         .span(
                             position,
                             crate::source_map::SourcePos::from_raw_for_store(end),
@@ -1316,7 +1270,7 @@ impl<'a, G> CommandContext<'a, G> {
                 source.byte_offset().saturating_add(1),
             )),
             OriginRecord::SourceSpan(span) => {
-                let registration = self.sources.registration_for_span(span)?;
+                let registration = self.resident.sources.registration_for_span(span)?;
                 let region = registration.region();
                 Some(crate::provenance::OriginSourceRange::new(
                     region.source,
@@ -1338,7 +1292,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         let (registration, start, end) = match record {
             OriginRecord::SourceSpan(span) => {
-                let Some(registration) = self.sources.registration_for_span(span) else {
+                let Some(registration) = self.resident.sources.registration_for_span(span) else {
                     return (None, None);
                 };
                 let region = registration.region();
@@ -1351,7 +1305,10 @@ impl<'a, G> CommandContext<'a, G> {
                 (registration, start, end)
             }
             OriginRecord::Source(source) => {
-                let Some(registration) = self.sources.registration_for_source(source.source())
+                let Some(registration) = self
+                    .resident
+                    .sources
+                    .registration_for_source(source.source())
                 else {
                     return (None, None);
                 };
@@ -1362,10 +1319,10 @@ impl<'a, G> CommandContext<'a, G> {
         };
         let (logical_path, bytes, generated) = match registration.descriptor() {
             crate::source_map::SourceDescriptor::World { input_record, .. } => {
-                let Some(record) = self.world.input_record(*input_record) else {
+                let Some(record) = self.resident.world.input_record(*input_record) else {
                     return (None, None);
                 };
-                let Some(bytes) = self.world.input_content(record.hash()) else {
+                let Some(bytes) = self.resident.world.input_content(record.hash()) else {
                     return (None, None);
                 };
                 (
@@ -1522,7 +1479,7 @@ impl<'a, G> CommandContext<'a, G> {
                 ));
             }
         }
-        self.durable_boxes.metadata(index)
+        self.resident.durable_boxes.metadata(index)
     }
 
     fn promote_output_box_if_needed(
@@ -1540,7 +1497,8 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .copy_page_root_to_durable(root)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| {
                 crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed)
@@ -1563,7 +1521,8 @@ impl<'a, G> CommandContext<'a, G> {
             .transpose()
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         let current_level = self.admitted.state_ref().current_level();
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .assign(&mut self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1604,7 +1563,8 @@ impl<'a, G> CommandContext<'a, G> {
             }
         };
         let current_level = self.admitted.state_ref().current_level();
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .assign(&mut self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1624,7 +1584,12 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        debug_assert!(self.durable_boxes.metadata(u8::MAX.into()).is_none());
+        debug_assert!(
+            self.resident
+                .durable_boxes
+                .metadata(u8::MAX.into())
+                .is_none()
+        );
         self.page
             .install_output_box(&self.page_nodes, value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
@@ -1643,7 +1608,8 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .copy_page_root_to_durable(value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1657,7 +1623,8 @@ impl<'a, G> CommandContext<'a, G> {
             self.promote_output_box_if_needed(index)
                 .expect("output-box copy promotion");
         }
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .copy_to_page(&mut self.page_nodes, index)
             .expect("box copy allocation")
     }
@@ -1671,7 +1638,8 @@ impl<'a, G> CommandContext<'a, G> {
                 return Some(root);
             }
         }
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .take_to_page(&mut self.page_nodes, index)
             .expect("box transfer allocation")
     }
@@ -1681,7 +1649,8 @@ impl<'a, G> CommandContext<'a, G> {
             self.page.clear_output_box();
             return;
         }
-        self.durable_boxes
+        self.resident
+            .durable_boxes
             .replace(&mut self.page_nodes, index, None)
             .expect("void box replacement cannot allocate");
     }
@@ -1895,7 +1864,7 @@ impl<'a, G> CommandContext<'a, G> {
                 return Err(error);
             }
         };
-        self.durable_boxes.begin_group(frame.level());
+        self.resident.durable_boxes.begin_group(frame.level());
         Ok(frame)
     }
 
@@ -1907,13 +1876,15 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.end_definition_group();
         let trace = self.admitted.state_ref().group_restoration_trace_state()?;
         let durable = self
+            .resident
             .durable_boxes
             .end_group(&mut self.page_nodes, receipt.frame().level())?;
         receipt.append_durable(durable, trace);
         // Closing a save level replays an ordered environment-journal suffix.
         // That timeline mutation cannot be validated from the individual live
         // post-images alone, so an in-flight memo episode must fail closed.
-        self.dependencies
+        self.resident
+            .dependencies
             .poison(TrackedRegionBarrier::EnvironmentTimelineChange);
         Ok(receipt)
     }
@@ -1931,8 +1902,8 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> crate::diagnostic::Diagnostic<'effects> {
         crate::diagnostic::Diagnostic::from_parts(
             effects,
-            *self.interaction_mode,
-            self.error_context_widths.max_print_line(),
+            self.resident.interaction_mode,
+            self.resident.error_context_widths.max_print_line(),
             trace.tracing_online(),
             trace.newline_char(),
             trace.escape_char(),
@@ -1952,7 +1923,7 @@ impl<'a, G> CommandContext<'a, G> {
                 };
             }
         }
-        let owner = self.durable_boxes.value(index)?;
+        let owner = self.resident.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
@@ -2026,7 +1997,7 @@ impl<'a, G> CommandContext<'a, G> {
                 });
             }
         }
-        let owner = self.durable_boxes.value(index)?;
+        let owner = self.resident.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
@@ -2044,7 +2015,7 @@ impl<'a, G> CommandContext<'a, G> {
         if index == u8::MAX.into() && !self.page.output_box().is_empty() {
             return self.page_output_box_margin_kern(side);
         }
-        let owner = self.durable_boxes.value(index)?;
+        let owner = self.resident.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let children = match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(node))) => self
@@ -2108,37 +2079,38 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_name(&self, id: crate::ids::FontId) -> String {
-        self.fonts.get(id).name().to_owned()
+        self.resident.fonts.get(id).name().to_owned()
     }
 
     /// Detaches the complete artifact-facing metadata for one live font.
     #[must_use]
     pub fn font_artifact_recipe(&self, id: crate::ids::FontId) -> crate::FontArtifactRecipe {
-        self.fonts.artifact_recipe(id)
+        self.resident.fonts.artifact_recipe(id)
     }
 
     /// Detaches the complete immutable font recipe prefix for one admitted
     /// episode. Callers retain no font ID or generation handle.
     pub fn font_artifact_recipes(&self) -> Vec<crate::FontArtifactRecipe> {
-        (0..self.fonts.len())
+        (0..self.resident.fonts.len())
             .map(|slot| {
                 let id = self
+                    .resident
                     .fonts
                     .id_at(u32::try_from(slot).expect("font store is bounded by u32"))
                     .expect("immutable font prefix is dense");
-                self.fonts.artifact_recipe(id)
+                self.resident.fonts.artifact_recipe(id)
             })
             .collect()
     }
 
     #[must_use]
     pub fn font_construction(&self, id: crate::ids::FontId) -> tex_fonts::FontConstruction {
-        self.fonts.get(id).construction().clone()
+        self.resident.fonts.get(id).construction().clone()
     }
 
     #[must_use]
     pub fn font_supports_math(&self, id: crate::ids::FontId) -> bool {
-        self.fonts.get(id).supports_math()
+        self.resident.fonts.get(id).supports_math()
     }
 
     #[must_use]
@@ -2156,12 +2128,12 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         identity: tex_fonts::FontSourceIdentity,
     ) -> Option<crate::ids::FontId> {
-        self.fonts.by_source_identity(identity)
+        self.resident.fonts.by_source_identity(identity)
     }
 
     #[must_use]
     pub fn font_false_boundary_char(&self, id: crate::ids::FontId) -> Option<u8> {
-        self.fonts.get(id).metrics().false_boundary_char()
+        self.resident.fonts.get(id).metrics().false_boundary_char()
     }
 
     /// Interns one already-validated in-memory font for an admitted executor
@@ -2170,12 +2142,13 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn intern_font(&mut self, font: tex_fonts::LoadedFont) -> crate::ids::FontId {
         let mut font = Some(font);
         let view = font.as_ref().expect("font publication slot is occupied");
-        let allocates = self.fonts.would_allocate(view);
+        let allocates = self.resident.fonts.would_allocate(view);
         assert!(
             !allocates
                 || (self.has_font_slot_capacity()
                     && view.font_info_words()
                         <= self
+                            .resident
                             .engine_usage
                             .capacities()
                             .font_info_words
@@ -2191,6 +2164,7 @@ impl<'a, G> CommandContext<'a, G> {
                 .expect("validated font runtime state exceeds memory")
         });
         let id = self
+            .resident
             .fonts
             .intern_staged(&mut font)
             .expect("validated font exceeds the live font store capacity");
@@ -2210,25 +2184,28 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         let symbol = match identifier.into() {
             FontIdentifier::Symbol(symbol) => self
-                .interner
+                .resident
+                .interner()
                 .qualify_local(symbol)
                 .expect("font identifier belongs to the admitted session"),
             FontIdentifier::Qualified(symbol) => symbol,
         };
         let kind = self
-            .interner
+            .resident
+            .interner()
             .kind_id(symbol)
             .expect("font identifier belongs to the admitted session");
         let name = self
-            .interner
+            .resident
+            .interner()
             .resolve_id(symbol)
             .expect("font identifier belongs to the admitted session")
             .to_owned();
         let complete = crate::font::complete_font_hash_fragment(
-            *self.fonts.hash_fragment(font),
+            *self.resident.fonts.hash_fragment(font),
             Some((kind, &name)),
         );
-        self.fonts.set_identifier(font, symbol, complete);
+        self.resident.fonts.set_identifier(font, symbol, complete);
     }
 
     pub fn try_intern_font_with_identifier(
@@ -2237,11 +2214,12 @@ impl<'a, G> CommandContext<'a, G> {
         identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let view = font.as_ref().expect("font publication slot is occupied");
-        let allocates = self.fonts.would_allocate(view);
+        let allocates = self.resident.fonts.would_allocate(view);
         if allocates
             && (!self.has_font_slot_capacity()
                 || view.font_info_words()
                     > self
+                        .resident
                         .engine_usage
                         .capacities()
                         .font_info_words
@@ -2261,7 +2239,7 @@ impl<'a, G> CommandContext<'a, G> {
             })
             .transpose()
             .map_err(|_| crate::font::FontStoreCapacityError)?;
-        let id = self.fonts.intern_staged(font)?;
+        let id = self.resident.fonts.intern_staged(font)?;
         if let Some(prepared) = prepared {
             self.admitted
                 .state()
@@ -2280,7 +2258,7 @@ impl<'a, G> CommandContext<'a, G> {
         let parameters = (1..=self.font_parameter_count(source))
             .map(|number| self.font_dimen(source, number as u32))
             .collect();
-        let font = self.fonts.get(source).copied(parameters);
+        let font = self.resident.fonts.get(source).copied(parameters);
         let id = self.try_intern_derived_font(font, source, true, false, false)?;
         self.set_font_identifier_symbol(id, identifier);
         Ok(id)
@@ -2295,6 +2273,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let current_quad = self.font_dimen(source, 6);
         let font = self
+            .resident
             .fonts
             .get(source)
             .letterspaced(current_quad, amount, no_ligatures)
@@ -2309,7 +2288,7 @@ impl<'a, G> CommandContext<'a, G> {
         font: crate::ids::FontId,
         expansion: crate::font::FontExpansion,
     ) -> Result<bool, crate::font::FontExpansionConfigError> {
-        self.fonts.set_expansion(font, expansion)
+        self.resident.fonts.set_expansion(font, expansion)
     }
 
     pub fn try_expanded_font(
@@ -2320,8 +2299,12 @@ impl<'a, G> CommandContext<'a, G> {
         if ratio == 0 {
             return Ok(source);
         }
-        let generated = self.fonts.get(source).expanded(ratio);
-        if let Some(existing) = self.fonts.by_source_identity(generated.source_identity()) {
+        let generated = self.resident.fonts.get(source).expanded(ratio);
+        if let Some(existing) = self
+            .resident
+            .fonts
+            .by_source_identity(generated.source_identity())
+        {
             return Ok(existing);
         }
         self.try_intern_derived_font(generated, source, true, true, false)
@@ -2339,11 +2322,12 @@ impl<'a, G> CommandContext<'a, G> {
         let view = font
             .as_ref()
             .expect("derived font publication slot is occupied");
-        let allocates = self.fonts.would_allocate(view);
+        let allocates = self.resident.fonts.would_allocate(view);
         if allocates
             && (!self.has_font_slot_capacity()
                 || view.font_info_words()
                     > self
+                        .resident
                         .engine_usage
                         .capacities()
                         .font_info_words
@@ -2369,7 +2353,7 @@ impl<'a, G> CommandContext<'a, G> {
             })
             .transpose()
             .map_err(|_| crate::font::FontStoreCapacityError)?;
-        let id = self.fonts.intern_staged(&mut font)?;
+        let id = self.resident.fonts.intern_staged(&mut font)?;
         if let Some(prepared) = prepared {
             self.admitted
                 .state()
@@ -2381,12 +2365,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_external_name(&self, id: crate::ids::FontId) -> &str {
-        self.fonts.get(id).name()
+        self.resident.fonts.get(id).name()
     }
 
     #[must_use]
     pub fn font_size(&self, id: crate::ids::FontId) -> Scaled {
-        self.fonts.get(id).size()
+        self.resident.fonts.get(id).size()
     }
 
     #[must_use]
@@ -2396,12 +2380,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_design_size(&self, id: crate::ids::FontId) -> Scaled {
-        self.fonts.get(id).design_size()
+        self.resident.fonts.get(id).design_size()
     }
 
     #[must_use]
     pub fn font_identifier_symbol(&self, id: crate::ids::FontId) -> Option<Symbol> {
-        self.fonts.identifier(id).map(SymbolId::symbol)
+        self.resident.fonts.identifier(id).map(SymbolId::symbol)
     }
 
     #[must_use]
@@ -2410,7 +2394,7 @@ impl<'a, G> CommandContext<'a, G> {
         id: crate::ids::FontId,
         code: u8,
     ) -> Option<crate::font::CharMetrics> {
-        self.fonts.get(id).metrics().character(code)
+        self.resident.fonts.get(id).metrics().character(code)
     }
 
     #[must_use]
@@ -2419,17 +2403,18 @@ impl<'a, G> CommandContext<'a, G> {
         id: crate::ids::FontId,
         character: char,
     ) -> Option<crate::font::CharMetrics> {
-        self.fonts.get(id).character_metrics(character)
+        self.resident.fonts.get(id).character_metrics(character)
     }
 
     #[must_use]
     pub fn font_character_exists(&self, id: crate::ids::FontId, character: char) -> bool {
-        self.fonts.get(id).character_exists(character)
+        self.resident.fonts.get(id).character_exists(character)
     }
 
     #[must_use]
     pub fn font_is_left_to_right_shaping(&self, id: crate::ids::FontId) -> bool {
-        self.fonts
+        self.resident
+            .fonts
             .get(id)
             .opentype()
             .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight)
@@ -2437,7 +2422,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_mapped_text(&self, id: crate::ids::FontId, character: char) -> Option<&str> {
-        self.fonts.get(id).mapped_text(character)
+        self.resident.fonts.get(id).mapped_text(character)
     }
 
     #[must_use]
@@ -2446,22 +2431,22 @@ impl<'a, G> CommandContext<'a, G> {
         id: crate::ids::FontId,
         request: tex_fonts::ShapingRequest<'_>,
     ) -> Option<tex_fonts::ShapedRun> {
-        self.fonts.get(id).shape_run(request)
+        self.resident.fonts.get(id).shape_run(request)
     }
 
     #[must_use]
     pub fn font_uses_tfm_metrics(&self, id: crate::ids::FontId) -> bool {
-        self.fonts.get(id).uses_tfm_metrics()
+        self.resident.fonts.get(id).uses_tfm_metrics()
     }
 
     #[must_use]
     pub fn font_widths(&self, id: crate::ids::FontId) -> &[Scaled; 256] {
-        self.fonts.get(id).metrics().widths()
+        self.resident.fonts.get(id).metrics().widths()
     }
 
     #[must_use]
     pub fn font_characters(&self, id: crate::ids::FontId) -> &[Option<crate::font::CharMetrics>] {
-        self.fonts.get(id).metrics().characters()
+        self.resident.fonts.get(id).metrics().characters()
     }
 
     #[must_use]
@@ -2471,7 +2456,8 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn classic_math_parameter(&self, id: crate::ids::FontId, number: u16) -> Scaled {
-        self.fonts
+        self.resident
+            .fonts
             .get(id)
             .classic_math_parameter_override(number)
             .unwrap_or_else(|| self.font_dimen(id, u32::from(number)))
@@ -2479,7 +2465,8 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn classic_math_parameter_count(&self, id: crate::ids::FontId) -> usize {
-        self.fonts
+        self.resident
+            .fonts
             .get(id)
             .classic_math_parameter_count_override()
             .unwrap_or_else(|| self.font_parameter_count(id))
@@ -2487,7 +2474,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_next_larger(&self, id: crate::ids::FontId, code: u8) -> Option<u8> {
-        self.fonts.get(id).metrics().next_larger(code)
+        self.resident.fonts.get(id).metrics().next_larger(code)
     }
 
     #[must_use]
@@ -2497,7 +2484,13 @@ impl<'a, G> CommandContext<'a, G> {
         code: u8,
     ) -> Option<crate::font::ExtensibleRecipe> {
         (self.pdf_font_code(crate::PdfFontCode::Tag, id, code) & 4 != 0)
-            .then(|| self.fonts.get(id).metrics().extensible_recipe(code))
+            .then(|| {
+                self.resident
+                    .fonts
+                    .get(id)
+                    .metrics()
+                    .extensible_recipe(code)
+            })
             .flatten()
     }
 
@@ -2513,7 +2506,12 @@ impl<'a, G> CommandContext<'a, G> {
         {
             return None;
         }
-        let command = self.fonts.get(id).metrics().lig_kern_command(left, right);
+        let command = self
+            .resident
+            .fonts
+            .get(id)
+            .metrics()
+            .lig_kern_command(left, right);
         if self.pdf_font_ligatures_disabled(id) {
             return command
                 .filter(|command| matches!(command, crate::font::LigKernCommand::Kern(_)));
@@ -2526,12 +2524,12 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         id: crate::ids::FontId,
     ) -> tex_fonts::MathMetricsSource<'_> {
-        self.fonts.get(id).math_metrics_source()
+        self.resident.fonts.get(id).math_metrics_source()
     }
 
     #[must_use]
     pub fn font_expansion(&self, id: crate::ids::FontId) -> Option<crate::font::FontExpansion> {
-        self.fonts.expansion(id)
+        self.resident.fonts.expansion(id)
     }
 
     #[must_use]
@@ -2554,12 +2552,13 @@ impl<'a, G> CommandContext<'a, G> {
                 && usize::try_from(id.raw())
                     .ok()
                     .and_then(|raw| raw.checked_add(1))
-                    == Some(self.fonts.len())
+                    == Some(self.resident.fonts.len())
                 && usize::try_from(number).ok().is_some_and(|number| {
                     let current = self.font_parameter_count(id);
                     let growth = number.saturating_sub(current);
                     growth
                         <= self
+                            .resident
                             .engine_usage
                             .capacities()
                             .font_info_words
@@ -2568,12 +2567,13 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     fn current_font_info_words(&self) -> usize {
-        self.fonts
+        self.resident
+            .fonts
             .font_info_words(self.admitted.state_ref().font_parameter_words())
     }
 
     fn has_font_slot_capacity(&self) -> bool {
-        self.fonts.len().saturating_sub(1) < self.engine_usage.capacities().fonts
+        self.resident.fonts.len().saturating_sub(1) < self.resident.engine_usage.capacities().fonts
     }
 
     #[must_use]
@@ -2599,12 +2599,12 @@ impl<'a, G> CommandContext<'a, G> {
         value: Scaled,
     ) -> Result<(), usize> {
         if !self.font_dimen_writable(id, number) {
-            return Err(self.engine_usage.capacities().font_info_words);
+            return Err(self.resident.engine_usage.capacities().font_info_words);
         }
         self.admitted
             .state()
             .assign_font_dimen(id, number, value, AssignmentScope::Global)
-            .map_err(|_| self.engine_usage.capacities().font_info_words)
+            .map_err(|_| self.resident.engine_usage.capacities().font_info_words)
     }
 
     pub fn set_font_hyphen_char(&mut self, id: crate::ids::FontId, value: i32) {
@@ -2695,6 +2695,7 @@ impl<'a, G> CommandContext<'a, G> {
         match table {
             crate::PdfFontCode::Ef => 1000,
             crate::PdfFontCode::Tag => self
+                .resident
                 .fonts
                 .get(font)
                 .character_metrics(char::from(code))
@@ -2798,7 +2799,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// Validates and freezes TeX82 §288's job-level magnification.
     pub fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
         let attempted = self.int_param(IntParam::MAG);
-        let (effective, diagnostic) = if let Some(retained) = *self.prepared_mag
+        let (effective, diagnostic) = if let Some(retained) = self.resident.prepared_mag
             && attempted != retained
         {
             (
@@ -2820,7 +2821,7 @@ impl<'a, G> CommandContext<'a, G> {
             self.assign_int_param(IntParam::MAG, effective, AssignmentScope::Global)
                 .expect("the magnification parameter is admitted");
         }
-        *self.prepared_mag = Some(effective);
+        self.resident.prepared_mag = Some(effective);
         (effective, diagnostic)
     }
 
@@ -2835,29 +2836,32 @@ impl<'a, G> CommandContext<'a, G> {
             InternalInteger::InputLineNumber => return None,
             InternalInteger::ETeXVersion => 2,
             InternalInteger::PdfTeXVersion => 140,
-            InternalInteger::PdfElapsedTime => self.world.pdf_elapsed_time(),
-            InternalInteger::PdfRandomSeed => self.world.pdf_random_seed(),
-            InternalInteger::PdfShellEscape => match self.world.shell_escape_policy() {
+            InternalInteger::PdfElapsedTime => self.resident.world.pdf_elapsed_time(),
+            InternalInteger::PdfRandomSeed => self.resident.world.pdf_random_seed(),
+            InternalInteger::PdfShellEscape => match self.resident.world.shell_escape_policy() {
                 crate::world::ShellEscapePolicy::Disabled => 0,
                 crate::world::ShellEscapePolicy::Enabled => 1,
                 crate::world::ShellEscapePolicy::Restricted => 2,
             },
-            InternalInteger::PdfLastObject => self.pdf.last_raw_object() as i32,
-            InternalInteger::PdfLastAnnot => self.pdf.last_annotation() as i32,
-            InternalInteger::PdfLastLink => self.pdf.last_link() as i32,
-            InternalInteger::PdfLastXPos => self.pdf.last_position().0.raw(),
-            InternalInteger::PdfLastYPos => self.pdf.last_position().1.raw(),
-            InternalInteger::PdfLastXForm => self.pdf.last_form() as i32,
+            InternalInteger::PdfLastObject => self.resident.pdf.last_raw_object() as i32,
+            InternalInteger::PdfLastAnnot => self.resident.pdf.last_annotation() as i32,
+            InternalInteger::PdfLastLink => self.resident.pdf.last_link() as i32,
+            InternalInteger::PdfLastXPos => self.resident.pdf.last_position().0.raw(),
+            InternalInteger::PdfLastYPos => self.resident.pdf.last_position().1.raw(),
+            InternalInteger::PdfLastXForm => self.resident.pdf.last_form() as i32,
             InternalInteger::PdfLastXImage => self
+                .resident
                 .pdf
                 .last_external_image()
                 .map_or(0, |record| record.id().raw() as i32),
-            InternalInteger::PdfReturnValue => self.pdf.return_value(),
+            InternalInteger::PdfReturnValue => self.resident.pdf.return_value(),
             InternalInteger::PdfLastXImagePages => self
+                .resident
                 .pdf
                 .last_external_image()
                 .map_or(0, |record| record.metadata().page_count() as i32),
             InternalInteger::PdfLastXImageColorDepth => self
+                .resident
                 .pdf
                 .last_external_image()
                 .map_or(0, |record| i32::from(record.metadata().color_depth())),
@@ -2901,7 +2905,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn observe_command_projection(&mut self, key: DependencyKey, value: DependencyValue) {
-        self.dependencies.record(key, value);
+        self.resident.dependencies.record(key, value);
     }
 
     /// Advances and records an executor-owned semantic projection in the
@@ -2911,42 +2915,44 @@ impl<'a, G> CommandContext<'a, G> {
         key: DependencyKey,
         value: DependencyValue,
     ) {
-        self.dependencies.mark_changed(key);
-        self.dependencies.track(key);
-        self.dependencies.record(key, value);
+        self.resident.dependencies.mark_changed(key);
+        self.resident.dependencies.track(key);
+        self.resident.dependencies.record(key, value);
     }
 
     #[must_use]
     pub fn tracked_region_is_active(&self) -> bool {
-        self.dependencies.is_recording()
+        self.resident.dependencies.is_recording()
     }
 
     pub fn unsupported_command_state(&mut self) {
-        self.dependencies
+        self.resident
+            .dependencies
             .poison(TrackedRegionBarrier::UnsupportedCommandState);
     }
 
     pub fn unsupported_host_capability(&mut self) {
-        self.dependencies
+        self.resident
+            .dependencies
             .poison(TrackedRegionBarrier::UnsupportedHostCapability);
     }
 
     #[must_use]
     pub fn job_clock(&mut self) -> JobClock {
-        self.world.job_clock()
+        self.resident.world.job_clock()
     }
 
     #[must_use]
     pub fn interaction_permits_terminal_input(&self) -> bool {
         matches!(
-            *self.interaction_mode,
+            self.resident.interaction_mode,
             InteractionMode::Scroll | InteractionMode::ErrorStop
         )
     }
 
     #[must_use]
     pub fn interaction_mode_value(&self) -> i32 {
-        match *self.interaction_mode {
+        match self.resident.interaction_mode {
             InteractionMode::Batch => 0,
             InteractionMode::Nonstop => 1,
             InteractionMode::Scroll => 2,
@@ -2955,20 +2961,23 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
-        *self.interaction_mode = mode;
+        self.resident.interaction_mode = mode;
     }
 
     pub fn clear_error_count(&mut self) {
-        self.world.error_channel_mut().clear_error_count();
+        self.resident.world.error_channel_mut().clear_error_count();
     }
 
     pub fn take_long_help_seen(&mut self, mark: bool) -> bool {
-        self.world.error_channel_mut().take_long_help_seen(mark)
+        self.resident
+            .world
+            .error_channel_mut()
+            .take_long_help_seen(mark)
     }
 
     #[must_use]
     pub fn read_stream_at_eof(&self, slot: crate::world::StreamSlot) -> bool {
-        self.world.input_stream_eof(slot)
+        self.resident.world.input_stream_eof(slot)
     }
 
     pub fn input_ln(&mut self, source: CommandLineSource<'_>) -> Option<String> {
@@ -2977,16 +2986,21 @@ impl<'a, G> CommandContext<'a, G> {
                 if !prompt.is_empty() {
                     self.printer().print(prompt);
                 }
-                let line = self.world.read_terminal_line().ok().flatten()?;
-                self.world.echo_terminal_input(&line);
+                let line = self.resident.world.read_terminal_line().ok().flatten()?;
+                self.resident.world.echo_terminal_input(&line);
                 Some(line)
             }
-            CommandLineSource::Stream(slot) => self.world.read_stream_line(slot).ok().flatten(),
+            CommandLineSource::Stream(slot) => {
+                self.resident.world.read_stream_line(slot).ok().flatten()
+            }
         }
     }
 
     pub fn record_warning_history(&mut self) {
-        self.world.error_channel_mut().record_warning_history();
+        self.resident
+            .world
+            .error_channel_mut()
+            .record_warning_history();
     }
 
     pub fn print_file_open(&mut self, name: &str) {
@@ -2998,20 +3012,20 @@ impl<'a, G> CommandContext<'a, G> {
             printer.print_char(' ');
         }
         printer.print_char('(').print(name);
-        self.world.file_framing_mut().open();
+        self.resident.world.file_framing_mut().open();
     }
 
     pub fn print_file_close(&mut self) {
         self.printer().print_char(')');
-        self.world.file_framing_mut().close();
+        self.resident.world.file_framing_mut().close();
     }
 
     pub fn make_string_pool_string(&mut self, value: &str) {
-        self.engine_usage.make_string(value);
+        self.resident.engine_usage.make_string(value);
     }
 
     pub fn slow_make_string_pool_string(&mut self, value: &str) {
-        self.engine_usage.slow_make_string(value);
+        self.resident.engine_usage.slow_make_string(value);
     }
 
     pub fn register_source(
@@ -3019,7 +3033,8 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::input::SourceId,
         descriptor: crate::source_map::SourceDescriptor,
     ) -> Result<crate::source_map::SourcePos, crate::source_map::SourceMapError> {
-        self.sources
+        self.resident
+            .sources
             .register_without_line_starts(source, descriptor)
     }
 
@@ -3030,7 +3045,8 @@ impl<'a, G> CommandContext<'a, G> {
         start: u64,
         end: u64,
     ) -> crate::token::OriginId {
-        self.sources
+        self.resident
+            .sources
             .registered_source(source)
             .and_then(|registered| registered.direct_origin(start, end))
             .unwrap_or(crate::token::OriginId::UNKNOWN)
@@ -3043,6 +3059,7 @@ impl<'a, G> CommandContext<'a, G> {
         end: u64,
     ) -> crate::token::OriginId {
         let Some(span) = self
+            .resident
             .sources
             .registered_source(source)
             .and_then(|registered| registered.span(start, end).ok())
@@ -3063,12 +3080,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn hyphenation_patterns_open(&self) -> bool {
-        self.hyphenation.patterns_open()
+        self.resident.hyphenation.patterns_open()
     }
 
     #[must_use]
     pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
-        self.hyphenation.saved_hyphen_code(language, ch)
+        self.resident.hyphenation.saved_hyphen_code(language, ch)
     }
 
     #[must_use]
@@ -3077,12 +3094,13 @@ impl<'a, G> CommandContext<'a, G> {
         language: u8,
         letters: &[char],
     ) -> bool {
-        self.hyphenation
+        self.resident
+            .hyphenation
             .contains_pattern_for_language(language, letters)
     }
 
     pub fn close_hyphenation_patterns(&mut self) {
-        self.hyphenation.close_patterns();
+        self.resident.hyphenation.close_patterns();
     }
 
     pub fn add_hyphenation_pattern_for_language(
@@ -3090,7 +3108,9 @@ impl<'a, G> CommandContext<'a, G> {
         language: u8,
         pattern: PatternSpec,
     ) -> Result<bool, crate::hyphenation::HyphenationCapacityError> {
-        self.hyphenation.add_pattern_for_language(language, pattern)
+        self.resident
+            .hyphenation
+            .add_pattern_for_language(language, pattern)
     }
 
     pub fn add_hyphenation_exception_for_language(
@@ -3098,7 +3118,8 @@ impl<'a, G> CommandContext<'a, G> {
         language: u8,
         exception: ExceptionSpec,
     ) {
-        self.hyphenation
+        self.resident
+            .hyphenation
             .add_exception_for_language(language, exception);
     }
 
@@ -3107,7 +3128,7 @@ impl<'a, G> CommandContext<'a, G> {
         language: u8,
         codes: impl IntoIterator<Item = (char, char)>,
     ) {
-        self.hyphenation.save_hyphen_codes(language, codes);
+        self.resident.hyphenation.save_hyphen_codes(language, codes);
     }
 
     #[must_use]
@@ -3118,16 +3139,17 @@ impl<'a, G> CommandContext<'a, G> {
         left_min: usize,
         right_min: usize,
     ) -> Vec<usize> {
-        self.hyphenation
+        self.resident
+            .hyphenation
             .hyphen_positions_for_language(language, word, left_min, right_min)
     }
 
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
-        self.world.pdf_uniform_deviate(bound)
+        self.resident.world.pdf_uniform_deviate(bound)
     }
 
     pub fn pdf_normal_deviate(&mut self) -> i32 {
-        self.world.pdf_normal_deviate()
+        self.resident.world.pdf_normal_deviate()
     }
 
     #[must_use]
@@ -3135,7 +3157,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         id: crate::PdfExternalImageId,
     ) -> Option<crate::PdfExternalImageMetadata> {
-        self.pdf.external_image(id)
+        self.resident.pdf.external_image(id)
     }
 
     #[must_use]
@@ -3143,7 +3165,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         id: crate::PdfExternalImageId,
     ) -> Option<crate::PdfExternalImageRecord> {
-        self.pdf.external_image_record(id)
+        self.resident.pdf.external_image_record(id)
     }
 
     pub fn allocate_pdf_external_image(
@@ -3152,14 +3174,15 @@ impl<'a, G> CommandContext<'a, G> {
         dimensions: crate::PdfExternalImageDimensions,
         color_space_object: i32,
     ) -> Result<crate::PdfExternalImageRecord, crate::PdfObjectCapacityError> {
-        self.pdf
+        self.resident
+            .pdf
             .allocate_external_image(source, dimensions, color_space_object)
     }
 
     pub fn reserve_pdf_annotation(
         &mut self,
     ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfObjectCapacityError> {
-        self.pdf.reserve_annotation()
+        self.resident.pdf.reserve_annotation()
     }
 
     pub fn initialize_pdf_annotation(
@@ -3168,14 +3191,16 @@ impl<'a, G> CommandContext<'a, G> {
         data: crate::PdfAnnotationData<G>,
     ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfAnnotationInitializeError> {
         let semantic_id = self.token_semantic_id(data.entries.clone());
-        self.pdf.initialize_annotation(object, data, semantic_id)
+        self.resident
+            .pdf
+            .initialize_annotation(object, data, semantic_id)
     }
 
     pub fn create_pdf_annotation(
         &mut self,
         data: crate::PdfAnnotationData<G>,
     ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfObjectCapacityError> {
-        let object = self.pdf.reserve_annotation()?.object();
+        let object = self.resident.pdf.reserve_annotation()?.object();
         self.initialize_pdf_annotation(object, data)
             .map_err(|_| crate::PdfObjectCapacityError)
     }
@@ -3189,7 +3214,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::PdfLinkRecord<G>, crate::PdfObjectCapacityError> {
         let attributes_semantic_id = self.token_semantic_id(attributes.clone());
         let action_semantic_id = action.fingerprint(|tokens| self.token_semantic_id(tokens));
-        self.pdf.create_link(
+        self.resident.pdf.create_link(
             dimensions,
             attributes,
             action,
@@ -3200,7 +3225,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn end_pdf_link(&mut self) -> Option<crate::PdfOpenLink<G>> {
-        self.pdf.end_link()
+        self.resident.pdf.end_link()
     }
 
     pub fn create_pdf_outline(
@@ -3215,7 +3240,8 @@ impl<'a, G> CommandContext<'a, G> {
             action.fingerprint(|tokens| self.token_semantic_id(tokens)),
             self.token_semantic_id(title.clone()),
         ];
-        self.pdf
+        self.resident
+            .pdf
             .create_outline(attributes, action, count, title, semantic_ids)
     }
 
@@ -3225,7 +3251,7 @@ impl<'a, G> CommandContext<'a, G> {
         identity: &crate::PdfDestinationIdentity,
         structure: bool,
     ) -> Option<crate::PdfDestinationRecord> {
-        self.pdf.destination(identity, structure)
+        self.resident.pdf.destination(identity, structure)
     }
 
     pub fn reserve_pdf_destination(
@@ -3233,26 +3259,27 @@ impl<'a, G> CommandContext<'a, G> {
         identity: crate::PdfDestinationIdentity,
         structure: bool,
     ) -> Result<crate::PdfDestinationRecord, crate::PdfObjectCapacityError> {
-        self.pdf.reserve_destination(identity, structure)
+        self.resident.pdf.reserve_destination(identity, structure)
     }
 
     pub fn reserve_pdf_thread(
         &mut self,
         identity: crate::PdfDestinationIdentity,
     ) -> Result<crate::PdfThreadRecord, crate::PdfObjectCapacityError> {
-        self.pdf.reserve_thread(identity)
+        self.resident.pdf.reserve_thread(identity)
     }
 
     #[must_use]
     pub fn pdf_raw_object(&self, object: u32) -> Option<crate::PdfRawObjectRecord<G>> {
-        self.pdf
+        self.resident
+            .pdf
             .raw_object(crate::PdfRawObjectId::from_allocated(object))
     }
 
     pub fn reserve_pdf_raw_object(
         &mut self,
     ) -> Result<crate::PdfRawObjectId, crate::PdfObjectCapacityError> {
-        self.pdf.reserve_raw_object()
+        self.resident.pdf.reserve_raw_object()
     }
 
     pub fn initialize_pdf_raw_object(
@@ -3266,7 +3293,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<(), crate::PdfRawObjectInitializeError> {
         let stream_attr = stream_attr.map(|tokens| self.pdf_token_parameter(tokens));
         let data = self.pdf_token_parameter(data);
-        self.pdf.initialize_raw_object(
+        self.resident.pdf.initialize_raw_object(
             id,
             crate::PdfRawObjectData::new(stream, stream_attr, file, data),
             immediate,
@@ -3274,51 +3301,51 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn set_pdf_space_font_name(&mut self, name: Vec<u8>) {
-        self.pdf.set_space_font_name(name);
+        self.resident.pdf.set_space_font_name(name);
     }
 
     pub fn set_pdf_return_value(&mut self, value: i32) {
-        self.pdf.set_return_value(value);
+        self.resident.pdf.set_return_value(value);
     }
 
     pub fn has_pdf_color_stack(&mut self, id: u32) -> bool {
-        self.pdf.has_color_stack(id)
+        self.resident.pdf.has_color_stack(id)
     }
 
     pub fn push_pdf_font_map(&mut self, operation: crate::PdfFontMapOperation) {
-        self.pdf.push_font_map(operation);
+        self.resident.pdf.push_font_map(operation);
     }
 
     #[must_use]
     pub fn pdf_font_map_duplicate_names(&self) -> Vec<Vec<u8>> {
-        self.pdf.font_map_duplicate_names()
+        self.resident.pdf.font_map_duplicate_names()
     }
 
     pub fn set_pdf_font_attribute(&mut self, font: crate::ids::FontId, bytes: Vec<u8>) {
         self.validate_font_root(font)
             .expect("PDF font attribute retains a live admitted font");
-        self.pdf.set_font_attribute(font, bytes);
+        self.resident.pdf.set_font_attribute(font, bytes);
     }
 
     pub fn include_pdf_font_chars(&mut self, font: crate::ids::FontId, chars: Vec<u8>) {
         self.validate_font_root(font)
             .expect("PDF character inclusion retains a live admitted font");
-        self.pdf.include_font_chars(font, chars);
+        self.resident.pdf.include_font_chars(font, chars);
     }
 
     pub fn disable_pdf_builtin_to_unicode(&mut self, font: crate::ids::FontId) {
         self.validate_font_root(font)
             .expect("PDF font configuration retains a live admitted font");
-        self.pdf.disable_builtin_to_unicode(font);
+        self.resident.pdf.disable_builtin_to_unicode(font);
     }
 
     pub fn set_pdf_glyph_to_unicode(&mut self, mapping: crate::PdfGlyphToUnicode) {
-        self.pdf.set_glyph_to_unicode(mapping);
+        self.resident.pdf.set_glyph_to_unicode(mapping);
     }
 
     #[must_use]
     pub fn pdf_form_resource(&self, object: u32) -> Option<u32> {
-        self.pdf.form(object).map(|form| form.resource())
+        self.resident.pdf.form(object).map(|form| form.resource())
     }
 
     pub fn ensure_pdf_font_resource(
@@ -3327,12 +3354,13 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::PdfFontResourceRecord, crate::PdfObjectCapacityError> {
         self.validate_font_root(font)
             .map_err(|_| crate::PdfObjectCapacityError)?;
-        let recipe = self.fonts.artifact_recipe(font);
+        let recipe = self.resident.fonts.artifact_recipe(font);
         let identity = tex_fonts::PdfFontResourceIdentity::new(
             recipe.tfm_content_hash,
             recipe.opentype.map(|opentype| opentype.program_identity),
         );
-        self.pdf
+        self.resident
+            .pdf
             .ensure_font_resource(font, recipe.semantic_identity, identity)
     }
 
@@ -3340,17 +3368,18 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         raw: u32,
     ) -> Result<(), crate::PdfRawObjectInitializeError> {
-        self.pdf
+        self.resident
+            .pdf
             .reference_raw_object(crate::PdfRawObjectId::from_allocated(raw))
     }
 
     #[must_use]
     pub fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord<G>> {
-        self.pdf.form(object)
+        self.resident.pdf.form(object)
     }
 
     pub fn reserve_pdf_form(&mut self) -> Result<(u32, u32), crate::PdfObjectCapacityError> {
-        self.pdf.reserve_form()
+        self.resident.pdf.reserve_form()
     }
 
     pub fn initialize_pdf_form(
@@ -3362,15 +3391,19 @@ impl<'a, G> CommandContext<'a, G> {
         resources: Option<TokenListId<G>>,
         immediate: bool,
     ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
-        let semantic_id =
-            page_list_semantic_id(&self.page_nodes, self.fonts, &self.admitted, box_list);
+        let semantic_id = page_list_semantic_id(
+            &self.page_nodes,
+            &self.resident.fonts,
+            &self.admitted,
+            box_list,
+        );
         let owner = self
             .page_nodes
             .copy_page_root_to_durable(box_list)
             .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
-        let record = self.pdf.initialize_form(
+        let record = self.resident.pdf.initialize_form(
             identity,
             semantic_id,
             dimensions,
@@ -3379,7 +3412,7 @@ impl<'a, G> CommandContext<'a, G> {
         );
         match record {
             Ok(record) => {
-                self.durable_forms.insert(record.object(), owner);
+                self.resident.durable_forms.insert(record.object(), owner);
                 Ok(record)
             }
             Err(error) => {
@@ -3405,8 +3438,12 @@ impl<'a, G> CommandContext<'a, G> {
         immediate: bool,
     ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
         let (box_list, build) = source;
-        let semantic_id =
-            page_list_semantic_id(&self.page_nodes, self.fonts, &self.admitted, box_list);
+        let semantic_id = page_list_semantic_id(
+            &self.page_nodes,
+            &self.resident.fonts,
+            &self.admitted,
+            box_list,
+        );
         let owner = self
             .page_nodes
             .finish_built_page_root_to_durable_preserving_roots(
@@ -3417,7 +3454,7 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
-        let record = self.pdf.initialize_form(
+        let record = self.resident.pdf.initialize_form(
             identity,
             semantic_id,
             dimensions,
@@ -3426,7 +3463,7 @@ impl<'a, G> CommandContext<'a, G> {
         );
         match record {
             Ok(record) => {
-                self.durable_forms.insert(record.object(), owner);
+                self.resident.durable_forms.insert(record.object(), owner);
                 Ok(record)
             }
             Err(error) => {
@@ -3439,7 +3476,8 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
-        self.durable_forms
+        self.resident
+            .durable_forms
             .copy_to_page(&mut self.page_nodes, object)
             .expect("PDF form copy must succeed")
     }
@@ -3450,12 +3488,12 @@ impl<'a, G> CommandContext<'a, G> {
         tokens: TokenListId<G>,
     ) {
         let parameter = self.pdf_token_parameter(tokens);
-        self.pdf.append_document_fragment(kind, parameter);
+        self.resident.pdf.append_document_fragment(kind, parameter);
     }
 
     #[must_use]
     pub fn pdf_catalog_open_action(&self) -> Option<crate::PdfActionRecord<G>> {
-        self.pdf.catalog_open_action()
+        self.resident.pdf.catalog_open_action()
     }
 
     pub fn set_pdf_catalog_open_action_with_targets(
@@ -3466,8 +3504,13 @@ impl<'a, G> CommandContext<'a, G> {
         thread: Option<crate::PdfDestinationIdentity>,
     ) -> Result<crate::PdfActionRecord<G>, crate::PdfObjectCapacityError> {
         let fingerprint = action.fingerprint(|tokens| self.token_semantic_id(tokens));
-        self.pdf
-            .set_catalog_open_action(action, fingerprint, destination, structure, thread)
+        self.resident.pdf.set_catalog_open_action(
+            action,
+            fingerprint,
+            destination,
+            structure,
+            thread,
+        )
     }
 
     fn token_semantic_id(&self, tokens: TokenListId<G>) -> crate::state_hash::StateHashFragment {
@@ -3492,7 +3535,9 @@ impl<'a, G> CommandContext<'a, G> {
         identity: crate::PdfDestinationIdentity,
         structure_target: Option<u32>,
     ) -> Result<crate::PdfDestinationDefinition, crate::PdfObjectCapacityError> {
-        self.pdf.define_destination(identity, structure_target)
+        self.resident
+            .pdf
+            .define_destination(identity, structure_target)
     }
 
     pub fn append_pdf_thread_bead(
@@ -3500,19 +3545,19 @@ impl<'a, G> CommandContext<'a, G> {
         identity: crate::PdfDestinationIdentity,
     ) -> Result<(crate::PdfThreadRecord, crate::PdfThreadBeadRecord), crate::PdfObjectCapacityError>
     {
-        self.pdf.append_thread_bead(identity)
+        self.resident.pdf.append_thread_bead(identity)
     }
 
     #[must_use]
     pub fn pdf_page_object(&self, page: u32) -> Option<u32> {
         page.checked_sub(1)
-            .and_then(|index| self.pdf.pages().get(index as usize))
+            .and_then(|index| self.resident.pdf.pages().get(index as usize))
             .map(crate::PdfPageRecord::page_object)
     }
 
     #[must_use]
     pub fn pdf_page_count(&self) -> usize {
-        self.pdf.pages().len()
+        self.resident.pdf.pages().len()
     }
 
     /// Resolves the complete terminal PDF ledger while this generation is
@@ -3537,17 +3582,18 @@ impl<'a, G> CommandContext<'a, G> {
             form_omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
             suppress_page_group_warning: self.int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP)
                 != 0,
-            clock: self.world.job_clock(),
+            clock: self.resident.world.job_clock(),
         };
         crate::pdf::completion::detach(
-            self.pdf,
+            &self.resident.pdf,
             scalars,
             |tokens| Ok(self.pdf_completion_token_bytes(tokens)),
-            |font| self.fonts.artifact_recipe(font),
-            |font, code| self.fonts.get(font).metrics().character(code),
+            |font| self.resident.fonts.artifact_recipe(font),
+            |font, code| self.resident.fonts.get(font).metrics().character(code),
             |font, number| self.font_parameter(font, number),
             |hash| {
-                self.world
+                self.resident
+                    .world
                     .read_artifact(hash)
                     .map_err(|error| error.to_string())
             },
@@ -3566,7 +3612,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// admission is released for terminal publication.
     #[must_use]
     pub fn detach_pdf_navigation_warnings(&self) -> Vec<crate::PdfNavigationWarning> {
-        self.pdf.unresolved_navigation_warnings()
+        self.resident.pdf.unresolved_navigation_warnings()
     }
 
     pub fn set_pdf_match_state(
@@ -3576,12 +3622,14 @@ impl<'a, G> CommandContext<'a, G> {
         slots: u32,
         matched: bool,
     ) {
-        self.pdf.set_match(haystack, captures, slots, matched);
+        self.resident
+            .pdf
+            .set_match(haystack, captures, slots, matched);
     }
 
     #[must_use]
     pub fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
-        self.pdf.match_capture(index)
+        self.resident.pdf.match_capture(index)
     }
 
     pub fn allocate_pdf_color_stack(
@@ -3590,7 +3638,8 @@ impl<'a, G> CommandContext<'a, G> {
         restore_at_page_start: bool,
         initial: Vec<u8>,
     ) -> Result<u32, crate::PdfColorStackCapacityError> {
-        self.pdf
+        self.resident
+            .pdf
             .allocate_color_stack(mode, restore_at_page_start, initial)
     }
 
@@ -3600,7 +3649,7 @@ impl<'a, G> CommandContext<'a, G> {
         target: crate::PdfColorStackTarget,
         action: &crate::PdfColorStackAction,
     ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
-        self.pdf.apply_color_stack(id, target, action)
+        self.resident.pdf.apply_color_stack(id, target, action)
     }
 
     /// Applies a color-stack whatsit through its typed shipout coordinate.
@@ -3634,30 +3683,31 @@ impl<'a, G> CommandContext<'a, G> {
                         .expect("page shipout color index is live"),
                     id,
                 );
-                self.pdf.apply_color_stack(id, target, &action)
+                self.resident.pdf.apply_color_stack(id, target, &action)
             }
             crate::ShipoutListId::Scratch(list) => {
                 let action = action(
                     crate::NodeView::from(
-                        self.shipout_scratch
+                        self.resident
+                            .shipout_scratch
                             .get(list)
                             .and_then(|nodes| nodes.get(source.index))
                             .expect("scratch shipout color source is live"),
                     ),
                     id,
                 );
-                self.pdf.apply_color_stack(id, target, &action)
+                self.resident.pdf.apply_color_stack(id, target, &action)
             }
         }
     }
 
     pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
-        self.pdf.page_color_stack_restorations()
+        self.resident.pdf.page_color_stack_restorations()
     }
 
     #[must_use]
     pub fn pdf_snap_reference(&self) -> (Scaled, Scaled) {
-        self.pdf.snap_reference()
+        self.resident.pdf.snap_reference()
     }
 
     pub fn publish_pdf_traversal_positions(
@@ -3665,7 +3715,8 @@ impl<'a, G> CommandContext<'a, G> {
         last_position: Option<(Scaled, Scaled)>,
         snap_reference: (Scaled, Scaled),
     ) {
-        self.pdf
+        self.resident
+            .pdf
             .publish_traversal_positions(last_position, snap_reference);
     }
 
@@ -3674,42 +3725,42 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         font: crate::ids::FontId,
     ) -> Option<crate::PdfFontResourceRecord> {
-        self.pdf.font_resource(font)
+        self.resident.pdf.font_resource(font)
     }
 
     pub fn set_pdf_form_artifact(&mut self, object: u32, artifact: crate::PdfFormArtifact) {
-        self.pdf.set_form_artifact(object, artifact);
+        self.resident.pdf.set_form_artifact(object, artifact);
     }
 
     #[must_use]
     pub fn pdf_form_artifact(&self, object: u32) -> Option<crate::PdfFormArtifact> {
-        self.pdf.form_artifact(object)
+        self.resident.pdf.form_artifact(object)
     }
 
     #[must_use]
     pub fn pdf_form_color_rollback(&self) -> crate::PdfFormColorRollback {
-        self.pdf.form_color_rollback()
+        self.resident.pdf.form_color_rollback()
     }
 
     pub fn rollback_pdf_form_colors(&mut self, rollback: crate::PdfFormColorRollback) {
-        self.pdf.rollback_form_colors(rollback);
+        self.resident.pdf.rollback_form_colors(rollback);
     }
 
     pub fn open_output_stream(&mut self, slot: crate::world::StreamSlot, path: std::path::PathBuf) {
-        self.world.open_out(slot, path);
+        self.resident.world.open_out(slot, path);
     }
 
     pub fn close_output_stream(&mut self, slot: crate::world::StreamSlot) -> bool {
-        self.world.close_out(slot)
+        self.resident.world.close_out(slot)
     }
 
     #[must_use]
     pub fn output_stream_is_open(&self, slot: crate::world::StreamSlot) -> bool {
-        self.world.write_stream_is_open(slot)
+        self.resident.world.write_stream_is_open(slot)
     }
 
     pub fn set_last_stream_open_context(&mut self, context: impl Into<String>) {
-        self.world.set_last_stream_open_context(context);
+        self.resident.world.set_last_stream_open_context(context);
     }
 
     /// Publishes one complete page-lifetime list inside this admitted episode.
@@ -3733,7 +3784,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         nodes: Vec<crate::node::Node>,
     ) -> crate::page_node_arena::UniquePageList {
-        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
+        let etex_node_sizes = self.resident.engine_usage.uses_etex_node_sizes();
         let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
             let node_words = node.tex_memory_words(etex_node_sizes);
             (
@@ -3748,7 +3799,9 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .publish_owned_unique(nodes)
             .expect("page construction contains only live page-arena children");
-        self.engine_usage.observe_transient_memory(words.0, words.1);
+        self.resident
+            .engine_usage
+            .observe_transient_memory(words.0, words.1);
         list
     }
 
@@ -3830,16 +3883,18 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list builder belongs to its live owner");
         if let Some(font) = metadata.font {
             assert!(
-                self.fonts.contains(font),
+                self.resident.fonts.contains(font),
                 "durable node contains a font outside the admitted timeline"
             );
         }
-        let words = if self.engine_usage.uses_etex_node_sizes() {
+        let words = if self.resident.engine_usage.uses_etex_node_sizes() {
             metadata.etex_words
         } else {
             metadata.tex82_words
         };
-        self.engine_usage.observe_transient_memory(words.0, words.1);
+        self.resident
+            .engine_usage
+            .observe_transient_memory(words.0, words.1);
     }
 
     pub fn append_page_active_list(
@@ -3935,7 +3990,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         nodes: Vec<crate::node::Node>,
     ) -> crate::node_arena::PageNodeRange {
-        let etex_node_sizes = self.engine_usage.uses_etex_node_sizes();
+        let etex_node_sizes = self.resident.engine_usage.uses_etex_node_sizes();
         let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
             let node_words = node.tex_memory_words(etex_node_sizes);
             (
@@ -3950,7 +4005,9 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .publish_range(nodes)
             .expect("page construction contains only live page-arena children");
-        self.engine_usage.observe_transient_memory(words.0, words.1);
+        self.resident
+            .engine_usage
+            .observe_transient_memory(words.0, words.1);
         range
     }
 
@@ -4164,7 +4221,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         list: ShipoutScratchListId,
     ) -> Option<&[crate::ShipoutScratchNode]> {
-        self.shipout_scratch.get(list)
+        self.resident.shipout_scratch.get(list)
     }
 
     /// Materializes one page closure as a self-contained shipout-scratch
@@ -4204,7 +4261,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Opens one final shipout-scratch row for direct construction.
     pub fn begin_shipout_scratch_list(&mut self) -> ShipoutScratchListId {
-        self.shipout_scratch.begin_list()
+        self.resident.shipout_scratch.begin_list()
     }
 
     /// Appends directly to a final shipout-scratch row.
@@ -4213,7 +4270,7 @@ impl<'a, G> CommandContext<'a, G> {
         list: ShipoutScratchListId,
         node: crate::ShipoutScratchNode,
     ) {
-        self.shipout_scratch.push(list, node);
+        self.resident.shipout_scratch.push(list, node);
     }
 
     /// Visits a deferred shipout token payload without materializing it.
@@ -4296,6 +4353,7 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
+                    .resident
                     .shipout_scratch
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
@@ -4358,6 +4416,7 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
+                    .resident
                     .shipout_scratch
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
@@ -4803,9 +4862,11 @@ impl<'a, G> CommandContext<'a, G> {
         value: crate::node::NodeTokenList,
     ) {
         self.page.set_mark(mark, value);
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMark(mark.index()));
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class: 0,
@@ -4814,9 +4875,11 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn clear_page_mark(&mut self, mark: crate::page::PageMark) {
         self.page.clear_mark(mark);
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMark(mark.index()));
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class: 0,
@@ -4830,26 +4893,30 @@ impl<'a, G> CommandContext<'a, G> {
         value: crate::node::NodeTokenList,
     ) {
         self.page.set_mark_class(mark, class, value);
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class,
             });
         if class == 0 {
-            self.dependencies
+            self.resident
+                .dependencies
                 .mark_changed(DependencyKey::PageMark(mark.index()));
         }
     }
 
     pub fn clear_page_mark_class(&mut self, mark: crate::page::PageMark, class: u16) {
         self.page.clear_mark_class(mark, class);
-        self.dependencies
+        self.resident
+            .dependencies
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class,
             });
         if class == 0 {
-            self.dependencies
+            self.resident
+                .dependencies
                 .mark_changed(DependencyKey::PageMark(mark.index()));
         }
     }
@@ -5091,7 +5158,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub const fn error_context_widths(&self) -> crate::print::ErrorContextWidths {
-        self.error_context_widths
+        self.resident.error_context_widths
     }
 
     pub fn begin_diagnostic<'effects>(
@@ -5103,8 +5170,8 @@ impl<'a, G> CommandContext<'a, G> {
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::diagnostic::Diagnostic::from_parts(
             effects,
-            *self.interaction_mode,
-            self.error_context_widths.max_print_line(),
+            self.resident.interaction_mode,
+            self.resident.error_context_widths.max_print_line(),
             tracing_online,
             newline,
             escape,
@@ -5120,8 +5187,8 @@ impl<'a, G> CommandContext<'a, G> {
         text: String,
     ) {
         effects.push_ordinary_rendered(
-            *self.interaction_mode,
-            self.error_context_widths.max_print_line(),
+            self.resident.interaction_mode,
+            self.resident.error_context_widths.max_print_line(),
             text,
         );
     }
@@ -5139,8 +5206,8 @@ impl<'a, G> CommandContext<'a, G> {
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::diagnostic::Diagnostic::from_parts(
             effects,
-            *self.interaction_mode,
-            self.error_context_widths.max_print_line(),
+            self.resident.interaction_mode,
+            self.resident.error_context_widths.max_print_line(),
             1,
             newline,
             escape,
@@ -5150,13 +5217,13 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn printer(&mut self) -> crate::print::Printer<'_, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
-        let selector = crate::print::Selector::for_interaction(*self.interaction_mode);
+        let selector = crate::print::Selector::for_interaction(self.resident.interaction_mode);
         crate::print::Printer::from_parts(
-            self.world,
-            self.interaction_mode,
+            &mut self.resident.world,
+            &mut self.resident.interaction_mode,
             newline,
             escape,
-            self.error_context_widths.max_print_line(),
+            self.resident.error_context_widths.max_print_line(),
             selector,
         )
     }
@@ -5165,9 +5232,9 @@ impl<'a, G> CommandContext<'a, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::print::ErrorReport::begin_from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            &mut self.resident.world,
+            &mut self.resident.interaction_mode,
+            self.resident.error_context_widths,
             newline,
             escape,
             text,
@@ -5188,7 +5255,8 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         effects: &mut crate::diagnostic::DiagnosticEffects,
     ) {
-        self.world
+        self.resident
+            .world
             .publish_diagnostic_effects(std::mem::take(effects));
     }
 
@@ -5196,9 +5264,9 @@ impl<'a, G> CommandContext<'a, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::print::ErrorReport::bare_from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            &mut self.resident.world,
+            &mut self.resident.interaction_mode,
+            self.resident.error_context_widths,
             newline,
             escape,
         )
@@ -5211,9 +5279,9 @@ impl<'a, G> CommandContext<'a, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::print::ErrorReport::resume_from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            &mut self.resident.world,
+            &mut self.resident.interaction_mode,
+            self.resident.error_context_widths,
             newline,
             escape,
             deferred,
@@ -5224,9 +5292,9 @@ impl<'a, G> CommandContext<'a, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::print::ErrorReport::<G>::continue_from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            &mut self.resident.world,
+            &mut self.resident.interaction_mode,
+            self.resident.error_context_widths,
             newline,
             escape,
             context,
@@ -5265,7 +5333,9 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.primitive_names
+        self.resident
+            .primitive_registry
+            .names
             .get(usize::from(frozen.primitive_index()?))
             .map(String::as_str)
     }
@@ -5273,7 +5343,9 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn primitive_token(&self, name: &str) -> Option<crate::token::Token> {
         let index = self
-            .primitive_names
+            .resident
+            .primitive_registry
+            .names
             .iter()
             .position(|candidate| candidate == name)?;
         Some(crate::token::Token::frozen_primitive(
@@ -5283,7 +5355,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn symbol(&self, name: &str) -> Option<Symbol> {
-        self.interner.known(name).map(SymbolId::symbol)
+        self.resident.interner().known(name).map(SymbolId::symbol)
     }
 
     pub fn known_control_sequence(&mut self, name: &str) -> Option<Symbol> {
@@ -5309,20 +5381,21 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         let (id, created) = self
-            .interner
+            .resident
+            .interner_mut()
             .intern_with_status(name)
             .expect("command control-sequence interning stays within session budget");
         if created && name.chars().nth(1).is_some() {
-            self.engine_usage.make_string(name);
+            self.resident.engine_usage.make_string(name);
         }
         self.ensure_symbol_admitted(id.symbol());
         id.symbol()
     }
 
     pub fn intern(&mut self, name: &str) -> Result<SymbolId, crate::interner::InternerError> {
-        let (id, created) = self.interner.intern_with_status(name)?;
+        let (id, created) = self.resident.interner_mut().intern_with_status(name)?;
         if created && name.chars().nth(1).is_some() {
-            self.engine_usage.make_string(name);
+            self.resident.engine_usage.make_string(name);
         }
         self.ensure_symbol_admitted(id.symbol());
         Ok(id)
@@ -5336,29 +5409,30 @@ impl<'a, G> CommandContext<'a, G> {
         // strings, not §259 control-sequence hash entries. The interner holds
         // their typed identity only; that representation must not allocate a
         // second canonical pool string.
-        let id = self.interner.intern(value)?;
+        let id = self.resident.interner_mut().intern(value)?;
         self.admitted
             .state()
             .admit_symbol(id.symbol())
             .expect("font identifier fits the current meaning bank");
-        self.engine_usage.make_string(value);
+        self.resident.engine_usage.make_string(value);
         Ok(id)
     }
 
     pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {
         let (id, created) = self
-            .interner
+            .resident
+            .interner_mut()
             .intern_hash_with_status(name)
             .expect("command control-sequence interning stays within session budget");
         if created && name.chars().nth(1).is_some() {
-            self.engine_usage.make_string(name);
+            self.resident.engine_usage.make_string(name);
         }
         self.ensure_symbol_admitted(id.symbol());
         id.symbol()
     }
 
     pub fn intern_internal_control_sequence(&mut self, name: &str) -> Symbol {
-        let id = self.interner.intern_internal(name);
+        let id = self.resident.interner_mut().intern_internal(name);
         self.intern_symbol(id)
     }
 

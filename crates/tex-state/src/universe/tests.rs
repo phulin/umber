@@ -457,16 +457,24 @@ fn runtime_checkpoint_hyphenation_restore_and_fork_isolate_mutable_state() {
             .fork_runtime_checkpoint(&checkpoint)
             .expect("fork hyphen checkpoint");
         {
-            fork.hyphenation.add_exception_for_language(
-                7,
-                ExceptionSpec {
-                    word: "hyphen".to_owned(),
-                    positions: vec![2],
-                },
-            );
-            fork.hyphenation.save_hyphen_codes(7, [('A', 'f')]);
+            fork.command
+                .resident
+                .hyphenation
+                .add_exception_for_language(
+                    7,
+                    ExceptionSpec {
+                        word: "hyphen".to_owned(),
+                        positions: vec![2],
+                    },
+                );
+            fork.command
+                .resident
+                .hyphenation
+                .save_hyphen_codes(7, [('A', 'f')]);
             assert_eq!(
-                fork.hyphenation
+                fork.command
+                    .resident
+                    .hyphenation
                     .hyphen_positions_for_language(7, "hyphen", 0, 0),
                 vec![2]
             );
@@ -474,13 +482,19 @@ fn runtime_checkpoint_hyphenation_restore_and_fork_isolate_mutable_state() {
         universe.reject_checkpoint_candidate(&mut fork);
         assert_eq!(
             universe
+                .command
+                .resident
                 .hyphenation
                 .hyphen_positions_for_language(7, "hyphen", 0, 0),
             vec![3],
             "rejected fork exceptions do not mutate accepted state"
         );
         assert_eq!(
-            universe.hyphenation.saved_hyphen_code(7, 'A'),
+            universe
+                .command
+                .resident
+                .hyphenation
+                .saved_hyphen_code(7, 'A'),
             Some(Some('a'))
         );
     })
@@ -1208,9 +1222,10 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
         let mut candidate = universe
             .fork_runtime_checkpoint(&first)
             .expect("older page mark forks");
-        let candidate_root = candidate.page_region.builder().contribution_root();
+        let candidate_root = candidate.command.page_region.builder().contribution_root();
         assert_eq!(
             candidate
+                .command
                 .page_region
                 .nodes()
                 .node_cursor(candidate_root)
@@ -1218,7 +1233,7 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
                 .len(),
             1
         );
-        let (mut nodes, page) = candidate.page_region.parts_mut();
+        let (mut nodes, page) = candidate.command.page_region.parts_mut();
         page.push_contribution(&mut nodes, Node::Penalty(3));
         universe.reject_checkpoint_candidate(&mut candidate);
 
@@ -1359,11 +1374,13 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
         let before_page = universe.page_node_cursor();
         let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let boundary = universe
+            .command
             .page_region
             .nodes_mut()
             .seal_boundary()
             .expect("sealed page tail");
         let page = universe
+            .command
             .page_region
             .nodes()
             .checkpoint_mark(boundary)
@@ -1523,8 +1540,8 @@ fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
         }
 
         let first = fonts[0];
-        let source_identity = universe.fonts.get(first).source_identity();
-        let font_address = std::ptr::from_ref(universe.fonts.get(first));
+        let source_identity = universe.command.resident.fonts.get(first).source_identity();
+        let font_address = std::ptr::from_ref(universe.command.resident.fonts.get(first));
         let mut children = universe.publish_page_nodes(&[Node::Char {
             font: first,
             ch: 'A',
@@ -1575,8 +1592,11 @@ fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
             universe.runtime_checkpoint_font_scan_counters(),
             crate::RuntimeCheckpointFontScanCounters::default()
         );
-        assert_eq!(std::ptr::from_ref(universe.fonts.get(first)), font_address);
-        assert!(!universe.fonts.contains(stale));
+        assert_eq!(
+            std::ptr::from_ref(universe.command.resident.fonts.get(first)),
+            font_address
+        );
+        assert!(!universe.command.resident.fonts.contains(stale));
         assert_eq!(
             universe
                 .command_context()

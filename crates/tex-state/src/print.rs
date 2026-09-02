@@ -237,8 +237,8 @@ impl<'a, G> Printer<'a, G> {
         let escape_char = universe.int_param(IntParam::ESCAPE_CHAR);
         let max_print_line = universe.error_context_widths().max_print_line();
         Self::from_parts(
-            &mut universe.world,
-            &mut universe.interaction_mode,
+            &mut universe.command.resident.world,
+            &mut universe.command.resident.interaction_mode,
             newline_char,
             escape_char,
             max_print_line,
