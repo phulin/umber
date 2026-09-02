@@ -575,19 +575,16 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!prepared_application.contains("CommandEpisode"));
     assert!(!prepared_application.contains("OperationFrame"));
     let hot_application = control
-        .split_once("fn apply_hot_operation(")
-        .and_then(|(_, tail)| tail.split_once("fn execute_cold_episode("))
+        .split_once("fn apply_hot_operation_admitted(")
+        .and_then(|(_, tail)| tail.split_once("fn finish_hot_operation_admission("))
         .map(|(body, _)| body)
         .expect("locate hot application lifetime");
-    let hot_admission = hot_application
-        .split_once(".with_command_context(|context|")
-        .and_then(|(_, tail)| tail.split_once(".map_err(|_| ExecError::MissingToken"))
-        .map(|(body, _)| body)
-        .expect("locate callback-scoped hot command admission");
-    assert!(hot_admission.contains("hot_apply::apply("));
-    assert!(hot_admission.contains("publish_named_token_list_pushes("));
-    assert!(hot_admission.contains("schedule_afterassignment("));
+    assert!(hot_application.contains("context: &mut CommandContext<'_, G>"));
+    assert!(hot_application.contains("hot_apply::apply("));
+    assert!(hot_application.contains("publish_named_token_list_pushes("));
+    assert!(hot_application.contains("schedule_afterassignment("));
     assert!(!hot_application.contains("stores.command_context()"));
+    assert!(admitted_episode.contains("self.apply_hot_operation_admitted("));
     assert!(cold_support.contains("stores: &mut tex_state::CommandContext<'_, G>"));
     assert!(cold_support.contains("context: &'borrow mut tex_state::CommandContext<'stores, G>"));
     assert!(!cold_support.contains("context: tex_state::CommandContext<'a, G>"));

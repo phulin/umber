@@ -78,9 +78,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   writes the completed hot operation into the existing caller-owned
   `CommandEpisode`, root preparation mutates that resident operation, and
   typed execution consumes its fields without a second carrier. Definition, let,
-  and catcode application, ordered evidence publication, and §1269
-  `afterassignment` backup share one callback-scoped admitted context; a group
-  transition ends admission before a possible page/host boundary. Detached
+  and catcode delivery, expansion, scanning, application, ordered evidence
+  publication, and §1269 `afterassignment` backup share one callback-scoped
+  admitted context; a group transition ends admission before a possible
+  page/host boundary. Detached
   mutation values and macro-body walks are demand-selected cold evidence.
   Ordinary `let` carries only the scanned compact meaning and journals/replaces
   it directly; global escape promotes a local definition span once. Ordinary

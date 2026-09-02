@@ -4413,12 +4413,13 @@ a canonical filler or expansion loop continues, and never crosses a resource
 barrier. Raw delivery, expansion classification, and any required expansion
 advance that destination inside one driver entry; the executor does not take
 the command merely for the command core to write it back. For an ordinary
-non-barrier command, tracing, capability classification, prefix handling, and
-the general operand scanner continue in the same `CommandProcessor` and
-admitted `CommandContext`. There is no hand-picked command-family scanner at
-this boundary. Its completed hot or cold operand enters the canonical typed
-executor directly after that borrow ends; cold resource resolution and rooting
-own no command processor or command context. Resource, transaction,
+non-barrier command, tracing, capability classification, prefix handling, the
+general operand scanner, and hot semantic application continue in the same
+admitted `CommandContext`; only the narrower `CommandProcessor` borrow ends
+before application. There is no hand-picked command-family scanner at this
+boundary. A completed cold operand ends admission at its host/resource
+preparation boundary; cold resource resolution and rooting own no command
+processor or command context. Resource, transaction,
 diagnostic, alignment, and tracked-region boundaries retain their explicit
 typed continuation. No path backs up or redelivers a settled preflight command.
 Replay completion and alignment events remain compact status variants and

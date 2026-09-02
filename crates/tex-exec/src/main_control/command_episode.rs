@@ -27,6 +27,11 @@ pub(super) enum OperationDelivery {
     /// borrow barrier before semantic state application; no command or
     /// universal scanned-step DTO crosses it.
     ResidentHot,
+    /// Delivery, expansion, scanning, and semantic application completed in
+    /// the one admitted command-context episode. Only host-side settlement
+    /// remains. Success is implicit; an uncommon application error occupies
+    /// the episode's existing error slot until the dispatcher consumes it.
+    AppliedHot,
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the adjacent typed slot contains the cold operation.
     ResidentCold,

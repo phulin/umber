@@ -699,6 +699,20 @@ impl<'a, G> CommandContext<'a, G> {
             .observe_transient_memory(0, words);
     }
 
+    /// Captures the current host artifact boundary without ending the
+    /// admitted command episode.
+    #[must_use]
+    pub fn artifact_commit_count(&self) -> usize {
+        self.resident.world.artifact_commits().len()
+    }
+
+    /// Captures the current host-effect boundary without ending the admitted
+    /// command episode.
+    #[must_use]
+    pub fn effect_record_count(&self) -> usize {
+        self.resident.world.effect_records().len()
+    }
+
     /// Detaches the state-owned portion of TeX82's terminal usage report.
     #[must_use]
     pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {

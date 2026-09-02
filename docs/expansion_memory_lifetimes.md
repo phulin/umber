@@ -211,9 +211,10 @@ transaction boundary borrows those exact scalars instead of reconstructing
 the 240-byte admitted facade. Hot and ordinary cold application use their
 already-resident semantic context to write the post-apply checked save depth
 back into the same preparation, and settlement drains only that scalar.
-Measured definition, let, and catcode application constructs its 240-byte
+Measured definition, let, and catcode delivery constructs its 240-byte
 semantic context directly in one callback-owned stack slot and retains that
-borrow through named-token publication and §1269 `afterassignment` backup.
+same borrow through expansion, scanning, semantic application, named-token
+publication, and §1269 `afterassignment` backup.
 The callback passes only narrow mutable borrows; it neither returns nor moves
 the admitted aggregate. Group application ends the callback before its
 possible page-output boundary and reacquires only for command-local

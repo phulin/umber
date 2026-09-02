@@ -6584,12 +6584,31 @@ impl<G> MainControl<G> {
             frame.assert_command_only();
         } else if matches!(&delivery, OperationDelivery::ResidentHot) {
             frame.assert_hot_only();
+        } else if matches!(&delivery, OperationDelivery::AppliedHot) {
+            assert!(
+                frame.command.is_none()
+                    && frame.hot.is_none()
+                    && frame.expansion.is_none()
+                    && frame.phase.is_none()
+                    && frame.cursor.is_none()
+                    && frame.scanner.is_none()
+                    && frame.scalar.is_empty()
+                    && frame.operation_scan.is_none()
+                    && frame.alignment_scanner.is_none(),
+                "applied hot delivery retains only an application error"
+            );
         } else {
             frame.assert_empty();
         }
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let source_role = frame.operation_source_role();
+        if matches!(delivery, OperationDelivery::AppliedHot) {
+            return match frame.error.take() {
+                Some(error) => Err(TypedOperationError::Application(error)),
+                None => Ok(ReplayStep::Continue),
+            };
+        }
         if matches!(delivery, OperationDelivery::ResidentHot) {
             let applied = self.apply_hot_operation(
                 stores,
@@ -6863,6 +6882,9 @@ impl<G> MainControl<G> {
                                     )?,
                                 }
                             }
+                            OperationDelivery::AppliedHot => {
+                                unreachable!("applied hot delivery returns before scanning")
+                            }
                             OperationDelivery::ResidentHot => {
                                 unreachable!(
                                     "pre-scanned hot delivery bypasses operation preparation"
@@ -7117,6 +7139,34 @@ impl<G> MainControl<G> {
         operation: &mut hot_apply::HotOperation<G>,
         output_start: OperationOutputStart,
     ) -> Result<ReplayStep, ExecError> {
+        let admission = stores
+            .with_command_context(|context| {
+                self.apply_hot_operation_admitted(
+                    context,
+                    host_preparation,
+                    diagnostic_effects,
+                    operation,
+                )
+            })
+            .map_err(|_| ExecError::MissingToken {
+                context: "hot operation admission",
+            })?;
+        self.finish_hot_operation_admission(
+            stores,
+            host_preparation,
+            diagnostic_effects,
+            admission,
+            output_start,
+        )
+    }
+
+    fn apply_hot_operation_admitted(
+        &mut self,
+        context: &mut CommandContext<'_, G>,
+        host_preparation: &mut OperationPreparation<'_, G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+        operation: &mut hot_apply::HotOperation<G>,
+    ) -> HotApplyAdmission {
         self.main_loop_active = false;
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -7130,100 +7180,120 @@ impl<G> MainControl<G> {
         let mut assignment_receipts = observing.then(Vec::new);
         let fires_afterassignment = operation.fires_afterassignment();
         // TeX82 §1211's measured definition, let, and catcode arms reach
-        // §1269's `done` label without an intervening host transition. Admit
-        // their authoritative state directly in this callback's stack slot,
-        // and retain that one borrow through semantic apply, ordered evidence
+        // §1269's `done` label without an intervening host transition. Retain
+        // the episode's authoritative borrow through semantic apply, evidence
         // publication, and `afterassignment` backup. Group transitions can
         // open page-output work, so they deliberately leave the callback at
         // the existing host boundary and use the generic tail below.
-        let (result, settled_in_admission, pending_page_output) = stores
-            .with_command_context(|context| {
-                let mut result = hot_apply::apply(
-                    operation,
-                    context,
-                    &mut self.modes,
-                    &mut CommandMachine {
-                        state: &mut self.command,
-                        fuel: self.fuel.fuel_mut(),
-                        capabilities: &mut self.capabilities,
-                        host_facts: CommandMachineHostFacts::Forbidden,
-                        observations: &mut self.operation_observations,
-                        assignment_receipts: assignment_receipts.as_mut(),
-                        diagnostic_effects,
-                        shown_mode: &mut self.shown_mode,
-                        initex: self.initex,
-                        emit_dvi_override: self.emit_dvi_override,
-                        immediate_prints: &mut self.immediate_prints,
-                        prepared_shipout: &mut self.prepared_shipout,
-                        pending_show_completion: None,
-                        pending_outer_page_build_context: None,
-                        output_routine_active: self.boxes.output_routine_active,
-                    },
-                );
-                Self::capture_save_stack_usage(
-                    host_preparation,
-                    context,
-                    &self.boxes,
-                    self.command.state(),
-                    self.command_profile(),
-                );
-                // These are exactly §1211's assignment leaves. Unlike group
-                // transitions, none can contribute material, invoke the page
-                // builder, or cross a World publication boundary. A pending
-                // builder continuation is drained by the direct-episode loop
-                // before another command is delivered. Capture the page facts
-                // from this existing admission rather than opening another
-                // command context after the callback closes.
-                if result.is_err() || !fires_afterassignment {
-                    let pending_page_output = PendingPageOutputFacts::capture(context);
-                    return (result, false, pending_page_output);
-                }
+        let mut result = hot_apply::apply(
+            operation,
+            context,
+            &mut self.modes,
+            &mut CommandMachine {
+                state: &mut self.command,
+                fuel: self.fuel.fuel_mut(),
+                capabilities: &mut self.capabilities,
+                host_facts: CommandMachineHostFacts::Forbidden,
+                observations: &mut self.operation_observations,
+                assignment_receipts: assignment_receipts.as_mut(),
+                diagnostic_effects,
+                shown_mode: &mut self.shown_mode,
+                initex: self.initex,
+                emit_dvi_override: self.emit_dvi_override,
+                immediate_prints: &mut self.immediate_prints,
+                prepared_shipout: &mut self.prepared_shipout,
+                pending_show_completion: None,
+                pending_outer_page_build_context: None,
+                output_routine_active: self.boxes.output_routine_active,
+            },
+        );
+        Self::capture_save_stack_usage(
+            host_preparation,
+            context,
+            &self.boxes,
+            self.command.state(),
+            self.command_profile(),
+        );
+        // These are exactly §1211's assignment leaves. Unlike group
+        // transitions, none can contribute material, invoke the page
+        // builder, or cross a World publication boundary. A pending
+        // builder continuation is drained by the direct-episode loop
+        // before another command is delivered. Capture the page facts
+        // from this existing admission rather than opening another
+        // command context after the callback closes.
+        if result.is_err() || !fires_afterassignment {
+            return HotApplyAdmission {
+                result,
+                settled_in_admission: false,
+                fires_afterassignment,
+                pending_page_output: PendingPageOutputFacts::capture(context),
+                assignment_receipts,
+            };
+        }
 
-                #[cfg(feature = "profiling")]
-                tex_state::measurement::record_hot_core_phase(
-                    tex_state::measurement::HotCorePhase::EvidencePublication,
-                );
-                #[cfg(feature = "profiling")]
-                let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                    tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
-                );
-                publish_named_token_list_pushes(
-                    &mut self.command,
-                    context,
-                    diagnostic_effects,
-                    &mut self.operation_observations,
-                );
-                self.observe_committed(
-                    assignment_receipts
-                        .take()
-                        .into_iter()
-                        .flatten()
-                        .map(CommandObservation::Mutation),
-                );
-                // §1269 publishes the completed assignment mutation before
-                // §325 observes the replay-level push of the saved token.
-                let mut host_facts = ExecutorHostFacts {
-                    modes: &self.modes,
-                    pdf_ignore_depth: self.pdf_ignore_depth,
-                    telemetry: &mut self.episode_telemetry,
-                };
-                if let Err(error) = schedule_afterassignment(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    diagnostic_effects,
-                    context,
-                ) {
-                    result = Err(error);
-                }
-                let pending_page_output = PendingPageOutputFacts::capture(context);
-                (result, true, pending_page_output)
-            })
-            .map_err(|_| ExecError::MissingToken {
-                context: "hot operation admission",
-            })?;
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::EvidencePublication,
+        );
+        #[cfg(feature = "profiling")]
+        let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+        );
+        publish_named_token_list_pushes(
+            &mut self.command,
+            context,
+            diagnostic_effects,
+            &mut self.operation_observations,
+        );
+        self.observe_committed(
+            assignment_receipts
+                .take()
+                .into_iter()
+                .flatten()
+                .map(CommandObservation::Mutation),
+        );
+        // §1269 publishes the completed assignment mutation before
+        // §325 observes the replay-level push of the saved token.
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
+        if let Err(error) = schedule_afterassignment(
+            &mut self.command,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut host_facts,
+            &mut self.operation_observations,
+            diagnostic_effects,
+            context,
+        ) {
+            result = Err(error);
+        }
+        HotApplyAdmission {
+            result,
+            settled_in_admission: true,
+            fires_afterassignment,
+            pending_page_output: PendingPageOutputFacts::capture(context),
+            assignment_receipts,
+        }
+    }
+
+    fn finish_hot_operation_admission(
+        &mut self,
+        stores: &mut Universe<G>,
+        _host_preparation: &mut OperationPreparation<'_, G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+        admission: HotApplyAdmission,
+        output_start: OperationOutputStart,
+    ) -> Result<ReplayStep, ExecError> {
+        let HotApplyAdmission {
+            result,
+            settled_in_admission,
+            fires_afterassignment,
+            pending_page_output,
+            assignment_receipts,
+        } = admission;
         if result.is_ok() {
             self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         }
@@ -8904,6 +8974,17 @@ impl MainControlParking {
 struct PendingPageOutputFacts {
     fire_up: Option<PageFireUp>,
     resume_after_output: bool,
+}
+
+/// Semantic result retained while the one command-context episode is still
+/// admitted. The enclosing driver spends the copy-small page facts only after
+/// releasing that borrow for host-side page and effect publication.
+struct HotApplyAdmission {
+    result: Result<ReplayStep, ExecError>,
+    settled_in_admission: bool,
+    fires_afterassignment: bool,
+    pending_page_output: PendingPageOutputFacts,
+    assignment_receipts: Option<Vec<MutationRecord>>,
 }
 
 impl PendingPageOutputFacts {

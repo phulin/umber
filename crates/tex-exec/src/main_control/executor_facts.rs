@@ -52,6 +52,10 @@ impl<'operation, G> OperationPreparation<'operation, G> {
         }
     }
 
+    pub(super) fn fill_applied_hot(&mut self) {
+        self.fill_delivery(OperationDelivery::AppliedHot, None, None);
+    }
+
     pub(super) fn has_delivery(&self) -> bool {
         self.delivery.is_some()
     }

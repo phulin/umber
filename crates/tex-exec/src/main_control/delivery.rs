@@ -32,6 +32,7 @@ pub(super) fn operation_barrier<G>(
                 crate::transaction_protocol::canonical_command_barrier(command.meaning())
             }),
         },
+        OperationDelivery::AppliedHot => None,
         _ => None,
     }
 }
@@ -120,7 +121,10 @@ impl<G> MainControl<G> {
         frame.assert_empty();
         self.ensure_primitive_handles(stores);
         let mut diagnostics = Vec::new();
+        let mut hot_admission = None;
         let raw_main_loop_delivery = self.main_loop_active;
+        let outer_paragraph_was_active =
+            self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
         let context_readiness = stores
             .with_command_context(|context| {
                 let mode = self.modes.current_mode();
@@ -356,6 +360,27 @@ impl<G> MainControl<G> {
                     }
                     host_preparation.record_delivery_status(status, reported);
                 };
+                if host_preparation.has_delivery()
+                    && diagnostics.is_empty()
+                    && matches!(host_preparation.delivery(), OperationDelivery::ResidentHot)
+                {
+                    let output_start = OperationOutputStart {
+                        outer_paragraph_was_active,
+                        source_role: frame.operation_source_role(),
+                        artifact_count: context.artifact_commit_count(),
+                        effect_count: context.effect_record_count(),
+                        prepared_page_count: self.prepared_dvi_pages.len(),
+                        tracked_region_is_active: false,
+                    };
+                    let admission = self.apply_hot_operation_admitted(
+                        context,
+                        host_preparation,
+                        diagnostic_effects,
+                        frame.hot_mut(),
+                    );
+                    hot_admission = Some((admission, output_start));
+                    frame.hot = None;
+                }
                 PreflightReadiness::Ready
             })
             .expect("live generation");
@@ -365,6 +390,26 @@ impl<G> MainControl<G> {
         let mode = self.modes.current_mode();
         self.capture_first_reported_command_error_context(stores);
         self.capture_first_causal_context(stores, &diagnostics);
+        if let Some((admission, output_start)) = hot_admission {
+            assert!(matches!(
+                host_preparation.take_delivery(),
+                OperationDelivery::ResidentHot
+            ));
+            if let Err(error) = self.finish_hot_operation_admission(
+                stores,
+                host_preparation,
+                diagnostic_effects,
+                admission,
+                output_start,
+            ) {
+                frame.error = Some(error);
+            }
+            frame.clear_preflight();
+            frame.clear_operation_origin();
+            host_preparation.fill_applied_hot();
+            host_preparation.discard_delivery_status();
+            return PreflightReadiness::Ready;
+        }
         if let Err(error) = report_pending_diagnostics(stores, diagnostic_effects, diagnostics) {
             frame.error = Some(error);
             return PreflightReadiness::Failed;
