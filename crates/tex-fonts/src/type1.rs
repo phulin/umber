@@ -564,9 +564,9 @@ fn encrypted_program_boundary(source: &[u8]) -> Option<usize> {
 #[derive(Clone, Copy)]
 struct Type1StringEntry<'a> {
     start: usize,
-    end: usize,
+    begin_token: &'a [u8],
     charstring: &'a [u8],
-    serialized_tail: &'a [u8],
+    line_suffix: &'a [u8],
 }
 
 struct Type1Subrs<'a> {
@@ -605,12 +605,13 @@ fn subset_charstrings_and_subrs(
     cursor = begin;
     let mut entries = Vec::new();
     loop {
-        let entry_start = cursor;
+        let previous_end = cursor;
         skip_space(plaintext, &mut cursor);
         if plaintext.get(cursor) != Some(&b'/') {
-            cursor = entry_start;
+            cursor = previous_end;
             break;
         }
+        let entry_start = cursor;
         cursor += 1;
         let name_start = cursor;
         while plaintext
@@ -697,7 +698,7 @@ fn subset_charstrings_and_subrs(
                     .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
                 subset.extend_from_slice(b" ");
                 subset.extend_from_slice(entry.charstring.len().to_string().as_bytes());
-                subset.extend_from_slice(entry.serialized_tail);
+                append_type1_string_tail(&mut subset, entry);
             } else {
                 subset.extend_from_slice(b" ");
                 subset.extend_from_slice(return_charstring.len().to_string().as_bytes());
@@ -714,9 +715,17 @@ fn subset_charstrings_and_subrs(
         subset.extend_from_slice(&plaintext[..count_start]);
     }
     subset.extend_from_slice(kept.len().to_string().as_bytes());
-    subset.extend_from_slice(&plaintext[count_end..begin]);
-    for (_, entry) in kept {
-        subset.extend_from_slice(&plaintext[entry.start..entry.end]);
+    let first_entry = entries
+        .first()
+        .map(|(_, entry)| entry.start)
+        .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
+    subset.extend_from_slice(&plaintext[count_end..first_entry]);
+    for (name, entry) in kept {
+        subset.extend_from_slice(b"/");
+        subset.extend_from_slice(name);
+        subset.extend_from_slice(b" ");
+        subset.extend_from_slice(entry.charstring.len().to_string().as_bytes());
+        append_type1_string_tail(&mut subset, entry);
     }
     subset.extend_from_slice(&subset_type1_trailer(&plaintext[cursor..]));
     Ok(subset)
@@ -782,7 +791,6 @@ fn parse_type1_subrs<'a>(
     let mut entries_end = cursor;
     let mut token_pair = None;
     loop {
-        let entry_start = cursor;
         skip_space(plaintext, &mut cursor);
         if plaintext.get(cursor..cursor + 3) != Some(b"dup")
             || !plaintext
@@ -791,6 +799,7 @@ fn parse_type1_subrs<'a>(
         {
             break;
         }
+        let entry_start = cursor;
         cursor += 3;
         skip_space(plaintext, &mut cursor);
         let index = parse_decimal(plaintext, &mut cursor)?;
@@ -798,7 +807,7 @@ fn parse_type1_subrs<'a>(
             return Err(PdfType1SubsetError::MalformedCharStrings);
         }
         let entry = parse_type1_string_entry(plaintext, entry_start, &mut cursor)?;
-        token_pair.get_or_insert(detect_type1_token_pair(entry.serialized_tail)?);
+        token_pair.get_or_insert(detect_type1_token_pair(&entry)?);
         entries[index] = Some(entry);
         entries_end = cursor;
     }
@@ -832,9 +841,7 @@ fn parse_type1_string_entry<'a>(
     if token_start == *cursor || !plaintext.get(*cursor).is_some_and(u8::is_ascii_whitespace) {
         return Err(PdfType1SubsetError::MalformedCharStrings);
     }
-    let serialized_tail_start = token_start
-        .checked_sub(1)
-        .ok_or(PdfType1SubsetError::MalformedCharStrings)?;
+    let begin_token = &plaintext[token_start..*cursor];
     *cursor += 1;
     let charstring_start = *cursor;
     *cursor = cursor
@@ -844,6 +851,7 @@ fn parse_type1_string_entry<'a>(
     if charstring_end > plaintext.len() {
         return Err(PdfType1SubsetError::MalformedCharStrings);
     }
+    let line_suffix_start = *cursor;
     while plaintext
         .get(*cursor)
         .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'))
@@ -853,10 +861,41 @@ fn parse_type1_string_entry<'a>(
     skip_line_ending(plaintext, cursor);
     Ok(Type1StringEntry {
         start: entry_start,
-        end: *cursor,
+        begin_token,
         charstring: &plaintext[charstring_start..charstring_end],
-        serialized_tail: &plaintext[serialized_tail_start..*cursor],
+        line_suffix: &plaintext[line_suffix_start..*cursor],
     })
+}
+
+/// Reproduces the split text/binary handling in `writet1.c::t1_getline` and
+/// `cs_store`. The CharString bytes bypass the line normalizer, but its first
+/// following text byte is still compared with the last binary byte. Thus a
+/// CharString ending in byte 0x20 consumes a following delimiter space.
+fn append_type1_string_tail(output: &mut Vec<u8>, entry: &Type1StringEntry<'_>) {
+    output.push(b' ');
+    output.extend_from_slice(entry.begin_token);
+    output.push(b' ');
+    output.extend_from_slice(entry.charstring);
+
+    for source in entry.line_suffix {
+        let byte = match source {
+            b'\t' => b' ',
+            b'\r' => b'\n',
+            byte => *byte,
+        };
+        if byte != b' ' || output.last() != Some(&b' ') {
+            output.push(byte);
+        }
+        if byte == b'\n' {
+            break;
+        }
+    }
+    if output.last() != Some(&b'\n') {
+        output.push(b'\n');
+    }
+    if output.len() >= 2 && output[output.len() - 2] == b' ' {
+        output.remove(output.len() - 2);
+    }
 }
 
 fn skip_line_ending(bytes: &[u8], cursor: &mut usize) {
@@ -869,15 +908,17 @@ fn skip_line_ending(bytes: &[u8], cursor: &mut usize) {
 }
 
 fn detect_type1_token_pair(
-    tail: &[u8],
+    entry: &Type1StringEntry<'_>,
 ) -> Result<(&'static [u8], &'static [u8]), PdfType1SubsetError> {
+    let mut tail = Vec::with_capacity(entry.charstring.len() + entry.line_suffix.len() + 8);
+    append_type1_string_tail(&mut tail, entry);
     for pair in [
         (b" RD".as_slice(), b"NP".as_slice()),
         (b" -|".as_slice(), b"|".as_slice()),
         (b" RD".as_slice(), b"noaccess put".as_slice()),
         (b" -|".as_slice(), b"noaccess put".as_slice()),
     ] {
-        let without_lf = tail.strip_suffix(b"\n").unwrap_or(tail);
+        let without_lf = tail.strip_suffix(b"\n").unwrap_or(&tail);
         let without_eol = without_lf.strip_suffix(b"\r").unwrap_or(without_lf);
         if tail.starts_with(pair.0) && without_eol.ends_with(pair.1) {
             return Ok(pair);
@@ -1481,6 +1522,57 @@ mod tests {
             !subset
                 .windows(b"\n mark currentfile closefile".len())
                 .any(|window| window == b"\n mark currentfile closefile")
+        );
+    }
+
+    #[test]
+    fn charstring_suffix_normalization_observes_the_last_binary_byte() {
+        let clear =
+            b"%!PS\n/FontName /Fixture def\n/Encoding StandardEncoding def\ncurrentfile eexec\n";
+        let ending_in_space = charstring_crypt(&[163, 14], true);
+        let ending_elsewhere = charstring_crypt(&[14], true);
+        assert_eq!(ending_in_space, [0xb3, b' ']);
+        assert_eq!(ending_elsewhere, [0x1e]);
+
+        let mut plaintext = b"seed/Private 8 dict dup begin\n/lenIV 0 def\n/Subrs 0 array\nND\n2 index /CharStrings 3 dict dup begin\n/.notdef 1 RD ".to_vec();
+        plaintext.extend_from_slice(&ending_elsewhere);
+        plaintext.extend_from_slice(b" ND\n/A 2 RD ");
+        plaintext.extend_from_slice(&ending_in_space);
+        plaintext.extend_from_slice(b" ND\n/B 1 RD ");
+        plaintext.extend_from_slice(&ending_elsewhere);
+        plaintext.extend_from_slice(b" ND\nend\nend\nreadonly put\nmark currentfile closefile\n");
+        let encrypted = eexec_crypt(&plaintext, true);
+        let mut pfb = vec![0x80, 1];
+        pfb.extend_from_slice(&(clear.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(clear);
+        pfb.extend_from_slice(&[0x80, 2]);
+        pfb.extend_from_slice(&(encrypted.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(&encrypted);
+        pfb.extend_from_slice(&[0x80, 3]);
+
+        let program = PdfType1Program::from_pfb(&pfb).expect("synthetic PFB");
+        let glyphs = [b"A".to_vec(), b"B".to_vec()]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let subset = program
+            .subset(&glyphs, b"AAAAAA+Fixture")
+            .expect("synthetic subset");
+        let decrypted = eexec_crypt(
+            &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize],
+            false,
+        );
+
+        assert!(
+            decrypted
+                .windows(b"/A 2 RD \xb3\x20ND\n".len())
+                .any(|window| window == b"/A 2 RD \xb3\x20ND\n"),
+            "pdfTeX's line buffer suppresses the separator after binary 0x20",
+        );
+        assert!(
+            decrypted
+                .windows(b"/B 1 RD \x1e ND\n".len())
+                .any(|window| window == b"/B 1 RD \x1e ND\n"),
+            "a non-space final binary byte retains the suffix separator",
         );
     }
 
