@@ -15,3 +15,15 @@ not learn TeX lists, node children, annex codecs, or semantic region roles.
 Keep generation fork-copy restricted to `Copy` payloads. Group, scratch,
 journal, and speculative-output wrappers must remain distinct and nonforking;
 do not give owned production records fork semantics for allocator convenience.
+
+Source ownership is split as follows:
+
+- `store.rs`: caller-owned typed physical blocks and private `BlockId` reuse;
+- `logical.rs`: public logical coordinates, accepted tables, direct lookup,
+  cursor/truncate, rotation, and the accepted/candidate transaction;
+- `transfer.rs`: semantic-neutral whole-block owners, detached loans, prepared
+  transfer, and exact-frontier rollback receipts;
+- `generation.rs`: the convenience owner combining a store and table for
+  isolated measurements;
+- `nonforking.rs`: dense group, scratch, journal, and output policies; and
+- `metrics.rs`: exact safe-layer measurement rows.
