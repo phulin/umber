@@ -2,7 +2,7 @@
 
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
-    PdfContentGlyphRaster, PdfContentOperation, PdfContentRectangle, PdfContentTextExactRaster,
+    PdfContentGlyphRaster, PdfContentOperation, PdfContentRule, PdfContentTextExactRaster,
     PdfContentTextPosition, PdfContentTextRaster, PdfContentTextRun, PdfDestinationAction,
     PdfDestinationActionKind, PdfDestinationNameTree, PdfDestinationNameTreeChildren,
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView,
@@ -579,23 +579,19 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => {
-                    content_operations.push(PdfContentOperation::Rectangle(PdfContentRectangle {
-                        x: scaled_to_bp_f32(
-                            rule.x
-                                .checked_add(record.h_origin())
-                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                            parameters.decimal_digits,
-                        ),
-                        y: scaled_to_bp_f32(
-                            page_height
-                                .checked_sub(rule.y)
-                                .and_then(|value| value.checked_sub(record.v_origin()))
-                                .and_then(|value| value.checked_sub(rule.height))
-                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                            parameters.decimal_digits,
-                        ),
-                        width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
-                        height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
+                    content_operations.push(PdfContentOperation::Rule(PdfContentRule {
+                        x: rule
+                            .x
+                            .checked_add(record.h_origin())
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        y: page_height
+                            .checked_sub(rule.y)
+                            .and_then(|value| value.checked_sub(record.v_origin()))
+                            .and_then(|value| value.checked_sub(rule.height))
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        width: rule.width,
+                        height: rule.height,
+                        decimal_digits: parameters.decimal_digits as u8,
                     }))
                 }
                 PositionedEvent::TextRun(run) if !run.units.is_empty() => {
@@ -1132,17 +1128,15 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => {
-                    operations.push(PdfContentOperation::Rectangle(PdfContentRectangle {
-                        x: scaled_to_bp_f32(rule.x, parameters.decimal_digits),
-                        y: scaled_to_bp_f32(
-                            total_height
-                                .checked_sub(rule.y)
-                                .and_then(|value| value.checked_sub(rule.height))
-                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                            parameters.decimal_digits,
-                        ),
-                        width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
-                        height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
+                    operations.push(PdfContentOperation::Rule(PdfContentRule {
+                        x: rule.x,
+                        y: total_height
+                            .checked_sub(rule.y)
+                            .and_then(|value| value.checked_sub(rule.height))
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        width: rule.width,
+                        height: rule.height,
+                        decimal_digits: parameters.decimal_digits as u8,
                     }))
                 }
                 PositionedEvent::PdfGraphics(graphics) => {

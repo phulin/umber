@@ -1,6 +1,8 @@
+use pdf_writer::types::LineCapStyle;
 use pdf_writer::{Name, Str};
+use tex_arith::Scaled;
 
-use super::{PdfContentOperation, PdfContentRectangle};
+use super::{PdfContentOperation, PdfContentRectangle, PdfContentRule};
 
 pub(super) enum PdfPaintProgram<'a> {
     Rectangles(&'a [PdfContentRectangle]),
@@ -26,6 +28,11 @@ impl<'a> PdfPaintProgram<'a> {
         match self {
             Self::Rectangles(rectangles) => painter.compact_rectangles(rectangles),
             Self::Compact(operations) => {
+                for operation in operations {
+                    if let PdfContentOperation::Rule(rule) = operation {
+                        painter.rule(rule);
+                    }
+                }
                 painter.compact_rectangles(operations.iter().filter_map(
                     |operation| match operation {
                         PdfContentOperation::Rectangle(rectangle) => Some(rectangle),
@@ -130,6 +137,7 @@ impl PdfPainter {
                 self.rectangle(rectangle);
                 self.restore();
             }
+            PdfContentOperation::Rule(rule) => self.rule(rule),
             PdfContentOperation::Text(run) => self.text(run),
             PdfContentOperation::Literal { mode, x, y, bytes } => {
                 self.prepare_literal(*mode, *x, *y);
@@ -173,6 +181,69 @@ impl PdfPainter {
         self.content
             .rect(x, y, rectangle.width, rectangle.height)
             .fill_nonzero();
+    }
+
+    fn rule(&mut self, rule: &PdfContentRule) {
+        // pdftex.web §691 (`pdf_set_rule`) uses strokes for rules no thicker
+        // than one bp. It selects horizontal strokes first, centers the path
+        // with scaled integer arithmetic, and uses a filled rectangle only
+        // when both dimensions exceed that threshold.
+        const ONE_BP: i32 = 65_782;
+
+        self.end_text();
+        self.save();
+        if rule.height.raw() <= ONE_BP {
+            let center_y = i64::from(rule.y.raw()) + (i64::from(rule.height.raw()) + 1) / 2;
+            self.rule_origin(i64::from(rule.x.raw()), center_y, rule.decimal_digits);
+            self.stroke_rule(
+                scaled_to_bp(rule.height, rule.decimal_digits),
+                scaled_to_bp(rule.width, rule.decimal_digits),
+                0.0,
+            );
+        } else if rule.width.raw() <= ONE_BP {
+            let center_x = i64::from(rule.x.raw()) + (i64::from(rule.width.raw()) + 1) / 2;
+            self.rule_origin(center_x, i64::from(rule.y.raw()), rule.decimal_digits);
+            self.stroke_rule(
+                scaled_to_bp(rule.width, rule.decimal_digits),
+                0.0,
+                scaled_to_bp(rule.height, rule.decimal_digits),
+            );
+        } else {
+            self.rule_origin(
+                i64::from(rule.x.raw()),
+                i64::from(rule.y.raw()),
+                rule.decimal_digits,
+            );
+            self.content
+                .rect(
+                    0.0,
+                    0.0,
+                    scaled_to_bp(rule.width, rule.decimal_digits),
+                    scaled_to_bp(rule.height, rule.decimal_digits),
+                )
+                .fill_nonzero();
+        }
+        self.restore();
+    }
+
+    fn rule_origin(&mut self, x: i64, y: i64, decimal_digits: u8) {
+        let (x, y) = self.relative_position(
+            scaled_raw_to_bp(x, decimal_digits),
+            scaled_raw_to_bp(y, decimal_digits),
+        );
+        if x != 0.0 || y != 0.0 {
+            self.content.transform([1.0, 0.0, 0.0, 1.0, x, y]);
+        }
+    }
+
+    fn stroke_rule(&mut self, width: f32, x: f32, y: f32) {
+        self.content
+            .set_dash_pattern([], 0.0)
+            .set_line_cap(LineCapStyle::ButtCap)
+            .set_line_width(width)
+            .move_to(0.0, 0.0)
+            .line_to(x, y)
+            .stroke();
     }
 
     fn text(&mut self, run: &super::PdfContentTextRun) {
@@ -552,6 +623,23 @@ impl PdfPainter {
         self.end_text();
         self.content.finish().to_vec()
     }
+}
+
+fn scaled_to_bp(value: Scaled, decimal_digits: u8) -> f32 {
+    scaled_raw_to_bp(i64::from(value.raw()), decimal_digits)
+}
+
+fn scaled_raw_to_bp(value: i64, decimal_digits: u8) -> f32 {
+    let scale = 10_i128.pow(u32::from(decimal_digits));
+    const NUMERATOR: i128 = 7_200;
+    const DENOMINATOR: i128 = 7_227 * 65_536;
+    let numerator = i128::from(value) * NUMERATOR * scale;
+    let rounded = if numerator >= 0 {
+        (numerator + DENOMINATOR / 2) / DENOMINATOR
+    } else {
+        (numerator - DENOMINATOR / 2) / DENOMINATOR
+    };
+    rounded as f32 / 10_f32.powi(i32::from(decimal_digits))
 }
 
 fn has_glyph_raster(run: &super::PdfContentTextRun) -> bool {

@@ -1,6 +1,79 @@
 use super::*;
 use tex_arith::Scaled;
 
+fn canonical_rule(width: i32, height: i32) -> PdfContentOperation {
+    const ONE_BP: i32 = 65_782;
+    PdfContentOperation::Rule(PdfContentRule {
+        x: Scaled::from_raw(10 * ONE_BP),
+        y: Scaled::from_raw(20 * ONE_BP),
+        width: Scaled::from_raw(width),
+        height: Scaled::from_raw(height),
+        decimal_digits: 3,
+    })
+}
+
+#[test]
+fn canonical_rule_paint_selects_strokes_and_fills_at_one_bp() {
+    // pdftex.web §691 (`pdf_set_rule`): height wins when both dimensions
+    // are thin; otherwise a width no greater than one bp selects a vertical
+    // stroke, while dimensions above one bp select a filled rectangle.
+    const ONE_BP: i32 = 65_782;
+    let cases = [
+        (
+            canonical_rule(2 * ONE_BP, ONE_BP),
+            concat!(
+                "q\n",
+                "1 0 0 1 10 20.5 cm\n",
+                "[] 0 d\n",
+                "0 J\n",
+                "1 w\n",
+                "0 0 m\n",
+                "2 0 l\n",
+                "S\n",
+                "Q",
+            ),
+        ),
+        (
+            canonical_rule(ONE_BP, 2 * ONE_BP),
+            concat!(
+                "q\n",
+                "1 0 0 1 10.5 20 cm\n",
+                "[] 0 d\n",
+                "0 J\n",
+                "1 w\n",
+                "0 0 m\n",
+                "0 2 l\n",
+                "S\n",
+                "Q",
+            ),
+        ),
+        (
+            canonical_rule(ONE_BP, ONE_BP),
+            concat!(
+                "q\n",
+                "1 0 0 1 10 20.5 cm\n",
+                "[] 0 d\n",
+                "0 J\n",
+                "1 w\n",
+                "0 0 m\n",
+                "1 0 l\n",
+                "S\n",
+                "Q",
+            ),
+        ),
+        (
+            canonical_rule(2 * ONE_BP, 2 * ONE_BP),
+            "q\n1 0 0 1 10 20 cm\n0 0 2 2 re\nf\nQ",
+        ),
+    ];
+    for (operation, expected) in cases {
+        assert_eq!(
+            String::from_utf8(ordered_page_content(&[operation])).expect("ASCII content"),
+            expected,
+        );
+    }
+}
+
 #[test]
 fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
     let bytes = ordered_page_content(&[

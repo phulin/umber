@@ -200,6 +200,11 @@ ordered construction policies. Compact construction groups rules before text;
 ordered construction retains pdfTeX literal, color-stack, matrix, save/restore,
 form, and image order. Both policies execute through one graphics/text-state
 interpreter, including origin restoration and typed `pdf_writer` operators.
+TeX rule operations retain exact scaled geometry through that boundary.
+Following pdftex.web §691, the interpreter strokes a rule horizontally when
+its height is at most one bp, otherwise strokes it vertically when its width is
+at most one bp, and fills a rectangle only when both dimensions exceed one bp;
+stroke centers are selected in scaled arithmetic before PDF decimal rounding.
 For mapped scalable fonts, that interpreter retains the current text position
 across compatible character, kern, glue, and direct-color operations and emits
 the intervening movement as a `TJ` adjustment, following pdftex.web §690's

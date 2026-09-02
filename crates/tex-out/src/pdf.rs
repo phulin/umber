@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 
 use sha2::{Digest, Sha256};
+use tex_arith::Scaled;
 
 mod finalization;
 mod finalize;
@@ -44,6 +45,16 @@ pub struct PdfContentRectangle {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+/// One TeX rule with exact scaled geometry for canonical PDF painting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfContentRule {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub decimal_digits: u8,
 }
 
 /// One absolutely positioned byte-encoded PDF text run.
@@ -116,6 +127,7 @@ pub struct PdfContentTextRun {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PdfContentOperation {
     Rectangle(PdfContentRectangle),
+    Rule(PdfContentRule),
     Text(PdfContentTextRun),
     Literal {
         mode: crate::PdfLiteralMode,
