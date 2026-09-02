@@ -2793,6 +2793,41 @@ struct PdfFontObjectIds {
 }
 
 #[derive(Clone, Copy)]
+enum PdfFontDictionaryHeader<'a> {
+    Scalable {
+        subtype: &'static str,
+        base_font: &'a [u8],
+    },
+    Type3 {
+        resource_name: &'a [u8],
+    },
+}
+
+/// Starts a font dictionary with pdfTeX's subtype-specific identity fields.
+///
+/// Scalable Type-1 and TrueType dictionaries identify the font only through
+/// `/BaseFont`; `/Name` belongs exclusively to Type-3 dictionaries. See
+/// pdftex.web §32e, `writefont.c::write_fontdictionary`, and
+/// `writet3.c::writet3` in the pinned pdfTeX 1.40.29 source.
+fn font_dictionary_header(
+    header: PdfFontDictionaryHeader<'_>,
+) -> Result<PdfDictionary, PdfModelError> {
+    let mut dictionary = PdfDictionary::new();
+    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
+    match header {
+        PdfFontDictionaryHeader::Scalable { subtype, base_font } => {
+            dictionary.insert("Subtype", PdfValue::Name(subtype.into()))?;
+            dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font.to_vec())))?;
+        }
+        PdfFontDictionaryHeader::Type3 { resource_name } => {
+            dictionary.insert("Subtype", PdfValue::Name("Type3".into()))?;
+            dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
+        }
+    }
+    Ok(dictionary)
+}
+
+#[derive(Clone, Copy)]
 struct PdfFallbackSpaceFont {
     font: PdfObjectId,
 }
@@ -2820,10 +2855,9 @@ fn allocate_fallback_space_font(
     });
 
     let matrix = PdfNumber::new(1, 3)?;
-    let mut dictionary = PdfDictionary::new();
-    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
-    dictionary.insert("Subtype", PdfValue::Name("Type3".into()))?;
-    dictionary.insert("Name", PdfValue::Name(PdfName::new(selected_name)))?;
+    let mut dictionary = font_dictionary_header(PdfFontDictionaryHeader::Type3 {
+        resource_name: selected_name,
+    })?;
     dictionary.insert(
         "FontMatrix",
         PdfValue::Array(vec![
@@ -3182,17 +3216,10 @@ fn pdf_font_objects(
         None
     };
     let truetype = subset_truetype.as_ref().or(truetype);
-    let mut dictionary = PdfDictionary::new();
-    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
-    dictionary.insert(
-        "Subtype",
-        PdfValue::Name(if is_truetype { "TrueType" } else { "Type1" }.into()),
-    )?;
-    dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
-    dictionary.insert(
-        "BaseFont",
-        PdfValue::Name(PdfName::new(subset_font_name.clone())),
-    )?;
+    let mut dictionary = font_dictionary_header(PdfFontDictionaryHeader::Scalable {
+        subtype: if is_truetype { "TrueType" } else { "Type1" },
+        base_font: &subset_font_name,
+    })?;
     if let Some(encoding) = encoding {
         let differences = encoding_differences(encoding, used_codes, subset_requested);
         let mut encoding_dictionary = PdfDictionary::new();
@@ -3438,10 +3465,7 @@ fn pdf_pk_font_objects(
         });
     }
 
-    let mut dictionary = PdfDictionary::new();
-    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
-    dictionary.insert("Subtype", PdfValue::Name("Type3".into()))?;
-    dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
+    let mut dictionary = font_dictionary_header(PdfFontDictionaryHeader::Type3 { resource_name })?;
     dictionary.insert(
         "FontMatrix",
         PdfValue::Array(vec![

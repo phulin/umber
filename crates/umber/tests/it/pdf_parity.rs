@@ -550,6 +550,12 @@ fn check_embedded_font_case(case: &str) {
     let actual_structure = normalize_structure(&actual).expect("normalize embedded-font PDF");
     let reference_structure =
         normalize_structure(&reference).expect("normalize reference font PDF");
+    if case.starts_with("embedded_") {
+        // pdftex.web §32e delegates scalable dictionaries to
+        // writefont.c, which omits Type-3's resource-name entry.
+        assert!(!actual_structure.contains("/Name /F1"));
+        assert!(!reference_structure.contains("/Name /F1"));
+    }
     match case {
         "embedded_type1" => {
             // pdftex.web §690: mapped scalable widths share the one-decimal
@@ -589,14 +595,18 @@ fn check_embedded_font_case(case: &str) {
         }
         "pk_bitmap_300" => {
             assert!(actual_structure.contains("/Subtype /Type3"));
+            assert!(actual_structure.contains("/Name /F1"));
             assert!(actual_structure.contains("/FontMatrix [0.024 0 0 0.024 0 0]"));
             assert!(reference_structure.contains("/Subtype /Type3"));
+            assert!(reference_structure.contains("/Name /F1"));
             assert!(reference_structure.contains("/FontMatrix [0.024 0 0 0.024 0 0]"));
         }
         "pk_bitmap_600" => {
             assert!(actual_structure.contains("/Subtype /Type3"));
+            assert!(actual_structure.contains("/Name /F1"));
             assert!(actual_structure.contains("/FontMatrix [0.012 0 0 0.012 0 0]"));
             assert!(reference_structure.contains("/Subtype /Type3"));
+            assert!(reference_structure.contains("/Name /F1"));
             assert!(reference_structure.contains("/FontMatrix [0.012 0 0 0.012 0 0]"));
         }
         _ => {}

@@ -293,6 +293,12 @@ pdfTeX's subset object. Effective Type 1, TrueType, resident, or PK program and
 VF-leaf selection remain finalization inputs and preserve their existing
 typed identities.
 
+Font-dictionary identity follows the subtype split in pdftex.web §32e and
+its pinned `writefont.c`/`writet3.c` delegates. Scalable Type-1 and TrueType
+dictionaries use `/BaseFont` and omit `/Name`; Type-3 dictionaries retain the
+resource-local `/Name`. One detached header constructor owns that distinction
+for mapped, resident, PK, and generated fallback-space fonts.
+
 When a mapped Type-1 font has no external encoding, finalization resolves used
 character codes through the program's cleartext built-in encoding. The bounded
 PostScript token scan accepts both spaced entries (`dup 10 /name put`) and the

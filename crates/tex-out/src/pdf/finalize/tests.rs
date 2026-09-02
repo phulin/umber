@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn font_dictionary_name_is_type3_only() {
+    for subtype in ["Type1", "TrueType"] {
+        let dictionary = font_dictionary_header(PdfFontDictionaryHeader::Scalable {
+            subtype,
+            base_font: b"ABCDEF+CanonicalFont",
+        })
+        .expect("valid scalable font header");
+        assert!(dictionary.get(b"Name").is_none());
+        assert_eq!(
+            dictionary.get(b"BaseFont"),
+            Some(&PdfValue::Name(PdfName::new(b"ABCDEF+CanonicalFont")))
+        );
+    }
+
+    let dictionary = font_dictionary_header(PdfFontDictionaryHeader::Type3 {
+        resource_name: b"F31",
+    })
+    .expect("valid Type-3 font header");
+    assert_eq!(
+        dictionary.get(b"Name"),
+        Some(&PdfValue::Name(PdfName::new(b"F31")))
+    );
+    assert!(dictionary.get(b"BaseFont").is_none());
+}
+
+#[test]
 fn type1_descriptor_fallback_uses_named_tfm_characters_instead_of_table_extrema() {
     let mut widths = [Scaled::from_raw(0); 256];
     let mut heights = [Scaled::from_raw(0); 256];
