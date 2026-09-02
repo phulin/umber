@@ -40,6 +40,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
 - `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including committed pages/forms, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
 - `src/pdf/finalize.rs`: pure detached form validation, artifact positioning, page/content lowering, font-object emission, object allocation, graph validation, and deterministic serialization.
+- `src/pdf/finalize/tests.rs`: focused pure PDF-finalization regressions, including canonical pdfTeX Type-1 descriptor fallback metrics.
 - `src/pdf/graph.rs`: private canonical graph-role and nested-value cursor shared by validation, hashing, preflight, and serialization.
 - `src/pdf/import.rs`: sole bounded pure selected-page PDF resource importer used by detached external-image lowering.
 - `src/pdf/paint.rs`: private compact/ordered PDF paint program and shared graphics/text-state interpreter.

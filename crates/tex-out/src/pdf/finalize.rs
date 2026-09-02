@@ -6,12 +6,13 @@ use super::{
     PdfContentTextRaster, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
     PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
     PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
-    PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontProgramInput,
-    PdfImageColorSpace, PdfImageFilter, PdfImageGammaInput, PdfImageMetadataInput, PdfImageXObject,
-    PdfIndirectObject, PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId,
-    PdfOutlineItemObject, PdfOutlineObject, PdfPageRotationInput, PdfRasterColorSpaceInput,
-    PdfRasterFormatInput, PdfSerializeError, PdfThreadObject, PdfTrailer, PdfValue, PdfVersion,
-    UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfExplicitDestination, PdfFinalizationInput, PdfFontInput, PdfFontMetricsInput,
+    PdfFontProgramInput, PdfImageColorSpace, PdfImageFilter, PdfImageGammaInput,
+    PdfImageMetadataInput, PdfImageXObject, PdfIndirectObject, PdfModelError, PdfName,
+    PdfNamesObject, PdfNumber, PdfObject, PdfObjectId, PdfOutlineItemObject, PdfOutlineObject,
+    PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfSerializeError,
+    PdfThreadObject, PdfTrailer, PdfValue, PdfVersion, UnvalidatedPdfDocument,
+    ordered_page_content, page_content,
 };
 use crate::positioned::{BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage};
 use crate::{ContentHash, PageArtifact, PageNode};
@@ -20,6 +21,9 @@ use tex_arith::Scaled;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{Read, Write};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Copy)]
 struct PdfFormTraversalLimits {
@@ -3243,27 +3247,8 @@ fn pdf_font_objects(
         "FontName",
         PdfValue::Name(PdfName::new(subset_font_name.clone())),
     )?;
-    let denominator = i64::from(font.at_size.raw()).max(1);
-    let scale_metric =
-        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
-    let tfm_ascent = input
-        .metrics
-        .heights
-        .iter()
-        .copied()
-        .map(scale_metric)
-        .max()
-        .unwrap_or(0);
-    let tfm_descent = input
-        .metrics
-        .depths
-        .iter()
-        .copied()
-        .map(scale_metric)
-        .max()
-        .unwrap_or(0);
-    let tfm_cap_height = scale_metric(input.metrics.heights[usize::from(b'H')]);
-    let tfm_x_height = scale_metric(input.metrics.x_height);
+    let [tfm_ascent, tfm_descent, tfm_cap_height, tfm_x_height] =
+        type1_fallback_descriptor_metrics(&input.metrics, font.at_size);
     let (bbox, ascent, descent, cap_height, x_height, italic_angle, stem_v, fixed_pitch) =
         if let Some(program) = truetype {
             (
@@ -3281,7 +3266,7 @@ fn pdf_font_objects(
             (
                 program.font_bbox().unwrap_or([-500, -500, 1500, 1500]),
                 tfm_ascent,
-                -tfm_descent,
+                tfm_descent,
                 tfm_cap_height,
                 tfm_x_height,
                 i64::from(program.italic_angle().unwrap_or(0)),
@@ -3346,6 +3331,21 @@ fn pdf_font_objects(
         objects.push(stream);
     }
     Ok(objects)
+}
+
+/// pdfTeX's Type-1 descriptor fallbacks use named TFM characters, not the
+/// extrema of the complete character table. See pdftex.web §799 and
+/// `writefont.c::preset_fontmetrics` in the pinned 1.40.29 source.
+fn type1_fallback_descriptor_metrics(metrics: &PdfFontMetricsInput, at_size: Scaled) -> [i64; 4] {
+    let denominator = i64::from(at_size.raw()).max(1);
+    let scale_metric =
+        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
+    [
+        scale_metric(metrics.heights[usize::from(b'h')]),
+        -scale_metric(metrics.depths[usize::from(b'y')]),
+        scale_metric(metrics.heights[usize::from(b'H')]),
+        scale_metric(metrics.x_height),
+    ]
 }
 
 fn pdf_pk_font_objects(
