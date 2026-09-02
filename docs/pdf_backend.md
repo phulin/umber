@@ -324,7 +324,12 @@ Descriptor construction follows pdftex.web §799 and the pinned
 `writefont.c::preset_fontmetrics`/`writet1.c::t1_scan_param` owner order.
 It first derives fallbacks from the TFM, including `/StemV` as one third of
 period's width on pdfTeX's three-place raster, then replaces them with font
-program keys when present. `/StdVW` may live in the encrypted eexec
+program keys when present. Type-1 `/ItalicAngle` is parsed on pdfTeX's
+single-precision `%g` path and truncated toward zero when stored in the integer
+descriptor slot; decimal program values therefore do not fall back to zero.
+The embedded-font `/Flags` default remains `4` independently of that metric;
+pdfTeX does not infer italic or fixed-pitch bits from the program fields.
+`/StdVW` may live in the encrypted eexec
 private-dictionary prelude; the bounded scan decrypts only that prelude and
 stops before binary Subrs or CharStrings data. Because subsetting retains this
 prelude, the descriptor observes the same `/StdVW` before and after subset

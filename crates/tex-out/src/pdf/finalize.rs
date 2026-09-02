@@ -3285,7 +3285,7 @@ fn pdf_font_objects(
         tfm_stem_v,
         tfm_x_height,
     ] = type1_fallback_descriptor_metrics(&input.metrics, font.at_size);
-    let (bbox, ascent, descent, cap_height, x_height, italic_angle, stem_v, fixed_pitch) =
+    let (bbox, ascent, descent, cap_height, x_height, italic_angle, stem_v) =
         if let Some(program) = truetype {
             (
                 program.bbox(),
@@ -3295,7 +3295,6 @@ fn pdf_font_objects(
                 i64::from(program.x_height()),
                 i64::from(program.italic_angle()),
                 i64::from(program.stem_v()),
-                program.fixed_pitch(),
             )
         } else {
             let program = type1.expect("program kind checked");
@@ -3307,11 +3306,12 @@ fn pdf_font_objects(
                 tfm_x_height,
                 i64::from(program.italic_angle().unwrap_or(0)),
                 type1_descriptor_stem_v(program, tfm_stem_v),
-                program.is_fixed_pitch(),
             )
         };
-    let flags = 4 + i64::from(fixed_pitch) + if italic_angle != 0 { 64 } else { 0 };
-    descriptor.insert("Flags", PdfValue::Integer(flags))?;
+    // pdfTeX writefont.c::write_fontdescriptor uses the embedded-program
+    // default directly; it does not infer fixed-pitch or italic bits from the
+    // program metrics.
+    descriptor.insert("Flags", PdfValue::Integer(4))?;
     descriptor.insert(
         "FontBBox",
         PdfValue::Array(

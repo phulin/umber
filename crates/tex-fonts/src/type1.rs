@@ -205,7 +205,9 @@ impl PdfType1Program {
 
     #[must_use]
     pub fn italic_angle(&self) -> Option<i32> {
-        self.cleartext_integer(b"/ItalicAngle")
+        let value = self.cleartext_value(b"/ItalicAngle")?;
+        let value: f32 = std::str::from_utf8(value).ok()?.parse().ok()?;
+        value.is_finite().then_some(value.trunc() as i32)
     }
 
     #[must_use]
@@ -1384,6 +1386,22 @@ mod tests {
         assert_eq!(program.stem_v(), Some(69));
         assert_eq!(program.italic_angle(), Some(0));
         assert!(program.is_fixed_pitch());
+    }
+
+    #[test]
+    fn reads_type1_real_italic_angle_with_pdftex_integer_conversion() {
+        fn program(value: &[u8]) -> PdfType1Program {
+            let header = [b"%!PS\n/ItalicAngle ".as_slice(), value, b" def\n"].concat();
+            let mut pfb = vec![0x80, 1];
+            pfb.extend_from_slice(&(header.len() as u32).to_le_bytes());
+            pfb.extend_from_slice(&header);
+            pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
+            PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB")
+        }
+
+        assert_eq!(program(b"-14.04").italic_angle(), Some(-14));
+        assert_eq!(program(b"14.99").italic_angle(), Some(14));
+        assert_eq!(program(b"not-a-number").italic_angle(), None);
     }
 
     #[test]
