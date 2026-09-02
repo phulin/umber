@@ -64,6 +64,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_output/finalization_input/virtual_fonts.rs`: destination-local,
   handle-free discovery and atomic allocation of the sized font instances
   selected while detached virtual-font packets are lowered.
+- `src/pdf_output/finalization_input/virtual_fonts/tests.rs`: unified pdfTeX
+  engine/VF internal-font timeline regression coverage.
 - `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, independently configurable restart-history retention, and execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.

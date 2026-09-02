@@ -36,6 +36,75 @@ pub(super) struct DestinationFontUse {
     pub(super) font_watermark: u32,
 }
 
+/// pdfTeX section 32e's single internal-font-number timeline.
+///
+/// Umber loads ordinary engine fonts before detached PDF lowering, while
+/// pdfTeX can interleave VF-local loads with later `\font` definitions.  Keep
+/// the engine order separately and let a later engine definition reuse an
+/// identity that destination-time VF loading already installed.
+struct FontNumberTimeline<'a> {
+    engine_identities: &'a [FontSourceIdentity],
+    numbers_by_identity: BTreeMap<FontSourceIdentity, u32>,
+    engine_numbers: Vec<u32>,
+    engine_watermark: u32,
+    next_number: u32,
+}
+
+impl<'a> FontNumberTimeline<'a> {
+    fn new(engine_identities: &'a [FontSourceIdentity]) -> Self {
+        let nullfont = *engine_identities
+            .first()
+            .expect("the detached engine font timeline contains nullfont");
+        Self {
+            engine_identities,
+            numbers_by_identity: BTreeMap::from([(nullfont, 0)]),
+            engine_numbers: vec![0; engine_identities.len()],
+            engine_watermark: 0,
+            next_number: 1,
+        }
+    }
+
+    fn advance_engine_to(&mut self, watermark: u32) -> Result<(), PdfBuildError> {
+        for raw in self.engine_watermark.saturating_add(1)..=watermark {
+            let identity = *self
+                .engine_identities
+                .get(raw as usize)
+                .expect("page font watermark belongs to the detached engine timeline");
+            let number = self.register(identity)?;
+            self.engine_numbers[raw as usize] = number;
+        }
+        self.engine_watermark = self.engine_watermark.max(watermark);
+        Ok(())
+    }
+
+    fn register(&mut self, identity: FontSourceIdentity) -> Result<u32, PdfBuildError> {
+        if let Some(number) = self.numbers_by_identity.get(&identity) {
+            return Ok(*number);
+        }
+        let number = self.next_number;
+        self.next_number = self
+            .next_number
+            .checked_add(1)
+            .ok_or(PdfBuildError::ObjectCapacity)?;
+        self.numbers_by_identity.insert(identity, number);
+        Ok(number)
+    }
+
+    fn number(&self, identity: FontSourceIdentity) -> u32 {
+        *self
+            .numbers_by_identity
+            .get(&identity)
+            .expect("font identity was registered on the unified timeline")
+    }
+
+    fn engine_number(&self, raw: u32) -> u32 {
+        *self
+            .engine_numbers
+            .get(raw as usize)
+            .expect("PDF font resource owner belongs to the engine timeline")
+    }
+}
+
 /// Materializes the font instances selected by reachable virtual packets.
 ///
 /// The engine completion owns only fonts that execution itself selected. A
@@ -85,13 +154,9 @@ pub(super) fn materialize_destination_font_instances(
     let mut pending = roots;
     let mut visited = BTreeSet::new();
     let mut loaded_virtual_fonts = BTreeSet::new();
-    let mut local_font_numbers = fonts
-        .iter()
-        .map(|(identity, font)| (*identity, font.resource_number))
-        .collect::<BTreeMap<_, _>>();
+    let engine_pdf_fonts = fonts.keys().copied().collect::<BTreeSet<_>>();
+    let mut font_numbers = FontNumberTimeline::new(pdf.engine_font_identities());
     let recursion_limit = tex_out::pdf::PdfFinalizationLimits::default().max_virtual_font_recursion;
-    let mut next_resource = 1_u32;
-    let mut engine_font_watermark = 0_u32;
 
     while let Some(PendingCharacter {
         font,
@@ -101,17 +166,7 @@ pub(super) fn materialize_destination_font_instances(
     }) = pending.pop_front()
     {
         if let Some(font_watermark) = font_watermark {
-            // Engine font loading and pdftex.web §32e's destination-time VF
-            // loading share one `font_ptr` timeline in pdfTeX. Umber keeps
-            // those phases detached, so a later page watermark carries only
-            // the engine-side increase. Merge that delta into the destination
-            // cursor without discarding local fonts loaded on earlier pages.
-            if font_watermark > engine_font_watermark {
-                next_resource = next_resource
-                    .checked_add(font_watermark - engine_font_watermark)
-                    .ok_or(PdfBuildError::ObjectCapacity)?;
-                engine_font_watermark = font_watermark;
-            }
+            font_numbers.advance_engine_to(font_watermark)?;
         }
         if !visited.insert((font.identity, code)) {
             continue;
@@ -125,13 +180,7 @@ pub(super) fn materialize_destination_font_instances(
             continue;
         };
         if loaded_virtual_fonts.insert(font.identity) {
-            register_virtual_local_fonts(
-                resources,
-                &font,
-                program,
-                &mut local_font_numbers,
-                &mut next_resource,
-            )?;
+            register_virtual_local_fonts(resources, &font, program, &mut font_numbers)?;
         }
         let Some(packet) = program.program.packet(u32::from(code)) else {
             // The pure finalizer owns the canonical missing-packet error.
@@ -150,7 +199,7 @@ pub(super) fn materialize_destination_font_instances(
             &font,
             default.number,
             fonts,
-            &local_font_numbers,
+            &font_numbers,
             next_object,
         )?;
         for command in &packet.commands {
@@ -165,7 +214,7 @@ pub(super) fn materialize_destination_font_instances(
                         &font,
                         *number,
                         fonts,
-                        &local_font_numbers,
+                        &font_numbers,
                         next_object,
                     )?;
                 }
@@ -192,6 +241,15 @@ pub(super) fn materialize_destination_font_instances(
             }
         }
     }
+    let final_engine_watermark = u32::try_from(pdf.engine_font_identities().len() - 1)
+        .expect("engine font capacity is bounded by u32");
+    font_numbers.advance_engine_to(final_engine_watermark)?;
+    for identity in engine_pdf_fonts {
+        let font = fonts
+            .get_mut(&identity)
+            .expect("engine PDF font remains in the detached font map");
+        font.resource_number = font_numbers.engine_number(font.resource_number);
+    }
     Ok(())
 }
 
@@ -199,8 +257,7 @@ fn register_virtual_local_fonts(
     resources: &crate::PdfVirtualFontResources,
     parent: &LocalInstance,
     program: &crate::CachedVirtualFont,
-    local_font_numbers: &mut BTreeMap<FontSourceIdentity, u32>,
-    next_resource: &mut u32,
+    font_numbers: &mut FontNumberTimeline<'_>,
 ) -> Result<(), PdfBuildError> {
     // pdftex.web §32e's `do_vf` processes every local font definition before
     // interpreting any character packet. `vf_def_font` reuses an equal
@@ -210,15 +267,7 @@ fn register_virtual_local_fonts(
     // font number even though it never creates a PDF font dictionary.
     for local in program.program.local_fonts() {
         let (instance, _) = load_local_instance(resources, parent, local.number)?;
-        if let std::collections::btree_map::Entry::Vacant(entry) =
-            local_font_numbers.entry(instance.identity)
-        {
-            let number = *next_resource;
-            *next_resource = next_resource
-                .checked_add(1)
-                .ok_or(PdfBuildError::ObjectCapacity)?;
-            entry.insert(number);
-        }
+        font_numbers.register(instance.identity)?;
     }
     Ok(())
 }
@@ -233,7 +282,7 @@ fn materialize_local_instance(
     parent: &LocalInstance,
     number: i32,
     fonts: &mut BTreeMap<FontSourceIdentity, PdfFontInput>,
-    local_font_numbers: &BTreeMap<FontSourceIdentity, u32>,
+    font_numbers: &FontNumberTimeline<'_>,
     next_object: &mut u32,
 ) -> Result<LocalInstance, PdfBuildError> {
     let (instance, loaded) = load_local_instance(resources, parent, number)?;
@@ -242,9 +291,7 @@ fn materialize_local_instance(
         ref name,
         size,
     } = instance;
-    let resource_number = *local_font_numbers
-        .get(&identity)
-        .expect("the containing VF registered every local definition");
+    let resource_number = font_numbers.number(identity);
     let name = name.clone();
     if !fonts.contains_key(&identity) {
         let recipe = FontArtifactRecipe {
@@ -418,3 +465,6 @@ fn load_local_instance(
         loaded,
     ))
 }
+
+#[cfg(test)]
+mod tests;

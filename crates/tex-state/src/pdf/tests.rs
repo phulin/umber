@@ -77,6 +77,11 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     let completion = completion::detach(
         &state,
         completion::PdfCompletionScalars {
+            engine_font_identities: vec![
+                tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
+                base_identity,
+                scaled_identity,
+            ],
             font_configuration: PdfFontConfiguration {
                 adjust_spacing: 0,
                 protrude_chars: 0,
@@ -124,6 +129,14 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     .expect("alias-only PDF ledger detaches");
 
     assert_eq!(completion.fonts().len(), 2);
+    assert_eq!(
+        completion.engine_font_identities(),
+        [
+            tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
+            base_identity,
+            scaled_identity,
+        ]
+    );
     assert_eq!(
         completion
             .fonts()

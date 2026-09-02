@@ -3588,6 +3588,11 @@ impl<'a, G> CommandContext<'a, G> {
             .map(|tokens| self.pdf_completion_token_bytes(tokens))
             .unwrap_or_default();
         let scalars = crate::pdf::completion::PdfCompletionScalars {
+            engine_font_identities: self
+                .font_artifact_recipes()
+                .into_iter()
+                .map(|recipe| recipe.semantic_identity)
+                .collect(),
             font_configuration: self.pdf_font_configuration(),
             pages_entries,
             include_info_dictionary: self.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0,

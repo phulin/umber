@@ -314,9 +314,10 @@ names with the same resolved scalable map entry keep size-specific realized
 identities and metrics while sharing the first font dictionary and subset.
 Their internal font-number ledger remains distinct from dictionary
 materialization: every VF preamble definition is loaded in declaration order,
-including definitions no packet selects, and later page-watermark deltas merge
-new engine fonts into that same timeline without erasing earlier
-destination-local allocations.
+including definitions no packet selects. Terminal completion retains every
+engine font's handle-free identity in definition order; later page watermarks
+merge genuinely new engine fonts into that same timeline, while an engine font
+equal to an earlier VF-local load reuses its existing number.
 
 Font-dictionary identity follows the subtype split in pdftex.web §32e and
 its pinned `writefont.c`/`writet3.c` delegates. Scalable Type-1 and TrueType
