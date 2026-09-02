@@ -3214,7 +3214,7 @@ enum NodeCursorSource<'a> {
             crate::node_record::NodeRecord,
             crate::fork_arena::PageMaterialLane,
         >,
-        &'a crate::node_record::NodeAnnexArena,
+        crate::node_record::NodeAnnexView<'a>,
     ),
 }
 
@@ -3240,7 +3240,7 @@ impl<'a> NodeCursor<'a> {
             crate::node_record::NodeRecord,
             crate::fork_arena::PageMaterialLane,
         >,
-        annex: &'a crate::node_record::NodeAnnexArena,
+        annex: crate::node_record::NodeAnnexView<'a>,
     ) -> Self {
         Self {
             source: NodeCursorSource::Fork(view, annex),
@@ -3435,7 +3435,7 @@ pub enum NodeCursorIter<'a> {
             crate::node_record::NodeRecord,
             crate::fork_arena::PageMaterialLane,
         >,
-        &'a crate::node_record::NodeAnnexArena,
+        crate::node_record::NodeAnnexView<'a>,
     ),
 }
 
@@ -3449,17 +3449,6 @@ impl NodeCursorIter<'_> {
     pub fn cloned(self) -> impl DoubleEndedIterator<Item = Node> + ExactSizeIterator {
         self.map(|node| node.to_owned_with(std::convert::identity))
     }
-
-    /// Descriptor rows visited by reverse traversal of a page-material list.
-    ///
-    /// Direct chunk roots always report zero; slices have no descriptor lane.
-    #[must_use]
-    pub const fn reverse_descriptor_visits(&self) -> usize {
-        match self {
-            Self::Slice(_) => 0,
-            Self::Fork(nodes, _) => nodes.reverse_descriptor_visits(),
-        }
-    }
 }
 
 impl<'a> Iterator for NodeCursorIter<'a> {
@@ -3470,7 +3459,7 @@ impl<'a> Iterator for NodeCursorIter<'a> {
             Self::Slice(nodes) => nodes.next().map(NodeView::from),
             Self::Fork(nodes, annex) => nodes
                 .next()
-                .and_then(|record| record.decode_owned(annex))
+                .and_then(|record| record.decode_owned(*annex))
                 .map(NodeView::from_owned),
         }
     }
@@ -3491,7 +3480,7 @@ impl<'a> DoubleEndedIterator for NodeCursorIter<'a> {
             Self::Slice(nodes) => nodes.next_back().map(NodeView::from),
             Self::Fork(nodes, annex) => nodes
                 .next_back()
-                .and_then(|record| record.decode_owned(annex))
+                .and_then(|record| record.decode_owned(*annex))
                 .map(NodeView::from_owned),
         }
     }

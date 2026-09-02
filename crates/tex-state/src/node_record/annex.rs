@@ -1,15 +1,11 @@
 use super::*;
 
-static NEXT_ANNEX_OWNER: AtomicU32 = AtomicU32::new(1);
+use crate::fork_arena::{ArenaListId, ChunkPool, ForkArena};
+use crate::node_region::NodeAnnexLane;
 
 #[repr(C)]
 pub(crate) struct AnnexKey<Kind> {
-    pub(super) owner: u32,
-    pub(super) block_ordinal: u32,
-    pub(super) logical_block_incarnation: u32,
-    pub(super) word_offset: u32,
-    pub(super) word_len: u32,
-    pub(super) publication_serial: u32,
+    words: [u32; 7],
     pub(super) kind: PhantomData<fn(&Kind) -> &Kind>,
 }
 
@@ -25,80 +21,76 @@ impl<Kind> core::fmt::Debug for AnnexKey<Kind> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("AnnexKey")
-            .field("word_len", &self.word_len)
+            .field("word_len", &self.words[5])
             .finish_non_exhaustive()
     }
 }
 
 impl<Kind> AnnexKey<Kind> {
-    pub(crate) const fn words(self) -> [u32; 6] {
-        [
-            self.owner,
-            self.block_ordinal,
-            self.logical_block_incarnation,
-            self.word_offset,
-            self.word_len,
-            self.publication_serial,
-        ]
+    pub(crate) const fn words(self) -> [u32; 7] {
+        self.words
     }
 
-    pub(crate) const fn from_words(words: [u32; 6]) -> Self {
+    pub(crate) const fn from_words(words: [u32; 7]) -> Self {
         Self {
-            owner: words[0],
-            block_ordinal: words[1],
-            logical_block_incarnation: words[2],
-            word_offset: words[3],
-            word_len: words[4],
-            publication_serial: words[5],
+            words,
             kind: PhantomData,
         }
     }
-}
 
-const _: () = assert!(core::mem::size_of::<AnnexKey<()>>() == 24);
-const _: () = assert!(core::mem::align_of::<AnnexKey<()>>() == 4);
-const _: () = assert!(!core::mem::needs_drop::<AnnexKey<()>>());
+    fn from_list(list: ArenaListId<NodeAnnexLane>, publication_serial: u32) -> Self {
+        let words = list.words();
+        Self::from_words([
+            words[1],
+            words[2],
+            words[3],
+            words[4],
+            words[5],
+            words[7],
+            publication_serial,
+        ])
+    }
 
-struct AnnexBlock {
-    words: tex_dense_prefix::Superblock<u32>,
-    logical_incarnation: u32,
-}
-
-impl AnnexBlock {
-    fn new(logical_incarnation: u32) -> Self {
-        Self {
-            words: tex_dense_prefix::Superblock::try_new()
-                .expect("u32 annex superblock layout is valid"),
-            logical_incarnation,
-        }
+    fn list(self, space: u32, chunk_capacity: usize) -> Option<ArenaListId<NodeAnnexLane>> {
+        let chunk_capacity = u32::try_from(chunk_capacity).ok()?;
+        let head_offset = self.words[2];
+        let len = self.words[5];
+        let end = head_offset.checked_add(len)?;
+        let tail_offset = if self.words[0] == self.words[3] && self.words[1] == self.words[4] {
+            end
+        } else {
+            match end % chunk_capacity {
+                0 => chunk_capacity,
+                offset => offset,
+            }
+        };
+        ArenaListId::from_words([
+            space,
+            self.words[0],
+            self.words[1],
+            self.words[2],
+            self.words[3],
+            self.words[4],
+            tail_offset,
+            len,
+        ])
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct NodeAnnexMetrics {
-    pub(crate) superblocks_allocated: u64,
-    pub(crate) superblocks_reclaimed: u64,
-    pub(crate) words_published: u64,
-    pub(crate) words_rolled_back: u64,
-    pub(crate) boundary_padding_words: u64,
-    pub(crate) direct_lookups: u64,
-    pub(crate) stale_rejections: u64,
+const _: () = assert!(core::mem::size_of::<AnnexKey<()>>() == 28);
+const _: () = assert!(core::mem::align_of::<AnnexKey<()>>() == 4);
+const _: () = assert!(!core::mem::needs_drop::<AnnexKey<()>>());
+
+pub struct NodeAnnexWriter<'a> {
+    pool: &'a mut ChunkPool<u32>,
+    arena: &'a mut ForkArena<u32, NodeAnnexLane>,
+    dependency_floor: usize,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct NodeAnnexMark {
-    owner: u32,
-    words: usize,
-}
-
-pub struct NodeAnnexArena {
-    owner: u32,
-    blocks: Vec<AnnexBlock>,
-    words: usize,
-    next_publication_serial: u32,
-    next_logical_incarnation: u32,
-    metrics: NodeAnnexMetrics,
+#[derive(Clone, Copy)]
+pub struct NodeAnnexView<'a> {
+    pool: &'a ChunkPool<u32>,
+    arena: &'a ForkArena<u32, NodeAnnexLane>,
 }
 
 pub(super) enum LigaturePayload {}
@@ -114,18 +106,20 @@ pub(super) enum MathChoicePayload {}
 pub(super) enum ListPayload {}
 pub(super) enum Utf8Span {}
 pub(super) enum ByteSpan {}
+pub(super) enum OpenOutPayload {}
 pub(super) enum SpecialPayload {}
 pub(super) enum DeferredSpecialPayload {}
 pub(super) enum PdfDestinationPayload {}
 pub(super) enum PdfThreadPayload {}
+pub(super) enum PdfColorStackPayload {}
 
-pub(super) fn key_words<Kind>(key: AnnexKey<Kind>) -> [u32; 6] {
+pub(super) fn key_words<Kind>(key: AnnexKey<Kind>) -> [u32; 7] {
     key.words()
 }
 
 pub(super) fn key_from_record<Kind>(record: NodeRecord) -> AnnexKey<Kind> {
     let words = record.words();
-    AnnexKey::from_words([words[0], words[1], words[2], words[3], words[4], words[5]])
+    AnnexKey::from_words(words)
 }
 
 pub(super) fn encode_page_list(destination: &mut Vec<u32>, list: PageListId) {
@@ -347,221 +341,92 @@ pub(super) fn decode_noad_kind(words: &[u32], cursor: &mut usize) -> Option<Noad
     }
 }
 
-impl Default for NodeAnnexArena {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl NodeAnnexArena {
-    pub(crate) fn new() -> Self {
+impl<'a> NodeAnnexWriter<'a> {
+    pub(crate) fn new(
+        pool: &'a mut ChunkPool<u32>,
+        arena: &'a mut ForkArena<u32, NodeAnnexLane>,
+    ) -> Self {
         Self {
-            owner: NEXT_ANNEX_OWNER
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                    value.checked_add(1)
-                })
-                .expect("node annex owner domain exhausted"),
-            blocks: Vec::new(),
-            words: 0,
-            next_publication_serial: 1,
-            next_logical_incarnation: 1,
-            metrics: NodeAnnexMetrics::default(),
+            pool,
+            arena,
+            dependency_floor: usize::MAX,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) const fn mark(&self) -> NodeAnnexMark {
-        NodeAnnexMark {
-            owner: self.owner,
-            words: self.words,
-        }
+    pub(crate) fn view(&self) -> NodeAnnexView<'_> {
+        NodeAnnexView::new(self.pool, self.arena)
     }
 
-    #[cfg(test)]
-    pub(crate) const fn metrics(&self) -> NodeAnnexMetrics {
-        self.metrics
-    }
-
-    fn ensure_block(&mut self, ordinal: usize) {
-        while self.blocks.len() <= ordinal {
-            let incarnation = self.next_logical_incarnation;
-            self.next_logical_incarnation = incarnation
-                .checked_add(1)
-                .expect("node annex logical incarnation exhausted");
-            self.blocks.push(AnnexBlock::new(incarnation));
-            self.metrics.superblocks_allocated += 1;
-        }
-    }
-
-    fn next_serial(&mut self) -> u32 {
-        let serial = self.next_publication_serial;
-        self.next_publication_serial = serial
-            .checked_add(1)
-            .expect("node annex publication serial exhausted");
-        serial
+    pub(crate) fn dependency_floor(&self) -> Option<usize> {
+        (self.dependency_floor != usize::MAX).then_some(self.dependency_floor)
     }
 
     pub(crate) fn append_fixed<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
-        let word_len = body
-            .len()
-            .checked_add(1)
-            .expect("node annex fixed record length overflow");
         assert!(
-            word_len <= 41,
+            body.len() <= 40,
             "fixed node annex record exceeds design maximum"
         );
-        let tail = self.words % ANNEX_WORDS_PER_BLOCK;
-        if tail != 0 && tail + word_len > ANNEX_WORDS_PER_BLOCK {
-            let padding = ANNEX_WORDS_PER_BLOCK - tail;
-            self.words += padding;
-            self.metrics.boundary_padding_words += padding as u64;
-        }
-        self.append_contiguous(body)
+        let publication_serial = self.pool.next_publication_serial();
+        let list = self
+            .arena
+            .append_unsealed_fixed_list(
+                self.pool,
+                core::iter::once(publication_serial).chain(body.iter().copied()),
+            )
+            .expect("fixed typed annex publication fits one paired-region chunk");
+        let position = self
+            .arena
+            .owner_relative_head_position(self.pool, list)
+            .expect("new fixed annex record belongs to its paired region");
+        self.dependency_floor = self.dependency_floor.min(position);
+        AnnexKey::from_list(list, publication_serial)
     }
 
     pub(crate) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
-        self.append_contiguous(body)
+        let publication_serial = self.pool.next_publication_serial();
+        let list = self
+            .arena
+            .append_unsealed_list(
+                self.pool,
+                core::iter::once(publication_serial).chain(body.iter().copied()),
+            )
+            .expect("typed annex publication fits its paired region");
+        let position = self
+            .arena
+            .owner_relative_head_position(self.pool, list)
+            .expect("new annex record belongs to its paired region");
+        self.dependency_floor = self.dependency_floor.min(position);
+        AnnexKey::from_list(list, publication_serial)
+    }
+}
+
+impl<'a> NodeAnnexView<'a> {
+    pub(crate) const fn new(
+        pool: &'a ChunkPool<u32>,
+        arena: &'a ForkArena<u32, NodeAnnexLane>,
+    ) -> Self {
+        Self { pool, arena }
     }
 
-    fn append_contiguous<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
-        let serial = self.next_serial();
-        let start = self.words;
-        let total = body
-            .len()
-            .checked_add(1)
-            .expect("node annex span length overflow");
-        for (index, word) in core::iter::once(serial)
-            .chain(body.iter().copied())
-            .enumerate()
-        {
-            let position = start + index;
-            let ordinal = position / ANNEX_WORDS_PER_BLOCK;
-            let offset = position % ANNEX_WORDS_PER_BLOCK;
-            self.ensure_block(ordinal);
-            let block = &mut self.blocks[ordinal];
-            if offset == block.words.len() {
-                block
-                    .words
-                    .push_with(|slot| slot.insert(word))
-                    .expect("annex superblock capacity");
-            } else {
-                *block.words.get_mut(offset).expect("initialized annex word") = word;
-            }
+    fn list<Kind>(
+        self,
+        key: AnnexKey<Kind>,
+    ) -> Option<crate::fork_arena::ArenaListView<'a, u32, NodeAnnexLane>> {
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        let view = self.arena.list(self.pool, list).ok()?;
+        let actual = *view.get(0)?;
+        if actual != key.words[6] {
+            return None;
         }
-        self.words = start
-            .checked_add(total)
-            .expect("node annex logical length overflow");
-        self.metrics.words_published += total as u64;
-        let ordinal = start / ANNEX_WORDS_PER_BLOCK;
-        AnnexKey {
-            owner: self.owner,
-            block_ordinal: u32::try_from(ordinal).expect("node annex block ordinal overflow"),
-            logical_block_incarnation: self.blocks[ordinal].logical_incarnation,
-            word_offset: u32::try_from(start % ANNEX_WORDS_PER_BLOCK)
-                .expect("node annex offset overflow"),
-            word_len: u32::try_from(total).expect("node annex record length overflow"),
-            publication_serial: serial,
-            kind: PhantomData,
-        }
+        Some(view)
     }
 
-    #[cfg(test)]
-    pub(crate) fn rollback(&mut self, mark: NodeAnnexMark) -> bool {
-        if mark.owner != self.owner || mark.words > self.words {
-            return false;
-        }
-        let removed = self.words - mark.words;
-        self.words = mark.words;
-        let retained_blocks = self.words.div_ceil(ANNEX_WORDS_PER_BLOCK);
-        while self.blocks.len() > retained_blocks {
-            self.blocks.pop();
-            self.metrics.superblocks_reclaimed += 1;
-        }
-        if let Some(block) = self.blocks.last_mut() {
-            let mut initialized = self.words % ANNEX_WORDS_PER_BLOCK;
-            if initialized == 0 && self.words != 0 {
-                initialized = ANNEX_WORDS_PER_BLOCK;
-            }
-            block.words.truncate(initialized);
-        }
-        self.metrics.words_rolled_back += removed as u64;
-        true
+    pub(crate) fn resolve_fixed_shared<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
+        self.detach_span(key)
     }
 
-    #[cfg(test)]
-    pub(crate) fn resolve_fixed<Kind>(&mut self, key: AnnexKey<Kind>) -> Option<&[u32]> {
-        if key.owner != self.owner || key.word_len == 0 {
-            self.metrics.stale_rejections += 1;
-            return None;
-        }
-        let ordinal = key.block_ordinal as usize;
-        let offset = key.word_offset as usize;
-        let len = key.word_len as usize;
-        let valid = self.blocks.get(ordinal).is_some_and(|block| {
-            block.logical_incarnation == key.logical_block_incarnation
-                && offset
-                    .checked_add(len)
-                    .is_some_and(|end| end <= block.words.len())
-                && block.words.get(offset).copied() == Some(key.publication_serial)
-        });
-        if !valid {
-            self.metrics.stale_rejections += 1;
-            return None;
-        }
-        self.metrics.direct_lookups += 1;
-        self.blocks[ordinal]
-            .words
-            .initialized()
-            .get(offset + 1..offset + len)
-    }
-
-    pub(crate) fn resolve_fixed_shared<Kind>(&self, key: AnnexKey<Kind>) -> Option<&[u32]> {
-        if key.owner != self.owner || key.word_len == 0 {
-            return None;
-        }
-        let block = self.blocks.get(key.block_ordinal as usize)?;
-        let offset = key.word_offset as usize;
-        let len = key.word_len as usize;
-        if block.logical_incarnation != key.logical_block_incarnation
-            || offset.checked_add(len)? > block.words.len()
-            || block.words.get(offset).copied()? != key.publication_serial
-        {
-            return None;
-        }
-        block.words.initialized().get(offset + 1..offset + len)
-    }
-
-    pub(crate) fn resolve_word<Kind>(&self, key: AnnexKey<Kind>, index: usize) -> Option<u32> {
-        let len = key.word_len as usize;
-        if key.owner != self.owner || index + 1 >= len {
-            return None;
-        }
-        let absolute = (key.block_ordinal as usize)
-            .checked_mul(ANNEX_WORDS_PER_BLOCK)?
-            .checked_add(key.word_offset as usize)?;
-        let serial_ordinal = absolute / ANNEX_WORDS_PER_BLOCK;
-        let serial_offset = absolute % ANNEX_WORDS_PER_BLOCK;
-        let serial_block = self.blocks.get(serial_ordinal)?;
-        if serial_block.logical_incarnation != key.logical_block_incarnation
-            || serial_block.words.get(serial_offset).copied() != Some(key.publication_serial)
-        {
-            return None;
-        }
-        let position = absolute.checked_add(index + 1)?;
-        if position >= self.words {
-            return None;
-        }
-        self.blocks
-            .get(position / ANNEX_WORDS_PER_BLOCK)?
-            .words
-            .get(position % ANNEX_WORDS_PER_BLOCK)
-            .copied()
-    }
-
-    pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
-        let body_len = (key.word_len as usize).checked_sub(1)?;
-        (0..body_len)
-            .map(|index| self.resolve_word(key, index))
-            .collect()
+    pub(super) fn detach_span<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
+        let view = self.list(key)?;
+        Some(view.iter().skip(1).copied().collect())
     }
 }

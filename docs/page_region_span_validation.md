@@ -113,8 +113,8 @@ Physical pages contain sixteen logical blocks, so many small lists share one
 bump allocation. The pool reports payload capacity and block metadata
 separately, while `unused_sealed_bytes` records exact tail slack.
 
-The pending compact-node cutover preserves this span API while replacing the
-physical payload with flat exact-64-KiB block tables. Head, tail, predecessors,
+The compact-node production backing preserves this span API with flat
+exact-64-KiB block tables. Head, tail, predecessors,
 and child roots use the one logical coordinate form; the admitted accepted or
 candidate view selects the physical table. An interior fork copies at most one
 65,504-byte node tail and its separately coupled 65,532-byte annex tail. It

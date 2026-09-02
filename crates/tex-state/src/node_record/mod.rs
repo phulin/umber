@@ -2,7 +2,6 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::fork_arena::PageMaterialLane;
 use crate::glue::{GlueSpec, Order};
@@ -27,8 +26,18 @@ mod layout;
 mod node_codec;
 mod whatsit_codec;
 
-pub(crate) use annex::{AnnexKey, NodeAnnexArena};
+pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use layout::NodeRecord;
+
+pub(crate) trait NodeRecordEncoder {
+    fn encode_node(&mut self, node: Node) -> NodeRecord;
+}
+
+impl NodeRecordEncoder for NodeAnnexWriter<'_> {
+    fn encode_node(&mut self, node: Node) -> NodeRecord {
+        NodeRecord::encode_owned(node, self)
+    }
+}
 
 use annex::*;
 use layout::*;

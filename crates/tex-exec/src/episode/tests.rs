@@ -107,11 +107,6 @@ fn growing_list_without_tail_enquiries_performs_no_tail_work() {
         }
         let telemetry = control.episode_telemetry();
         assert_eq!(telemetry.host_fact_queries(), 0);
-        assert_eq!(
-            telemetry.effective_tail_descriptor_visits(),
-            0,
-            "direct ChunkCursor roots perform no descriptor lookup: {telemetry:?}"
-        );
         assert_eq!(telemetry.effective_tail_traversals(), 0);
     });
 }

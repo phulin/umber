@@ -26,7 +26,7 @@ enum NodeDestinationSlot<'a> {
     Owned(&'a mut Option<Node>),
     Record {
         slot: &'a mut Option<crate::node_record::NodeRecord>,
-        annex: &'a mut crate::node_record::NodeAnnexArena,
+        encoder: &'a mut dyn crate::node_record::NodeRecordEncoder,
     },
 }
 
@@ -41,11 +41,11 @@ impl<'a> NodeDestination<'a> {
 
     pub(crate) fn new_record(
         slot: &'a mut Option<crate::node_record::NodeRecord>,
-        annex: &'a mut crate::node_record::NodeAnnexArena,
+        encoder: &'a mut dyn crate::node_record::NodeRecordEncoder,
     ) -> Self {
         assert!(slot.is_none(), "node-record destination is vacant");
         Self {
-            slot: NodeDestinationSlot::Record { slot, annex },
+            slot: NodeDestinationSlot::Record { slot, encoder },
         }
     }
 
@@ -53,8 +53,8 @@ impl<'a> NodeDestination<'a> {
         match self.slot {
             #[cfg(test)]
             NodeDestinationSlot::Owned(slot) => *slot = Some(node),
-            NodeDestinationSlot::Record { slot, annex } => {
-                *slot = Some(crate::node_record::NodeRecord::encode_owned(node, annex));
+            NodeDestinationSlot::Record { slot, encoder } => {
+                *slot = Some(encoder.encode_node(node));
             }
         }
     }

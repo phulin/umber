@@ -2,38 +2,108 @@ use super::*;
 
 enum Fixed {}
 
+struct AnnexHarness {
+    pool: crate::fork_arena::ChunkPool<u32>,
+    arena: crate::fork_arena::ForkArena<u32, crate::node_region::NodeAnnexLane>,
+}
+
+impl AnnexHarness {
+    fn new() -> Self {
+        Self {
+            pool: crate::fork_arena::ChunkPool::with_packed_chunk_bytes(65_536),
+            arena: crate::fork_arena::ForkArena::new(),
+        }
+    }
+
+    fn writer(&mut self) -> NodeAnnexWriter<'_> {
+        NodeAnnexWriter::new(&mut self.pool, &mut self.arena)
+    }
+
+    fn view(&self) -> NodeAnnexView<'_> {
+        NodeAnnexView::new(&self.pool, &self.arena)
+    }
+}
+
 #[test]
 fn exact_record_and_key_layouts_are_copy_only() {
     assert_eq!(core::mem::size_of::<NodeRecord>(), 32);
     assert_eq!(core::mem::align_of::<NodeRecord>(), 4);
     assert!(!core::mem::needs_drop::<NodeRecord>());
     assert_eq!(core::mem::size_of::<Option<NodeRecord>>(), 32);
-    assert_eq!(core::mem::size_of::<AnnexKey<Fixed>>(), 24);
+    assert_eq!(core::mem::size_of::<AnnexKey<Fixed>>(), 28);
     assert_eq!(core::mem::align_of::<AnnexKey<Fixed>>(), 4);
     assert!(!core::mem::needs_drop::<AnnexKey<Fixed>>());
 }
 
 #[test]
-fn rollback_reuse_rejects_old_publication_serial() {
-    let mut arena = NodeAnnexArena::new();
-    let mark = arena.mark();
-    let stale = arena.append_fixed::<Fixed>(&[7, 8]);
-    assert_eq!(arena.resolve_fixed(stale), Some([7, 8].as_slice()));
-    assert!(arena.rollback(mark));
-    let current = arena.append_fixed::<Fixed>(&[9, 10]);
-    assert!(arena.resolve_fixed(stale).is_none());
-    assert_eq!(arena.resolve_fixed(current), Some([9, 10].as_slice()));
+fn paired_annex_uses_exact_u32_superblock_cells() {
+    let annex = AnnexHarness::new();
+    assert!(annex.pool.has_packed_payload());
+    assert_eq!(annex.pool.resident_payload_slot_bytes(), 4);
+    assert_eq!(annex.pool.chunk_capacity(), 16_384);
+    assert_eq!((annex.pool.chunk_capacity() - 1) * 4, 65_532);
 }
 
 #[test]
-fn fixed_records_pad_instead_of_crossing_a_superblock() {
-    let mut arena = NodeAnnexArena::new();
-    let body = vec![0; ANNEX_WORDS_PER_BLOCK - 2];
-    let _ = arena.append_span::<()>(&body);
-    let fixed = arena.append_fixed::<Fixed>(&[1, 2, 3]);
-    assert_eq!(fixed.word_offset, 0);
-    assert_eq!(arena.metrics().boundary_padding_words, 1);
-    assert_eq!(arena.resolve_fixed(fixed), Some([1, 2, 3].as_slice()));
+fn rollback_reuse_rejects_old_publication_serial() {
+    let mut annex = AnnexHarness::new();
+    let _prefix = annex.writer().append_fixed::<Fixed>(&[1]);
+    let mark = annex.arena.operation_mark(&annex.pool);
+    let stale = annex.writer().append_fixed::<Fixed>(&[7, 8]);
+    assert_eq!(annex.view().resolve_fixed_shared(stale), Some(vec![7, 8]));
+    annex
+        .arena
+        .restore_operation(&mut annex.pool, mark)
+        .expect("rollback annex publication");
+    let current = annex.writer().append_fixed::<Fixed>(&[9, 10]);
+    assert!(annex.view().resolve_fixed_shared(stale).is_none());
+    assert_eq!(
+        annex.view().resolve_fixed_shared(current),
+        Some(vec![9, 10])
+    );
+}
+
+#[test]
+fn fixed_records_resolve_through_the_paired_annex_arena() {
+    let mut annex = AnnexHarness::new();
+    let fixed = annex.writer().append_fixed::<Fixed>(&[1, 2, 3]);
+    assert_eq!(
+        annex.view().resolve_fixed_shared(fixed),
+        Some(vec![1, 2, 3])
+    );
+}
+
+#[test]
+fn fixed_record_rotates_instead_of_crossing_an_annex_block() {
+    let mut annex = AnnexHarness::new();
+    let capacity = annex.pool.chunk_capacity();
+    let prefix = vec![1; capacity - 3];
+    let _prefix = annex.writer().append_span::<()>(&prefix);
+    let fixed = annex.writer().append_fixed::<Fixed>(&[7, 8]);
+    let words = fixed.words();
+    assert_eq!(
+        words[0], words[3],
+        "fixed record stays in one logical block"
+    );
+    assert_eq!(words[1], words[4], "fixed record keeps one incarnation");
+    assert_eq!(annex.view().resolve_fixed_shared(fixed), Some(vec![7, 8]));
+}
+
+#[test]
+fn dynamic_annex_span_crosses_exact_word_superblocks() {
+    let mut annex = AnnexHarness::new();
+    let _prefix = annex.writer().append_fixed::<Fixed>(&[1, 2, 3]);
+    let body: Vec<_> = (0..20_000).collect();
+    let key = annex.writer().append_span::<()>(&body);
+    assert_eq!(annex.view().detach_span(key), Some(body));
+}
+
+#[test]
+fn annex_key_rejects_a_foreign_pool_space() {
+    let mut source = AnnexHarness::new();
+    let key = source.writer().append_fixed::<Fixed>(&[7, 8]);
+    let foreign = AnnexHarness::new();
+    assert!(foreign.view().resolve_fixed_shared(key).is_none());
 }
 
 fn box_node() -> BoxNode<PageListId> {
@@ -292,24 +362,28 @@ fn all_node_kinds() -> Vec<Node> {
 
 #[test]
 fn every_node_kind_round_trips_through_record_and_annex() {
-    let mut arena = NodeAnnexArena::new();
+    let mut annex = AnnexHarness::new();
     let nodes = all_node_kinds();
     assert_eq!(nodes.len(), NodeKind::ALL.len());
     for (node, expected_kind) in nodes.into_iter().zip(NodeKind::ALL) {
         assert_eq!(node.kind(), expected_kind);
-        let record = NodeRecord::encode_owned(node.clone(), &mut arena);
+        let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
         assert_eq!(record.kind(), Some(expected_kind));
-        assert_eq!(record.decode_owned(&arena), Some(node), "{expected_kind:?}");
+        assert_eq!(
+            record.decode_owned(annex.view()),
+            Some(node),
+            "{expected_kind:?}"
+        );
     }
 }
 
 #[test]
 fn every_whatsit_subtype_round_trips() {
-    let mut arena = NodeAnnexArena::new();
+    let mut annex = AnnexHarness::new();
     for whatsit in whatsits() {
         let node = Node::Whatsit(whatsit);
-        let record = NodeRecord::encode_owned(node.clone(), &mut arena);
+        let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
         assert_eq!(record.kind(), Some(NodeKind::Whatsit));
-        assert_eq!(record.decode_owned(&arena), Some(node));
+        assert_eq!(record.decode_owned(annex.view()), Some(node));
     }
 }

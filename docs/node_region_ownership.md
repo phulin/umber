@@ -13,29 +13,28 @@ Where an older document implies that a raw list coordinate owns storage, that
 TeX box copy may alias an immutable node row, or that page-material liveness is
 computed through dependency counts, this document takes precedence.
 
-The design preserves the fixed-chunk work already completed for
-`ChunkPool<Node>`, `ForkArena<Node, Lane>`, stable generation-checked chunk
+The design preserves the fixed-chunk work completed for
+`ChunkPool<NodeRecord>`, `ForkArena<NodeRecord, Lane>`, stable generation-checked chunk
 keys, sealed payload marks, composable summaries, and atomic chunk-suffix
 settlement. Lists now use direct `ListRoot { head, tail, length }` coordinates
 over packed logical blocks carved from the same physical pool pages. There is
 no list-descriptor lane or owner-local range lookup.
 
-The pending physical cutover in [Arena-owned node lists](node_word_arena.md)
+The production physical cutover in [Arena-owned node lists](node_word_arena.md)
 and [Dense fork-arena superblocks](fork_arena_dense_prefix_emplacement.md)
-replaces the 168-byte owned node slots with 32-byte non-owning records and a
-typed word annex. Logical blocks become cursor/range boundaries inside exact
+replaced the 168-byte owned node slots with 32-byte non-owning records and a
+typed word annex. Logical blocks are cursor/range boundaries inside exact
 64 KiB dense storage. The unified logical-table prerequisite preserves every
 coarse semantic owner and TeX move/copy rule here while replacing physical-key
 admission and payload-rebranding transfers with pool-stable logical
 coordinates and paired node+annex envelope receipts.
 
-Production now couples the unchanged resident node arena and a separate annex
-word arena directly in `NodeRegion`. Checkpoint boundaries, closure-build
+Production couples the compact resident node arena and its typed annex arena
+directly in `NodeRegion`. Checkpoint boundaries, closure-build
 marks, detached suffixes, whole-region moves, history sharing, succession,
 rollback, and retirement consume a single paired value, so neither lane can be
-admitted independently. The downstream compact-record cutover replaces these
-physical payload stores without changing the logical coordinates or semantic
-owner transitions.
+admitted independently. The pool supplies shared physical block allocation,
+but owns no global annex arena and no resident owned-node representation.
 
 The following are explicitly rejected:
 

@@ -8,15 +8,10 @@ impl NodeRecord<PageMaterialLane> {
         key: AnnexKey<Kind>,
     ) -> Self {
         let key = key_words(key);
-        Self::new(
-            kind,
-            subtype,
-            flags,
-            [key[0], key[1], key[2], key[3], key[4], key[5], 0],
-        )
+        Self::new(kind, subtype, flags, key)
     }
 
-    pub(crate) fn encode_owned(node: Node, annex: &mut NodeAnnexArena) -> Self {
+    pub(crate) fn encode_owned(node: Node, annex: &mut NodeAnnexWriter<'_>) -> Self {
         match node {
             Node::Char { font, ch, origin } => {
                 let font = font.words();
@@ -55,7 +50,7 @@ impl NodeRecord<PageMaterialLane> {
                     source.push(origins.get(index).copied().unwrap_or_default().raw());
                 }
                 let source = annex.append_span::<LigatureSource>(&source);
-                let mut payload = Vec::with_capacity(11);
+                let mut payload = Vec::with_capacity(12);
                 encode_font(&mut payload, font);
                 payload.push(ch as u32);
                 append_words(&mut payload, source.words());
@@ -342,7 +337,7 @@ impl NodeRecord<PageMaterialLane> {
         }
     }
 
-    pub(crate) fn decode_owned(self, annex: &NodeAnnexArena) -> Option<Node> {
+    pub(crate) fn decode_owned(self, annex: NodeAnnexView<'_>) -> Option<Node> {
         let kind = self.kind()?;
         let subtype = self.subtype();
         let flags = self.flags();
@@ -353,18 +348,18 @@ impl NodeRecord<PageMaterialLane> {
                 ch: char::from_u32(words[4])?,
                 origin: OriginId::from_raw(words[5]),
             }),
-            NodeKind::Lig if subtype == 0 && flags & !3 == 0 && words[6] == 0 => {
+            NodeKind::Lig if subtype == 0 && flags & !3 == 0 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<LigaturePayload>(self))?;
-                if payload.len() != 11 {
+                if payload.len() != 12 {
                     return None;
                 }
                 let mut cursor = 0;
-                let font = decode_font(payload, &mut cursor)?;
+                let font = decode_font(&payload, &mut cursor)?;
                 let ch = char::from_u32(*payload.get(cursor)?)?;
                 cursor += 1;
                 let source =
-                    AnnexKey::<LigatureSource>::from_words(take_words(payload, &mut cursor)?);
+                    AnnexKey::<LigatureSource>::from_words(take_words(&payload, &mut cursor)?);
                 let source = annex.detach_span(source)?;
                 let count = *source.first()? as usize;
                 let origins_empty = decode_bool(*source.get(1)?)?;
@@ -423,7 +418,7 @@ impl NodeRecord<PageMaterialLane> {
                             depth: (flags & 16 != 0).then(|| decode_scaled(words[6])),
                         }),
                     }),
-                    leader @ (2 | 3) if flags == leader && words[6] == 0 => {
+                    leader @ (2 | 3) if flags == leader => {
                         let payload = annex
                             .resolve_fixed_shared(key_from_record::<LeaderBoxPayload>(self))?;
                         if payload.len() != 32 {
@@ -458,23 +453,23 @@ impl NodeRecord<PageMaterialLane> {
                     depth: (flags & 4 != 0).then(|| decode_scaled(words[2])),
                 })
             }
-            NodeKind::HList | NodeKind::VList if subtype == 0 && flags == 0 && words[6] == 0 => {
+            NodeKind::HList | NodeKind::VList if subtype == 0 && flags == 0 => {
                 let payload = annex.resolve_fixed_shared(key_from_record::<BoxPayload>(self))?;
-                let boxed = decode_box_payload(payload)?;
+                let boxed = decode_box_payload(&payload)?;
                 Some(if kind == NodeKind::HList {
                     Node::HList(boxed)
                 } else {
                     Node::VList(boxed)
                 })
             }
-            NodeKind::Unset if subtype == 0 && words[6] == 0 => {
+            NodeKind::Unset if subtype == 0 => {
                 let payload = annex.resolve_fixed_shared(key_from_record::<UnsetPayload>(self))?;
                 if payload.len() != 15 || flags & !0x1f_ffff != 0 {
                     return None;
                 }
                 let mut cursor = 0;
-                let children = decode_page_list(payload, &mut cursor)?;
-                let values: [u32; 5] = take_words(payload, &mut cursor)?;
+                let children = decode_page_list(&payload, &mut cursor)?;
+                let values: [u32; 5] = take_words(&payload, &mut cursor)?;
                 Some(Node::Unset(UnsetNode::new(UnsetNodeFields {
                     kind: if flags & (1 << 20) == 0 {
                         UnsetKind::HBox
@@ -492,7 +487,7 @@ impl NodeRecord<PageMaterialLane> {
                     children,
                 })))
             }
-            NodeKind::Disc if flags <= u8::MAX as u32 && words[6] == 0 => {
+            NodeKind::Disc if flags <= u8::MAX as u32 => {
                 let payload = annex.resolve_fixed_shared(key_from_record::<DiscPayload>(self))?;
                 if payload.len() != 30 {
                     return None;
@@ -500,9 +495,9 @@ impl NodeRecord<PageMaterialLane> {
                 let mut cursor = 0;
                 Some(Node::Disc {
                     kind: decode_disc_kind(subtype)?,
-                    pre: decode_page_list(payload, &mut cursor)?,
-                    post: decode_page_list(payload, &mut cursor)?,
-                    replace: decode_page_list(payload, &mut cursor)?,
+                    pre: decode_page_list(&payload, &mut cursor)?,
+                    post: decode_page_list(&payload, &mut cursor)?,
+                    replace: decode_page_list(&payload, &mut cursor)?,
                     physical_replace_count: flags as u8,
                 })
             }
@@ -512,16 +507,16 @@ impl NodeRecord<PageMaterialLane> {
                     tokens: NodeTokenKey::from_coordinates(words[..6].try_into().ok()?),
                 })
             }
-            NodeKind::Ins if subtype == 0 && flags <= u16::MAX as u32 && words[6] == 0 => {
+            NodeKind::Ins if subtype == 0 && flags <= u16::MAX as u32 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<InsertionPayload>(self))?;
                 if payload.len() != 17 {
                     return None;
                 }
                 let mut cursor = 0;
-                let content = decode_page_list(payload, &mut cursor)?;
-                let split_top_skip = decode_glue(take_words(payload, &mut cursor)?)?;
-                let scalar: [u32; 3] = take_words(payload, &mut cursor)?;
+                let content = decode_page_list(&payload, &mut cursor)?;
+                let split_top_skip = decode_glue(take_words(&payload, &mut cursor)?)?;
+                let scalar: [u32; 3] = take_words(&payload, &mut cursor)?;
                 Some(Node::Ins {
                     class: flags as u16,
                     size: decode_scaled(scalar[0]),
@@ -552,7 +547,7 @@ impl NodeRecord<PageMaterialLane> {
                     _ => return None,
                 }))
             }
-            NodeKind::MathNoad if subtype == 0 && flags == 0 && words[6] == 0 => {
+            NodeKind::MathNoad if subtype == 0 && flags == 0 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<MathNoadPayload>(self))?;
                 if payload.len() != 36 {
@@ -560,24 +555,24 @@ impl NodeRecord<PageMaterialLane> {
                 }
                 let mut cursor = 0;
                 Some(Node::MathNoad(MathNoad {
-                    kind: decode_noad_kind(payload, &mut cursor)?,
-                    nucleus: decode_math_field(payload, &mut cursor)?,
-                    subscript: decode_math_field(payload, &mut cursor)?,
-                    superscript: decode_math_field(payload, &mut cursor)?,
+                    kind: decode_noad_kind(&payload, &mut cursor)?,
+                    nucleus: decode_math_field(&payload, &mut cursor)?,
+                    subscript: decode_math_field(&payload, &mut cursor)?,
+                    superscript: decode_math_field(&payload, &mut cursor)?,
                 }))
             }
-            NodeKind::FractionNoad if subtype == 0 && flags & !7 == 0 && words[6] == 0 => {
+            NodeKind::FractionNoad if subtype == 0 && flags & !7 == 0 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<FractionPayload>(self))?;
                 if payload.len() != 23 {
                     return None;
                 }
                 let mut cursor = 0;
-                let numerator = decode_page_list(payload, &mut cursor)?;
-                let denominator = decode_page_list(payload, &mut cursor)?;
+                let numerator = decode_page_list(&payload, &mut cursor)?;
+                let denominator = decode_page_list(&payload, &mut cursor)?;
                 let thickness = *payload.get(cursor)?;
                 cursor += 1;
-                let delimiters: [u32; 2] = take_words(payload, &mut cursor)?;
+                let delimiters: [u32; 2] = take_words(&payload, &mut cursor)?;
                 Some(Node::FractionNoad(MathFraction {
                     numerator,
                     denominator,
@@ -593,7 +588,7 @@ impl NodeRecord<PageMaterialLane> {
             NodeKind::MathStyle if flags == 0 && words.iter().all(|word| *word == 0) => {
                 Some(Node::MathStyle(decode_math_style(subtype)?))
             }
-            NodeKind::MathChoice if subtype == 0 && flags == 0 && words[6] == 0 => {
+            NodeKind::MathChoice if subtype == 0 && flags == 0 => {
                 let payload =
                     annex.resolve_fixed_shared(key_from_record::<MathChoicePayload>(self))?;
                 if payload.len() != 40 {
@@ -601,13 +596,13 @@ impl NodeRecord<PageMaterialLane> {
                 }
                 let mut cursor = 0;
                 Some(Node::MathChoice(MathChoice {
-                    display: decode_page_list(payload, &mut cursor)?,
-                    text: decode_page_list(payload, &mut cursor)?,
-                    script: decode_page_list(payload, &mut cursor)?,
-                    script_script: decode_page_list(payload, &mut cursor)?,
+                    display: decode_page_list(&payload, &mut cursor)?,
+                    text: decode_page_list(&payload, &mut cursor)?,
+                    script: decode_page_list(&payload, &mut cursor)?,
+                    script_script: decode_page_list(&payload, &mut cursor)?,
                 }))
             }
-            NodeKind::MathList if subtype == 0 && flags <= 1 && words[6] == 0 => {
+            NodeKind::MathList if subtype == 0 && flags <= 1 => {
                 let payload = annex.resolve_fixed_shared(key_from_record::<ListPayload>(self))?;
                 if payload.len() != 10 {
                     return None;
@@ -615,7 +610,7 @@ impl NodeRecord<PageMaterialLane> {
                 let mut cursor = 0;
                 Some(Node::MathList(MathListNode {
                     display: flags == 1,
-                    content: decode_page_list(payload, &mut cursor)?,
+                    content: decode_page_list(&payload, &mut cursor)?,
                 }))
             }
             NodeKind::Nonscript
@@ -623,14 +618,14 @@ impl NodeRecord<PageMaterialLane> {
             {
                 Some(Node::Nonscript)
             }
-            NodeKind::Adjust if subtype == 0 && flags <= 1 && words[6] == 0 => {
+            NodeKind::Adjust if subtype == 0 && flags <= 1 => {
                 let payload = annex.resolve_fixed_shared(key_from_record::<ListPayload>(self))?;
                 if payload.len() != 10 {
                     return None;
                 }
                 let mut cursor = 0;
                 Some(Node::Adjust(AdjustNode {
-                    content: decode_page_list(payload, &mut cursor)?,
+                    content: decode_page_list(&payload, &mut cursor)?,
                     pre: flags == 1,
                 }))
             }

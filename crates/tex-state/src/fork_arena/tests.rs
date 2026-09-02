@@ -1102,11 +1102,6 @@ fn direct_mapped_clone_metadata_failure_restores_the_exact_operation_mark() {
         restored.payload_tail_summary,
         operation.payload_tail_summary
     );
-    assert_eq!(restored.descriptor_chunks, operation.descriptor_chunks);
-    assert_eq!(
-        restored.descriptor_tail_used,
-        operation.descriptor_tail_used
-    );
     assert_eq!(
         source
             .list(&pool, source_root)
@@ -1180,7 +1175,7 @@ fn exhaustive_test_audit_rejects_unconstructible_length_and_chain_roots() {
 
 #[test]
 fn reverse_tail_chunk_work_is_independent_of_list_size() {
-    fn tail_work(size: u32) -> (Vec<u32>, usize, usize) {
+    fn tail_work(size: u32) -> (Vec<u32>, usize) {
         let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
         let mut arena = ForkArena::<u32, ActiveLane>::new();
         let root = {
@@ -1195,21 +1190,15 @@ fn reverse_tail_chunk_work_is_independent_of_list_size() {
         let tail = (0..3)
             .map(|_| *nodes.next_back().expect("three-node tail"))
             .collect::<Vec<_>>();
-        (
-            tail,
-            nodes.reverse_descriptor_visits(),
-            nodes.reverse_chunk_crossings(),
-        )
+        (tail, nodes.reverse_chunk_crossings())
     }
 
     let short = tail_work(8);
     let long = tail_work(4_096);
     assert_eq!(short.0, vec![7, 6, 5]);
     assert_eq!(long.0, vec![4_095, 4_094, 4_093]);
-    assert_eq!(short.1, 0, "direct roots visit no list descriptors");
-    assert_eq!(long.1, 0, "direct roots visit no list descriptors");
-    assert_eq!(short.2, long.2);
-    assert_eq!(short.2, 2, "three one-node blocks cross two boundaries");
+    assert_eq!(short.1, long.1);
+    assert_eq!(short.1, 2, "three one-node blocks cross two boundaries");
 }
 
 #[test]
@@ -1217,17 +1206,14 @@ fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let direct = list(&mut arena, &mut pool, [1, 2]);
-    let mark = arena.operation_mark(&pool);
-
     assert_eq!(direct.len(), 2);
     assert_eq!(direct.head.raw, direct.tail.raw);
     assert_eq!(direct.head.offset, 0);
     assert_eq!(direct.tail.offset, 2);
-    assert_eq!(mark.descriptor_chunks, 0);
     assert_eq!(
         arena
             .list(&pool, direct)
-            .expect("direct descriptor")
+            .expect("direct list")
             .iter()
             .copied()
             .collect::<Vec<_>>(),
@@ -1922,7 +1908,7 @@ fn active_shared_subrange_crosses_chunks_with_one_counted_copy() {
         .expect("open destination");
     arena
         .append_active_list_range(&mut pool, &mut active, source, 1..4)
-        .expect("append cross-descriptor range");
+        .expect("append cross-chunk range");
     arena
         .finalize_active_list(&mut pool, &mut active)
         .expect("finalize destination");
@@ -1997,11 +1983,6 @@ fn shared_copy_operation_rollback_restores_the_exact_source_frontier() {
     assert_eq!(
         restored.payload_tail_summary,
         source_mark.payload_tail_summary
-    );
-    assert_eq!(restored.descriptor_chunks, source_mark.descriptor_chunks);
-    assert_eq!(
-        restored.descriptor_tail_used,
-        source_mark.descriptor_tail_used
     );
     assert_eq!(
         arena

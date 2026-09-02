@@ -1,6 +1,6 @@
 use super::*;
 
-fn append_bytes<Kind>(annex: &mut NodeAnnexArena, bytes: &[u8]) -> AnnexKey<Kind> {
+fn append_bytes<Kind>(annex: &mut NodeAnnexWriter<'_>, bytes: &[u8]) -> AnnexKey<Kind> {
     let mut body = Vec::with_capacity(1 + bytes.len().div_ceil(4));
     body.push(u32::try_from(bytes.len()).expect("node annex byte length fits u32"));
     for chunk in bytes.chunks(4) {
@@ -11,7 +11,7 @@ fn append_bytes<Kind>(annex: &mut NodeAnnexArena, bytes: &[u8]) -> AnnexKey<Kind
     annex.append_span(&body)
 }
 
-fn detach_bytes<Kind>(annex: &NodeAnnexArena, key: AnnexKey<Kind>) -> Option<Vec<u8>> {
+fn detach_bytes<Kind>(annex: NodeAnnexView<'_>, key: AnnexKey<Kind>) -> Option<Vec<u8>> {
     let body = annex.detach_span(key)?;
     let len = *body.first()? as usize;
     if body.len() != 1 + len.div_ceil(4) {
@@ -110,23 +110,18 @@ fn decode_destination_kind(tag: u32, words: [u32; 3], presence: u32) -> Option<P
     }
 }
 
-pub(super) fn encode_whatsit(value: Whatsit, annex: &mut NodeAnnexArena) -> NodeRecord {
+pub(super) fn encode_whatsit(value: Whatsit, annex: &mut NodeAnnexWriter<'_>) -> NodeRecord {
     match value {
         Whatsit::OpenOut { slot, path } => {
-            let key = append_bytes::<Utf8Span>(annex, path.as_bytes()).words();
-            NodeRecord::new(
+            let path = append_bytes::<Utf8Span>(annex, path.as_bytes());
+            let mut body = Vec::with_capacity(8);
+            append_words(&mut body, path.words());
+            body.push(u32::from(slot.raw()));
+            NodeRecord::with_key(
                 NodeKind::Whatsit,
                 0,
                 0,
-                [
-                    key[0],
-                    key[1],
-                    key[2],
-                    key[3],
-                    key[4],
-                    key[5],
-                    u32::from(slot.raw()),
-                ],
+                annex.append_fixed::<OpenOutPayload>(&body),
             )
         }
         Whatsit::CloseOut { slot } => NodeRecord::new(
@@ -242,12 +237,14 @@ pub(super) fn encode_whatsit(value: Whatsit, annex: &mut NodeAnnexArena) -> Node
                 crate::PdfColorStackAction::Pop => (2, None),
                 crate::PdfColorStackAction::Current => (3, None),
             };
-            let key = key.map_or([0; 6], AnnexKey::words);
-            NodeRecord::new(
+            let mut body = Vec::with_capacity(10);
+            body.extend([id, action, bool_word(key.is_some())]);
+            body.extend(key.map_or([0; 7], AnnexKey::words));
+            NodeRecord::with_key(
                 NodeKind::Whatsit,
                 16,
-                action,
-                [key[0], key[1], key[2], key[3], key[4], key[5], id],
+                0,
+                annex.append_fixed::<PdfColorStackPayload>(&body),
             )
         }
         Whatsit::PdfSavePos => NodeRecord::new(NodeKind::Whatsit, 17, 0, [0; 7]),
@@ -368,19 +365,23 @@ fn decode_literal_mode(value: u32) -> Option<PdfLiteralMode> {
     }
 }
 
-pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Option<Node> {
+pub(super) fn decode_whatsit(record: NodeRecord, annex: NodeAnnexView<'_>) -> Option<Node> {
     let subtype = record.subtype();
     let flags = record.flags();
     let words = record.words();
     let zero_tail = |start: usize| words[start..].iter().all(|word| *word == 0);
     let value = match subtype {
-        0 if flags == 0 && words[6] < 16 => {
+        0 if flags == 0 => {
+            let payload = annex.resolve_fixed_shared(key_from_record::<OpenOutPayload>(record))?;
+            if payload.len() != 8 || payload[7] >= 16 {
+                return None;
+            }
             let path = detach_bytes(
                 annex,
-                AnnexKey::<Utf8Span>::from_words(words[..6].try_into().ok()?),
+                AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?),
             )?;
             Whatsit::OpenOut {
-                slot: StreamSlot::new(words[6] as u8),
+                slot: StreamSlot::new(payload[7] as u8),
                 path: String::from_utf8(path).ok()?,
             }
         }
@@ -391,36 +392,36 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Opti
             sink: decode_print_sink(words[6])?,
             tokens: NodeTokenKey::from_coordinates(words[..6].try_into().ok()?),
         },
-        3 if flags == 0 && words[6] == 0 => {
+        3 if flags == 0 => {
             let payload = annex.resolve_fixed_shared(key_from_record::<SpecialPayload>(record))?;
-            if payload.len() != 12 {
+            if payload.len() != 14 {
                 return None;
             }
             Whatsit::Special {
                 class: String::from_utf8(detach_bytes(
                     annex,
-                    AnnexKey::<Utf8Span>::from_words(payload[..6].try_into().ok()?),
+                    AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?),
                 )?)
                 .ok()?,
                 payload: detach_bytes(
                     annex,
-                    AnnexKey::<ByteSpan>::from_words(payload[6..].try_into().ok()?),
+                    AnnexKey::<ByteSpan>::from_words(payload[7..].try_into().ok()?),
                 )?,
             }
         }
-        4 if flags == 0 && words[6] == 0 => {
+        4 if flags == 0 => {
             let payload =
                 annex.resolve_fixed_shared(key_from_record::<DeferredSpecialPayload>(record))?;
-            if payload.len() != 12 {
+            if payload.len() != 13 {
                 return None;
             }
             Whatsit::DeferredSpecial {
                 class: String::from_utf8(detach_bytes(
                     annex,
-                    AnnexKey::<Utf8Span>::from_words(payload[..6].try_into().ok()?),
+                    AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?),
                 )?)
                 .ok()?,
-                tokens: NodeTokenKey::from_coordinates(payload[6..].try_into().ok()?),
+                tokens: NodeTokenKey::from_coordinates(payload[7..].try_into().ok()?),
             }
         }
         5 if flags == 0 && zero_tail(1) => Whatsit::PdfReferenceObject { object: words[0] },
@@ -438,7 +439,7 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Opti
         10 if flags <= 1 && words.iter().all(|word| *word == 0) => {
             Whatsit::PdfRunningLink(flags == 1)
         }
-        11 if flags <= 2 && words[6] == 0 => Whatsit::PdfLiteral {
+        11 if flags <= 2 => Whatsit::PdfLiteral {
             mode: decode_literal_mode(flags)?,
             payload: detach_bytes(annex, key_from_record::<ByteSpan>(record))?,
         },
@@ -446,29 +447,29 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Opti
             mode: decode_literal_mode(flags)?,
             tokens: NodeTokenKey::from_coordinates(words[..6].try_into().ok()?),
         },
-        13 if flags == 0 && words[6] == 0 => Whatsit::PdfSetMatrix {
+        13 if flags == 0 => Whatsit::PdfSetMatrix {
             payload: detach_bytes(annex, key_from_record::<ByteSpan>(record))?,
         },
         14 if flags == 0 && words.iter().all(|word| *word == 0) => Whatsit::PdfSave,
         15 if flags == 0 && words.iter().all(|word| *word == 0) => Whatsit::PdfRestore,
-        16 if flags <= 3 => {
-            let bytes = || {
-                detach_bytes(
-                    annex,
-                    AnnexKey::<ByteSpan>::from_words(words[..6].try_into().ok()?),
-                )
-            };
-            let action = match flags {
-                0 => crate::PdfColorStackAction::Set(bytes()?),
-                1 => crate::PdfColorStackAction::Push(bytes()?),
-                2 if words[..6].iter().all(|word| *word == 0) => crate::PdfColorStackAction::Pop,
-                3 if words[..6].iter().all(|word| *word == 0) => {
-                    crate::PdfColorStackAction::Current
-                }
+        16 if flags == 0 => {
+            let payload =
+                annex.resolve_fixed_shared(key_from_record::<PdfColorStackPayload>(record))?;
+            if payload.len() != 10 {
+                return None;
+            }
+            let present = decode_bool(payload[2])?;
+            let key = AnnexKey::<ByteSpan>::from_words(payload[3..].try_into().ok()?);
+            let bytes = || detach_bytes(annex, key);
+            let action = match (payload[1], present) {
+                (0, true) => crate::PdfColorStackAction::Set(bytes()?),
+                (1, true) => crate::PdfColorStackAction::Push(bytes()?),
+                (2, false) => crate::PdfColorStackAction::Pop,
+                (3, false) => crate::PdfColorStackAction::Current,
                 _ => return None,
             };
             Whatsit::PdfColorStack {
-                id: words[6],
+                id: payload[0],
                 action,
             }
         }
@@ -503,7 +504,7 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Opti
                 }
             }
         }
-        23 if words[6] == 0 => {
+        23 => {
             let payload =
                 annex.resolve_fixed_shared(key_from_record::<PdfDestinationPayload>(record))?;
             if payload.len() != 12 || flags >> 8 != 0 {
@@ -519,7 +520,7 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: &NodeAnnexArena) -> Opti
                 kind,
             }))
         }
-        24 if words[6] == 0 && flags & !0xf == 0 => {
+        24 if flags & !0xf == 0 => {
             let payload =
                 annex.resolve_fixed_shared(key_from_record::<PdfThreadPayload>(record))?;
             if payload.len() != 16 {

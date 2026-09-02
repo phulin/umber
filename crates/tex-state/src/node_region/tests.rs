@@ -56,7 +56,10 @@ fn resident_nodes<Role>(
         .iter()
         .map(|record| {
             record
-                .decode_owned(&pool.record_annex)
+                .decode_owned(crate::node_record::NodeAnnexView::new(
+                    &pool.annex_chunks,
+                    &region.annex_arena,
+                ))
                 .expect("typed annex")
         })
         .collect()

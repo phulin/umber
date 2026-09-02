@@ -1,6 +1,5 @@
 use super::*;
 
-pub(super) const ANNEX_WORDS_PER_BLOCK: usize = 16_384;
 const HEADER_PRESENT: u32 = 1 << 31;
 const KIND_MASK: u32 = 0x1f;
 const SUBTYPE_SHIFT: u32 = 5;

@@ -5,9 +5,10 @@
 This document defines the compact chunk/range implementation below
 [Node-region ownership](node_region_ownership.md), which is authoritative for
 coarse node lifetime, TeX move/copy semantics, and exact checkpoint history.
-The 32-byte non-owning node-record design below is implementation-ready but is
-not yet the production representation. Its approval and cutover are tracked by
-`umber2-66p0.8.40.113.5` and its children.
+The 32-byte non-owning node record and paired typed annex are the production
+page-material representation as of 2026-09-02. The atomic backing cutover is
+tracked by `umber2-66p0.8.40.113.5.4`; the separate authenticated census and
+production-approval work remains `umber2-66p0.8.40.113.5.5`.
 
 The first attempted cutover exposed two prerequisites which this document now
 resolves. A physical `RawChunkKey` cannot be embedded in `PageListId`, a
@@ -23,35 +24,29 @@ rewriting its records. The selected design therefore separates three facts:
 - move-only aggregate envelopes say which semantic owner may admit a set of
   node and annex blocks.
 
-The logical-coordinate and aggregate-boundary prerequisites are now in
-production. `NodePool` owns the unchanged resident `Node<PageListId>` backend
-and a separate annex-word pool; every `NodeRegion` carries matching lanes.
+The logical-coordinate and aggregate-boundary prerequisites and the compact
+backing are now in production. `NodePool` owns the two exact physical pools,
+while every `NodeRegion` exclusively owns matching `NodeRecord` and typed
+`u32` annex arena states.
 Closure marks, retained checkpoint marks, accepted/candidate settlement,
 history sharing, page succession, page/durable moves, rollback, rootless
-release, and retirement pair those lanes directly. The compact cutover
-replaces the physical payload stores atomically; it does not add a second
-resident node representation or change `PageListId` words.
+release, and retirement pair those lanes directly. No pool-global annex owner,
+second resident node representation, or list-descriptor lane remains.
 
-This is the prerequisite design tracked by `umber2-66p0.8.40.113.5.6`. It does
-not authorize the production record cutover. The cutover remains blocked until
-the explicit approval and implementation children named below land.
-
-Production currently uses one caller-owned `ChunkPool<T>` plus typed,
-coordinate-only `ForkArena<T, Lane>` states. The compact cutover replaces the
+Production uses one caller-owned `ChunkPool<T>` plus typed,
+coordinate-only `ForkArena<T, Lane>` states. The compact backing uses the
 physical payload slots with the exact 64 KiB dense node and annex arenas from
 [Dense fork-arena superblocks](fork_arena_dense_prefix_emplacement.md).
-Existing list blocks become logical cursor/range boundaries inside that dense
+Existing list blocks are logical cursor/range boundaries inside that dense
 storage; they are not physical allocations. Lists remain copy-only borrowed
 coordinates and own no payload. Reads take a shared region borrow and use flat
 direct indexing. Allocation, sealing, settlement, and pruning require the
 caller's exclusive mutable owner borrow.
 
-Production currently publishes every nonempty list, including a one-range
-list, through the range metadata owned by `ForkArena` and names it with the
-current 32-byte `ArenaListId`. The page-semantic wrapper adds one optional
+Production publishes every nonempty list through direct head/tail/predecessor
+metadata owned by `ForkArena` and names it with the 32-byte `ArenaListId`. The page-semantic wrapper adds one optional
 maintained identity scalar, making `PageListId` exactly 40 bytes. The logical
-table migration keeps equivalent range/predecessor metadata beside the flat
-logical rows. The compact record keeps the complete pool-stable coordinate in
+table keeps the predecessor metadata beside the flat logical rows. The compact record keeps the complete pool-stable coordinate in
 the annex rather than weakening its admission or identity proof.
 
 When incremental convergence requests semantic identity before publication,
@@ -68,31 +63,24 @@ is disabled, append, slice, compose, and active-range retention perform zero
 node hashing and zero summary combination.
 
 `ArenaListView` is a copy-only direct borrow of both the coordinate lane and
-the physical pool. Today its returned node references carry the pool borrow
-rather than the temporary view borrow. The compact cutover returns the
-equivalent borrowed `NodeView`, which additionally borrows the admitted annex
-view. `NodeCursor` retains its slice adapter for pure tests and its
+the physical pool. Its returned record references carry the pool borrow rather
+than the temporary view borrow; `NodeCursor` projects borrowed `NodeView`
+values through the admitted paired annex. `NodeCursor` retains its slice adapter for pure tests and its
 page-material variant without materialization or a guard-owned lifetime.
 
 `ActiveListBuilder` is the persistent append boundary. It is move-only and
 stores only private generation-checked coordinates plus scalar pending-range
-and descriptor state. It has explicit vacant, open, and sealed states. No
+state. It has explicit vacant, open, and sealed states. No
 state holds a reference, pointer, `Rc`, or `RefCell`; each operation receives
 the pool and arena explicitly. Open builders cannot become retained marks and
 must be finalized or rolled back before a whole-chunk checkpoint boundary can
 be sealed.
 
-New page material crosses that boundary through one resident-slot reservation.
-Production currently lends the final `Option<Node>` place to one inlined
-initializer. The compact cutover instead coordinates annex publication with
-the final `VacantSlot<NodeRecord>` from the dense prefix substrate; no vacancy
-tag remains. The facade derives child dependency metadata and completes the
-optional identity summary from that resident value. No whole-node return value
-crosses the generic arena layers. A rejected foreign builder never reserves a
-destination, and a rejected child restores the annex cursor before abandoning
-that exact unpublished node reservation. This removes the intermediate
-whole-node carriers without adding a payload owner, alternate node
-representation, allocation, or rollback state; explicit TeX/source-copy paths
+New page material crosses that boundary through one final compact-record
+reservation. Destination-directed builders publish typed annex words and the
+corresponding `NodeRecord` in the paired operation; rejection restores both
+tails. No whole owned node is resident in `NodeRegion`, and no whole-node
+return value crosses the generic arena layers. Explicit TeX/source-copy paths
 remain separately named value-copy boundaries.
 
 The `TypesetState::page_nodes` contract returns this borrowed `NodeCursor`, not
@@ -171,15 +159,16 @@ session must reach a stable table high-water when its semantic owners do. A
 hole is never skipped through a search structure and compaction is not a
 fallback for excessive metadata.
 
-An annex cursor uses the existing six-word shape with `owner` redefined as the
-pool-stable annex `space`:
+An annex cursor uses a seven-word compact direct-list shape. The admitted
+paired view supplies the pool-stable annex space:
 
 ```text
 AnnexKey<K>
-  space: u32
-  block_ordinal: u32
-  logical_block_incarnation: u32
-  word_offset: u32
+  head_block_ordinal: u32
+  head_block_incarnation: u32
+  head_word_offset: u32
+  tail_block_ordinal: u32
+  tail_block_incarnation: u32
   word_len: u32
   publication_serial: u32
 ```
@@ -373,12 +362,9 @@ No group, journal, output, or scratch wrapper becomes forkable merely because
 it uses exact superblocks. Only the generation/page aggregate owns the
 accepted/candidate table transaction.
 
-### Required substrate APIs
+### Implemented substrate APIs
 
-`tex-dense-arena` currently puts its physical store inside one
-`GenerationArena`, so it cannot yet support multiple semantic regions or
-move-only envelope transfer. Before node integration it must expose, in safe
-Rust:
+The dense substrate and `ForkArena` expose these safe-Rust capabilities:
 
 - a typed `BlockStore<T>` whose private `BlockId` can be resolved, copied into
   one fresh tail, and released only by owner receipts;
@@ -477,9 +463,9 @@ detaches stable source recipes while the page arena is still borrowed.
 
 ## Compact non-owning node record
 
-### Current production layout audit
+### Former owned-enum layout audit
 
-The supported 64-bit compiler layout for `Node<PageListId>` is 168 bytes at
+Before the production cutover, the supported 64-bit compiler layout for `Node<PageListId>` was 168 bytes at
 alignment 8 and `needs_drop::<Node<PageListId>>() == true`. The audit command
 uses compiler layout output for the concrete page monomorphization, not an
 estimate from source syntax. Its important component widths are:
@@ -495,7 +481,7 @@ estimate from source syntax. Its important component widths are:
 | `MathField<PageListId>`            |           48 / 8 | Copy tagged field; its largest alternative is one 40-byte child         |
 | `Whatsit<GlueSpec, NodeTokenList>` |           56 / 8 | Mixed; some alternatives own `String`, `Vec`, or `Box`; tokens are keys |
 
-The number in the current-size column below is the compiler-reported variant
+The number in the former-size column below is the compiler-reported variant
 payload after the one-byte outer discriminant, including variant-local
 padding. A variant which has no owned field still pays the 168-byte enum width.
 
@@ -578,7 +564,7 @@ closed.
 Seven payload words are the exact common-inline budget. They hold a full
 16-byte `FontId`, Unicode scalar, and origin for `Char`; a full font, amount,
 and character for `MarginKern`; all four glue words plus all three rule-leader
-dimensions; or one six-word typed handle plus one scalar. Every unused word is
+dimensions; or one seven-word typed handle. Every unused word is
 zeroed. Code never transmutes the record, hashes padding, or serializes native
 bytes: constructors and views explicitly encode and decode integers, scaled
 values, handles, and enums.
@@ -594,24 +580,28 @@ topology.
 
 ### Typed word annex
 
-The pool's one logical `NodeAnnexArena<Lane>` stores every rare or large
-page-lifetime field. Each `NodeRegion` owns the disjoint annex envelopes which
-its nodes may admit. The physical payload is `u32`, but private typed codecs
-and invariant-branded handles preserve field types:
+Each `NodeRegion` owns one `ForkArena<u32, NodeAnnexLane>` containing every
+rare or large page-lifetime field admitted by its nodes. `NodePool` supplies
+only the shared exact-block allocation substrate; there is no pool-global
+annex arena or second annex owner. Private typed codecs and invariant-branded
+handles preserve field types:
 
 ```text
 AnnexKey<K>
-  space: u32
-  block_ordinal: u32
-  logical_block_incarnation: u32
-  word_offset: u32
+  head_block_ordinal: u32
+  head_block_incarnation: u32
+  head_word_offset: u32
+  tail_block_ordinal: u32
+  tail_block_incarnation: u32
   word_len: u32
   publication_serial: u32
 ```
 
-`AnnexKey<K>` is exactly 24 bytes, or six node words. `AnnexSpan<E>` has the
-same six-word coordinate shape and interprets `word_len` in the element codec
-for `E`. Constructors are private. Resolution verifies space, region envelope, flat-table
+`AnnexKey<K>` is exactly 28 bytes, or seven node words. The pool space is
+supplied by the admitted paired view rather than stored redundantly in the
+record. The tail offset is derived from the head, length, and exact
+16,384-word block capacity. Constructors are private. Resolution verifies
+space, region envelope, flat-table
 ordinal, logical block incarnation, initialized bounds, publication serial,
 expected fixed word count or span divisibility, and the type selected by the
 node header before returning a borrowed view. The flat view table maps that
@@ -632,26 +622,26 @@ not one allocation or cursor per payload type.
 Every fixed record starts with its publication serial; the sizes below include
 that word. Reusing a truncated offset assigns a fresh serial without changing
 the logical incarnation of valid earlier records in the same block. The
-pool's next-publication serial is monotonic across rejection and rollback,
+physical pool's next-publication serial is monotonic across rejection and rollback,
 never rewinds, and fails before u32 exhaustion. Dynamic spans begin with the
 same serial word. The fixed codecs are:
 
-| Typed codec              | Words | Exact content                                                                                               |
-| ------------------------ | ----: | ----------------------------------------------------------------------------------------------------------- |
-| `LigaturePayload`        |    12 | serial, font 4, displayed character 1, and one six-word `LigatureSource` span; flags are in the node header |
-| `BoxPayload`             |    29 | serial, four dimensions, glue ratio, packed box/glue enums, child, optional diagnostic child, overlap       |
-| `LeaderBoxPayload`       |    33 | serial, four glue words, and the 28 content words of `BoxPayload`                                           |
-| `UnsetPayload`           |    16 | serial, child, and five scaled values; span count, orders, and box kind are in the node header              |
-| `DiscPayload`            |    31 | serial and three children; kind and physical count are in the node header                                   |
-| `InsertionPayload`       |    18 | serial, child, glue, size, split depth, and penalty; class is in the node header                            |
-| `MathNoadPayload`        |    37 | serial, noad kind, and three fixed 11-word math fields                                                      |
-| `FractionPayload`        |    24 | serial, two children, thickness, and delimiter values; presence flags are in the node header                |
-| `MathChoicePayload`      |    41 | serial and four children                                                                                    |
-| `ListPayload`            |    11 | serial and one child; `MathList` display or `Adjust` pre is in the node header                              |
-| `SpecialPayload`         |    13 | serial, UTF-8 class span, and byte payload span                                                             |
-| `DeferredSpecialPayload` |    13 | serial, UTF-8 class span, and generation token key                                                          |
-| `PdfDestinationPayload`  |    14 | serial, identifier, structure value, and destination values; tags/presence are in the node header           |
-| `PdfThreadPayload`       |    19 | serial, typed identifier, dimensions, attributes token key, and running flag                                |
+| Typed codec              | Words | Exact content                                                                                                 |
+| ------------------------ | ----: | ------------------------------------------------------------------------------------------------------------- |
+| `LigaturePayload`        |    13 | serial, font 4, displayed character 1, and one seven-word `LigatureSource` span; flags are in the node header |
+| `BoxPayload`             |    29 | serial, four dimensions, glue ratio, packed box/glue enums, child, optional diagnostic child, overlap         |
+| `LeaderBoxPayload`       |    33 | serial, four glue words, and the 28 content words of `BoxPayload`                                             |
+| `UnsetPayload`           |    16 | serial, child, and five scaled values; span count, orders, and box kind are in the node header                |
+| `DiscPayload`            |    31 | serial and three children; kind and physical count are in the node header                                     |
+| `InsertionPayload`       |    18 | serial, child, glue, size, split depth, and penalty; class is in the node header                              |
+| `MathNoadPayload`        |    37 | serial, noad kind, and three fixed 11-word math fields                                                        |
+| `FractionPayload`        |    24 | serial, two children, thickness, and delimiter values; presence flags are in the node header                  |
+| `MathChoicePayload`      |    41 | serial and four children                                                                                      |
+| `ListPayload`            |    11 | serial and one child; `MathList` display or `Adjust` pre is in the node header                                |
+| `SpecialPayload`         |    15 | serial, UTF-8 class span, and byte payload span                                                               |
+| `DeferredSpecialPayload` |    14 | serial, UTF-8 class span, and generation token key                                                            |
+| `PdfDestinationPayload`  |    13 | serial, identifier, structure value, and destination values; tags/presence are in the node header             |
+| `PdfThreadPayload`       |    17 | serial, typed identifier, dimensions, attributes token key, and running flag                                  |
 
 A `LigatureSource` element is two words: one validated Unicode scalar and one
 `OriginId`. A flag distinguishes the current empty-origins diagnostic case
@@ -805,12 +795,9 @@ or serializes runtime words. The 64 KiB allocation and all word/byte/coordinate
 arithmetic remain checked in target `usize`; external ids remain explicitly
 bounded to their u32 domains.
 
-### Source decomposition before integration
+### Source decomposition
 
-`crates/tex-state/src/node_record.rs` is already 2,392 lines after the isolated
-codec work. Table and envelope integration must not extend that monolith. The
-first implementation child performs a behavior-preserving module split with
-these ownership boundaries and approximate ceilings:
+The compact implementation remains split along these ownership boundaries:
 
 - `node_record/mod.rs`, under 250 lines: private exports, module wiring, shared
   record/view entry points, and compile-time layout assertions;
@@ -831,9 +818,9 @@ Logical table and ownership code belongs beside, not inside, that codec tree.
 transitions. The split lands before new codec behavior so review can
 distinguish mechanical movement from the backing-store change.
 
-### Migration and approval boundary
+### Completed migration and remaining approval boundary
 
-No stage introduces a second resident node representation:
+The production migration completed these stages without introducing a second resident node representation:
 
 1. Replace node-side `Rc` token payloads with generation-owned immutable token
    coordinates and prove group, checkpoint, copy, rollback, and retirement
@@ -858,14 +845,12 @@ No stage introduces a second resident node representation:
    accept/reject, scratch rewind, semantic hashing, format materialization,
    and handle-free output before enabling dense fork-tail copy in production.
 8. Run the focused construction/fork/release attribution, routine suite,
-   quality gate, Miri where available, sanitizers, and Wasm runtime tests, then
-   stop with the cutover unmerged.
+   quality gate, sanitizer where available, and Wasm tests.
 9. In the separate measurement task, run the authenticated 50-million-command
    census and seek the dense-superblock design's second approval before any
    production merge.
 
-Any failed ownership, stale-key, semantic, allocation, Wasm, or copy census
-removes the cutover commit. It must not retain the old enum as fallback, add a
+The separate census remains outside this cutover issue. Any later failure must not retain the old enum as fallback, add a
 compatibility representation, add per-node allocation or reference counts, or
 weaken the direct-list and two-generation contracts.
 
@@ -931,10 +916,9 @@ back; a superseding global assignment drops it in TeX order. Retained
 checkpoint history likewise owns the exact older carrier it can restore.
 
 Moving a durable box into page state transfers its exclusive self-contained
-region when unique. Page construction still publishes a compatibility page
-closure, so assignment to a durable register currently performs one explicit,
-counted `page_to_durable` copy; whole-envelope transfer is the remaining seam
-once page construction produces an independently consumable closure. TeX
+paired region when unique. Page construction seals an independently consumable
+node-plus-annex closure, so ordinary assignment and PDF form creation move its
+envelopes without payload copy when suffix-local. TeX
 `\copy` creates an independent node
 closure but continues to share the selected immutable token-list and glue
 values, matching TeX82. Neither operation adds per-list or per-node ownership.

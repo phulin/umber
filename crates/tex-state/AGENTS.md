@@ -257,10 +257,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   regions above the shared fixed-chunk pool, generation-checked owner-relative
   roots and borrows, paired node/annex checkpoint and closure marks,
   mutation-free recursive transfer preflight, address-stable aggregate
-  detach/rollback, and reason-counted structural-copy fallback. The resident
-  node enum and annex-word lane settle together today; the compact cutover
-  changes only their physical backing while preserving logical coordinates;
-  production durable carrier cutover remains a separate migration stage.
+  detach/rollback, and reason-counted structural-copy fallback. The exact
+  32-byte `NodeRecord` and region-owned typed `u32` annex settle together;
+  there is no descriptor lane, pool-global annex arena, or resident owned-node
+  fallback.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the generic arena.

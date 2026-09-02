@@ -14,7 +14,7 @@ use crate::fork_arena::{
     ForkArenaError, PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
 };
 use crate::node::Node;
-use crate::node_record::{NodeAnnexArena, NodeRecord};
+use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 use crate::page_node_arena::PageListId;
 
@@ -83,8 +83,7 @@ struct RegionSlot {
 pub struct NodePool {
     id: u64,
     pub(crate) chunks: ChunkPool<RegionNode>,
-    pub(crate) record_annex: NodeAnnexArena,
-    annex_chunks: ChunkPool<u32>,
+    pub(crate) annex_chunks: ChunkPool<u32>,
     regions: Vec<RegionSlot>,
     free_regions: Vec<u32>,
     closure_transitions: ClosureTransitionCounters,
@@ -119,10 +118,10 @@ impl Default for NodePool {
 impl NodePool {
     #[must_use]
     pub fn new() -> Self {
-        // Three current `Node<PageListId>` values fit in one block on the
-        // supported 64-bit targets. This keeps tiny TeX lists below a 4 KiB
-        // allocation quantum while retaining coarse packed traversal.
-        Self::with_chunk_bytes(512)
+        // One production logical block is one exact 64 KiB dense superblock:
+        // 2,048 compact node records, with a largest interior-fork tail of
+        // 2,047 records (65,504 bytes).
+        Self::with_chunk_bytes(65_536)
     }
 
     #[must_use]
@@ -130,8 +129,7 @@ impl NodePool {
         Self {
             id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
             chunks: ChunkPool::with_chunk_bytes(chunk_bytes),
-            record_annex: NodeAnnexArena::new(),
-            annex_chunks: ChunkPool::with_chunk_bytes(65_536),
+            annex_chunks: ChunkPool::with_packed_chunk_bytes(65_536),
             regions: Vec::new(),
             free_regions: Vec::new(),
             closure_transitions: ClosureTransitionCounters::default(),
@@ -187,6 +185,7 @@ impl NodePool {
             },
             pub_arena: arena,
             annex_arena,
+            active_annex_operation: None,
             next_closure_build: 1,
             _role: PhantomData,
         })
@@ -209,6 +208,11 @@ impl NodePool {
         source
             .annex_arena
             .can_share_sealed_prefix(&self.annex_chunks, &mark.annex_batch, &[])?;
+        source.pub_arena.preflight_paired_dependency_floor(
+            &self.chunks,
+            &coordinates,
+            mark.annex_batch.payload_start(),
+        )?;
         let arena = source
             .pub_arena
             .share_sealed_prefix(&mut self.chunks, mark.batch, &coordinates)
@@ -314,7 +318,8 @@ impl NodePool {
 pub struct NodeRegion<Role> {
     id: NodeRegionId,
     pub(crate) pub_arena: ForkArena<RegionNode, PageMaterialLane>,
-    annex_arena: ForkArena<u32, NodeAnnexLane>,
+    pub(crate) annex_arena: ForkArena<u32, NodeAnnexLane>,
+    pub(crate) active_annex_operation: Option<crate::fork_arena::OperationMark<NodeAnnexLane>>,
     next_closure_build: u64,
     _role: PhantomData<fn(Role) -> Role>,
 }
@@ -459,8 +464,19 @@ impl<Role> NodeRegion<Role> {
         pool.validate_region(self)?;
         let mut builder = self.pub_arena.begin_builder(&mut pool.chunks)?;
         for node in nodes {
-            let record = NodeRecord::encode_owned(node.clone(), &mut pool.record_annex);
+            let child_annex_dependency_floor = builder.paired_dependency_floor_for(&node)?;
+            let (record, annex_dependency_floor) = {
+                let mut annex = NodeAnnexWriter::new(&mut pool.annex_chunks, &mut self.annex_arena);
+                let record = NodeRecord::encode_owned(node.clone(), &mut annex);
+                (record, annex.dependency_floor())
+            };
             builder.push_with_dependencies(record, &node)?;
+            builder.record_paired_dependency(
+                [annex_dependency_floor, child_annex_dependency_floor]
+                    .into_iter()
+                    .flatten()
+                    .min(),
+            )?;
         }
         Ok(RegionRoot {
             region: self.id,
@@ -469,7 +485,7 @@ impl<Role> NodeRegion<Role> {
         })
     }
 
-    /// Seals the current payload and descriptor tails and opens one fresh
+    /// Seals the current payload tail and opens one fresh
     /// whole-envelope construction suffix. Unlike an operation mark, this
     /// capability can only be consumed by closure sealing.
     pub(crate) fn begin_closure_build(
@@ -518,7 +534,12 @@ impl<Role> NodeRegion<Role> {
         self.pub_arena
             .can_share_sealed_prefix(&pool.chunks, &mark.batch, &coordinates)?;
         self.annex_arena
-            .can_share_sealed_prefix(&pool.annex_chunks, &mark.annex_batch, &[])
+            .can_share_sealed_prefix(&pool.annex_chunks, &mark.annex_batch, &[])?;
+        self.pub_arena.preflight_paired_dependency_floor(
+            &pool.chunks,
+            &coordinates,
+            mark.annex_batch.payload_start(),
+        )
     }
 
     pub(crate) fn share_sealed_prefix<const N: usize>(
@@ -582,6 +603,11 @@ impl<Role> NodeRegion<Role> {
             &pool.chunks,
             &mark.batch,
             &coordinates,
+        )?;
+        self.pub_arena.preflight_paired_dependency_floor(
+            &pool.chunks,
+            &coordinates,
+            mark.annex_batch.payload_start(),
         )?;
         self.annex_arena.preflight_unique_successor_adoption(
             &pool.annex_chunks,
@@ -662,6 +688,13 @@ impl<Role> NodeRegion<Role> {
             self.annex_arena
                 .preflight_batch_closure(&pool.annex_chunks, &mark.annex_batch, &[])
         {
+            return Err(ClosureSealError { error, mark });
+        }
+        if let Err(error) = self.pub_arena.preflight_paired_dependency_floor(
+            &pool.chunks,
+            &[root.list.coordinate()],
+            mark.annex_batch.payload_start(),
+        ) {
             return Err(ClosureSealError { error, mark });
         }
         let batch = match self.pub_arena.seal_batch(
@@ -765,6 +798,7 @@ impl<Role> NodeRegion<Role> {
             return Err(ForkArenaError::InvalidRegion);
         }
         let view = self.pub_arena.list(&pool.chunks, root.list.coordinate())?;
+        let annex = NodeAnnexView::new(&pool.annex_chunks, &self.annex_arena);
         #[cfg(test)]
         let resident_addresses = view
             .iter()
@@ -774,7 +808,7 @@ impl<Role> NodeRegion<Role> {
             .iter()
             .map(|record| {
                 record
-                    .decode_owned(&pool.record_annex)
+                    .decode_owned(annex)
                     .ok_or(ForkArenaError::InvalidRange)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -812,7 +846,7 @@ impl<Role> NodeRegion<Role> {
     }
 }
 
-/// Sealed payload-plus-descriptor boundary taken before closure construction.
+/// Paired node-plus-annex boundary taken before closure construction.
 /// It is consumed either by exact suffix transfer or by the retained-root
 /// structural-copy path that deliberately keeps the suffix page-owned.
 pub struct ClosureBuildMark<Role> {
@@ -1078,6 +1112,9 @@ pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
     ) {
         return Err(SealedNodeClosureError { error, closure });
     }
+    let source_annex_start = closure.batch.annex.payload_start();
+    let destination_node_start = destination.pub_arena.live_payload_chunks();
+    let destination_annex_start = destination.annex_arena.live_payload_chunks();
     let (coordinates, scanned) = source
         .pub_arena
         .promote_detached_batch_into(
@@ -1096,6 +1133,15 @@ pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
         .unwrap_or_else(|_| unreachable!("paired annex transfer was preflighted"));
     debug_assert!(annex_roots.is_empty());
     debug_assert_eq!(annex_scanned, 0);
+    destination
+        .pub_arena
+        .rebase_paired_dependency_suffix(
+            &mut pool.chunks,
+            destination_node_start,
+            source_annex_start,
+            destination_annex_start,
+        )
+        .expect("paired detached transfer preserves relative annex floors");
     let [coordinate]: [_; 1] = coordinates
         .try_into()
         .expect("one sealed closure root produces one transferred root");
@@ -1152,6 +1198,8 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         .annex_arena
         .seal_whole_region_batch(&mut pool.annex_chunks, Vec::new())
         .expect("whole-region annex transfer was preflighted");
+    let destination_node_start = destination.pub_arena.live_payload_chunks();
+    let destination_annex_start = destination.annex_arena.live_payload_chunks();
     let promoted = closure
         .region
         .pub_arena
@@ -1167,6 +1215,15 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         )
         .expect("whole-region annex promotion was preflighted");
     debug_assert!(annex_promoted.is_empty());
+    destination
+        .pub_arena
+        .rebase_paired_dependency_suffix(
+            &mut pool.chunks,
+            destination_node_start,
+            0,
+            destination_annex_start,
+        )
+        .expect("paired whole-region transfer preserves relative annex floors");
     let [coordinate]: [_; 1] = promoted
         .try_into()
         .expect("one declared closure root produces one promoted root");
@@ -1219,9 +1276,11 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     let annex_operation = destination.annex_arena.operation_mark(&pool.annex_chunks);
     let copied = copy_list_recursive::<Source, Destination>(
         &mut pool.chunks,
-        &mut pool.record_annex,
+        &mut pool.annex_chunks,
         &source.pub_arena,
+        &source.annex_arena,
         &mut destination.pub_arena,
+        &mut destination.annex_arena,
         root.list,
         &mut Vec::new(),
         semantic_identity_enabled,
@@ -1288,11 +1347,14 @@ pub(crate) fn structural_copy_fallback<Source, Destination>(
     Ok(copied)
 }
 
+#[allow(clippy::too_many_arguments)] // Keeps both paired stores and owners explicit during recursive copy.
 fn copy_list_recursive<Source, Destination>(
     pool: &mut ChunkPool<RegionNode>,
-    annex: &mut NodeAnnexArena,
+    annex_pool: &mut ChunkPool<u32>,
     source: &ForkArena<RegionNode, PageMaterialLane>,
+    source_annex: &ForkArena<u32, NodeAnnexLane>,
     destination: &mut ForkArena<RegionNode, PageMaterialLane>,
+    destination_annex: &mut ForkArena<u32, NodeAnnexLane>,
     list: PageListId,
     stack: &mut Vec<PageListId>,
     semantic_identity_enabled: bool,
@@ -1304,6 +1366,7 @@ fn copy_list_recursive<Source, Destination>(
     if stack.contains(&list) {
         return Err(ForkArenaError::InvalidRegion);
     }
+    let annex = NodeAnnexView::new(annex_pool, source_annex);
     let source_nodes = source
         .list(pool, list.coordinate())?
         .iter()
@@ -1323,9 +1386,11 @@ fn copy_list_recursive<Source, Destination>(
     for child in &mut source_children {
         match copy_list_recursive::<Source, Destination>(
             pool,
-            annex,
+            annex_pool,
             source,
+            source_annex,
             destination,
+            destination_annex,
             *child,
             stack,
             semantic_identity_enabled,
@@ -1361,8 +1426,19 @@ fn copy_list_recursive<Source, Destination>(
             let node_identity = semantic_node_identity(&node);
             sequence_identity.push_back(node_identity);
         }
-        let record = NodeRecord::encode_owned(node.clone(), annex);
+        let child_annex_dependency_floor = builder.paired_dependency_floor_for(&node)?;
+        let (record, annex_dependency_floor) = {
+            let mut annex = NodeAnnexWriter::new(annex_pool, destination_annex);
+            let record = NodeRecord::encode_owned(node.clone(), &mut annex);
+            (record, annex.dependency_floor())
+        };
         builder.push_with_dependencies(record, &node)?;
+        builder.record_paired_dependency(
+            [annex_dependency_floor, child_annex_dependency_floor]
+                .into_iter()
+                .flatten()
+                .min(),
+        )?;
     }
     let coordinate = builder.seal()?;
     if copied_children.next().is_some() {

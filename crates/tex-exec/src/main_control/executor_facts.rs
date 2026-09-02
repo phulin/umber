@@ -118,7 +118,6 @@ pub(super) struct EffectiveTailFacts {
     pub(super) last_node: Option<tex_command::LastNodeItem>,
     pub(super) last_node_type: i32,
     pub(super) traversed: bool,
-    pub(super) descriptor_visits: usize,
 }
 
 /// One processor-episode borrow of live executor facts.
@@ -173,7 +172,7 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
         self.telemetry.record_host_fact_query();
         let tail = effective_tail_facts(self.modes, stores);
         self.telemetry
-            .record_effective_tail_traversal(tail.traversed, tail.descriptor_visits);
+            .record_effective_tail_traversal(tail.traversed);
         tail.last_node
     }
 
@@ -181,7 +180,7 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
         self.telemetry.record_host_fact_query();
         let tail = effective_tail_facts(self.modes, stores);
         self.telemetry
-            .record_effective_tail_traversal(tail.traversed, tail.descriptor_visits);
+            .record_effective_tail_traversal(tail.traversed);
         tail.last_node_type
     }
 }
@@ -200,13 +199,11 @@ fn effective_tail_facts<G>(
         let contributions = context.page_contributions();
         let mut nodes = contributions.iter();
         let tail = crate::effective_tail::EffectiveTail::find(&mut nodes);
-        let descriptor_visits = nodes.reverse_descriptor_visits();
         return match tail {
             Some(tail) => EffectiveTailFacts {
                 last_node: classify_last_node(context, tail.node()),
                 last_node_type: tail.node().etex_type(),
                 traversed: true,
-                descriptor_visits,
             },
             None => {
                 let last_node_type = context.page_last_node_type();
@@ -224,7 +221,6 @@ fn effective_tail_facts<G>(
                     last_node,
                     last_node_type,
                     traversed: true,
-                    descriptor_visits,
                 }
             }
         };
@@ -234,25 +230,21 @@ fn effective_tail_facts<G>(
             last_node: None,
             last_node_type: 0,
             traversed: false,
-            descriptor_visits: 0,
         };
     }
     let current = modes.current_list().nodes(context);
     let mut nodes = current.iter();
     let tail = crate::effective_tail::EffectiveTail::find(&mut nodes);
-    let descriptor_visits = nodes.reverse_descriptor_visits();
     match tail {
         Some(tail) => EffectiveTailFacts {
             last_node: classify_last_node(context, tail.node()),
             last_node_type: tail.node().etex_type(),
             traversed: true,
-            descriptor_visits,
         },
         None => EffectiveTailFacts {
             last_node: None,
             last_node_type: -1,
             traversed: true,
-            descriptor_visits,
         },
     }
 }

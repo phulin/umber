@@ -84,7 +84,6 @@ pub struct EpisodeTelemetry {
     terminals: u64,
     host_fact_queries: u64,
     effective_tail_traversals: u64,
-    effective_tail_descriptor_visits: u64,
     last_commit: Option<EpisodeCommit>,
 }
 
@@ -100,7 +99,6 @@ impl Default for EpisodeTelemetry {
             terminals: 0,
             host_fact_queries: 0,
             effective_tail_traversals: 0,
-            effective_tail_descriptor_visits: 0,
             last_commit: None,
         }
     }
@@ -115,17 +113,10 @@ impl EpisodeTelemetry {
         self.host_fact_queries = self.host_fact_queries.saturating_add(1);
     }
 
-    pub(crate) fn record_effective_tail_traversal(
-        &mut self,
-        traversed_effective_tail: bool,
-        descriptor_visits: usize,
-    ) {
+    pub(crate) fn record_effective_tail_traversal(&mut self, traversed_effective_tail: bool) {
         self.effective_tail_traversals = self
             .effective_tail_traversals
             .saturating_add(u64::from(traversed_effective_tail));
-        self.effective_tail_descriptor_visits = self
-            .effective_tail_descriptor_visits
-            .saturating_add(u64::try_from(descriptor_visits).unwrap_or(u64::MAX));
     }
 
     pub(crate) fn record_commit(&mut self, commit: EpisodeCommit) {
@@ -221,14 +212,6 @@ impl EpisodeTelemetry {
     #[must_use]
     pub const fn effective_tail_traversals(self) -> u64 {
         self.effective_tail_traversals
-    }
-
-    /// Descriptor rows visited by effective-tail traversal. Reverse arena
-    /// cursors keep this bounded by the fixed tail window, independent of the
-    /// accumulated list length.
-    #[must_use]
-    pub const fn effective_tail_descriptor_visits(self) -> u64 {
-        self.effective_tail_descriptor_visits
     }
 
     #[must_use]
