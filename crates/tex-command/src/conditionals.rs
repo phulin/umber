@@ -1278,7 +1278,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
         let episode =
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
-        let operands = (|| {
+        let comparison = (|| {
             let mut first = None;
             if self.get_next_into(&mut first)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
@@ -1287,13 +1287,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.get_next_into(&mut second)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
-            Ok::<_, CommandError>((first, second))
+            let first = first
+                .as_ref()
+                .expect("command status initializes destination");
+            let second = second
+                .as_ref()
+                .expect("command status initializes destination");
+            Ok::<_, CommandError>(self.ifx_meaning_eq(first.meaning_ref(), second.meaning_ref()))
         })();
         self.finish_scanner_episode(episode);
-        let (first, second) = operands?;
-        let first = first.expect("command status initializes destination");
-        let second = second.expect("command status initializes destination");
-        Ok(self.ifx_meaning_eq(first.meaning_ref(), second.meaning_ref()))
+        comparison
     }
 
     /// TeX compares macro meanings by their defining token lists, not by the

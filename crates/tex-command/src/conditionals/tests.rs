@@ -56,6 +56,32 @@ fn assert_expanded_end<G>(processor: &mut CommandProcessor<'_, '_, G>) {
     assert!(destination.is_none());
 }
 
+fn ifx_branch<G>(universe: &mut tex_state::Universe<G>, first: Token, second: Token) -> char {
+    let if_x = install(universe, "ifx", ExpandablePrimitive::IfX);
+    let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+    let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+    let mut command = CommandState::default();
+    crate::test_harness::push(
+        &mut command,
+        [if_x, first, second, other('y'), otherwise, other('n'), fi],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::default();
+    let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+    let mut context = universe.command_context().expect("command context");
+    let mut processor = crate::test_harness::processor(
+        &mut command,
+        &mut context,
+        &mut capabilities,
+        &mut fuel,
+        &mut diagnostic_effects,
+    );
+
+    let branch = next_character(&mut processor);
+    assert_expanded_end(&mut processor);
+    branch
+}
+
 #[test]
 fn etex_current_if_values_preserve_kind_inversion_and_branch() {
     let cases = [
@@ -244,6 +270,60 @@ fn ifx_compares_raw_operands_without_expanding_them() {
 
         assert_eq!(next_character(&mut processor), 'y');
         assert_expanded_end(&mut processor);
+    });
+}
+
+#[test]
+fn ifx_compares_primitives_active_characters_undefined_controls_and_character_tokens() {
+    crate::test_harness::with_universe(|universe| {
+        let if_true = install(universe, "iftrue", ExpandablePrimitive::IfTrue);
+        let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
+        assert_eq!(ifx_branch(universe, if_true, if_true), 'y');
+        assert_eq!(ifx_branch(universe, if_true, if_false), 'n');
+
+        let undefined_left = Token::Cs(
+            universe
+                .intern("ifx-undefined-left")
+                .expect("undefined control sequence")
+                .symbol(),
+        );
+        let undefined_right = Token::Cs(
+            universe
+                .intern("ifx-undefined-right")
+                .expect("undefined control sequence")
+                .symbol(),
+        );
+        assert_eq!(ifx_branch(universe, undefined_left, undefined_right), 'y');
+
+        let active_symbol = universe
+            .intern_active_character('~')
+            .expect("active character");
+        let active_alias = universe.intern("ifx-active-alias").expect("active alias");
+        for symbol in [active_symbol, active_alias] {
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::from_static(Meaning::CharGiven('A')),
+                    AssignmentScope::Global,
+                )
+                .expect("active meaning");
+        }
+        let active = Token::Char {
+            ch: '~',
+            cat: Catcode::Active,
+        };
+        assert_eq!(
+            ifx_branch(universe, active, Token::Cs(active_alias.symbol())),
+            'y'
+        );
+
+        let letter_a = Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        };
+        assert_eq!(ifx_branch(universe, other('a'), other('a')), 'y');
+        assert_eq!(ifx_branch(universe, other('a'), other('b')), 'n');
+        assert_eq!(ifx_branch(universe, other('a'), letter_a), 'n');
     });
 }
 

@@ -1015,6 +1015,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     assert!(ifx.contains("finish_scanner_episode(episode)"));
     assert_eq!(ifx.matches(".meaning_ref()").count(), 2);
     assert!(!ifx.contains(".meaning()"));
+    assert!(ifx.contains("Ok::<_, CommandError>(self.ifx_meaning_eq("));
+    assert!(!ifx.contains("(first, second)"));
     let ifx_comparison = conditionals
         .split("fn ifx_meaning_eq(")
         .nth(1)
