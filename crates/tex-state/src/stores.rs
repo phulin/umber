@@ -195,6 +195,16 @@ impl<G> StateCore<G> {
         })
     }
 
+    pub(crate) fn new_format(
+        generation: Generation<G>,
+        meaning_slots: usize,
+    ) -> Result<Self, StateError> {
+        Ok(Self {
+            generation: GenerationOwner::new(generation),
+            state: DenseState::new_format(meaning_slots)?,
+        })
+    }
+
     #[must_use]
     pub(crate) fn memory_accounting(&self) -> crate::memory_accounting::MemoryAccounting {
         self.generation.generation().memory_accounting()
@@ -844,42 +854,9 @@ impl<'a, G> AdmittedStateMut<'a, G> {
                     .and_then(|total| total.checked_add(definition.replacement_text.len()))
             })
             .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
-        let token_words = token_lists
-            .iter()
-            .try_fold(0usize, |total, words| total.checked_add(words.len()))
-            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
-
-        let mut definition_builders = Vec::new();
-        definition_builders
-            .try_reserve_exact(definitions.len())
-            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
-        for (definition, live) in definitions.iter().zip(&live_definitions) {
-            definition_builders.push(if *live {
-                let mut builder = crate::DefinitionBuilder::new();
-                for &word in &definition.parameter_text {
-                    builder.push_parameter(TokenWord::from_raw(word))?;
-                }
-                builder.finish_parameters()?;
-                for &word in &definition.replacement_text {
-                    builder.push_replacement(TokenWord::from_raw(word))?;
-                }
-                builder.seal()?;
-                Some(builder)
-            } else {
-                None
-            });
-        }
-
-        for definition in definition_builders.iter().flatten() {
-            self.generation.definitions().validate_builder(definition)?;
-        }
-
         self.generation
             .definitions_mut()
             .reserve_format_batch(definition_rows, definition_words)?;
-        self.generation
-            .token_lists_mut()
-            .reserve_batch(token_lists.len(), token_words)?;
         self.generation
             .glue_mut()
             .reserve_batch(glue_values.len())?;
@@ -889,33 +866,25 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .try_reserve_exact(definitions.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         promoted_definitions.resize(definitions.len(), None);
-        let mut promoted_token_lists = Vec::new();
-        promoted_token_lists
-            .try_reserve_exact(token_lists.len())
-            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         let mut promoted_glue = Vec::new();
         promoted_glue
             .try_reserve_exact(glue_values.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
-        for (row, definition) in definition_builders.iter_mut().enumerate() {
+        for (row, definition) in definitions.iter().enumerate() {
             if !live_definitions[row] {
                 continue;
             }
             let id = self
                 .generation
                 .definitions_mut()
-                .publish_format_prevalidated(definition.as_mut().expect("live builder was staged"));
+                .publish_format_row(definition)?;
             promoted_definitions[row] = Some(id);
         }
-        for words in token_lists {
-            promoted_token_lists.push(
-                self.generation
-                    .token_lists_mut()
-                    .allocate_from_iter(words.into_iter().map(TokenWord::from_raw))
-                    .expect("the complete format token-list batch was reserved"),
-            );
-        }
+        let promoted_token_lists = self
+            .generation
+            .token_lists_mut()
+            .install_format_rows(token_lists)?;
         for glue in glue_values {
             promoted_glue.push(
                 self.generation

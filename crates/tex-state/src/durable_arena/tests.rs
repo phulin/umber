@@ -101,6 +101,30 @@ fn nested_builders_seal_distinct_interleaved_sequences_in_place() {
 }
 
 #[test]
+fn format_rows_become_published_owners_without_retained_builder_scratch() {
+    with_generation(|mut generation| {
+        let rows = vec![vec![1, 2, 3], vec![], vec![4, 5]];
+        let arena = generation.token_lists_mut();
+        let installed = arena
+            .install_format_rows(rows)
+            .expect("validated format prefix");
+
+        assert_eq!(arena.len(), 3);
+        assert_eq!(
+            collect_words(arena.get(installed[0].clone())),
+            [
+                TokenWord::from_raw(1),
+                TokenWord::from_raw(2),
+                TokenWord::from_raw(3),
+            ]
+        );
+        assert!(collect_words(arena.get(installed[1].clone())).is_empty());
+        assert_eq!(arena.retained_chunk_len(), 0);
+        assert_eq!(arena.retained_builder_slot_len(), 0);
+    });
+}
+
+#[test]
 fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
     use core::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;

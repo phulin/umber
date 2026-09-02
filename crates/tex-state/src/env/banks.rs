@@ -560,6 +560,15 @@ impl<T: Clone> DenseBank<T> {
         }
     }
 
+    pub(crate) fn format_prefix(len: usize, default: T) -> Result<Self, BankError> {
+        let mut cells = Vec::new();
+        cells
+            .try_reserve_exact(len)
+            .map_err(|_| BankError::AllocationFailed)?;
+        cells.resize(len, BankCell::level_zero(default.clone()));
+        Ok(Self { cells, default })
+    }
+
     pub(crate) fn admit_through(&mut self, index: u32) -> Result<(), BankError> {
         let required = index as usize + 1;
         if required <= self.cells.len() {

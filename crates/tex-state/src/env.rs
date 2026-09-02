@@ -945,6 +945,18 @@ impl<G> DenseState<G> {
         })
     }
 
+    /// Constructs the immutable format prefix at its validated final extent.
+    ///
+    /// A normal session grows the meaning bank as names are interned. A
+    /// detached format already carries its complete dense namespace, so
+    /// growing that vector one admitted symbol at a time would repeatedly
+    /// reallocate and copy the retained prefix.
+    pub(crate) fn new_format(meaning_slots: usize) -> Result<Self, StateError> {
+        let mut state = Self::new()?;
+        state.meanings = DenseBank::format_prefix(meaning_slots, MeaningWord::UNDEFINED)?;
+        Ok(state)
+    }
+
     pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
         if self.reachable_state_identity_enabled {
             return true;

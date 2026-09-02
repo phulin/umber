@@ -71,8 +71,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   depths.
   Exceptional local-to-global
   `let` promotion copies one span once and caches the mapped global key in its
-  source region, so no global promotion sweep exists. Detached builders remain
-  only for cold format/memo/import batches. Each semantic region owns an
+  source region, so no global promotion sweep exists. Validated format rows
+  write their two wire slices directly into the pre-reserved immutable format
+  region; detached builders remain only for memo/import batches. Each semantic region owns an
   eight-word inline common prefix and one flat append-only directory of stable
   4,096-word overflow chunks. Tiny group-local definitions therefore retire
   with their existing region slot without acquiring a mostly empty heap block.
@@ -86,7 +87,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   token-list owners, reusable publication builders, retained immutable rows
   addressed by compact node token coordinates, allocation-free owning
   views/cursors, and exact private-suffix rollback for token, glue, and
-  provenance publication.
+  provenance publication. Loaded-format token rows become the initial
+  published prefix directly, without retaining scanner-builder chunks beside
+  the immutable owners.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, journal-cursor restore, and
   demand-only semantic-root traversal. Ordinary meaning writes replace their
@@ -150,8 +153,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   before identity and direct-child dependency completion; rejection truncates
   that exact unpublished reservation.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
-  format staging, decoded-row draining into final owners, and infallible atomic
-  publication after complete validation.
+  format staging, detached-count-sized initial generation construction,
+  decoded-row draining into final owners, and infallible atomic publication
+  after complete validation.
 - `src/format/schema.rs`: Handle-free schema-11 logical rows for names,
   immutable values, and sparse environment cells.
 - `src/format_container.rs`: Portable schema-11 format-image header, section directory, authoritative fingerprints, checksum, compression, and structural validation; no compatibility codec is retained.

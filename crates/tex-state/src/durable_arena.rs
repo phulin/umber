@@ -621,6 +621,67 @@ impl<G> TokenListArena<G> {
         self.seal_builder(builder)
     }
 
+    /// Installs a validated detached format prefix directly as the arena's
+    /// retained published rows.
+    ///
+    /// Runtime publication deliberately passes through reusable scanner
+    /// chunks. Those chunks are operation scratch, however, and retaining a
+    /// complete duplicate chunk population while loading an already-complete
+    /// format would make scratch as large as the immutable generation.
+    pub(crate) fn install_format_rows(
+        &mut self,
+        rows: Vec<Vec<u32>>,
+    ) -> Result<Vec<TokenListId<G>>, DurableAllocationError> {
+        if self.next_serial != 0 || !self.published.is_empty() {
+            return Err(DurableAllocationError::CapacityOverflow);
+        }
+        let row_count = rows.len();
+        u32::try_from(row_count).map_err(|_| DurableAllocationError::CapacityOverflow)?;
+        self.published
+            .try_reserve_exact(row_count)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        let mut installed = Vec::new();
+        installed
+            .try_reserve_exact(row_count)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        for row in rows {
+            let serial = next_row(self.next_serial as usize)?;
+            let words = row
+                .into_iter()
+                .map(TokenWord::from_raw)
+                .collect::<Rc<[_]>>();
+            let publication_serial = self.next_publication_serial;
+            self.next_publication_serial = self
+                .next_publication_serial
+                .checked_add(1)
+                .ok_or(DurableAllocationError::CapacityOverflow)?;
+            let semantic_identity = if self.semantic_identity_enabled {
+                crate::state_hash::semantic_scalar_root(0x746f_6b65_6e73_7631, |hasher| {
+                    hasher.usize(words.len());
+                    for word in words.iter() {
+                        hasher.u32(word.raw());
+                    }
+                })
+                .max(1)
+            } else {
+                0
+            };
+            self.published.push(PublishedTokenList {
+                words: Rc::clone(&words),
+                publication_serial,
+                accounting: self.accounting.clone(),
+            });
+            self.next_serial = serial.get();
+            installed.push(TokenListId::from_words(
+                serial,
+                words,
+                self.accounting.clone(),
+                semantic_identity,
+            ));
+        }
+        Ok(installed)
+    }
+
     /// Reserves a complete promotion batch without publishing a row.
     pub(crate) fn reserve_batch(
         &mut self,

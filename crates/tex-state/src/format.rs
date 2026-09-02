@@ -1175,7 +1175,7 @@ pub struct FormatMaterializationConfig {
 pub struct FormatDestination<G> {
     identity: u64,
     budget: InternerBudget,
-    core: Option<StateCore<G>>,
+    generation: Option<crate::generation::Generation<G>>,
     world: Option<World>,
     provenance: FormatMaterializationConfig,
 }
@@ -1212,7 +1212,12 @@ impl<G> FormatDestination<G> {
         image: DetachedFormatImage,
         interner: crate::session_epoch::InternerLease,
     ) -> Result<FormatStaging<G>, FormatError> {
-        let core = self.core.take().ok_or(FormatError::DestinationConsumed)?;
+        let generation = self
+            .generation
+            .take()
+            .ok_or(FormatError::DestinationConsumed)?;
+        let core = StateCore::new_format(generation, image.decoded.names.len())
+            .map_err(|_| FormatError::AllocationFailed)?;
         let mut universe = Universe::new_format_candidate(interner, core);
         let DetachedFormatImage { bytes, decoded } = image;
         drop(bytes);
@@ -1268,13 +1273,6 @@ pub fn with_format_destination<R>(
     ) -> Result<R, FormatError>,
 ) -> Result<R, FormatError> {
     with_generation(|generation| {
-        let core = {
-            #[cfg(feature = "profiling")]
-            let _allocation_scope = crate::measurement::hot_core_allocation_scope(
-                crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
-            );
-            StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?
-        };
         let identity = NEXT_DESTINATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
@@ -1283,7 +1281,7 @@ pub fn with_format_destination<R>(
         let mut destination = FormatDestination {
             identity,
             budget,
-            core: Some(core),
+            generation: Some(generation),
             world: Some(world),
             provenance: FormatMaterializationConfig {
                 provenance_demand: ProvenanceDemand::default(),
@@ -1337,7 +1335,8 @@ pub(crate) fn materialize_retained_format<G>(
     image: DetachedFormatImage,
     wants_page_node_semantic_identity: bool,
 ) -> Result<Universe<G>, FormatError> {
-    let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
+    let core = StateCore::new_format(generation, image.decoded.names.len())
+        .map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
     if wants_page_node_semantic_identity {
         if !universe

@@ -1858,11 +1858,60 @@ impl<G> DefinitionArena<G> {
         self.publish_prevalidated_to(builder, GLOBAL_REGION)
     }
 
-    pub(crate) fn publish_format_prevalidated(
+    /// Writes one validated wire definition into the immutable format region
+    /// without first rebuilding it in a detached `DefinitionBuilder`.
+    pub(crate) fn publish_format_row(
         &mut self,
-        builder: &mut DefinitionBuilder,
-    ) -> DefinitionRef<G> {
-        self.publish_prevalidated_to(builder, FORMAT_REGION)
+        row: &crate::format::schema::FormatDefinition,
+    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+        let parameter_len = u32::try_from(row.parameter_text.len())
+            .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
+        let word_len = row
+            .parameter_text
+            .len()
+            .checked_add(row.replacement_text.len())
+            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
+        let mut pattern = MacroParameterPatternBuilder::new();
+        for &word in &row.parameter_text {
+            pattern
+                .push_parameter(TokenWord::from_raw(word))
+                .map_err(DefinitionBuildError::from)
+                .map_err(map_build_error)?;
+        }
+        for &word in &row.replacement_text {
+            pattern
+                .validate_replacement(TokenWord::from_raw(word))
+                .map_err(DefinitionBuildError::from)
+                .map_err(map_build_error)?;
+        }
+
+        self.record_region_change(FORMAT_REGION);
+        let accounting = self.accounting.clone();
+        let mut region = self
+            .region_mut(FORMAT_REGION)
+            .expect("fixed definition region exists");
+        let definition_row = NonZeroU32::new(
+            u32::try_from(region.headers.len() + 1)
+                .expect("format batch preflight reserved every definition row"),
+        )
+        .expect("definition row zero is not publishable");
+        let start = region.begin_word_span();
+        for &word in row.parameter_text.iter().chain(&row.replacement_text) {
+            region
+                .push_word(TokenWord::from_raw(word))
+                .expect("format batch preflight reserved the complete word extent");
+        }
+        let end = region.begin_word_span();
+        region.push_header(DefinitionHeader {
+            start,
+            parameter_len,
+            end,
+            origin: crate::token::OriginId::UNKNOWN,
+            pattern: pattern.finish(),
+        });
+        drop(region);
+        accounting.allocate_shared_dynamic(definition_memory_words(word_len));
+        Ok(DefinitionRef::new(FORMAT_REGION, definition_row))
     }
 
     fn publish_prevalidated_to(
