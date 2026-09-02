@@ -1091,6 +1091,7 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 8] {
         [
             self.arena,
@@ -1104,6 +1105,7 @@ impl<Lane> ArenaListId<Lane> {
         ]
     }
 
+    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn from_words(words: [u32; 8]) -> Option<Self> {
         if words[7] == 0 {
             return if words[0] == 0

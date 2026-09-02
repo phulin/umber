@@ -241,11 +241,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned
   node crossing the arena boundary.
-- `src/node_record.rs`: Current private exact 32-byte page-material record and
-  typed annex codecs. Before storage integration, split this 2,392-line file
-  into `node_record/{mod,layout,annex,node_codec,whatsit_codec,tests}.rs` as
-  specified by `docs/node_word_arena.md`; table and envelope logic does not
-  belong in the codec tree.
+- `src/node_record/`: Private exact 32-byte page-material record and typed
+  annex codecs, mechanically decomposed into layout, annex, outer-node,
+  whatsit/PDF, and private test modules. Its nested `AGENTS.md` keeps logical
+  table and aggregate envelope ownership out of the codec tree.
 - `src/logical_node_table.rs` and `src/node_envelope.rs`: Reserved module
   boundaries for pool-stable logical coordinates, borrowed accepted/candidate
   views, and paired node+annex marks and transfer receipts. They are design

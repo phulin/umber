@@ -94,6 +94,7 @@ impl UniquePageList {
 }
 
 impl PageListId {
+    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 10] {
         let coordinate = self.coordinate.words();
         let identity = match self.semantic_identity {
@@ -114,6 +115,7 @@ impl PageListId {
         ]
     }
 
+    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) fn from_words(words: [u32; 10]) -> Option<Self> {
         let coordinate = ArenaListId::from_words([
             words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],

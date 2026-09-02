@@ -94,6 +94,7 @@ impl NodeTokenKey {
         ]
     }
 
+    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn from_coordinates(words: [u32; 6]) -> Self {
         Self::new(words[0], words[1], words[2], words[3], words[4], words[5])
     }
