@@ -20,6 +20,66 @@ use super::{
 
 const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
 
+const ROW_ROLLBACK_STATE_BITS: u32 = 2;
+const MAX_ROW_ROLLBACK_EPOCH: u64 = u64::MAX >> ROW_ROLLBACK_STATE_BITS;
+
+#[repr(u64)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RowRollbackState {
+    /// The row was admitted or replaced during this epoch and has no inverse.
+    Admitted = 0,
+    /// Its ordinary inline cursor or source lexer state has an inverse.
+    Inline = 1,
+    /// Its complete cold token or source-owner state has an inverse.
+    Cold = 2,
+}
+
+/// One packed rollback epoch and capture class beside an authoritative row.
+///
+/// An epoch mismatch means that the row was visible before the current
+/// capture. Within the current epoch, the two state bits distinguish a newly
+/// admitted row from the rare inline and cold inverse classes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RowRollbackMarker(u64);
+
+impl RowRollbackMarker {
+    #[inline(always)]
+    const fn in_epoch(self, epoch: u64) -> bool {
+        self.0 >> ROW_ROLLBACK_STATE_BITS == epoch
+    }
+
+    #[inline(always)]
+    const fn state(self) -> RowRollbackState {
+        match self.0 & ((1 << ROW_ROLLBACK_STATE_BITS) - 1) {
+            0 => RowRollbackState::Admitted,
+            1 => RowRollbackState::Inline,
+            2 => RowRollbackState::Cold,
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
+    fn set(&mut self, epoch: u64, state: RowRollbackState) {
+        debug_assert!((1..=MAX_ROW_ROLLBACK_EPOCH).contains(&epoch));
+        self.0 = (epoch << ROW_ROLLBACK_STATE_BITS) | state as u64;
+    }
+
+    #[inline(always)]
+    const fn needs_replacement(self, epoch: u64) -> bool {
+        !self.in_epoch(epoch) || !matches!(self.state(), RowRollbackState::Admitted)
+    }
+
+    #[inline(always)]
+    const fn needs_source_owner_inverse(self, epoch: u64) -> bool {
+        !self.in_epoch(epoch) || matches!(self.state(), RowRollbackState::Inline)
+    }
+
+    #[inline(always)]
+    const fn cold_captured(self, epoch: u64) -> bool {
+        self.in_epoch(epoch) && matches!(self.state(), RowRollbackState::Cold)
+    }
+}
+
 /// Profiling-only proof that active-source delivery is independent of input
 /// depth. Shipping builds contain neither the counters nor their updates.
 #[cfg(any(test, feature = "profiling"))]
@@ -96,8 +156,7 @@ struct ResidentSourceTop<'a, G> {
     slot: &'a mut SourceSlot<G>,
     recording: bool,
     interval: u64,
-    touched: &'a mut u64,
-    partially_captured: &'a mut u64,
+    rollback: &'a mut RowRollbackMarker,
     undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
     source_lex_captures: &'a mut u64,
@@ -124,7 +183,7 @@ impl<G> ResidentSourceTop<'_, G> {
 
     #[inline(always)]
     fn record_first_touch(&mut self) {
-        let needs_inverse = self.recording && *self.touched != self.interval;
+        let needs_inverse = self.recording && !self.rollback.in_epoch(self.interval);
         if needs_inverse {
             *self.source_lex_captures = self.source_lex_captures.saturating_add(1);
             let payload = self
@@ -134,8 +193,7 @@ impl<G> ResidentSourceTop<'_, G> {
                 index: u32::try_from(self.index).expect("input row index fits u32"),
                 payload,
             });
-            *self.touched = self.interval;
-            *self.partially_captured = self.interval;
+            self.rollback.set(self.interval, RowRollbackState::Inline);
             #[cfg(test)]
             {
                 self.counters.first_touch_transitions =
@@ -315,13 +373,11 @@ fn append_resident_inline_inverse<G>(
     index: usize,
     state: InputLevelInlineState,
     interval: u64,
-    touched: &mut u64,
-    partially_captured: &mut u64,
+    rollback: &mut RowRollbackMarker,
     undo: &mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
     #[cfg(test)] first_touch_transitions: &mut u64,
 ) {
-    *touched = interval;
-    *partially_captured = interval;
+    rollback.set(interval, RowRollbackState::Inline);
     undo.append(InputUndo::Inline {
         index: u32::try_from(index).expect("input row index fits u32"),
         state,
@@ -463,9 +519,7 @@ pub(crate) struct InputStack<G> {
     fork: Option<InputStackFork>,
     recording: bool,
     interval: u64,
-    touched: Vec<u64>,
-    partially_captured: Vec<u64>,
-    cold_state_captured: Vec<u64>,
+    rollback_markers: Vec<RowRollbackMarker>,
     row_admissions: u64,
     source_lex_captures: u64,
     source_owner_swaps: u64,
@@ -489,9 +543,7 @@ impl<G> Default for InputStack<G> {
             fork: None,
             recording: false,
             interval: 1,
-            touched: Vec::new(),
-            partially_captured: Vec::new(),
-            cold_state_captured: Vec::new(),
+            rollback_markers: Vec::new(),
             row_admissions: 0,
             source_lex_captures: 0,
             source_owner_swaps: 0,
@@ -847,7 +899,7 @@ impl<G> InputStack<G> {
             InputLevel::Source(source) => source.slot,
             _ => return None,
         };
-        let needs_inverse = self.recording && self.touched[index] != self.interval;
+        let needs_inverse = self.recording && !self.rollback_markers[index].in_epoch(self.interval);
         let (rows, slots, states, undo) = (
             &mut self.rows,
             &mut self.source_slots,
@@ -868,8 +920,7 @@ impl<G> InputStack<G> {
                 index: u32::try_from(index).expect("input row index fits u32"),
                 payload,
             });
-            self.touched[index] = self.interval;
-            self.partially_captured[index] = self.interval;
+            self.rollback_markers[index].set(self.interval, RowRollbackState::Inline);
         }
         let result = mutate(source, slot);
         Some(result)
@@ -901,13 +952,13 @@ impl<G> crate::CommandState<G> {
             ($resident_index:expr, $state:expr) => {{
                 if self.roots.input.levels.recording {
                     let interval = self.roots.input.levels.interval;
-                    if self.roots.input.levels.touched[$resident_index] != interval {
+                    if !self.roots.input.levels.rollback_markers[$resident_index].in_epoch(interval)
+                    {
                         append_resident_inline_inverse(
                             $resident_index,
                             $state,
                             interval,
-                            &mut self.roots.input.levels.touched[$resident_index],
-                            &mut self.roots.input.levels.partially_captured[$resident_index],
+                            &mut self.roots.input.levels.rollback_markers[$resident_index],
                             &mut self.roots.input.levels.undo,
                             #[cfg(test)]
                             &mut self
@@ -983,9 +1034,7 @@ impl<G> crate::CommandState<G> {
                             slot,
                             recording: self.roots.input.levels.recording,
                             interval: self.roots.input.levels.interval,
-                            touched: &mut self.roots.input.levels.touched[resident_index],
-                            partially_captured: &mut self.roots.input.levels.partially_captured
-                                [resident_index],
+                            rollback: &mut self.roots.input.levels.rollback_markers[resident_index],
                             undo: &mut self.roots.input.levels.undo,
                             source_lex_states: &mut self.roots.input.levels.source_lex_states,
                             source_lex_captures: &mut self.roots.input.levels.source_lex_captures,
@@ -1847,7 +1896,7 @@ impl<G> InputStack<G> {
         let InputLevel::ReplayTokens(_) = &self.rows[index] else {
             return None;
         };
-        if self.recording && self.touched[index] != self.interval {
+        if self.recording && !self.rollback_markers[index].in_epoch(self.interval) {
             let InputLevel::ReplayTokens(cursor) = &self.rows[index] else {
                 unreachable!()
             };
@@ -1891,12 +1940,10 @@ impl<G> InputStack<G> {
         self.row_admissions = self.row_admissions.saturating_add(1);
         if self.top == self.rows.len() {
             self.rows.push(value);
-            self.touched.push(self.interval);
-            self.partially_captured.push(0);
-            self.cold_state_captured.push(0);
-        } else if self.recording
-            && (self.touched[self.top] != self.interval
-                || self.partially_captured[self.top] == self.interval)
+            let mut marker = RowRollbackMarker::default();
+            marker.set(self.interval, RowRollbackState::Admitted);
+            self.rollback_markers.push(marker);
+        } else if self.recording && self.rollback_markers[self.top].needs_replacement(self.interval)
         {
             self.displaced_rows.warm_first_page();
             let old = std::mem::replace(&mut self.rows[self.top], value);
@@ -1905,17 +1952,13 @@ impl<G> InputStack<G> {
                 index: u32::try_from(self.top).expect("input row index fits u32"),
                 payload,
             });
-            self.touched[self.top] = self.interval;
-            self.partially_captured[self.top] = 0;
-            self.cold_state_captured[self.top] = 0;
+            self.rollback_markers[self.top].set(self.interval, RowRollbackState::Admitted);
         } else {
             let old = std::mem::replace(&mut self.rows[self.top], value);
             if let InputLevel::Source(source) = old {
                 self.source_slots.release(source.slot.0);
             }
-            self.touched[self.top] = self.interval;
-            self.partially_captured[self.top] = 0;
-            self.cold_state_captured[self.top] = 0;
+            self.rollback_markers[self.top].set(self.interval, RowRollbackState::Admitted);
         }
         if let InputLevel::Source(source) = &self.rows[self.top] {
             self.occupied_source_buffer_slots = self
@@ -1946,9 +1989,7 @@ impl<G> InputStack<G> {
             if let InputLevel::Source(source) = retired {
                 self.source_slots.release(source.slot.0);
             }
-            self.touched.pop();
-            self.partially_captured.pop();
-            self.cold_state_captured.pop();
+            self.rollback_markers.pop();
         }
         Some(result)
     }
@@ -1969,9 +2010,7 @@ impl<G> InputStack<G> {
         self.top = index;
         if !self.recording {
             self.rows.pop();
-            self.touched.pop();
-            self.partially_captured.pop();
-            self.cold_state_captured.pop();
+            self.rollback_markers.pop();
         }
         result
     }
@@ -2029,9 +2068,7 @@ impl<G> InputStack<G> {
             .expect("source slot remains live")
             .occupied_buffer_slots;
         let retain_inverse = self.recording
-            && (self.touched[index] != self.interval
-                || (self.partially_captured[index] == self.interval
-                    && self.cold_state_captured[index] != self.interval));
+            && self.rollback_markers[index].needs_source_owner_inverse(self.interval);
         if retain_inverse {
             self.source_owner_states.warm_first_page();
         }
@@ -2059,9 +2096,7 @@ impl<G> InputStack<G> {
                 payload,
                 generation: core::marker::PhantomData,
             });
-            self.touched[index] = self.interval;
-            self.partially_captured[index] = self.interval;
-            self.cold_state_captured[index] = self.interval;
+            self.rollback_markers[index].set(self.interval, RowRollbackState::Cold);
             self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
         }
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
@@ -2240,19 +2275,9 @@ impl<G> InputStack<G> {
                     .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
             )
             .saturating_add(
-                self.touched
+                self.rollback_markers
                     .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.partially_captured
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.cold_state_captured
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
+                    .saturating_mul(std::mem::size_of::<RowRollbackMarker>()),
             )
             .saturating_add(self.undo.retained_bytes())
             .saturating_add(self.displaced_rows.retained_bytes())
@@ -2291,11 +2316,10 @@ impl<G> InputStack<G> {
     }
 
     fn record_inline(&mut self, index: usize, state: InputLevelInlineState) {
-        if !self.recording || self.touched[index] == self.interval {
+        if !self.recording || self.rollback_markers[index].in_epoch(self.interval) {
             return;
         }
-        self.touched[index] = self.interval;
-        self.partially_captured[index] = self.interval;
+        self.rollback_markers[index].set(self.interval, RowRollbackState::Inline);
         self.undo.append(InputUndo::Inline {
             index: u32::try_from(index).expect("input row index fits u32"),
             state,
@@ -2307,16 +2331,14 @@ impl<G> InputStack<G> {
     /// position, so cold retirement/limit/flag mutation has its own capture
     /// bit and ordered inverse.
     fn record_token_state(&mut self, index: usize) {
-        if !self.recording || self.cold_state_captured[index] == self.interval {
+        if !self.recording || self.rollback_markers[index].cold_captured(self.interval) {
             return;
         }
         let cursor = self.rows[index]
             .stored_common()
             .expect("cold token capture names a token row");
         let state = InputLevelInlineState::new(cursor.frame, cursor.retirement);
-        self.touched[index] = self.interval;
-        self.partially_captured[index] = self.interval;
-        self.cold_state_captured[index] = self.interval;
+        self.rollback_markers[index].set(self.interval, RowRollbackState::Cold);
         self.undo.append(InputUndo::Inline {
             index: u32::try_from(index).expect("input row index fits u32"),
             state,
@@ -2324,11 +2346,13 @@ impl<G> InputStack<G> {
     }
 
     fn next_interval(&mut self) {
-        self.interval = self.interval.wrapping_add(1).max(1);
+        self.interval = if self.interval == MAX_ROW_ROLLBACK_EPOCH {
+            1
+        } else {
+            self.interval + 1
+        };
         if self.interval == 1 {
-            self.touched.fill(0);
-            self.partially_captured.fill(0);
-            self.cold_state_captured.fill(0);
+            self.rollback_markers.fill(RowRollbackMarker::default());
         }
     }
 

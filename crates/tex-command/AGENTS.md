@@ -322,8 +322,10 @@ collector (see `src/conditionals.rs`).
   Stable source, stored-token, and macro-argument rows share one ordered
   `InputUndo` journal for first-touch advances, cold source-owner swaps,
   replacement/reuse, retirement, rollback/redo, candidate settlement, and
-  prefix release. Repeated source-owner changes coalesce to the first inverse
-  per checkpoint-visible row and interval. Later cursor, everyeof, and backing
+  prefix release. One row-aligned packed marker records the rollback epoch and
+  its admitted, inline-captured, or cold-captured class; there are no parallel
+  touched/cold epoch vectors. Repeated source-owner changes coalesce to the
+  first inverse per checkpoint-visible row and interval. Later cursor, everyeof, and backing
   transitions release displaced owners directly without materializing a cold
   execution-state carrier; rows admitted in the interval do the same. Alternate
   owners live only in checked reusable slabs; there is no generic logical-stack

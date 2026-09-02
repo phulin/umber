@@ -9,6 +9,38 @@ use crate::input::{
     packed_token_frame,
 };
 
+#[test]
+fn packed_row_rollback_marker_encodes_each_capture_decision() {
+    use super::{RowRollbackMarker, RowRollbackState};
+
+    assert_eq!(std::mem::size_of::<RowRollbackMarker>(), 8);
+    let epoch = 17;
+    let mut marker = RowRollbackMarker::default();
+    assert!(!marker.in_epoch(epoch));
+    assert!(marker.needs_replacement(epoch));
+    assert!(marker.needs_source_owner_inverse(epoch));
+    assert!(!marker.cold_captured(epoch));
+
+    marker.set(epoch, RowRollbackState::Admitted);
+    assert!(marker.in_epoch(epoch));
+    assert!(!marker.needs_replacement(epoch));
+    assert!(!marker.needs_source_owner_inverse(epoch));
+
+    marker.set(epoch, RowRollbackState::Inline);
+    assert!(marker.needs_replacement(epoch));
+    assert!(marker.needs_source_owner_inverse(epoch));
+    assert!(!marker.cold_captured(epoch));
+
+    marker.set(epoch, RowRollbackState::Cold);
+    assert!(marker.needs_replacement(epoch));
+    assert!(!marker.needs_source_owner_inverse(epoch));
+    assert!(marker.cold_captured(epoch));
+
+    assert!(marker.needs_replacement(epoch + 1));
+    assert!(marker.needs_source_owner_inverse(epoch + 1));
+    assert!(!marker.cold_captured(epoch + 1));
+}
+
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::from_parts(
         TokenWord::pack(Token::Char {

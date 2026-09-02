@@ -106,6 +106,17 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     assert!(history.contains("enum InputUndo"));
     assert!(history.contains("pub(crate) struct InputStack"));
     assert!(history.contains("source_slots: PayloadSlab<SourceSlot<G>>"));
+    assert!(history.contains("rollback_markers: Vec<RowRollbackMarker>"));
+    for retired_lane in [
+        "touched: Vec<u64>",
+        "partially_captured",
+        "cold_state_captured",
+    ] {
+        assert!(
+            !history.contains(retired_lane),
+            "input rollback must not restore the parallel {retired_lane} lane"
+        );
+    }
     assert!(history.contains("mutate_top_source_lex"));
     assert!(!history.contains("fn last_mut"));
     assert!(!levels.contains("slot: Box<SourceSlot"));
