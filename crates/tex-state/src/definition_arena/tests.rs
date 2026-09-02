@@ -115,6 +115,62 @@ fn direct_definition_seals_the_transactional_destination_without_a_body_copy() {
 }
 
 #[test]
+fn small_definition_stays_in_its_region_inline_prefix() {
+    with_generation(|mut generation| {
+        let word = TokenWord::pack(Token::frozen_relax());
+        let arena = generation.definitions_mut();
+        arena.begin_group().expect("local definition group");
+        let definition = direct_definition(
+            arena,
+            super::DefinitionDestination::Local,
+            &[],
+            &[word; super::INLINE_DEFINITION_WORD_CAPACITY],
+        );
+        let region = arena.region(definition.region()).expect("local region");
+        assert!(
+            region
+                .owner
+                .as_ref()
+                .expect("definition words own storage")
+                .overflow_words
+                .borrow()
+                .is_empty(),
+            "the bounded common case does not allocate a 4,096-word overflow block"
+        );
+        assert_eq!(
+            arena.get(definition).replacement_text().len(),
+            super::INLINE_DEFINITION_WORD_CAPACITY
+        );
+        drop(region);
+        arena.end_group();
+    });
+}
+
+#[test]
+fn definition_overflow_keeps_direct_stable_chunk_reads() {
+    with_generation(|mut generation| {
+        let replacement = (0..super::INLINE_DEFINITION_WORD_CAPACITY + 1)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("overflow definition");
+        let owner = generation
+            .definitions()
+            .global
+            .owner
+            .as_ref()
+            .expect("definition words own storage");
+        assert_eq!(owner.overflow_words.borrow().len(), 1);
+        assert_eq!(
+            generation.definitions().get(definition).replacement_text(),
+            replacement
+        );
+    });
+}
+
+#[test]
 fn direct_definition_seals_provenance_in_the_only_header_write() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
@@ -1287,7 +1343,7 @@ fn resident_body_walks_chunk_boundary_and_large_definition_directly() {
 fn resident_body_read_work_is_exact_for_one_full_and_multiple_chunks() {
     for (words, expected_transitions) in [
         (1_usize, 0_u64),
-        (super::DEFINITION_WORD_CHUNK_CAPACITY, 0),
+        (super::DEFINITION_WORD_CHUNK_CAPACITY, 1),
         (super::DEFINITION_WORD_CHUNK_CAPACITY * 2 + 1, 2),
     ] {
         with_generation(|mut generation| {
@@ -1326,7 +1382,8 @@ fn resident_body_read_work_is_exact_for_one_full_and_multiple_chunks() {
 #[test]
 fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
     with_generation(|mut generation| {
-        let words = super::DEFINITION_WORD_CHUNK_CAPACITY + 3;
+        let words =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY + 3;
         let replacement = (0..words)
             .map(|index| TokenWord::from_raw(index as u32 + 1))
             .collect::<Vec<_>>();
@@ -1338,7 +1395,8 @@ fn resident_body_scalar_position_replays_exactly_after_chunk_crossing() {
             .definitions()
             .admit_macro_body(definition)
             .expect("resident body");
-        let checkpoint_position = super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
+        let checkpoint_position =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
         for (expected_position, expected) in replacement
             .iter()
             .copied()

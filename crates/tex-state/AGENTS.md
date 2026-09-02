@@ -69,13 +69,15 @@ All production mutation of live TeX state should pass through `Universe` or simi
   Exceptional local-to-global
   `let` promotion copies one span once and caches the mapped global key in its
   source region, so no global promotion sweep exists. Detached builders remain
-  only for cold format/memo/import batches. Each semantic region owns one flat
-  append-only directory of stable 4,096-word chunks; resident body admission
-  validates the initial chunk once and mints the sole absolute replacement
-  cursor. Ordinary safe-Rust delivery returns the relative semantic position
-  with one direct constant-time slot access, advances that cursor once, and
-  changes its derived chunk only at boundaries. Rollback swaps an opaque
-  store coordinate. Exact per-word structural counters are test-only;
+  only for cold format/memo/import batches. Each semantic region owns an
+  eight-word inline common prefix and one flat append-only directory of stable
+  4,096-word overflow chunks. Tiny group-local definitions therefore retire
+  with their existing region slot without acquiring a mostly empty heap block.
+  Resident body admission validates its initial storage segment once and mints
+  the sole absolute replacement cursor. Ordinary safe-Rust delivery returns
+  the relative semantic position with one direct constant-time slot access,
+  advances that cursor once, and changes its derived segment only at
+  boundaries. Rollback swaps an opaque store coordinate. Exact per-word structural counters are test-only;
   profiling gates derive their known sequential volumes at the boundary.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, retained immutable rows
