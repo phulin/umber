@@ -35,10 +35,34 @@ pub struct PageMaterialNodeRef<'a> {
     annex: NodeAnnexView<'a>,
 }
 
-impl PageMaterialNodeRef<'_> {
+impl<'a> PageMaterialNodeRef<'a> {
+    pub(crate) const fn new(record: &'a PageMaterialNode, annex: NodeAnnexView<'a>) -> Self {
+        Self { record, annex }
+    }
+
+    #[must_use]
+    pub fn kind(self) -> Option<crate::node::NodeKind> {
+        self.record.kind()
+    }
+
     #[must_use]
     pub fn character(self) -> Option<(crate::ids::FontId, char, crate::token::OriginId)> {
         self.record.character()
+    }
+
+    #[must_use]
+    pub fn glyph(self) -> Option<(crate::ids::FontId, char)> {
+        self.record.glyph(self.annex)
+    }
+
+    #[must_use]
+    pub fn kern(self) -> Option<(crate::scaled::Scaled, crate::node::KernKind)> {
+        self.record.kern()
+    }
+
+    #[must_use]
+    pub fn margin_kern_amount(self) -> Option<crate::scaled::Scaled> {
+        self.record.margin_kern_amount()
     }
 
     #[must_use]
@@ -49,6 +73,41 @@ impl PageMaterialNodeRef<'_> {
     #[must_use]
     pub fn is_glue(self) -> bool {
         self.record.is_glue()
+    }
+
+    #[must_use]
+    pub fn penalty(self) -> Option<i32> {
+        self.record.penalty()
+    }
+
+    #[must_use]
+    pub fn rule_width(self) -> Option<Option<crate::scaled::Scaled>> {
+        self.record.rule_width()
+    }
+
+    #[must_use]
+    pub fn box_width(self) -> Option<crate::scaled::Scaled> {
+        self.record.box_width(self.annex)
+    }
+
+    #[must_use]
+    pub fn unset_width(self) -> Option<crate::scaled::Scaled> {
+        self.record.unset_width(self.annex)
+    }
+
+    #[must_use]
+    pub fn math_boundary(self) -> Option<(bool, crate::scaled::Scaled)> {
+        self.record.math_boundary()
+    }
+
+    #[must_use]
+    pub fn direction(self) -> Option<crate::node::Direction> {
+        self.record.direction()
+    }
+
+    #[must_use]
+    pub fn pdf_image_width(self) -> Option<crate::scaled::Scaled> {
+        self.record.pdf_image_width()
     }
 
     #[must_use]
@@ -92,6 +151,16 @@ impl PageMaterialNodeRef<'_> {
         u8,
     )> {
         self.record.discretionary(self.annex)
+    }
+
+    #[must_use]
+    pub fn discretionary_break(self) -> Option<(crate::node::DiscKind, PageListId, PageListId)> {
+        self.record.discretionary_break(self.annex)
+    }
+
+    #[must_use]
+    pub fn discretionary_replace(self) -> Option<PageListId> {
+        self.record.discretionary_replace(self.annex)
     }
 
     pub fn visit_ligature_source(

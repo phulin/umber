@@ -175,7 +175,11 @@ fn ordinary_breakpoint_analysis_crosses_each_block_once_at_required_sizes() {
 
         let reference_before = cursor.testing_traversal_counters();
         let mut visited = 0;
-        cursor.for_each_range(0..cursor.len(), |_, _| visited += 1);
+        let _: core::ops::ControlFlow<core::convert::Infallible> = cursor
+            .try_for_each_direct_range(0..cursor.len(), |_, _| {
+                visited += 1;
+                core::ops::ControlFlow::Continue(())
+            });
         let reference = delta(cursor.testing_traversal_counters(), reference_before);
         assert_eq!(visited, values);
         assert_eq!(

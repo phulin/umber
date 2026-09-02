@@ -2,7 +2,7 @@ use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 #[cfg(test)]
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, NodeView, PackedNode, PageListId};
+use tex_state::node_arena::{DirectNodeView, HorizontalNode, NodeCursor, PageListId};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -216,31 +216,33 @@ pub(super) fn add_node_width_source<S: TypesetState>(
     include_font_expansion: bool,
     discretionary_widths: DiscretionaryWidths,
 ) {
-    let Some(node) = nodes.get(index) else {
+    let Some(node) = nodes.get_direct(index) else {
         return;
     };
-    add_node_width_value(
+    add_direct_node_width_value(
         widths,
         state,
         node,
-        index.checked_sub(1).and_then(|index| nodes.get(index)),
-        nodes.get(index + 1),
+        index
+            .checked_sub(1)
+            .and_then(|index| nodes.get_direct(index)),
+        nodes.get_direct(index + 1),
         include_font_expansion,
         discretionary_widths,
     );
 }
 
-pub(super) fn add_node_width_value<S: TypesetState>(
+pub(super) fn add_direct_node_width_value<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
-    node: NodeView<'_>,
-    previous: Option<NodeView<'_>>,
-    next: Option<NodeView<'_>>,
+    node: DirectNodeView<'_>,
+    previous: Option<DirectNodeView<'_>>,
+    next: Option<DirectNodeView<'_>>,
     include_font_expansion: bool,
     discretionary_widths: DiscretionaryWidths,
 ) {
-    match node.packed() {
-        PackedNode::Glyph { font, ch } => {
+    match node.horizontal() {
+        HorizontalNode::Glyph { font, ch } => {
             if let Some(metrics) = state.font_character_metrics(font, ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
                 if include_font_expansion && let Ok(code) = u8::try_from(ch as u32) {
@@ -248,30 +250,23 @@ pub(super) fn add_node_width_value<S: TypesetState>(
                 }
             }
         }
-        PackedNode::Kern { amount, kind } => {
-            // OpenType pass-1 cluster advances are carried as Font kern
-            // adjustments beside their source character nodes. Counting the
-            // adjustment here makes the accumulated width equal the shaped
-            // cluster advance rather than the sum of cmap glyph advances.
+        HorizontalNode::Kern { amount, kind } => {
             widths.natural = add_scaled(widths.natural, amount);
             if include_font_expansion && kind == Some(tex_state::node::KernKind::Font) {
-                add_font_kern_expansion(state, widths, previous, next, amount);
+                add_direct_font_kern_expansion(state, widths, previous, next, amount);
             }
         }
-        PackedNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
-        PackedNode::Glue { spec, .. } => add_glue(widths, spec),
-        PackedNode::Rule { width, .. } => {
-            if let Some(width) = width {
-                widths.natural = add_scaled(widths.natural, width);
-            }
+        HorizontalNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
+        HorizontalNode::Glue(spec) => add_glue(widths, spec),
+        HorizontalNode::Rule(Some(width))
+        | HorizontalNode::Box(width)
+        | HorizontalNode::Unset(width)
+        | HorizontalNode::Image(width) => {
+            widths.natural = add_scaled(widths.natural, width);
         }
-        PackedNode::Box(box_node) => {
-            widths.natural = add_scaled(widths.natural, box_node.width);
-        }
-        PackedNode::Unset(unset) => {
-            widths.natural = add_scaled(widths.natural, unset.width);
-        }
-        PackedNode::Disc(replace) if discretionary_widths == DiscretionaryWidths::Replacement => {
+        HorizontalNode::Disc(replace)
+            if discretionary_widths == DiscretionaryWidths::Replacement =>
+        {
             add_nested_list_widths(
                 widths,
                 state,
@@ -280,11 +275,7 @@ pub(super) fn add_node_width_value<S: TypesetState>(
                 discretionary_widths,
             );
         }
-        PackedNode::Disc(_) => {}
-        PackedNode::Image { width, .. } => {
-            widths.natural = add_scaled(widths.natural, width);
-        }
-        PackedNode::Ignored => {}
+        HorizontalNode::Disc(_) | HorizontalNode::Rule(None) | HorizontalNode::Ignored => {}
     }
 }
 
@@ -308,10 +299,10 @@ fn add_nested_list_widths<S: TypesetState>(
         let current = *index;
         *index += 1;
         let node = cursor
-            .get(current)
+            .get_direct(current)
             .expect("nested width cursor position is in bounds");
-        match node.packed() {
-            PackedNode::Glyph { font, ch } => {
+        match node.horizontal() {
+            HorizontalNode::Glyph { font, ch } => {
                 if let Some(metrics) = state.font_character_metrics(font, ch) {
                     widths.natural = add_scaled(widths.natural, metrics.width);
                     if include_font_expansion && let Ok(code) = u8::try_from(ch as u32) {
@@ -319,41 +310,35 @@ fn add_nested_list_widths<S: TypesetState>(
                     }
                 }
             }
-            PackedNode::Kern { amount, kind } => {
+            HorizontalNode::Kern { amount, kind } => {
                 widths.natural = add_scaled(widths.natural, amount);
                 if include_font_expansion && kind == Some(tex_state::node::KernKind::Font) {
-                    add_font_kern_expansion(
-                        state,
-                        widths,
-                        current.checked_sub(1).and_then(|index| cursor.get(index)),
-                        cursor.get(current + 1),
-                        amount,
-                    );
+                    let previous = current
+                        .checked_sub(1)
+                        .and_then(|index| cursor.get_direct(index))
+                        .and_then(direct_glyph);
+                    let next = cursor.get_direct(current + 1).and_then(direct_glyph);
+                    if let (Some((left_font, left)), Some((right_font, right))) = (previous, next) {
+                        add_font_kern_capacity(
+                            state, widths, left_font, left, right_font, right, amount,
+                        );
+                    }
                 }
             }
-            PackedNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
-            PackedNode::Glue { spec, .. } => add_glue(widths, spec),
-            PackedNode::Rule { width, .. } => {
-                if let Some(width) = width {
-                    widths.natural = add_scaled(widths.natural, width);
-                }
+            HorizontalNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
+            HorizontalNode::Glue(spec) => add_glue(widths, spec),
+            HorizontalNode::Rule(Some(width))
+            | HorizontalNode::Box(width)
+            | HorizontalNode::Unset(width)
+            | HorizontalNode::Image(width) => {
+                widths.natural = add_scaled(widths.natural, width);
             }
-            PackedNode::Box(box_node) => {
-                widths.natural = add_scaled(widths.natural, box_node.width);
-            }
-            PackedNode::Unset(unset) => {
-                widths.natural = add_scaled(widths.natural, unset.width);
-            }
-            PackedNode::Disc(replace)
+            HorizontalNode::Disc(replace)
                 if discretionary_widths == DiscretionaryWidths::Replacement =>
             {
                 stack.push((replace, 0));
             }
-            PackedNode::Disc(_) => {}
-            PackedNode::Image { width, .. } => {
-                widths.natural = add_scaled(widths.natural, width);
-            }
-            PackedNode::Ignored => {}
+            HorizontalNode::Disc(_) | HorizontalNode::Rule(None) | HorizontalNode::Ignored => {}
         }
     }
 }
@@ -381,17 +366,17 @@ fn add_char_expansion<S: TypesetState>(
     widths.font_shrink = add_scaled(widths.font_shrink, capacity.shrink);
 }
 
-fn add_font_kern_expansion<S: TypesetState>(
+fn add_direct_font_kern_expansion<S: TypesetState>(
     state: &S,
     widths: &mut Widths,
-    previous: Option<NodeView<'_>>,
-    next: Option<NodeView<'_>>,
+    previous: Option<DirectNodeView<'_>>,
+    next: Option<DirectNodeView<'_>>,
     natural: Scaled,
 ) {
-    let Some((left_font, left)) = previous.and_then(glyph) else {
+    let Some((left_font, left)) = previous.and_then(direct_glyph) else {
         return;
     };
-    let Some((right_font, right)) = next.and_then(glyph) else {
+    let Some((right_font, right)) = next.and_then(direct_glyph) else {
         return;
     };
     add_font_kern_capacity(state, widths, left_font, left, right_font, right, natural);
@@ -430,13 +415,9 @@ fn add_font_kern_capacity<S: TypesetState>(
     );
 }
 
-fn glyph(node: NodeView<'_>) -> Option<(tex_state::ids::FontId, u8)> {
-    match node {
-        NodeView::Char { font, ch, .. } | NodeView::Lig { font, ch, .. } => {
-            u8::try_from(ch as u32).ok().map(|code| (font, code))
-        }
-        _ => None,
-    }
+fn direct_glyph(node: DirectNodeView<'_>) -> Option<(tex_state::ids::FontId, u8)> {
+    let (font, ch) = node.glyph()?;
+    u8::try_from(ch as u32).ok().map(|code| (font, code))
 }
 
 pub(super) fn line_badness(

@@ -172,7 +172,7 @@ impl ArenaPostLineChannel {
                     .expect("paragraph source remains live")
                     .nodes();
                 nodes
-                    .try_for_each_range(self.position..end, |absolute, node| {
+                    .try_for_each_direct_range(self.position..end, |absolute, node| {
                         let node_action = classify_post_line_node_value(node);
                         let action = actions.and_then(|actions| actions.get(absolute)).copied();
                         if post_line_event_is_exceptional(
@@ -393,7 +393,7 @@ fn next_post_line_event<G>(
         .page_node_span(source)
         .expect("paragraph source remains live")
         .nodes()
-        .try_for_each_range(selected, |absolute, node| {
+        .try_for_each_direct_range(selected, |absolute, node| {
             let node_action = classify_post_line_node_value(node);
             let action = actions.and_then(|actions| actions.get(absolute)).copied();
             if post_line_event_is_exceptional(
@@ -442,33 +442,31 @@ fn post_line_event_is_exceptional(
     }
 }
 
-fn classify_post_line_node_value(node: tex_state::NodeView<'_>) -> PostLineNode {
-    match node {
-        tex_state::NodeView::Disc {
+fn classify_post_line_node_value(node: tex_state::node_arena::DirectNodeView<'_>) -> PostLineNode {
+    if let Some((kind, pre, post, replace, physical_replace_count)) = node.discretionary() {
+        return PostLineNode::Discretionary {
             kind,
             pre,
             post,
             replace,
             physical_replace_count,
-        } => PostLineNode::Discretionary {
-            kind,
-            pre,
-            post,
-            replace,
-            physical_replace_count,
-        },
-        tex_state::NodeView::Glue {
-            kind: GlueKind::ParFillSkip,
-            ..
-        } => PostLineNode::ParFillGlue,
-        tex_state::NodeView::Glue { .. }
-        | tex_state::NodeView::Kern {
-            kind: KernKind::Explicit,
-            ..
-        } => PostLineNode::BreakDiscardable,
-        tex_state::NodeView::MathOff(_) => PostLineNode::MathOff,
-        tex_state::NodeView::Direction(direction) => PostLineNode::Direction(direction),
-        _ => PostLineNode::Other,
+        };
+    }
+    let glue_kind = node.glue_kind();
+    if glue_kind == Some(GlueKind::ParFillSkip) {
+        PostLineNode::ParFillGlue
+    } else if glue_kind.is_some()
+        || node
+            .kern()
+            .is_some_and(|(_, kind)| kind == KernKind::Explicit)
+    {
+        PostLineNode::BreakDiscardable
+    } else if node.kind() == Some(tex_state::node::NodeKind::MathOff) {
+        PostLineNode::MathOff
+    } else if let Some(direction) = node.direction() {
+        PostLineNode::Direction(direction)
+    } else {
+        PostLineNode::Other
     }
 }
 
@@ -482,7 +480,7 @@ fn skip_post_line_discardable<G>(
         .page_node_span(source)
         .expect("paragraph source remains live")
         .nodes()
-        .try_for_each_range(start..source.len(), |index, node| {
+        .try_for_each_direct_range(start..source.len(), |index, node| {
             if post_line_discardable(node) {
                 next = index + 1;
                 core::ops::ControlFlow::Continue(())
@@ -502,8 +500,8 @@ fn append_direction_evidence<G>(
         .page_node_span(source)
         .expect("paragraph branch remains live")
         .nodes()
-        .for_each(|node| {
-            if let tex_state::NodeView::Direction(direction) = node {
+        .for_each_direct(|node| {
+            if let Some(direction) = node.direction() {
                 update_direction(direction, active);
             }
         });
@@ -542,12 +540,8 @@ fn extend_frozen_lineages<G>(
         .expect("frozen discretionary branch remains live")
         .nodes();
     let mut row = 0_usize;
-    nodes.for_each(|node| {
-        let count = match node {
-            tex_state::NodeView::Char { .. } => 1,
-            tex_state::NodeView::Lig { orig, .. } => orig.len(),
-            _ => 0,
-        };
+    nodes.for_each_direct(|node| {
+        let count = node.lineage_cell_count();
         for unit in 0..count {
             output.push(tex_state::node_sequence::DirectHighCellLineage::Frozen {
                 list: span.list(),
@@ -560,18 +554,19 @@ fn extend_frozen_lineages<G>(
     });
 }
 
-fn post_line_discardable(node: tex_state::NodeView<'_>) -> bool {
-    matches!(
-        node,
-        tex_state::NodeView::Glue { .. }
-            | tex_state::NodeView::Kern {
-                kind: KernKind::Explicit | KernKind::Mu,
-                ..
-            }
-            | tex_state::NodeView::Penalty(_)
-            | tex_state::NodeView::MathOn(_)
-            | tex_state::NodeView::MathOff(_)
-    )
+fn post_line_discardable(node: tex_state::node_arena::DirectNodeView<'_>) -> bool {
+    match node.kind() {
+        Some(
+            tex_state::node::NodeKind::Glue
+            | tex_state::node::NodeKind::Penalty
+            | tex_state::node::NodeKind::MathOn
+            | tex_state::node::NodeKind::MathOff,
+        ) => true,
+        Some(tex_state::node::NodeKind::Kern) => node
+            .kern()
+            .is_some_and(|(_, kind)| matches!(kind, KernKind::Explicit | KernKind::Mu)),
+        _ => false,
+    }
 }
 
 pub(crate) fn display_line_dimensions<G>(
@@ -1475,18 +1470,14 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
 
 fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
-    nodes.for_each(|node| match node {
-        tex_state::NodeView::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
+    nodes.for_each_direct(|node| match node.direction() {
+        Some(direction @ (Direction::BeginL | Direction::BeginR)) => {
             active.push(direction);
         }
-        tex_state::NodeView::Direction(Direction::EndL)
-            if active.last() == Some(&Direction::BeginL) =>
-        {
+        Some(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
             let _ = active.pop();
         }
-        tex_state::NodeView::Direction(Direction::EndR)
-            if active.last() == Some(&Direction::BeginR) =>
-        {
+        Some(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
             let _ = active.pop();
         }
         _ => {}

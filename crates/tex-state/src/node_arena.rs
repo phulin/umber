@@ -3161,14 +3161,255 @@ impl NodeView<'_> {
     }
 }
 
+/// Width-bearing semantic facts read without expanding a compact node record.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HorizontalNode {
+    Glyph {
+        font: crate::ids::FontId,
+        ch: char,
+    },
+    Kern {
+        amount: crate::scaled::Scaled,
+        kind: Option<crate::node::KernKind>,
+    },
+    Glue(GlueSpec),
+    Rule(Option<crate::scaled::Scaled>),
+    Box(crate::scaled::Scaled),
+    Unset(crate::scaled::Scaled),
+    Disc(PageListId),
+    Image(crate::scaled::Scaled),
+    Math(crate::scaled::Scaled),
+    Ignored,
+}
+
+const _: () = assert!(core::mem::size_of::<HorizontalNode>() <= 48);
+
+/// Small borrowed reference to either a native test node or one compact
+/// resident page-material record.
+///
+/// Sequential algorithms should retain this reference and decode only their
+/// demanded scalar or annex fields.
+#[derive(Clone, Copy)]
+pub struct DirectNodeView<'a> {
+    source: DirectNodeSource<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum DirectNodeSource<'a> {
+    Owned(&'a Node),
+    Page(crate::page_node_arena::PageMaterialNodeRef<'a>),
+}
+
+impl<'a> DirectNodeView<'a> {
+    fn owned(node: &'a Node) -> Self {
+        Self {
+            source: DirectNodeSource::Owned(node),
+        }
+    }
+
+    fn page(node: crate::page_node_arena::PageMaterialNodeRef<'a>) -> Self {
+        Self {
+            source: DirectNodeSource::Page(node),
+        }
+    }
+
+    #[must_use]
+    pub fn kind(self) -> Option<crate::node::NodeKind> {
+        match self.source {
+            DirectNodeSource::Owned(node) => Some(node.kind()),
+            DirectNodeSource::Page(node) => node.kind(),
+        }
+    }
+
+    #[must_use]
+    pub fn character(self) -> Option<(crate::ids::FontId, char, crate::token::OriginId)> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Char { font, ch, origin }) => Some((*font, *ch, *origin)),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.character(),
+        }
+    }
+
+    #[must_use]
+    pub fn glyph(self) -> Option<(crate::ids::FontId, char)> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Char { font, ch, .. } | Node::Lig { font, ch, .. }) => {
+                Some((*font, *ch))
+            }
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.glyph(),
+        }
+    }
+
+    #[must_use]
+    pub fn kern(self) -> Option<(crate::scaled::Scaled, crate::node::KernKind)> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Kern { amount, kind }) => Some((*amount, *kind)),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.kern(),
+        }
+    }
+
+    #[must_use]
+    pub fn penalty(self) -> Option<i32> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Penalty(value)) => Some(*value),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.penalty(),
+        }
+    }
+
+    #[must_use]
+    pub fn glue_kind(self) -> Option<crate::node::GlueKind> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Glue { kind, .. }) => Some(*kind),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.glue_spec_kind().map(|(_, kind)| kind),
+        }
+    }
+
+    #[must_use]
+    pub fn direction(self) -> Option<crate::node::Direction> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Direction(direction)) => Some(*direction),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.direction(),
+        }
+    }
+
+    #[must_use]
+    pub fn lineage_cell_count(self) -> usize {
+        match self.source {
+            DirectNodeSource::Owned(Node::Char { .. }) => 1,
+            DirectNodeSource::Owned(Node::Lig { orig, .. }) => orig.len(),
+            DirectNodeSource::Owned(_) => 0,
+            DirectNodeSource::Page(node) => {
+                if node.character().is_some() {
+                    1
+                } else {
+                    let mut count = 0;
+                    let _ = node.visit_ligature_source(|_, _| count += 1);
+                    count
+                }
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn discretionary(
+        self,
+    ) -> Option<(
+        crate::node::DiscKind,
+        PageListId,
+        PageListId,
+        PageListId,
+        u8,
+    )> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            }) => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.discretionary(),
+        }
+    }
+
+    #[must_use]
+    pub fn discretionary_break(self) -> Option<(crate::node::DiscKind, PageListId, PageListId)> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Disc {
+                kind, pre, post, ..
+            }) => Some((*kind, *pre, *post)),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.discretionary_break(),
+        }
+    }
+
+    #[must_use]
+    pub fn discretionary_replace(self) -> Option<PageListId> {
+        match self.source {
+            DirectNodeSource::Owned(Node::Disc { replace, .. }) => Some(*replace),
+            DirectNodeSource::Owned(_) => None,
+            DirectNodeSource::Page(node) => node.discretionary_replace(),
+        }
+    }
+
+    #[must_use]
+    pub fn horizontal(self) -> HorizontalNode {
+        match self.source {
+            DirectNodeSource::Owned(node) => match node {
+                Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => HorizontalNode::Glyph {
+                    font: *font,
+                    ch: *ch,
+                },
+                Node::Kern { amount, kind } => HorizontalNode::Kern {
+                    amount: *amount,
+                    kind: Some(*kind),
+                },
+                Node::MarginKern { amount, .. } => HorizontalNode::Kern {
+                    amount: *amount,
+                    kind: None,
+                },
+                Node::Glue { spec, .. } => HorizontalNode::Glue(*spec),
+                Node::Rule { width, .. } => HorizontalNode::Rule(*width),
+                Node::HList(value) | Node::VList(value) => HorizontalNode::Box(value.width),
+                Node::Unset(value) => HorizontalNode::Unset(value.width),
+                Node::Disc { replace, .. } => HorizontalNode::Disc(*replace),
+                Node::Whatsit(
+                    crate::node::Whatsit::PdfRefXForm { width, .. }
+                    | crate::node::Whatsit::PdfRefXImage { width, .. },
+                ) => HorizontalNode::Image(*width),
+                Node::MathOn(width) | Node::MathOff(width) => HorizontalNode::Math(*width),
+                _ => HorizontalNode::Ignored,
+            },
+            DirectNodeSource::Page(node) => {
+                if let Some((font, ch)) = node.glyph() {
+                    HorizontalNode::Glyph { font, ch }
+                } else if let Some((amount, kind)) = node.kern() {
+                    HorizontalNode::Kern {
+                        amount,
+                        kind: Some(kind),
+                    }
+                } else if let Some(amount) = node.margin_kern_amount() {
+                    HorizontalNode::Kern { amount, kind: None }
+                } else if let Some((spec, _)) = node.glue_spec_kind() {
+                    HorizontalNode::Glue(spec)
+                } else if let Some(width) = node.rule_width() {
+                    HorizontalNode::Rule(width)
+                } else if let Some(width) = node.box_width() {
+                    HorizontalNode::Box(width)
+                } else if let Some(width) = node.unset_width() {
+                    HorizontalNode::Unset(width)
+                } else if let Some(replace) = node.discretionary_replace() {
+                    HorizontalNode::Disc(replace)
+                } else if let Some(width) = node.pdf_image_width() {
+                    HorizontalNode::Image(width)
+                } else if let Some((_, width)) = node.math_boundary() {
+                    HorizontalNode::Math(width)
+                } else {
+                    HorizontalNode::Ignored
+                }
+            }
+        }
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<DirectNodeView<'static>>() <= 24);
+
 /// Unified borrowed view for operation buffers and direct page sequences.
 ///
 /// The arena variant retains only a borrow and a compact direct root.
-/// Genuinely positional consumers use [`Self::owned_node`]. Long sequential
-/// consumers use [`Self::for_each`] or [`Self::try_for_each_range`], which
-/// follow the sole predecessor chain once without successor metadata.
+/// Genuinely positional compatibility consumers use [`Self::owned_node`].
+/// Long compact consumers use [`Self::for_each_direct`] or
+/// [`Self::try_for_each_direct_range`], which follow the sole predecessor
+/// chain once without successor metadata or whole-node reconstruction.
 /// Iterator adapters remain for algorithms that genuinely need pull-based
-/// traversal and retain the admitted cursor within each packed block.
+/// compatibility traversal and retain the admitted cursor within each packed
+/// block.
 #[derive(Clone, Copy)]
 pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
@@ -3283,6 +3524,20 @@ impl<'a> NodeCursor<'a> {
         }
     }
 
+    /// Borrows one node without expanding compact page material into the
+    /// former whole-node value.
+    #[must_use]
+    pub fn get_direct(&self, index: usize) -> Option<DirectNodeView<'a>> {
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.get(index).map(DirectNodeView::owned),
+            NodeCursorSource::Fork(view, annex) => view.get(index).map(|record| {
+                DirectNodeView::page(crate::page_node_arena::PageMaterialNodeRef::new(
+                    record, annex,
+                ))
+            }),
+        }
+    }
+
     /// Returns the backing-row address for exact retained-range tests.
     ///
     /// This is deliberately unavailable to production consumers: node reads
@@ -3364,6 +3619,24 @@ impl<'a> NodeCursor<'a> {
         }
     }
 
+    /// Visits sequential nodes as small borrowed direct-record references.
+    ///
+    /// Compact page inputs never construct a complete [`Node`] or
+    /// [`NodeView`]. Callers request only the scalar or annex fields consumed
+    /// by their algorithm.
+    pub fn for_each_direct(&self, mut visit: impl FnMut(DirectNodeView<'a>)) {
+        match self.source {
+            NodeCursorSource::Slice(nodes) => {
+                nodes.iter().map(DirectNodeView::owned).for_each(visit)
+            }
+            NodeCursorSource::Fork(view, annex) => view.for_each(|record| {
+                visit(DirectNodeView::page(
+                    crate::page_node_arena::PageMaterialNodeRef::new(record, annex),
+                ));
+            }),
+        }
+    }
+
     /// Visits one logical range in forward order without materializing an
     /// iterator-side successor structure.
     ///
@@ -3398,6 +3671,40 @@ impl<'a> NodeCursor<'a> {
                         .map_or(core::ops::ControlFlow::Continue(()), |node| {
                             visit(index, node)
                         })
+                })
+            }
+        }
+    }
+
+    /// Visits one logical range through borrowed direct-record references.
+    pub fn try_for_each_direct_range<B>(
+        &self,
+        selected: core::ops::Range<usize>,
+        mut visit: impl FnMut(usize, DirectNodeView<'a>) -> core::ops::ControlFlow<B>,
+    ) -> core::ops::ControlFlow<B> {
+        assert!(
+            selected.start <= selected.end && selected.end <= self.len(),
+            "node traversal range must be in bounds"
+        );
+        match self.source {
+            NodeCursorSource::Slice(nodes) => {
+                for (offset, node) in nodes[selected.clone()].iter().enumerate() {
+                    if let core::ops::ControlFlow::Break(value) =
+                        visit(selected.start + offset, DirectNodeView::owned(node))
+                    {
+                        return core::ops::ControlFlow::Break(value);
+                    }
+                }
+                core::ops::ControlFlow::Continue(())
+            }
+            NodeCursorSource::Fork(view, annex) => {
+                view.try_for_each_range(selected, |index, record| {
+                    visit(
+                        index,
+                        DirectNodeView::page(crate::page_node_arena::PageMaterialNodeRef::new(
+                            record, annex,
+                        )),
+                    )
                 })
             }
         }
@@ -3495,9 +3802,7 @@ pub struct CharCodes<'a> {
 
 impl<'a> CharCodes<'a> {
     fn new(nodes: NodeCursor<'a>, index: usize) -> Option<Self> {
-        let NodeView::Char { font, ch, .. } = nodes.get(index)? else {
-            return None;
-        };
+        let (font, ch, _) = nodes.get_direct(index)?.character()?;
         u8::try_from(ch as u32).ok()?;
         Some(Self {
             nodes,
@@ -3514,9 +3819,7 @@ impl<'a> CharCodes<'a> {
 impl Iterator for CharCodes<'_> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
-        let NodeView::Char { font, ch, .. } = self.nodes.get(self.next)? else {
-            return None;
-        };
+        let (font, ch, _) = self.nodes.get_direct(self.next)?.character()?;
         if font != self.font {
             return None;
         }

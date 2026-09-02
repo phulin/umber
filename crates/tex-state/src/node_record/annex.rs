@@ -437,6 +437,17 @@ impl<'a> NodeAnnexView<'a> {
         self.detach_span(key)
     }
 
+    pub(super) fn inspect_fixed<Kind, Result>(
+        self,
+        key: AnnexKey<Kind>,
+        body_words: usize,
+        inspect: impl FnOnce(crate::fork_arena::ArenaListView<'a, u32, NodeAnnexLane>) -> Option<Result>,
+    ) -> Option<Result> {
+        let view = self.list(key)?;
+        (view.len() == body_words + 1).then_some(())?;
+        inspect(view)
+    }
+
     pub(super) fn resolve_fixed_array<Kind, const N: usize>(
         self,
         key: AnnexKey<Kind>,

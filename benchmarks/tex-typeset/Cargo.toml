@@ -18,6 +18,10 @@ tex-typeset = { path = "../../crates/tex-typeset" }
 name = "layout_allocations"
 path = "src/bin/layout_allocations.rs"
 
+[[bin]]
+name = "linebreak_direct"
+path = "src/bin/linebreak_direct.rs"
+
 [[bench]]
 name = "widths"
 harness = false

@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::{NodeCursor, NodeView, PageListId, PageNodeSequenceId};
+use tex_state::node_arena::{DirectNodeView, NodeCursor, NodeView, PageListId, PageNodeSequenceId};
 use tex_state::node_sequence::DirectHighCellLineages;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
@@ -720,7 +720,7 @@ pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_
 #[cfg(test)]
 use widths::line_widths_nodes;
 use widths::{
-    DiscretionaryWidths, Widths, add_node_width_value, line_badness, line_widths_cursor,
+    DiscretionaryWidths, Widths, add_direct_node_width_value, line_badness, line_widths_cursor,
     line_widths_view,
 };
 
@@ -743,31 +743,25 @@ fn observe_expansion_fonts<S: TypesetState>(
     paragraph: &mut crate::expansion::ParagraphExpansion,
 ) -> Result<(), crate::expansion::FontExpansionError> {
     let mut error = None;
-    nodes.for_each(|node| {
+    nodes.for_each_direct(|node| {
         if error.is_some() {
             return;
         }
-        match node {
-            NodeView::Char { font, .. } | NodeView::Lig { font, .. } => {
-                if let Some(spec) = state.font_expansion_spec(font)
-                    && let Err(found) = paragraph.observe(spec)
+        if let Some((font, _)) = node.glyph() {
+            if let Some(spec) = state.font_expansion_spec(font)
+                && let Err(found) = paragraph.observe(spec)
+            {
+                error = Some(found);
+            }
+        } else if let Some((_, pre, post, replace, _)) = node.discretionary() {
+            for list in [pre, post, replace] {
+                if let Err(found) =
+                    observe_expansion_fonts(state, state.page_nodes(list), paragraph)
                 {
                     error = Some(found);
+                    break;
                 }
             }
-            NodeView::Disc {
-                pre, post, replace, ..
-            } => {
-                for list in [pre, post, replace] {
-                    if let Err(found) =
-                        observe_expansion_fonts(state, state.page_nodes(list), paragraph)
-                    {
-                        error = Some(found);
-                        break;
-                    }
-                }
-            }
-            _ => {}
         }
     });
     error.map_or(Ok(()), Err)
@@ -1794,21 +1788,21 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         let nodes = self.nodes;
         let mut output = Vec::new();
         let mut pending_start = None;
-        let mut previous: Option<NodeView<'_>> = None;
-        let mut pending: Option<(usize, NodeView<'_>, Option<NodeView<'_>>)> = None;
+        let mut previous: Option<DirectNodeView<'_>> = None;
+        let mut pending: Option<(usize, DirectNodeView<'_>, Option<DirectNodeView<'_>>)> = None;
         let mut index = 0_usize;
-        nodes.for_each(|node| {
+        nodes.for_each_direct(|node| {
             if let Some((pending_index, pending_node, pending_previous)) = pending.take() {
                 self.observe_direct_node(
                     pending_index,
                     pending_node,
                     pending_previous,
-                    Some(node.clone()),
+                    Some(node),
                     &mut output,
                     &mut pending_start,
                 );
             }
-            pending = Some((index, node.clone(), previous.clone()));
+            pending = Some((index, node, previous));
             previous = Some(node);
             index += 1;
         });
@@ -1846,13 +1840,13 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
     fn observe_direct_node(
         &mut self,
         index: usize,
-        node: NodeView<'_>,
-        previous: Option<NodeView<'_>>,
-        next: Option<NodeView<'_>>,
+        node: DirectNodeView<'_>,
+        previous: Option<DirectNodeView<'_>>,
+        next: Option<DirectNodeView<'_>>,
         output: &mut Vec<BreakSite>,
         pending_start: &mut Option<usize>,
     ) {
-        if !is_discardable(node.clone()) {
+        if !is_direct_discardable(node) {
             Self::finalize_pending(output, pending_start, index, self.prefix);
         }
         let Some((site, awaits_discardable_end)) = self.observe_node(index, node, previous, next)
@@ -1885,35 +1879,34 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
     fn observe_node(
         &mut self,
         index: usize,
-        node: NodeView<'_>,
-        previous: Option<NodeView<'_>>,
-        next: Option<NodeView<'_>>,
+        node: DirectNodeView<'_>,
+        previous: Option<DirectNodeView<'_>>,
+        next: Option<DirectNodeView<'_>>,
     ) -> Option<(BreakSite, bool)> {
         let before = self.prefix;
-        add_node_width_value(
+        add_direct_node_width_value(
             &mut self.prefix,
             self.state,
-            node.clone(),
-            previous.clone(),
-            next.clone(),
+            node,
+            previous,
+            next,
             self.include_font_expansion,
             DiscretionaryWidths::Replacement,
         );
-        let definition = match node.clone() {
-            NodeView::Glue { .. }
-                if self.auto_breaking
-                    && index > 0
-                    && previous.is_some_and(|node| !is_discardable(node)) =>
-            {
-                Some((index + 1, index, 0, false, Widths::zero(), before, None))
-            }
-            NodeView::Kern {
-                kind: KernKind::Explicit,
-                ..
-            } if self.auto_breaking && matches!(next, Some(NodeView::Glue { .. })) => {
-                Some((index + 1, index, 0, false, Widths::zero(), before, None))
-            }
-            NodeView::Penalty(penalty) if penalty < INF_PENALTY => Some((
+        let kind = node.kind();
+        let zero_penalty_break = self.auto_breaking
+            && ((kind == Some(tex_state::node::NodeKind::Glue)
+                && index > 0
+                && previous.is_some_and(|node| !is_direct_discardable(node)))
+                || (node
+                    .kern()
+                    .is_some_and(|(_, kind)| kind == KernKind::Explicit)
+                    && next
+                        .is_some_and(|node| node.kind() == Some(tex_state::node::NodeKind::Glue))));
+        let definition = if zero_penalty_break {
+            Some((index + 1, index, 0, false, Widths::zero(), before, None))
+        } else if let Some(penalty) = node.penalty().filter(|penalty| *penalty < INF_PENALTY) {
+            Some((
                 index + 1,
                 index,
                 penalty.max(EJECT_PENALTY),
@@ -1921,8 +1914,9 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 Widths::zero(),
                 before,
                 None,
-            )),
-            NodeView::Disc { pre, post, .. } => Some((
+            ))
+        } else if let Some((_, pre, post)) = node.discretionary_break() {
+            Some((
                 index + 1,
                 index + 1,
                 discretionary_penalty(pre.is_empty(), self.params),
@@ -1936,31 +1930,36 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 ),
                 before,
                 Some(post),
-            )),
-            NodeView::MathOff(_) if matches!(next, Some(NodeView::Glue { .. })) => {
-                self.auto_breaking = true;
-                Some((index + 1, index, 0, false, Widths::zero(), before, None))
-            }
-            NodeView::MathOn(_) => {
-                self.auto_breaking = false;
-                None
-            }
-            NodeView::MathOff(_) => {
-                self.auto_breaking = true;
-                None
-            }
-            _ => None,
+            ))
+        } else if kind == Some(tex_state::node::NodeKind::MathOff)
+            && next.is_some_and(|node| node.kind() == Some(tex_state::node::NodeKind::Glue))
+        {
+            self.auto_breaking = true;
+            Some((index + 1, index, 0, false, Widths::zero(), before, None))
+        } else if kind == Some(tex_state::node::NodeKind::MathOn) {
+            self.auto_breaking = false;
+            None
+        } else if kind == Some(tex_state::node::NodeKind::MathOff) {
+            self.auto_breaking = true;
+            None
+        } else {
+            None
         };
-        self.materialization.push(match node {
-            NodeView::Disc { .. } => MaterializationAction::Discretionary,
-            NodeView::Glue { .. }
-            | NodeView::Kern {
-                kind: KernKind::Explicit,
-                ..
-            } if definition.is_some() => MaterializationAction::BreakDiscardable,
-            NodeView::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
-            _ => MaterializationAction::Copy,
-        });
+        self.materialization
+            .push(if kind == Some(tex_state::node::NodeKind::Disc) {
+                MaterializationAction::Discretionary
+            } else if definition.is_some()
+                && (kind == Some(tex_state::node::NodeKind::Glue)
+                    || node
+                        .kern()
+                        .is_some_and(|(_, kind)| kind == KernKind::Explicit))
+            {
+                MaterializationAction::BreakDiscardable
+            } else if definition.is_some() && kind == Some(tex_state::node::NodeKind::MathOff) {
+                MaterializationAction::BreakMath
+            } else {
+                MaterializationAction::Copy
+            });
         definition.map(
             |(position, protrusion_end, penalty, hyphenated, add_width, line_width, post)| {
                 let (next_position, next_width, awaits_discardable_end) =
@@ -2012,18 +2011,19 @@ fn legal_breakpoints<S: TypesetState>(
         .collect()
 }
 
-fn is_discardable(node: NodeView<'_>) -> bool {
-    matches!(
-        node,
-        NodeView::Glue { .. }
-            | NodeView::Kern {
-                kind: KernKind::Explicit | KernKind::Mu,
-                ..
-            }
-            | NodeView::Penalty(_)
-            | NodeView::MathOn(_)
-            | NodeView::MathOff(_)
-    )
+fn is_direct_discardable(node: DirectNodeView<'_>) -> bool {
+    match node.kind() {
+        Some(
+            tex_state::node::NodeKind::Glue
+            | tex_state::node::NodeKind::Penalty
+            | tex_state::node::NodeKind::MathOn
+            | tex_state::node::NodeKind::MathOff,
+        ) => true,
+        Some(tex_state::node::NodeKind::Kern) => node
+            .kern()
+            .is_some_and(|(_, kind)| matches!(kind, KernKind::Explicit | KernKind::Mu)),
+        _ => false,
+    }
 }
 
 fn fitness_class(bad: i32, natural: i64, target: i64) -> Fitness {

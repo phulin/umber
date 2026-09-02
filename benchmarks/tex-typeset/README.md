@@ -10,6 +10,8 @@ cargo bench --manifest-path benchmarks/tex-typeset/Cargo.toml --bench widths
 cargo bench --manifest-path benchmarks/tex-typeset/Cargo.toml --bench layout
 cargo run --release --manifest-path benchmarks/tex-typeset/Cargo.toml \
   --bin layout_allocations
+cargo run --release --manifest-path benchmarks/tex-typeset/Cargo.toml \
+  --bin linebreak_direct
 ```
 
 `widths` measures exact hpack width accumulation for 64- and 4,096-character
@@ -31,3 +33,7 @@ gate retains the larger 4,096-node paragraph workload. `layout_allocations`
 measures the same pure kernels outside workload setup and enforces the existing
 ceilings for allocation count and total allocated bytes; it remains outside
 the ordinary unit-test tier.
+
+`linebreak_direct` repeatedly analyzes one 4,096-record compact page-material
+paragraph. It is the focused CPU and public-copy attribution workload for the
+borrowed line-break scan; setup and compact publication occur before timing.

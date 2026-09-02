@@ -287,6 +287,44 @@ impl NodeRecord<PageMaterialLane> {
             })?
     }
 
+    pub(crate) fn glyph(self, annex: NodeAnnexView<'_>) -> Option<(FontId, char)> {
+        match self.kind()? {
+            NodeKind::Char => self.character().map(|(font, ch, _)| (font, ch)),
+            NodeKind::Lig if self.subtype() == 0 && self.flags() & !3 == 0 => {
+                annex.inspect_fixed(key_from_record::<LigaturePayload>(self), 12, |payload| {
+                    let mut font = [0; 4];
+                    for (index, word) in font.iter_mut().enumerate() {
+                        *word = *payload.get(index + 1)?;
+                    }
+                    Some((FontId::from_words(font)?, char::from_u32(*payload.get(5)?)?))
+                })
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn kern(self) -> Option<(Scaled, KernKind)> {
+        (self.kind()? == NodeKind::Kern
+            && self.flags() == 0
+            && self.words()[1..].iter().all(|word| *word == 0))
+        .then(|| {
+            Some((
+                decode_scaled(self.words()[0]),
+                decode_kern_kind(self.subtype())?,
+            ))
+        })?
+    }
+
+    pub(crate) fn margin_kern_amount(self) -> Option<Scaled> {
+        (self.kind()? == NodeKind::MarginKern
+            && self.flags() == 0
+            && self.words()[6] == 0
+            && self.words()[5] <= u8::MAX as u32
+            && decode_margin_side(self.subtype()).is_some()
+            && FontId::from_words(self.words()[1..5].try_into().ok()?).is_some())
+        .then(|| decode_scaled(self.words()[0]))
+    }
+
     pub(crate) fn is_font_kern(self) -> bool {
         self.kind() == Some(NodeKind::Kern)
             && self.flags() == 0
@@ -298,6 +336,76 @@ impl NodeRecord<PageMaterialLane> {
         self.kind() == Some(NodeKind::Glue)
     }
 
+    pub(crate) fn penalty(self) -> Option<i32> {
+        (self.kind()? == NodeKind::Penalty
+            && self.subtype() == 0
+            && self.flags() == 0
+            && self.words()[1..].iter().all(|word| *word == 0))
+        .then(|| self.words()[0] as i32)
+    }
+
+    pub(crate) fn rule_width(self) -> Option<Option<Scaled>> {
+        (self.kind()? == NodeKind::Rule
+            && self.subtype() == 0
+            && self.flags() & !7 == 0
+            && self.words()[3..].iter().all(|word| *word == 0))
+        .then(|| (self.flags() & 1 != 0).then(|| decode_scaled(self.words()[0])))
+    }
+
+    pub(crate) fn box_width(self, annex: NodeAnnexView<'_>) -> Option<Scaled> {
+        (matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            && self.subtype() == 0
+            && self.flags() == 0)
+            .then(|| {
+                annex.inspect_fixed(key_from_record::<BoxPayload>(self), 28, |payload| {
+                    payload.get(1).copied().map(decode_scaled)
+                })
+            })?
+    }
+
+    pub(crate) fn unset_width(self, annex: NodeAnnexView<'_>) -> Option<Scaled> {
+        (self.kind()? == NodeKind::Unset && self.subtype() == 0 && self.flags() & !0x1f_ffff == 0)
+            .then(|| {
+            annex.inspect_fixed(key_from_record::<UnsetPayload>(self), 15, |payload| {
+                payload.get(11).copied().map(decode_scaled)
+            })
+        })?
+    }
+
+    pub(crate) fn math_boundary(self) -> Option<(bool, Scaled)> {
+        let kind = self.kind()?;
+        (matches!(kind, NodeKind::MathOn | NodeKind::MathOff)
+            && self.subtype() == 0
+            && self.flags() == 0
+            && self.words()[1..].iter().all(|word| *word == 0))
+        .then(|| (kind == NodeKind::MathOn, decode_scaled(self.words()[0])))
+    }
+
+    pub(crate) fn direction(self) -> Option<crate::node::Direction> {
+        (self.kind()? == NodeKind::Direction
+            && self.flags() == 0
+            && self.words().iter().all(|word| *word == 0))
+        .then(|| {
+            Some(match self.subtype() {
+                0 => crate::node::Direction::BeginL,
+                1 => crate::node::Direction::EndL,
+                2 => crate::node::Direction::BeginR,
+                3 => crate::node::Direction::EndR,
+                4 => crate::node::Direction::BeginM,
+                5 => crate::node::Direction::EndM,
+                _ => return None,
+            })
+        })?
+    }
+
+    pub(crate) fn pdf_image_width(self) -> Option<Scaled> {
+        (self.kind()? == NodeKind::Whatsit
+            && matches!(self.subtype(), 21 | 22)
+            && self.flags() == 0
+            && self.words()[4..].iter().all(|word| *word == 0))
+        .then(|| decode_scaled(self.words()[1]))
+    }
+
     pub(crate) fn glue_spec_kind(self, annex: NodeAnnexView<'_>) -> Option<(GlueSpec, GlueKind)> {
         if self.kind()? != NodeKind::Glue {
             return None;
@@ -305,9 +413,15 @@ impl NodeRecord<PageMaterialLane> {
         let kind = decode_glue_kind(self.subtype())?;
         let glue = match self.flags() & 3 {
             0 | 1 => self.words()[..4].try_into().ok()?,
-            2 | 3 => annex.resolve_fixed_array::<LeaderBoxPayload, 32>(key_from_record(self))?[..4]
-                .try_into()
-                .ok()?,
+            2 | 3 => {
+                annex.inspect_fixed(key_from_record::<LeaderBoxPayload>(self), 32, |payload| {
+                    let mut words = [0; 4];
+                    for (index, word) in words.iter_mut().enumerate() {
+                        *word = *payload.get(index + 1)?;
+                    }
+                    Some(words)
+                })?
+            }
             _ => return None,
         };
         Some((decode_glue(glue)?, kind))
@@ -383,15 +497,54 @@ impl NodeRecord<PageMaterialLane> {
         if self.kind()? != NodeKind::Disc || self.flags() > u8::MAX as u32 {
             return None;
         }
-        let payload = annex.resolve_fixed_array::<DiscPayload, 30>(key_from_record(self))?;
-        let mut cursor = 0;
-        Some((
-            decode_disc_kind(self.subtype())?,
-            decode_page_list(&payload, &mut cursor)?,
-            decode_page_list(&payload, &mut cursor)?,
-            decode_page_list(&payload, &mut cursor)?,
-            self.flags() as u8,
-        ))
+        annex.inspect_fixed(key_from_record::<DiscPayload>(self), 30, |payload| {
+            let list = |start: usize| {
+                let mut words = [0; 10];
+                for (index, word) in words.iter_mut().enumerate() {
+                    *word = *payload.get(start + index + 1)?;
+                }
+                PageListId::from_words(words)
+            };
+            Some((
+                decode_disc_kind(self.subtype())?,
+                list(0)?,
+                list(10)?,
+                list(20)?,
+                self.flags() as u8,
+            ))
+        })
+    }
+
+    pub(crate) fn discretionary_break(
+        self,
+        annex: NodeAnnexView<'_>,
+    ) -> Option<(DiscKind, PageListId, PageListId)> {
+        if self.kind()? != NodeKind::Disc || self.flags() > u8::MAX as u32 {
+            return None;
+        }
+        annex.inspect_fixed(key_from_record::<DiscPayload>(self), 30, |payload| {
+            let list = |start: usize| {
+                let mut words = [0; 10];
+                for (index, word) in words.iter_mut().enumerate() {
+                    *word = *payload.get(start + index + 1)?;
+                }
+                PageListId::from_words(words)
+            };
+            Some((decode_disc_kind(self.subtype())?, list(0)?, list(10)?))
+        })
+    }
+
+    pub(crate) fn discretionary_replace(self, annex: NodeAnnexView<'_>) -> Option<PageListId> {
+        if self.kind()? != NodeKind::Disc || self.flags() > u8::MAX as u32 {
+            return None;
+        }
+        annex.inspect_fixed(key_from_record::<DiscPayload>(self), 30, |payload| {
+            let mut words = [0; 10];
+            for (index, word) in words.iter_mut().enumerate() {
+                *word = *payload.get(index + 21)?;
+            }
+            PageListId::from_words(words)
+        })
     }
 
     pub(crate) fn visit_ligature_source(
