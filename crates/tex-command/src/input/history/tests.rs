@@ -168,9 +168,9 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
             .levels
             .push(InputLevel::ReplayTokens(ReplayTokenCursor {
                 replay,
-                len,
                 resident,
-                common: TokenCursor::new(behavior, retirement, trace, frame),
+                common: TokenCursor::new(behavior, retirement, trace, len, frame),
+                rollback: super::super::levels::RowRollbackMarker::default(),
             }));
 
         assert_exact_direct_transition(&mut state, (0, 2, 0), |state| {
@@ -294,9 +294,9 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
             .levels
             .push(InputLevel::ReplayTokens(ReplayTokenCursor {
                 replay,
-                len,
                 resident,
-                common: TokenCursor::new(behavior, retirement, trace, frame),
+                common: TokenCursor::new(behavior, retirement, trace, len, frame),
+                rollback: super::super::levels::RowRollbackMarker::default(),
             }));
         let checkpoint = state.input.levels.mark().expect("input checkpoint");
         let before = state.input.levels.counters();

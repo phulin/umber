@@ -13,6 +13,27 @@ use super::{
 };
 use crate::attempt::AttemptTokenListId;
 
+/// Operational rollback state owned by one authoritative input row.
+///
+/// The marker is deliberately invisible to semantic equality and hashing:
+/// checkpoint capture state describes how the row is restored, not the TeX
+/// input future represented by the row. Its packed value is interpreted by
+/// the generation-owned input history.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct RowRollbackMarker(pub(super) u64);
+
+impl PartialEq for RowRollbackMarker {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for RowRollbackMarker {}
+
+impl Hash for RowRollbackMarker {
+    fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct InputLevelId(pub(crate) u64);
@@ -102,6 +123,7 @@ pub(crate) struct MacroBodyCursor<G> {
     pub(crate) invocation: OriginId,
     identity: u64,
     source: Option<tex_state::packed_input::SourceContext>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 impl<G> MacroBodyCursor<G> {
@@ -120,6 +142,7 @@ impl<G> MacroBodyCursor<G> {
             invocation,
             identity: identity.0,
             source,
+            rollback: RowRollbackMarker::default(),
         }
     }
 
@@ -171,6 +194,7 @@ pub(crate) struct SourceLevel<G> {
     /// contains only its checked key and reversible cursor/owner values.
     pub(crate) slot: SourceSlotKey,
     pub(crate) generation: PhantomData<fn() -> G>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 impl<G> SourceLevel<G> {
@@ -258,29 +282,30 @@ pub(crate) struct TokenCursor<G> {
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
     pub(crate) frame: PackedInputFrame,
+    pub(crate) len: u32,
     generation: PhantomData<fn() -> G>,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ReplayTokenCursor<G> {
     pub(crate) replay: ReplayPayloadId<G>,
-    pub(crate) len: u32,
     pub(crate) resident: ResidentReplayCursor,
     pub(crate) common: TokenCursor<G>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DurableTokenCursor<G> {
     pub(crate) list: tex_state::TokenListId<G>,
-    pub(crate) len: u32,
     pub(crate) common: TokenCursor<G>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AttemptTokenCursor<G> {
     pub(crate) list: AttemptTokenListId,
-    pub(crate) len: u32,
     pub(crate) common: TokenCursor<G>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 macro_rules! impl_common_token_cursor {
@@ -322,6 +347,7 @@ pub(crate) struct MacroArgumentCursor<G> {
     absolute: u32,
     identity: u64,
     source: Option<tex_state::packed_input::SourceContext>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 impl<G> MacroArgumentCursor<G> {
@@ -339,6 +365,7 @@ impl<G> MacroArgumentCursor<G> {
             absolute: range.start(),
             identity: identity.0,
             source,
+            rollback: RowRollbackMarker::default(),
         }
     }
 
@@ -415,6 +442,7 @@ impl<G> TokenCursor<G> {
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
+        len: u32,
         frame: PackedInputFrame,
     ) -> Self {
         Self {
@@ -422,6 +450,7 @@ impl<G> TokenCursor<G> {
             retirement,
             trace,
             frame,
+            len,
             generation: PhantomData,
         }
     }
@@ -442,6 +471,35 @@ impl<G> ReplayTokenCursor<G> {
 }
 
 impl<G> InputLevel<G> {
+    pub(super) const fn rollback_marker(&self) -> RowRollbackMarker {
+        match self {
+            Self::Source(level) => level.rollback,
+            Self::ReplayTokens(cursor) => cursor.rollback,
+            Self::DurableTokens(cursor) => cursor.rollback,
+            Self::AttemptTokens(cursor) => cursor.rollback,
+            Self::MacroBody(cursor) => cursor.rollback,
+            Self::MacroArgument(cursor) => cursor.rollback,
+        }
+    }
+
+    pub(super) fn rollback_marker_mut(&mut self) -> &mut RowRollbackMarker {
+        match self {
+            Self::Source(level) => &mut level.rollback,
+            Self::ReplayTokens(cursor) => &mut cursor.rollback,
+            Self::DurableTokens(cursor) => &mut cursor.rollback,
+            Self::AttemptTokens(cursor) => &mut cursor.rollback,
+            Self::MacroBody(cursor) => &mut cursor.rollback,
+            Self::MacroArgument(cursor) => &mut cursor.rollback,
+        }
+    }
+
+    /// Swaps semantic occupants while the physical resident row retains its
+    /// rollback header, matching the replacement journal's row-slot lifetime.
+    pub(super) fn swap_payload_preserving_rollback(&mut self, displaced: &mut Self) {
+        core::mem::swap(self, displaced);
+        core::mem::swap(self.rollback_marker_mut(), displaced.rollback_marker_mut());
+    }
+
     pub(crate) fn stored_common(&self) -> Option<&TokenCursor<G>> {
         match self {
             Self::ReplayTokens(cursor) => Some(&cursor.common),

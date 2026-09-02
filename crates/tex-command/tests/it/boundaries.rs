@@ -106,7 +106,14 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     assert!(history.contains("enum InputUndo"));
     assert!(history.contains("pub(crate) struct InputStack"));
     assert!(history.contains("source_slots: PayloadSlab<SourceSlot<G>>"));
-    assert!(history.contains("rollback_markers: Vec<RowRollbackMarker>"));
+    assert!(levels.contains("struct RowRollbackMarker"));
+    assert_eq!(
+        levels
+            .matches("pub(super) rollback: RowRollbackMarker")
+            .count(),
+        6
+    );
+    assert!(!history.contains("rollback_markers"));
     for retired_lane in [
         "touched: Vec<u64>",
         "partially_captured",

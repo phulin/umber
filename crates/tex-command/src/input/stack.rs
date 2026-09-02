@@ -581,9 +581,10 @@ impl<G> CommandState<G> {
         let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
         frame.set_source_context(self.input.levels.current_source_context());
-        let common = TokenCursor::new(behavior, retirement, trace, frame);
+        let len = u32::try_from(span.frame_len()).expect("input token span length fits u32");
+        let common = TokenCursor::new(behavior, retirement, trace, len, frame);
         let level = match span {
-            PackedTokenSpanHandle::Replay { replay, len } => {
+            PackedTokenSpanHandle::Replay { replay, .. } => {
                 let resident = self
                     .input
                     .replay
@@ -591,16 +592,24 @@ impl<G> CommandState<G> {
                     .expect("admitted replay span has a resident coordinate");
                 InputLevel::ReplayTokens(ReplayTokenCursor {
                     replay,
-                    len,
                     resident,
                     common,
+                    rollback: super::levels::RowRollbackMarker::default(),
                 })
             }
-            PackedTokenSpanHandle::DurableList { list, len } => {
-                InputLevel::DurableTokens(DurableTokenCursor { list, len, common })
+            PackedTokenSpanHandle::DurableList { list, .. } => {
+                InputLevel::DurableTokens(DurableTokenCursor {
+                    list,
+                    common,
+                    rollback: super::levels::RowRollbackMarker::default(),
+                })
             }
-            PackedTokenSpanHandle::AttemptList { list, len } => {
-                InputLevel::AttemptTokens(AttemptTokenCursor { list, len, common })
+            PackedTokenSpanHandle::AttemptList { list, .. } => {
+                InputLevel::AttemptTokens(AttemptTokenCursor {
+                    list,
+                    common,
+                    rollback: super::levels::RowRollbackMarker::default(),
+                })
             }
         };
         self.push_input_level(level);

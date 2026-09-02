@@ -155,11 +155,11 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     };
     let cursor: ReplayTokenCursor<()> = ReplayTokenCursor {
         replay,
-        len,
         resident: lane
             .resident_cursor(replay)
             .expect("resident replay cursor"),
-        common: TokenCursor::new(behavior, retirement, trace, frame),
+        common: TokenCursor::new(behavior, retirement, trace, len, frame),
+        rollback: super::RowRollbackMarker::default(),
     };
 
     assert_eq!(cursor.frame.position(), 1);
@@ -212,13 +212,17 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert!(std::mem::size_of::<TokenCursor<()>>() <= 56);
+    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 40);
     assert_eq!(std::mem::size_of::<tex_state::ResidentMacroBodyCursor>(), 4);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
-    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 48);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
+    assert_eq!(std::mem::size_of::<super::RowRollbackMarker>(), 8);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 72);
+    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 56);
+    assert_eq!(std::mem::size_of::<super::ReplayTokenCursor<()>>(), 72);
+    assert_eq!(std::mem::size_of::<super::DurableTokenCursor<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::AttemptTokenCursor<()>>(), 72);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 80);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
-    assert!(std::mem::size_of::<super::SourceLevel<()>>() <= 48);
+    assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 48);
     assert!(
         std::mem::size_of::<super::SourceLexExecutionState>() <= 64,
         "source lex state is {} bytes",
@@ -358,5 +362,5 @@ fn resident_macro_cursor_layout_stays_compact_and_wrapper_free() {
     let argument = std::mem::size_of::<super::MacroArgumentCursor<()>>();
     eprintln!("body={body} argument={argument}");
     assert!(body <= 72, "macro body cursor is {body} bytes");
-    assert!(argument <= 48, "macro argument cursor is {argument} bytes");
+    assert!(argument <= 56, "macro argument cursor is {argument} bytes");
 }
