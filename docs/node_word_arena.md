@@ -9,6 +9,24 @@ The 32-byte non-owning node-record design below is implementation-ready but is
 not yet the production representation. Its approval and cutover are tracked by
 `umber2-66p0.8.40.113.5` and its children.
 
+The first attempted cutover exposed two prerequisites which this document now
+resolves. A physical `RawChunkKey` cannot be embedded in `PageListId`, a
+predecessor link, or an annex key because one logical checkpoint tail must
+resolve to different accepted and candidate superblocks. A semantic region
+owner cannot be embedded there either because TeX moves must transfer a sealed
+closure from page to durable, history, or transient output ownership without
+rewriting its records. The selected design therefore separates three facts:
+
+- pool-stable logical coordinates identify node and annex positions;
+- exactly one accepted table and at most one candidate table map those logical
+  coordinates to private exact-64-KiB physical blocks; and
+- move-only aggregate envelopes say which semantic owner may admit a set of
+  node and annex blocks.
+
+This is the prerequisite design tracked by `umber2-66p0.8.40.113.5.6`. It does
+not authorize the production record cutover. The cutover remains blocked until
+the explicit approval and implementation children named below land.
+
 Production currently uses one caller-owned `ChunkPool<T>` plus typed,
 coordinate-only `ForkArena<T, Lane>` states. The compact cutover replaces the
 physical payload slots with the exact 64 KiB dense node and annex arenas from
@@ -19,11 +37,13 @@ coordinates and own no payload. Reads take a shared region borrow and use flat
 direct indexing. Allocation, sealing, settlement, and pruning require the
 caller's exclusive mutable owner borrow.
 
-Every nonempty list, including a one-range list, publishes its range entries
-in descriptor chunks and is named by the current 32-byte `ArenaListId`. The
-page-semantic wrapper adds one optional maintained identity scalar, making
-`PageListId` exactly 40 bytes. The compact record keeps that complete logical
-coordinate in the annex rather than weakening its owner or identity proof.
+Production currently publishes every nonempty list, including a one-range
+list, through the range metadata owned by `ForkArena` and names it with the
+current 32-byte `ArenaListId`. The page-semantic wrapper adds one optional
+maintained identity scalar, making `PageListId` exactly 40 bytes. The logical
+table migration keeps equivalent range/predecessor metadata beside the flat
+logical rows. The compact record keeps the complete pool-stable coordinate in
+the annex rather than weakening its admission or identity proof.
 
 When incremental convergence requests semantic identity before publication,
 the existing version-1 polynomial sequence algebra is maintained during the
@@ -81,6 +101,320 @@ The logical row representation is not a format ABI. The selected replacement
 is the compact record and typed annex below. It remains direct, safe Rust and
 allocation-free on ordinary access.
 
+## Unified logical tables
+
+### Coordinate and table ownership
+
+`NodePool` owns two typed physical stores, one for `NodeRecord` and one for
+annex `u32` words. Each store allocates exact 65,536-byte superblocks through
+`tex-dense-prefix`. A physical `BlockId { slot, incarnation }` is private to
+those stores. It may occur only in the pool's flat tables and in move-only
+storage receipts; it never occurs in `PageListId`, `PageListSpan`, a node
+record, a predecessor, a checkpoint row, a format, or detached output.
+
+The pool also owns stable logical spaces. A node cursor has this conceptual
+shape:
+
+```text
+LogicalNodeCursor
+  space: u32
+  block_ordinal: u32
+  logical_block_incarnation: u32
+  offset: u32
+```
+
+`space` authenticates the one `NodePool` coordinate domain, not a page or
+durable owner. A nonempty `ArenaListId`/`PageListId` stores logical head and
+tail cursors plus length; the canonical empty value is all zero. The existing
+optional semantic identity remains a scalar beside that coordinate. Head,
+tail, maintained predecessors, child roots, and `PageListSpan` therefore use
+one coordinate vocabulary. There is no physical-key compatibility form.
+
+The node table is a flat ordinal-indexed vector. Each live row contains the
+expected logical incarnation, its private physical `BlockId`, initialized
+prefix, logical-list range metadata, predecessor metadata, dependency floors,
+and sequence summary. Multiple small logical list ranges may occupy one dense
+physical superblock; their rows name an offset range in that block. The
+physical-block row separately records the logical-row interval which maps to
+it. This preserves the current packed-list granularity without making each
+short list consume 64 KiB. A direct node lookup is:
+
+```text
+logical row = node_table[block_ordinal]
+validate space, logical incarnation, and admitted envelope
+physical block = node_store[logical_row.physical_block]
+value = physical block[logical_row.physical_base + offset]
+```
+
+The quotient/remainder path for a naturally contiguous node position still
+selects its physical superblock directly. A maintained predecessor is followed
+only when traversal crosses one of the existing logical list-range boundaries;
+nodes never acquire per-node links. Indexed reads, admitted spans, and forward
+range callbacks continue to use the sole predecessor topology. There is no
+linked-node traversal, descriptor search, physical-owner range scan,
+forwarding lookup, or compaction.
+
+Released logical rows enter an explicit pool-owned free-slot stack. Reuse
+increments the row incarnation before publishing a new mapping, so the flat
+vector remains bounded by its live/high-water demand without relocating a live
+row. Fork metrics report copied live and vacant rows separately; a long
+session must reach a stable table high-water when its semantic owners do. A
+hole is never skipped through a search structure and compaction is not a
+fallback for excessive metadata.
+
+An annex cursor uses the existing six-word shape with `owner` redefined as the
+pool-stable annex `space`:
+
+```text
+AnnexKey<K>
+  space: u32
+  block_ordinal: u32
+  logical_block_incarnation: u32
+  word_offset: u32
+  word_len: u32
+  publication_serial: u32
+```
+
+The annex flat table maps that logical ordinal/incarnation to a physical word
+superblock and initialized prefix. Fixed records never cross a block. A
+dynamic span which crosses a block publishes a compact continuation header in
+each subsequent logical block. The header repeats the publication serial and
+span incarnation and states that segment's word count. Resolution verifies
+every crossed table row and continuation header before lending that segment;
+the first-block incarnation is never treated as proof for later blocks. The
+publication serial remains monotonic across rollback and rejects reuse of an
+offset within a surviving logical block.
+
+`NodePool` owns the tables because a region transfer must not make them sparse,
+copy them, or rebrand coordinates. `NodeRegion` owns only disjoint move-only
+envelopes over live logical rows and physical blocks. A region borrow admits a
+coordinate by checking both the selected table and the region's envelope. A
+coordinate from another pool, another logical incarnation, a transferred
+envelope, a truncated suffix, or a recycled physical block fails before a
+payload borrow is returned.
+
+### Exactly two views
+
+At rest the pool has one `AcceptedNodeTables` aggregate containing the node
+and annex tables. An edit consumes that authority and produces one
+`NodeTableFork` with exactly two borrow-scoped views:
+
+- `AcceptedNodeView<'fork>` resolves the unchanged accepted tables and the
+  parked prior suffix; and
+- `CandidateNodeView<'fork>` resolves the shared complete prefix, copied
+  private tails, and candidate suffix.
+
+There is no public lineage integer and no constructor for a third view.
+`NodeView`, `NodeDestination`, `PageListSpan`, cursors, predecessor resolution,
+and annex codecs all require one of these borrowed views. At rest, the accepted
+owner lends the same interface as `AcceptedNodeView`; callers do not branch on
+storage representation.
+
+The fork copies the flat table prefix as explicitly measured metadata. Every
+complete physical block before the checkpoint maps to the same immutable
+`BlockId` in both tables. If the checkpoint is inside a node block, the
+candidate receives one private physical block containing exactly the
+initialized checkpoint prefix and every logical table row in that physical
+tail is redirected to it in the candidate table. The corresponding operation
+is applied independently to the annex table. Logical ordinals, incarnations,
+offsets, list predecessors, child roots, and annex keys do not change.
+
+Checkpoint capture stores only the aggregate node cursor, annex cursor,
+PageBuilder roots, and scalar/journal positions. It allocates and copies zero.
+An interior fork copies at most 2,047 32-byte records, or 65,504 bytes, and at
+most 16,383 annex words, or 65,532 bytes. A boundary-aligned cursor copies
+zero. Candidate acceptance drops the superseded accepted private tails and
+moves the candidate table vectors into the accepted role; it copies zero
+payload. Rejection drops candidate-private blocks and returns the accepted
+tables unchanged. Node and annex acceptance or rejection is one aggregate
+operation and cannot be called component by component.
+
+### Stale and foreign rejection
+
+Logical ordinal reuse increments the logical incarnation before publication.
+Physical slot reuse independently increments `BlockId` incarnation. Annex
+offset reuse additionally receives a fresh publication serial. Published list
+roots are immutable; a partial node-tail rollback is legal only while its
+move-only builder has published no root, so no admitted `PageListId` can name a
+reused unpublished offset. Whole logical-row reuse increments its incarnation.
+
+Resolution fails closed on every mismatch: coordinate space, logical ordinal,
+logical incarnation, selected accepted/candidate table, physical block
+incarnation, initialized prefix, annex publication serial, expected annex
+codec/length, region envelope, predecessor boundary, or child-root admission.
+Validation completes before the physical store lends a reference. Hashes,
+serialized formats, artifacts, and diagnostics never use a physical id.
+
+## Aggregate node and annex envelopes
+
+### Boundary and closure isolation
+
+Every storage boundary is aggregate:
+
+```text
+AggregateNodeMark
+  region_id and generation
+  boundary_serial
+  node logical cursor and table frontier
+  annex logical cursor and table frontier
+  node and annex physical-tail identities
+  list-summary and dependency frontiers
+```
+
+An operation mark may name partial tails and is local rollback authority. A
+checkpoint mark is a copy-only projection created only after all builders are
+quiescent; creating it changes neither store. A `ClosureBuildMark` is
+move-only. Beginning a new semantic region or closure build seals both current physical tails and
+rotates the first subsequent node and annex append to fresh physical blocks.
+The unused capacity is reported as boundary slack. Rotation is lazy, so an
+empty canceled build allocates no block.
+
+This paired rotation is mandatory even when only one side currently has a
+partial tail. It guarantees that a physical block never straddles semantic
+region owners, and that every record and every region-local annex word
+published by the closure occupies whole physical blocks which are not shared
+with the retained source prefix. A large dynamic annex span may use several
+such blocks, but none contains pre-boundary words. The design does not copy the
+retained annex tail, retain the source owner, or rewrite a key to make that
+isolation true.
+
+Node publication folds two floors into physical and logical block metadata:
+the earliest child-node envelope and the earliest region-local annex envelope
+named by any resident record. Typed annex construction similarly propagates
+the floor of nested spans into the final fixed payload. Sealing a closure
+checks its declared roots, predecessor ranges, and these maintained floors
+against the build boundary. It visits table/block metadata only; it does not
+scan `NodeRecord`, decode annex payload, or traverse the node tree. A root or
+nested dependency before the boundary selects the explicit structural-copy
+fallback and cannot be detached.
+
+### Move receipts and rollback
+
+The facade exposes no separate node-batch and annex-batch methods. Its
+transaction types are move-only and pair both components:
+
+1. `OpenAggregateBuild` owns the source `ClosureBuildMark`. Construction
+   failure consumes an `AggregateOperationReceipt` which restores the node
+   cursor, annex cursor, logical-table frontiers, predecessor/summary metadata,
+   and active-builder state. Publication serials and boundary serials remain
+   monotonic; they are never rewound into an ABA alias.
+2. `seal_aggregate_closure` first validates the declared root and all maintained
+   floors without mutation. On failure it returns the original open-build
+   authority. On success it returns `SealedAggregateEnvelope`, naming exact
+   node and annex logical-row ranges and whole physical-block ranges.
+3. `detach_aggregate_envelope` removes both ranges from the source region and
+   returns `DetachedAggregateEnvelope` plus an internal
+   `AggregateDetachReceipt`. The receipt records source region generation,
+   boundary serial, exact insertion frontiers, roots, and both table/block
+   ranges. No physical mapping changes.
+4. `prepare_aggregate_transfer` validates source and destination pools, views,
+   region generations, destination quiescence, table capacity, and disjoint
+   envelopes, and reserves all destination metadata capacity. Failure returns
+   the unchanged detached loan. `commit_aggregate_transfer` is then infallible:
+   it moves the paired envelope into the destination owner and wraps the same
+   `PageListId` in a destination `RegionRoot`.
+
+If a destination is rejected, unwinds, or fails preflight after detachment,
+`rollback_aggregate_detach` uses the receipt to reinsert both ranges at their
+exact source frontiers. It first proves that the source has not appended or
+accepted another transfer since the boundary serial. A mismatch returns the
+still-owned detached loan rather than partially restoring it. No API can
+attach nodes while leaving annex blocks detached, or vice versa. Whole-region
+moves use the same prepared receipt with ranges beginning at the region's
+first envelope.
+
+This protocol applies to page-to-durable box publication, unique `\box` and
+`\unhbox`, durable-to-page moves, PDF-form ownership, history preservation,
+page succession, and transient output staging. History and output receive
+owners, not raw coordinates. Successful output lowers a handle-free artifact
+while the transient owner is borrowed, then retires the aggregate envelope;
+the artifact retains no table or region.
+
+### Copy semantics
+
+Rust `Copy` on `NodeRecord` authorizes only candidate-tail duplication inside
+one logical coordinate space. It is not TeX copy authority and is not a
+cross-owner copy API.
+
+`\copy`, `\unhcopy`, retained-source preservation, a foreign-pool transition,
+and every explicit structural fallback traverse the exact source closure once
+under its admitted view and call destination-directed constructors. Child
+lists are recursively rebuilt under destination envelopes. Every fixed annex
+record and dynamic annex span is decoded and republished into destination-local
+annex blocks; no destination key retains a source annex space or envelope.
+Font and generation-token values retain only the separately authorized
+immutable aliases, and are republished when their generation/store contract
+does not admit the destination. One aggregate destination operation mark
+restores both arenas on any failure. Raw `NodeRecord` copying across semantic
+owners is private and rejected even when source and destination share a pool.
+
+### Lifetime wrappers
+
+The physical substrate remains generic, but these policies are distinct:
+
+| Lifetime                 | Wrapper and behavior                                                                                                                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TeX group                | Group entry saves state/journal cursors and move-only durable closure owners. It does not fork or own page-node blocks. Restoration moves saved aggregate owners back before dropping replacements. `GroupStorage<T>` remains for genuinely group-local non-node values. |
+| Page and durable closure | `NodeRegion<Role>` owns aggregate node+annex envelopes admitted through the pool tables. Page regions may participate in the one edit fork; durable regions move or copy according to TeX semantics.                                                                     |
+| Paragraph checkpoint     | `PageRegionCheckpoint` stores aggregate cursors and four admitted roots under its history-owned page region. It is not an arena wrapper or node owner and capture allocates/copies zero. `CheckpointJournal<T>` stores metadata/journal values, not nodes.               |
+| Operation and scratch    | `AggregateOperationMark` and paired node/annex scratch wrappers rewind partial tails together and never fork. Completed scratch is reconstructed into the destination or moves only when it already owns a self-contained aggregate envelope.                            |
+| Speculative output       | A move-only transient `NodeRegion<OutputRole>` keeps candidate material private. Commit lowers detached output and retires it; rejection returns or drops the whole aggregate owner. It never acquires generation-fork semantics.                                        |
+
+No group, journal, output, or scratch wrapper becomes forkable merely because
+it uses exact superblocks. Only the generation/page aggregate owns the
+accepted/candidate table transaction.
+
+### Required substrate APIs
+
+`tex-dense-arena` currently puts its physical store inside one
+`GenerationArena`, so it cannot yet support multiple semantic regions or
+move-only envelope transfer. Before node integration it must expose, in safe
+Rust:
+
+- a typed `BlockStore<T>` whose private `BlockId` can be resolved, copied into
+  one fresh tail, and released only by owner receipts;
+- a flat logical table with checked ordinal/incarnation rows, initialized
+  prefixes, direct lookup, cursor/truncate, and explicit table-copy metrics;
+- `AcceptedCandidateTables<T>` which consumes the accepted authority, lends
+  exactly two view types, copies at most one initialized physical tail, and
+  settles by consuming itself;
+- physical-tail rotation and whole-block-range detach/reattach/attach receipts
+  which reserve metadata before their infallible commit phase;
+- fallible capacity/incarnation/length checks before any table or owner
+  mutation; and
+- counters for physical blocks, logical rows, table entries/bytes copied,
+  payload tail values/bytes copied, boundary slack, transfers, rollback, stale
+  rejection, and accepted/rejected payload copies.
+
+`tex-dense-arena` does not learn about lists, children, TeX roles, node codecs,
+or annex dependency floors. `ForkArena` retains those semantic responsibilities
+above the new store/table APIs and replaces `RawChunkKey` in its public and
+stored coordinates in one migration. `NodeRegion` alone couples the node and
+annex components and issues aggregate receipts.
+
+### Failure matrix
+
+Every failure is detected before mutation or returns the sole move-only loan:
+
+| Failure                                                                                                                | Required result                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Foreign pool space, region generation, or accepted/candidate view                                                      | Reject before table or payload access.                                                                                                                 |
+| Stale logical row, physical `BlockId`, annex serial, predecessor, or root                                              | Reject before returning a borrow; increment only the matching observation counter.                                                                     |
+| Cursor beyond initialized prefix, integer overflow, table/slot incarnation exhaustion, or fixed codec crossing a block | Return the typed capacity/coordinate error with all owners and cursors unchanged.                                                                      |
+| Open builder, open batch, third candidate, or destination with an unsettled transfer                                   | Reject before sealing, detaching, reserving, or changing roots.                                                                                        |
+| Closure root or child/annex dependency before its build boundary                                                       | Keep the source attached and select the explicit structural-copy path; never scan to rescue a move.                                                    |
+| Allocation or destination metadata reservation failure                                                                 | Return the original open build or detached aggregate loan; neither component attaches.                                                                 |
+| Failure after detach but before prepared commit                                                                        | Consume `AggregateDetachReceipt` to restore both exact source frontiers; if the source frontier changed, return the detached loan instead of guessing. |
+| Panic during destination construction or output staging                                                                | An unwind guard restores aggregate operation marks or the detached loan before outer state rejection proceeds.                                         |
+| Semantic copy decode, child, font, token, UTF-8, PDF, or annex validation failure                                      | Roll back destination node and annex cursors together and leave source ownership unchanged.                                                            |
+| Acceptance/rejection preflight failure                                                                                 | Keep the two-view fork intact and usable for explicit rejection; never settle one table.                                                               |
+
+An internal prepared commit has no recoverable validation branch. All vector
+capacity, ranges, owners, incarnations, and destination quiescence were proven
+by its constructor; commit only moves already-owned rows and blocks. This is
+the point which prevents a partially attached annex from becoming an unwind
+recovery problem.
+
 ## Lifetime-specific coordinates
 
 `NodeListId<L>` is a private-construction row and row-generation coordinate
@@ -91,8 +425,8 @@ are:
 - `ScratchListId` for unfinished shaping, transforms, packing probes, and
   speculative operation material;
 - `PageListId` for generation-owned open modes, alignments, insertions, and
-  page-builder material. Durable closures use owner-relative `PageListId`
-  coordinates only while borrowed through their move-only region owner.
+  page-builder material. Durable closures use the same pool-stable logical
+  coordinates only while admitted through their move-only region owner.
 
 Shipout-derived nodes use a separate `ShipoutScratchListId`, not another
 `NodeListId<L>` alias. During output only, `ShipoutListId` is the tagged borrow
@@ -113,9 +447,9 @@ coordinate without its region owner.
 Paragraph checkpoints within one page share the exclusive `PageRegion` that
 owns their coarse immutable chunks. Publication continues in its uniquely
 owned tail or opens a new chunk after sealing. A checkpoint stores only its
-region id, four PageBuilder roots, sealed payload/descriptor positions, scalar
-state, and journal position. It copies no payload and creates no segment,
-batch, or list owner.
+region id, four PageBuilder roots, sealed node and annex cursors, logical-table
+frontiers, scalar state, and journal position. It copies no payload and creates
+no segment, batch, or list owner.
 
 ## Payload placement
 
@@ -251,13 +585,14 @@ topology.
 
 ### Typed word annex
 
-One `NodeAnnexArena<Lane>` owned by the same `NodeRegion` stores every rare or
-large page-lifetime field. Its physical payload is `u32`, but private typed
-codecs and invariant-branded handles preserve field types:
+The pool's one logical `NodeAnnexArena<Lane>` stores every rare or large
+page-lifetime field. Each `NodeRegion` owns the disjoint annex envelopes which
+its nodes may admit. The physical payload is `u32`, but private typed codecs
+and invariant-branded handles preserve field types:
 
 ```text
 AnnexKey<K>
-  owner: u32
+  space: u32
   block_ordinal: u32
   logical_block_incarnation: u32
   word_offset: u32
@@ -267,7 +602,7 @@ AnnexKey<K>
 
 `AnnexKey<K>` is exactly 24 bytes, or six node words. `AnnexSpan<E>` has the
 same six-word coordinate shape and interprets `word_len` in the element codec
-for `E`. Constructors are private. Resolution verifies owner, flat-table
+for `E`. Constructors are private. Resolution verifies space, region envelope, flat-table
 ordinal, logical block incarnation, initialized bounds, publication serial,
 expected fixed word count or span divisibility, and the type selected by the
 node header before returning a borrowed view. The flat view table maps that
@@ -288,7 +623,7 @@ not one allocation or cursor per payload type.
 Every fixed record starts with its publication serial; the sizes below include
 that word. Reusing a truncated offset assigns a fresh serial without changing
 the logical incarnation of valid earlier records in the same block. The
-owner's next-publication serial is monotonic across rejection and rollback,
+pool's next-publication serial is monotonic across rejection and rollback,
 never rewinds, and fails before u32 exhaustion. Dynamic spans begin with the
 same serial word. The fixed codecs are:
 
@@ -372,14 +707,15 @@ coordinate, or allocation.
 
 ### Forks, handle validity, and reclamation
 
-A sealed node-storage boundary contains exactly two 24-byte cursors: one for
-records and one for annex words. Ordinary TeX groups, page attempts, and all
+A sealed node-storage boundary contains paired logical cursors and their
+constant-size table and summary frontiers: one component for records and one
+for annex words. Ordinary TeX groups, page attempts, and all
 1-versus-4,096 checkpoint captures copy neither arena. The block summaries
 prove at sealing time that every node at or before the boundary names only an
 annex/token prefix admitted by that same aggregate boundary.
 
-An exact edit fork uses the two-view dense wrapper independently for the node
-and annex arenas. Complete blocks are shared immutable. An interior node tail
+An exact edit fork uses one aggregate two-view wrapper whose node and annex
+components settle together. Complete blocks are shared immutable. An interior node tail
 copies `32 * tail_nodes`, with an exact maximum of 65,504 bytes for 2,047
 records. An interior annex tail copies `4 * tail_words`, with an exact maximum
 of 65,532 bytes for 16,383 words. Candidate keys retain the same flat
@@ -411,13 +747,13 @@ payload therefore retire with the page, box, form, or history region that owns
 them. Immutable token words retire with their coarse generation after its node
 regions. Handle-free DVI/PDF artifacts retain neither key.
 
-A TeX move transfers the one region envelope and rewrites no record. A TeX
+A TeX move transfers the paired node and annex envelopes and rewrites no record. A TeX
 copy or history-preservation copy traverses the exact closure and invokes
 destination constructors: child roots and region-local annex spans are rebuilt
 under the destination owner, while generation token and font keys keep their
 authorized immutable aliases. Raw record copying into another region is not
-an API. Same-region semantic copies may reuse immutable annex spans only when
-the recursive child topology needs no destination rebrand. These rules keep
+an API. Semantic copies always reconstruct destination-local annex data, even
+when source and destination share a pool. These rules keep
 the record mechanically `Copy` for bounded generation-tail duplication
 without turning Rust `Copy` into TeX move/copy authority.
 
@@ -429,10 +765,11 @@ with zero tail slack instead of 390 current records with 16 bytes of slack, a
 5.25-times density increase. Annex capacity is 16,384 words per block. For `N`
 resident records and `W` initialized annex words, physical allocation is
 `ceil(N / 2,048) + ceil(W / 16,384)` exact 64 KiB blocks, plus the generation
-token blocks charged to their owner. Each flat block-table entry remains one
-8-byte incarnation-bearing `BlockId` per 64 KiB of payload. Fork metadata copy
-is exactly eight bytes times the number of complete shared blocks in each
-forked table; it is reported separately from the bounded payload tails.
+token blocks charged to their owner. The physical table retains one 8-byte
+incarnation-bearing `BlockId` per 64 KiB of payload. Logical list-range rows
+and their copied bytes are accounted separately. Fork metadata copy reports
+both physical entries and logical rows; it is never folded into the bounded
+payload tails.
 
 The deterministic gates report:
 
@@ -459,6 +796,33 @@ or serializes runtime words. The 64 KiB allocation and all word/byte/coordinate
 arithmetic remain checked in target `usize`; external ids remain explicitly
 bounded to their u32 domains.
 
+### Source decomposition before integration
+
+`crates/tex-state/src/node_record.rs` is already 2,392 lines after the isolated
+codec work. Table and envelope integration must not extend that monolith. The
+first implementation child performs a behavior-preserving module split with
+these ownership boundaries and approximate ceilings:
+
+- `node_record/mod.rs`, under 250 lines: private exports, module wiring, shared
+  record/view entry points, and compile-time layout assertions;
+- `node_record/layout.rs`, under 350 lines: `NodeRecord`, header/kind/subtype
+  encoding, scalar word helpers, and typed key extraction;
+- `node_record/annex.rs`, under 550 lines: `AnnexKey`, typed markers, fixed and
+  dynamic codecs, publication serial validation, and the logical annex facade;
+- `node_record/node_codec.rs`, under 600 lines: outer node, box, glue, ligature,
+  insertion, and math encode/decode projections;
+- `node_record/whatsit_codec.rs`, under 550 lines: every whatsit, PDF payload,
+  byte/UTF-8 span, and identifier codec; and
+- `node_record/tests.rs`, split further by codec family if it exceeds roughly
+  600 lines.
+
+Logical table and ownership code belongs beside, not inside, that codec tree:
+`logical_node_table.rs` owns logical coordinates and borrowed views;
+`node_envelope.rs` owns aggregate marks and transfer receipts; existing
+`fork_arena.rs` retains list topology; and `node_region.rs` retains semantic
+roles and TeX transitions. The split lands before new behavior so review can
+distinguish mechanical movement from the coordinate and ownership changes.
+
 ### Migration and approval boundary
 
 No stage introduces a second resident node representation:
@@ -469,18 +833,25 @@ No stage introduces a second resident node representation:
 2. Move every consumer from direct enum matching to borrowed `NodeView` and
    every producer to variant-specific destination construction while the
    existing enum is still the sole backing representation.
-3. Implement the private annex codecs, handles, aggregate marks, stale-key
-   controls, and native/WASM layout tests without wiring a second node store.
-4. In one cutover commit, replace the enum backing with `NodeRecord`, attach
-   the annex to `NodeRegion`, and delete the owned ligature, token, whatsit,
-   and boxed payload fields from resident nodes.
-5. Re-prove TeX move/copy, held-over evacuation, page succession, exact edit
+3. Implement the private annex codecs and native/WASM layout tests without
+   wiring a second node store. Split the codec source before adding storage
+   integration.
+4. Add the pool-owned logical node/annex tables and exactly-two-view fork API
+   below `ForkArena`; replace every physical `RawChunkKey` in list coordinates
+   and predecessor metadata while the enum remains the sole resident node.
+5. Add aggregate marks, paired envelope rotation, detach/transfer/rollback
+   receipts, dependency floors, and stale-key controls. Prove page/durable,
+   history, succession, and transient-output moves before changing backing.
+6. In one cutover commit, replace the enum backing with `NodeRecord`, connect
+   the typed annex, and delete the owned ligature, token, whatsit, and boxed
+   payload fields from resident nodes.
+7. Re-prove TeX move/copy, held-over evacuation, page succession, exact edit
    accept/reject, scratch rewind, semantic hashing, format materialization,
    and handle-free output before enabling dense fork-tail copy in production.
-6. Run the focused construction/fork/release attribution, routine suite,
+8. Run the focused construction/fork/release attribution, routine suite,
    quality gate, Miri where available, sanitizers, and Wasm runtime tests, then
    stop with the cutover unmerged.
-7. In the separate measurement task, run the authenticated 50-million-command
+9. In the separate measurement task, run the authenticated 50-million-command
    census and seek the dense-superblock design's second approval before any
    production merge.
 
@@ -496,15 +867,15 @@ coordinate. Validation failure leaves the arena unchanged. The arena owns the
 complete immutable row; nested node fields contain only coordinates back into
 that same arena.
 
-`OperationMark<L>` may name a partially used payload or descriptor tail and is
-restricted to local failure. It cannot convert into a retained mark.
-Consuming every builder and sealing both tails yields an opaque
-`SealedBoundary<L>`, which alone can construct `CheckpointMark<L>`. A retained
-mark therefore contains only whole-chunk counts and stable terminal keys.
-The operation mark also carries the optional scalar summary of its partial
-payload tail, so truncation restores payload and identity metadata atomically.
-Whole-chunk detach, reattach, acceptance, pruning, and typed-lane promotion move
-the summary-bearing chunk and descriptor envelopes with their payload.
+`AggregateOperationMark<L>` may name partially used node and annex tails and
+is restricted to local failure. It cannot convert into a retained mark.
+Consuming every builder and sealing both components yields an opaque aggregate
+boundary, which alone can construct a checkpoint mark. A retained mark
+therefore contains logical cursors plus stable table/summary frontiers. The
+operation mark carries the optional scalar summaries of its partial tails, so
+truncation restores payload, topology, and identity metadata atomically.
+Whole-block detach, reattach, acceptance, pruning, and typed-role transfer move
+the summary-bearing aggregate envelope with its node and annex payload.
 Operation and page restore follows this order:
 
 1. validate the state journal, mode/page roots, and arena cursor without
@@ -518,8 +889,8 @@ mutation. Reusing a released chunk slot assigns a fresh slot generation, so a
 stale copied coordinate cannot alias later material even when its physical
 slot number is reused.
 
-`NodeArenaRegion<L>` is the consuming form of that cursor for a structurally
-nested allocation suffix. It is neither `Clone` nor `Copy`. A top-level
+`SealedAggregateEnvelope<L>` is the consuming form of the paired cursors for a
+structurally nested allocation suffix. It is neither `Clone` nor `Copy`. A top-level
 `\setbox` or explicit/default shipout opens the region before its operand is
 materialized, moves the token through any scanner suspension and box-body
 continuation, and consumes it only at a terminal boundary. Nested box scopes

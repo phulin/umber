@@ -228,6 +228,56 @@ The safe fork wrapper must prove:
   and
 - a second candidate or third live revision generation cannot be created.
 
+### Node integration prerequisite
+
+The existing isolated `GenerationArena<T>` proves the tail-copy bound, but it
+owns its `BlockStore`, flat table, and semantic arena as one value. Runtime
+nodes need one pool to back multiple page, durable, history, and transient
+output regions, and a sealed closure must move between those owners without
+changing its coordinates. The safe layer must therefore split physical and
+logical authority before production node integration:
+
+```text
+BlockStore<T>                     private physical BlockId owner
+LogicalBlockTable<T>              ordinal/incarnation -> BlockId rows
+AcceptedCandidateTables<T>        sole accepted + optional candidate owner
+LogicalTableView<'owner, T>       accepted or candidate borrowed resolver
+DetachedBlockRange<T>             move-only whole-block loan
+BlockRangeDetachReceipt<T>        exact source-frontier rollback authority
+PreparedBlockRangeTransfer<T>     reserved, infallible commit authority
+```
+
+`BlockId` remains private to this crate and these receipts. The public logical
+row id contains a coordinate-space id, ordinal, and logical incarnation. A
+lookup checks the logical row, physical incarnation, initialized prefix, and
+borrowed view before returning a reference. Reusing a logical row and reusing
+a physical slot advance independent incarnations.
+
+`AcceptedCandidateTables<T>` consumes the one accepted authority to create
+exactly two views. Forking copies the flat table prefix as measured metadata,
+shares complete physical blocks, and copies at most the initialized prefix of
+one physical tail. Acceptance and rejection consume the aggregate and return
+one accepted owner; no component exposes a public lineage selector or a third
+view constructor.
+
+Whole-block transfer is separate from generation sharing. A physical-tail
+rotation starts a transferable suffix on a fresh block. Detach returns the
+range and exact source insertion frontier. Destination validation and vector
+capacity reservation happen before `prepare` succeeds; commit then moves table
+and block authority without a fallible intermediate state. Failed preparation
+returns the unchanged loan. Rollback checks the source frontier and reinserts
+the exact range or returns the still-owned loan. There is no per-block `Rc`,
+foreign semantic-owner retention, forwarding entry, or payload scan.
+
+The generic crate does not couple types. `tex-state::NodeRegion` composes one
+node table and one annex-word table into the aggregate boundary and receipt
+specified by [Arena-owned node lists](node_word_arena.md). That facade rotates,
+detaches, attaches, accepts, rejects, and rolls back both components together.
+`ForkArena` continues to own list-range metadata, predecessors, summaries, and
+child dependency floors above the logical table. Neither layer may retain a
+physical `RawChunkKey` in a list id, predecessor, child root, annex key,
+checkpoint row, or output value.
+
 ## Payload eligibility and semantic wrappers
 
 The superblock substrate is generic; forking is not automatically generic.

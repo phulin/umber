@@ -24,9 +24,10 @@ The pending physical cutover in [Arena-owned node lists](node_word_arena.md)
 and [Dense fork-arena superblocks](fork_arena_dense_prefix_emplacement.md)
 replaces the 168-byte owned node slots with 32-byte non-owning records and a
 typed word annex. Logical blocks become cursor/range boundaries inside exact
-64 KiB dense storage. That cutover does not alter any coarse owner, raw-root
-admission, TeX move/copy, settlement, succession, or reclamation rule in this
-document.
+64 KiB dense storage. The unified logical-table prerequisite preserves every
+coarse semantic owner and TeX move/copy rule here while replacing physical-key
+admission and payload-rebranding transfers with pool-stable logical
+coordinates and paired node+annex envelope receipts.
 
 The following are explicitly rejected:
 
@@ -62,15 +63,15 @@ the design as an unwired substrate:
   traversal;
 - an uncheckpointed old page region retires immediately, while a region with
   retained paragraph boundaries stays in the contiguous history interval;
-- ordinary `\setbox` construction seals and rebrands its suffix into the box
-  owner without relocating payload; `\box`/`\unhbox` use a rollbackable
+- ordinary `\setbox` construction seals and transfers its suffix into the box
+  owner without relocating payload or rewriting coordinates; `\box`/`\unhbox` use a rollbackable
   command-operation transfer loan, and `\copy`/`\unhcopy` remain the explicit
   recursive-copy operations; and
 - PDF form creation consumes the same move-only construction envelope after
   taking its source box, so a unique source does not make a page-to-form copy.
 
 The former `CompatibilityClosureBuildReceipt` retain seam is deleted. Lifecycle
-counters distinguish envelope movement, bounded rebrand scans, TeX copies,
+counters distinguish aggregate envelope movement, metadata-only closure checks, TeX copies,
 history-preservation copies, structural page-to-durable copies, held-over
 fallback copies, region starts/retention/drops, and cross-region rejection.
 
@@ -129,9 +130,10 @@ unsafe boundary eligible.
 ## Coarse owners
 
 `NodeRegion<Lane>` is an exclusive, move-only owner of a self-contained node
-closure domain. It owns the packed logical-block envelopes allocated to that
+closure domain. It owns paired node and annex envelopes allocated to that
 domain, its stable `NodeRegionId`, and the private roots needed to resolve its
-lists. It is neither `Clone` nor `Copy` and has no shared-owner constructor.
+lists through the pool's logical tables. It is neither `Clone` nor `Copy` and
+has no shared-owner constructor.
 
 `PageRegion` is the page-building specialization. One exists for each period
 from the start of page building through the corresponding shipout. It owns:
@@ -143,7 +145,7 @@ from the start of page building through the corresponding shipout. It owns:
   region was current.
 
 Multiple paragraph checkpoints in one page share this one backing region. A
-checkpoint does not copy nodes, descriptors, roots, or a region owner. Its
+checkpoint does not copy nodes, annex words, logical tables, roots, or a region owner. Its
 private row inside checkpoint history stores:
 
 ```text
@@ -153,7 +155,8 @@ PageRegionCheckpoint
   current_page_root
   page_discard_root
   split_discard_root
-  sealed_payload_position
+  sealed_node_position
+  sealed_annex_position
   page_builder_scalar_state
   page_builder_journal_position
 ```
@@ -169,6 +172,37 @@ session- or generation-owned immutable non-node values such as fonts, stored
 token lists, and glue specifications through their existing typed contracts,
 but it cannot contain a node-list coordinate into another reclaimable node
 region.
+
+### Pool tables and aggregate envelopes
+
+`NodePool`, not an individual region, owns the exact-64-KiB node and annex
+stores and their accepted/candidate logical tables. A runtime coordinate names
+the pool-stable logical space, block ordinal/incarnation, and offset. It names
+neither a physical block nor a semantic region. The admitted region borrow
+checks that its move-only aggregate envelope owns that logical position before
+the selected accepted or candidate table may resolve it.
+
+Every `NodeRegion` envelope pairs node and annex ranges. Closure construction
+seals and rotates both physical tails before its first append so a transferable
+suffix shares neither tail block with the retained prefix. Publication folds
+child-node and annex dependency floors into block metadata. Closure sealing
+can therefore prove suffix locality from roots, predecessor ranges, and block
+metadata without scanning node records or annex payloads.
+
+Unique moves detach and attach this paired envelope through one prepared
+receipt. The `PageListId` remains byte-for-byte unchanged; only the typed
+`RegionRoot<Role>` wrapper changes semantic owner. Destination preflight and
+capacity reservation precede detachment commit. A failed or unwound transfer
+returns the same move-only loan, and its detach receipt can reinsert node and
+annex ranges only at the exact unchanged source frontiers. Component-level
+node-only or annex-only transfer is not an API.
+
+An explicit TeX or history-preservation copy has different authority. It
+visits the exact closure once and rebuilds all node topology and region-local
+annex data through destination constructors. Raw record copy across semantic
+owners and source-annex retention are forbidden. The complete coordinate,
+view, envelope, receipt, and failure contract is normative in
+[Arena-owned node lists](node_word_arena.md).
 
 ## Raw coordinates are borrowed capabilities
 
@@ -299,15 +333,16 @@ detached accepted suffix of R + later accepted page regions
 private current suffix of R + new candidate page regions
 ```
 
-The region and checkpoint owners move into one transaction. The selected
-region forks at its sealed payload-and-descriptor boundary. Its arena state is
-the existing two-lineage state:
+The region and checkpoint owners move into one transaction. The pool consumes
+the accepted aggregate node+annex tables at the selected sealed cursors and
+creates exactly two borrowed views. Its arena state remains conceptually:
 
 ```text
 Accepted
 Forked { prefix, detached_prior, current }
 ```
 
+The current `RawChunkKey` representation is migration input, not this state.
 There is no independently cloneable accepted tail. Page regions after `R`
 detach wholesale into the same accepted-suffix owner; they are not visited to
 copy roots or payload. Candidate execution appends only to the private current
@@ -318,7 +353,7 @@ Rejection performs this order:
 1. validate the return destination and every root/journal coordinate;
 2. undo candidate PageBuilder root and scalar changes;
 3. drop candidate page regions created after the selected page;
-4. truncate the selected region's current payload and descriptor suffix
+4. drop the selected region's candidate-private node and annex suffix
    atomically;
 5. reattach its detached accepted suffix and later accepted page regions;
 6. forward-redo the saved accepted PageBuilder journal; and
@@ -329,7 +364,7 @@ Acceptance performs this order after complete validation:
 1. remove checkpoint rows and journal roots which name the superseded accepted
    suffix;
 2. drop later accepted page regions as whole owners;
-3. prune the selected region's detached accepted payload and descriptor chunks
+3. prune the selected region's detached accepted node and annex blocks
    atomically;
 4. promote its current suffix and candidate page regions into accepted
    history; and
@@ -337,8 +372,10 @@ Acceptance performs this order after complete validation:
    settled.
 
 Unwind, cancellation, and explicit rejection use the same rejection path.
-Exactly the accepted lineage and one private current lineage may exist. No
-compaction, relocation, copied prefix, sibling bank, or third generation is
+Exactly the accepted view and one private candidate view may exist. An
+interior fork copies at most one 65,504-byte node tail and one 65,532-byte
+annex tail; checkpoint capture and acceptance copy zero. No compaction,
+relocation, copied payload prefix, sibling bank, or third generation is
 allowed.
 
 ## Shipout and page succession
@@ -363,27 +400,26 @@ PageBuilder root, including nested children, belongs to that suffix, commit
 consumes the predecessor and adopts the suffix under the same physical arena
 identity. The predecessor prefix drops, the semantic region generation
 advances so old handles become stale, and the successor retains the suffix's
-sealed chunks plus its mutable partial tail. Adoption changes only one chunk
-index per retained payload or descriptor chunk, so ownership transfer is O(1)
-per adopted chunk and copies or rebrands no payload.
+paired node and annex envelopes. Adoption changes only table/envelope
+metadata, so ownership transfer is O(1) per retained logical or physical block
+and copies or rebrands no payload.
 
-Prepare only proves that ownership shape and records the build mark; cancel
-re-arms the same suffix without changing chunks or counters. If a checkpoint
-keeps the predecessor live, a self-contained sealed successor suffix is shared
-at arena granularity. The source and destination keep separate chunk lists and
-one of two fixed lineage-position slots per shared chunk. The suffix is an
-immutable prefix in the destination, and both regions allocate subsequent
-values only in private tails. Direct child-position floors accumulated during
-publication prove suffix closure from chunk metadata; succession performs no
-node-tree traversal, payload clone, rebrand, census, or per-node reference
-count.
+Prepare proves the ownership shape, records both cursors, and reserves receipt
+capacity; cancel consumes the exact open-build receipt. If a checkpoint keeps
+the predecessor live, a self-contained sealed successor suffix moves into a
+fresh region owner while the accepted/candidate pool tables retain the only
+bounded sharing authority. Paired physical-tail rotation ensures no
+transferred suffix block contains retained-prefix node or annex data. Direct
+child and annex floors accumulated during publication prove suffix closure
+from block metadata; succession performs no node-tree traversal, payload
+clone, record rebrand, census, or per-node reference count.
 
-Dropping a lineage visits its chunk keys only. It clears that lineage's slot
-and returns an exclusive chunk immediately; a shared chunk remains live until
-the other lineage drops it, at which point payload destructors run and the
-chunk incarnation advances. Reuse therefore rejects stale keys, and retiring
-prior before current or current before prior releases exactly the unreachable
-chunks. A third lineage is rejected by the bounded metadata. A successor root
+Dropping an envelope visits its logical and physical block ranges only. A
+block shared solely by the accepted/candidate fork remains live until that
+aggregate transaction settles; no semantic owner adds another share. Reuse
+advances logical and physical incarnations, so retiring prior before current
+or current before prior releases exactly the unreachable blocks. A third view
+is unconstructible. A successor root
 which crosses the build boundary or was not published through the checked
 dependency-folding seam retains the explicit structural-copy fallback. The
 shipped page, complete old region, and unrelated checkpoint material are never
@@ -436,8 +472,8 @@ here.
 
 Logical retained-byte accounting follows the direct owner:
 
-- each live `PageRegion` is charged once for its pool pages, live chunk
-  envelopes, descriptors, journal storage, and reusable capacity;
+- each live `PageRegion` is charged once for its pool pages, aggregate node and
+  annex envelopes, logical topology metadata, journal storage, and reusable capacity;
 - each checkpoint is charged only for its fixed boundary row and aggregate
   non-node metadata;
 - each durable node region is charged once to its register, form, or history
@@ -473,8 +509,8 @@ TeX82 §§1074 and 1077's `\setbox<n>=\lastbox` first removes the selected
 tail box from the current mode list and only then stores that box in the
 register. The page-region source-list rewrite therefore settles before the
 destination durable-closure build mark opens. Opening the destination mark
-earlier would put the rewritten live source descriptor in the destination
-suffix and transfer it out of page ownership when the box is sealed.
+earlier would put the rewritten live source topology in the destination suffix
+and transfer it out of page ownership when the box is sealed.
 
 The historical-preservation copy is not a hidden optimization accident. It is
 the explicit cost of adding rollback history to a TeX operation that otherwise
@@ -490,8 +526,8 @@ preflight, the infallible drop order is:
 1. remove or restore the top-level semantic roots;
 2. settle PageBuilder and dense/save-journal entries that can name node owners;
 3. retire child `OwnedNodeClosure` values and candidate active builders;
-4. settle or remove canonical list descriptors;
-5. release payload chunk envelopes; and
+4. settle canonical logical tables and predecessor metadata;
+5. release paired node and annex envelopes; and
 6. recycle empty pool slots with fresh generations.
 
 For shipout, detached output is built first, held-over material is established
@@ -512,7 +548,8 @@ The storage facade must make these properties structural:
 2. A region id includes a reuse generation; a stale id or coordinate cannot
    alias a recycled chunk slot.
 3. Every node child coordinate resolves under the same region as its parent.
-4. Payload and descriptor changes validate together and settle atomically.
+4. Node, annex, logical-table, and predecessor changes validate together and
+   settle atomically.
 5. A retained boundary can be created only from a consumed sealed boundary and
    the quiescent restart-eligibility receipt.
 6. An operation mark cannot convert into a retained checkpoint mark.
@@ -525,8 +562,13 @@ The storage facade must make these properties structural:
     can resolve through it have been removed.
 11. Production top-level node roots are owner-relative fields inside a region
     or move-only owner-plus-root aggregates, never naked copy-only coordinates.
-12. Identity summaries, source range summaries, and memory counters move and
-    drop in the same envelope as payload and descriptors.
+12. Identity summaries, source range summaries, dependency floors, and memory
+    counters move and drop in the same aggregate envelope as nodes and annex.
+13. A runtime coordinate contains no physical `BlockId` or semantic owner id;
+    region admission and the borrowed accepted/candidate view are both
+    required for resolution.
+14. Transfer preflight returns an unchanged loan on failure, detach rollback
+    restores both component ranges exactly, and prepared commit is infallible.
 
 The essential APIs are conceptually:
 
@@ -612,7 +654,7 @@ The implementation must add or adapt these exact test families:
    group-level-zero paragraph/shipout boundaries from root documents and user
    includes can produce a region checkpoint.
 2. `paragraph_checkpoints_share_one_page_region` publishes many boundaries in
-   one page and proves one payload/descriptor owner and no node copy.
+   one page and proves one aggregate node+annex owner and no payload copy.
 3. `checkpoint_restores_all_four_page_roots` mutates every PageBuilder list,
    scalar family, insertion/mark state, and journal after a selected boundary,
    then restores the exact state.
@@ -639,13 +681,33 @@ The implementation must add or adapt these exact test families:
     rollback restores the original owner.
 12. `nested_closure_transfer_or_copy_is_region_local` covers both unique and
     retained nested children.
-13. `payload_and_descriptor_settlement_is_atomic` injects every validation
-    failure and proves no partial root/chunk change.
-14. `stale_region_and_chunk_generations_are_rejected` covers reuse without ABA
-    aliasing.
+13. `node_and_annex_envelope_settlement_is_atomic` injects every validation
+    failure and proves no partial root/table/block change.
+14. `stale_region_logical_and_physical_generations_are_rejected` covers space,
+    logical-row, physical-slot, annex-serial, and transferred-envelope reuse
+    without ABA aliasing.
 15. a compile-fail test such as `raw_page_list_root_escape_forbidden.rs` proves
     a raw list coordinate or borrowed `RegionList` cannot become a production
     top-level owner or outlive its `NodeRegion` borrow.
+16. `checkpoint_capture_allocates_and_copies_zero_at_scale` compares 1 and
+    4,096 boundaries with exact node, annex, table, and allocator counters.
+17. `interior_aggregate_fork_copies_only_two_tails` exercises empty,
+    boundary-aligned, one-value, and maximal tails and pins 65,504 node bytes
+    plus 65,532 annex bytes as the absolute maxima.
+18. `candidate_acceptance_moves_tables_without_payload_copy` and its rejection
+    pair prove exact two-view settlement and stale superseded coordinates.
+19. `closure_boundary_rotates_node_and_annex_tails` fills each side to
+    different offsets, transfers a suffix, and proves neither transferred
+    physical block retains source-prefix data.
+20. `detached_aggregate_transfer_failure_rolls_back_exactly` injects every
+    source, destination, capacity, incarnation, and root failure before and
+    after detachment and compares roots, frontiers, table rows, and owners.
+21. `tex_copy_republishes_destination_annex` covers fixed and cross-block
+    dynamic annex values and proves no destination key resolves through the
+    source envelope.
+22. `page_list_ids_never_encode_physical_blocks` audits words, predecessors,
+    child roots, formats, artifacts, and stale reuse while direct lookup and
+    range-crossing counters remain exact.
 
 Semantic output, DVI/PDF parity, format round trips, source identity, and
 aggregate checkpoint tests remain the acceptance authority; topology-only
@@ -680,6 +742,20 @@ reintroducing `Vec<Node>` or rebuilding their transforms.
 8. Add the counters, allocation gates, exact lifecycle tests, full semantic
    suite, and quality gates before declaring the node lifetime migration
    complete.
+
+The compact-record continuation is dependency ordered:
+
+9. Split the current node codec source without behavior change.
+10. Add pool-owned physical stores, logical tables, and exactly two borrowed
+    views in `tex-dense-arena`, then migrate `ForkArena` coordinates and
+    predecessors away from `RawChunkKey` while the owned enum remains resident.
+11. Couple node and annex cursors, physical-tail rotation, dependency floors,
+    and prepared detach/transfer/rollback receipts in `NodeRegion`.
+12. Resume the atomic enum-to-record cutover only after the explicit logical
+    table/envelope approval and focused coordinate/transfer gates pass.
+13. Run the authenticated copy/allocation census and seek the existing final
+    production approval. A failed stage is removed; it does not retain a
+    physical-coordinate bridge or second representation.
 
 No step changes restart eligibility, adds replay, or creates a temporary second
 production node topology.

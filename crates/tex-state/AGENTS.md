@@ -241,9 +241,15 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned
   node crossing the arena boundary.
-- `src/node_record.rs`: Private exact 32-byte page-material record, typed
-  six-word annex keys, checked 64-KiB word blocks, publication serials, and
-  aggregate rollback substrate.
+- `src/node_record.rs`: Current private exact 32-byte page-material record and
+  typed annex codecs. Before storage integration, split this 2,392-line file
+  into `node_record/{mod,layout,annex,node_codec,whatsit_codec,tests}.rs` as
+  specified by `docs/node_word_arena.md`; table and envelope logic does not
+  belong in the codec tree.
+- `src/logical_node_table.rs` and `src/node_envelope.rs`: Reserved module
+  boundaries for pool-stable logical coordinates, borrowed accepted/candidate
+  views, and paired node+annex marks and transfer receipts. They are design
+  targets, not current production files.
 - `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
@@ -252,7 +258,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   roots and borrows, sealed `ClosureBuildMark` suffix loans, mutation-free
   recursive transfer preflight, direct mapped cross-region construction into
   final packed chunks without whole-node staging, address-stable
-  detach/rollback/rebranding, and reason-counted structural-copy fallback;
+  detach/rollback, and reason-counted structural-copy fallback; the compact
+  cutover replaces payload rebranding with unchanged logical coordinates and
+  aggregate node+annex envelope receipts;
   production durable carrier cutover remains a separate migration stage.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed

@@ -197,9 +197,11 @@ retention without changing packed ids or rendered results.
 
 `node_word_arena.md` is the authoritative compact node-word arena document: it
 defines the implementation-ready 32-byte non-owning record, typed word annex,
-generation-tagged identities, sidecar and survivor ownership, access boundary,
-hashing, and validation. Do not create a separate `node_word_layout.md` whose
-encoding or rollback rules could drift.
+pool-stable logical node/annex coordinates, exactly-two-view flat tables,
+aggregate transfer envelopes and rollback receipts, generation-tagged
+identities, source decomposition, access boundary, hashing, and validation. Do
+not create a separate `node_word_layout.md` or logical-table document whose
+encoding, ownership, or rollback rules could drift.
 
 `wasm_resource_acquisition.md` specifies the implemented typed, batched
 resource state machine and the remaining OpenType rollout, including

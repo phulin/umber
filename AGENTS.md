@@ -91,7 +91,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   shipout, and retirement.
 - `docs/node_region_ownership.md`: authoritative exclusive node-region design
   for exact paragraph checkpoints, page succession, TeX move/copy semantics,
-  and whole-region reclamation.
+  aggregate node+annex envelope transfer, and whole-region reclamation.
+- `docs/node_word_arena.md`: authoritative compact-node record, pool-stable
+  logical node/annex table, exactly-two-view fork, source decomposition, and
+  transfer-receipt design.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `third_party/`: ignored reference downloads and external source archives.
 
