@@ -14,9 +14,8 @@ use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
 use super::{
-    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryErrorSlot,
-    DeliveryFailed, DeliveryStatus, ExpandedObservationPolicy, FirstCommandPolicy,
-    ReplayCompletionPolicy,
+    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryStatus,
+    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
 };
 
 use crate::observation::{
@@ -703,13 +702,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 match transition {
                     Ok(interception) => break interception,
                     Err(cold) => {
-                        let settled =
-                            match self.settle_raw_resident_cold_transition(cold, destination) {
-                                Ok(settled) => settled,
-                                Err(failure) => {
-                                    return self.fail_raw_delivery(destination, failure);
-                                }
-                            };
+                        let settled = match self.settle_resident_cold_transition(cold, destination)
+                        {
+                            Ok(settled) => settled,
+                            Err(failure) => {
+                                return self.fail_raw_delivery(destination, failure);
+                            }
+                        };
                         match settled {
                             ResidentColdOutcome::Retry => continue,
                             ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
@@ -773,72 +772,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    fn settle_raw_resident_cold_transition(
+    fn resume_expanded_delivery(
         &mut self,
-        cold: ResidentCommandColdTransition,
         destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<ResidentColdOutcome, CommandError> {
-        let mut error = DeliveryErrorSlot::empty();
-        match self.settle_resident_cold_transition(cold, destination, &mut error) {
-            Ok(settled) => Ok(settled),
-            Err(failure) => Err(error.take(failure)),
-        }
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
-    )]
-    pub(super) fn expanded_delivery_entry(
-        &mut self,
-        fetch: ExpandedFetch,
-        protected_macros: ProtectedMacroHandling,
-        undefined: UndefinedHandling,
-        observation: ExpandedObservationPolicy,
-        first_command: FirstCommandPolicy,
-        replay_completion: ReplayCompletionPolicy,
-        alignment_interception: AlignmentInterceptionPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        self.invalidate_delivery_freshness();
-        let mut error = DeliveryErrorSlot::empty();
-        let result = self.expanded_delivery_loop(
-            fetch,
-            protected_macros,
-            undefined,
-            observation,
-            first_command,
-            replay_completion,
-            alignment_interception,
-            destination,
-            &mut error,
-        );
-        match result {
-            Ok(status) => Ok(status),
-            Err(failure) => {
-                destination.take();
-                self.invalidate_delivery_freshness();
-                Err(error.take(failure))
-            }
-        }
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
-    )]
-    fn expanded_delivery_loop(
-        &mut self,
-        fetch: ExpandedFetch,
-        protected_macros: ProtectedMacroHandling,
-        undefined: UndefinedHandling,
-        observation: ExpandedObservationPolicy,
-        first_command: FirstCommandPolicy,
-        replay_completion: ReplayCompletionPolicy,
-        alignment_interception: AlignmentInterceptionPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-        error: &mut DeliveryErrorSlot,
-    ) -> Result<DeliveryStatus, DeliveryFailed> {
+    ) -> Result<bool, CommandError> {
         let key = self.expansion_resume.take().or_else(|| {
             self.scanner_resume
                 .as_ref()
@@ -854,63 +791,50 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .expect("live wrapper owns expansion work")
                 })
         });
-        let resumed_pending = key.is_some();
-        let mut delivery_expanded = false;
-        if let Some(key) = key {
-            let mut retained = match self.command.scratch.resume_expansion(key) {
-                Ok(retained) => retained,
-                Err(failure) => {
-                    return error.fail(crate::scan_toks::scratch_command_error(failure));
-                }
-            };
-            if destination
+        let mut retained = self
+            .command
+            .scratch
+            .resume_expansion(key.expect("genuine suspension owns expansion work"))
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        if destination
+            .as_ref()
+            .is_some_and(|command| command != &retained.command)
+        {
+            if let Some(child) = retained.take_child() {
+                self.abort_continuation(child)?;
+            }
+            return Err(CommandError::input_invariant());
+        }
+        if let Some(child) = retained.child.take() {
+            let (key, child_destination) = child.restore();
+            if child_destination != crate::state::PendingExpansionChildDestination::Dispatch {
+                return Err(CommandError::input_invariant());
+            }
+            self.scanner_resume = Some(key);
+        }
+        self.resumed_expansion = Some(retained.resume);
+        let delivery_expanded = retained.delivery_expanded;
+        *destination = Some(retained.command);
+        self.resume_current_command(
+            destination
                 .as_ref()
-                .is_some_and(|command| command != &retained.command)
-            {
-                if let Some(child) = retained.take_child()
-                    && let Err(failure) = self.abort_continuation(child)
-                {
-                    return error.fail(failure);
-                }
-                return error.fail(CommandError::input_invariant());
-            }
-            if let Some(child) = retained.child.take() {
-                let (key, child_destination) = child.restore();
-                if child_destination != crate::state::PendingExpansionChildDestination::Dispatch {
-                    return error.fail(CommandError::input_invariant());
-                }
-                self.scanner_resume = Some(key);
-            }
-            self.resumed_expansion = Some(retained.resume);
-            delivery_expanded = retained.delivery_expanded;
-            *destination = Some(retained.command);
-        }
-        if resumed_pending && let Some(command) = &destination {
-            self.resume_current_command(command);
-        }
-        let depth = self.command.transient.active_expansion_depth;
-        let Some(active_depth) = depth.checked_add(1) else {
-            return error.fail(CommandError::input_invariant());
-        };
-        self.command.transient.active_expansion_depth = active_depth;
-        let result = self.expanded_destination_loop(
-            replay_completion,
-            alignment_interception,
-            fetch,
-            protected_macros,
-            undefined,
-            observation,
-            first_command,
-            delivery_expanded,
-            destination,
-            error,
+                .expect("resumed expansion restores its command"),
         );
-        assert_eq!(
-            self.command.transient.active_expansion_depth, active_depth,
-            "nested delivery must balance expansion depth"
-        );
+        Ok(delivery_expanded)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_expanded_delivery(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        depth: u32,
+        failure: CommandError,
+    ) -> Result<DeliveryStatus, CommandError> {
+        destination.take();
         self.command.transient.active_expansion_depth = depth;
-        result
+        self.invalidate_delivery_freshness();
+        Err(failure)
     }
 
     #[cold]
@@ -918,12 +842,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         cold: ResidentCommandColdTransition,
         destination: &mut Option<CurrentCommand<G>>,
-        error: &mut DeliveryErrorSlot,
-    ) -> Result<ResidentColdOutcome, DeliveryFailed> {
+    ) -> Result<ResidentColdOutcome, CommandError> {
         match cold {
             ResidentCommandColdTransition::Failure => {
                 destination.take();
-                error.fail(CommandError::input_invariant())
+                Err(CommandError::input_invariant())
             }
             ResidentCommandColdTransition::Empty => {
                 observe!(
@@ -943,7 +866,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         destination.take();
                         Ok(ResidentColdOutcome::End)
                     }
-                    Err(failure) => error.fail(failure),
+                    Err(failure) => Err(failure),
                 }
             }
             ResidentCommandColdTransition::InvalidCharacter => {
@@ -958,14 +881,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(ResidentColdOutcome::Retry)
             }
             ResidentCommandColdTransition::NeedLine(identity) => {
-                let line = match self.acquire_source_line(true) {
-                    Ok(line) => line,
-                    Err(failure) => return error.fail(failure),
-                };
+                let line = self.acquire_source_line(true)?;
                 let exhausted = if line.is_none() {
                     match self.finish_exhausted_source(identity) {
                         Ok(status) => matches!(status, SourceExhaustionStatus::End),
-                        Err(failure) => return error.fail(failure),
+                        Err(failure) => return Err(failure),
                     }
                 } else {
                     false
@@ -977,7 +897,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             destination.take();
                             Ok(ResidentColdOutcome::End)
                         }
-                        Err(failure) => error.fail(failure),
+                        Err(failure) => Err(failure),
                     }
                 } else {
                     Ok(ResidentColdOutcome::Retry)
@@ -996,7 +916,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 let exhausted = match self.finish_exhausted_source(identity) {
                     Ok(status) => matches!(status, SourceExhaustionStatus::End),
-                    Err(failure) => return error.fail(failure),
+                    Err(failure) => return Err(failure),
                 };
                 if exhausted {
                     match self.raw_end_restarts() {
@@ -1005,7 +925,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             destination.take();
                             Ok(ResidentColdOutcome::End)
                         }
-                        Err(failure) => error.fail(failure),
+                        Err(failure) => Err(failure),
                     }
                 } else {
                     Ok(ResidentColdOutcome::Retry)
@@ -1049,12 +969,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             _ => None,
                         })
                 else {
-                    return error.fail(CommandError::input_invariant());
+                    return Err(CommandError::input_invariant());
                 };
-                let handoff = match self.retire_input_top(identity) {
-                    Ok(handoff) => handoff,
-                    Err(failure) => return error.fail(failure),
-                };
+                let handoff = self.retire_input_top(identity)?;
                 match handoff {
                     RetirementHandoff::Stop => match self.raw_end_restarts() {
                         Ok(true) => Ok(ResidentColdOutcome::Retry),
@@ -1062,7 +979,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             destination.take();
                             Ok(ResidentColdOutcome::End)
                         }
-                        Err(failure) => error.fail(failure),
+                        Err(failure) => Err(failure),
                     },
                     RetirementHandoff::Continue => Ok(ResidentColdOutcome::Retry),
                     RetirementHandoff::Completed(episode) => {
@@ -1116,32 +1033,53 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Advances resident input and inspects its resolved command in one
     /// destination-directed state machine. Cold transitions re-enter only
     /// after the command typestate borrow has ended.
-    #[inline(always)]
     #[allow(
         clippy::too_many_arguments,
         reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
     )]
-    fn expanded_destination_loop(
+    pub(super) fn expanded_delivery_entry(
         &mut self,
-        replay_completion: ReplayCompletionPolicy,
-        alignment_interception: AlignmentInterceptionPolicy,
         expanded_fetch: ExpandedFetch,
         protected_macros: ProtectedMacroHandling,
         undefined: UndefinedHandling,
         observation: ExpandedObservationPolicy,
         first_command: FirstCommandPolicy,
-        mut delivery_expanded: bool,
+        replay_completion: ReplayCompletionPolicy,
+        alignment_interception: AlignmentInterceptionPolicy,
         destination: &mut Option<CurrentCommand<G>>,
-        error: &mut DeliveryErrorSlot,
-    ) -> Result<DeliveryStatus, DeliveryFailed> {
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.invalidate_delivery_freshness();
+        let depth = self.command.transient.active_expansion_depth;
+        let mut delivery_expanded = false;
+        if self.expansion_resume.is_some()
+            || self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_expansion)
+        {
+            delivery_expanded = match self.resume_expanded_delivery(destination) {
+                Ok(delivery_expanded) => delivery_expanded,
+                Err(failure) => {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+            };
+        }
+        let Some(active_depth) = depth.checked_add(1) else {
+            return self.fail_expanded_delivery(
+                destination,
+                depth,
+                CommandError::input_invariant(),
+            );
+        };
+        self.command.transient.active_expansion_depth = active_depth;
         let mut first = true;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let mut fetch = destination.is_none();
-        'delivery: loop {
+        let status = 'delivery: loop {
             if fetch {
                 self.invalidate_delivery_freshness();
                 if let Err(failure) = self.charge_command_action() {
-                    return error.fail(failure);
+                    return self.fail_expanded_delivery(destination, depth, failure);
                 }
                 if destination.is_none() {
                     *destination = Some(CurrentCommand::empty());
@@ -1176,12 +1114,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let interception = match transition {
                         Ok(interception) => interception,
                         Err(cold) => {
-                            match self.settle_resident_cold_transition(cold, destination, error)? {
+                            let settled =
+                                match self.settle_resident_cold_transition(cold, destination) {
+                                    Ok(settled) => settled,
+                                    Err(failure) => {
+                                        return self.fail_expanded_delivery(
+                                            destination,
+                                            depth,
+                                            failure,
+                                        );
+                                    }
+                                };
+                            match settled {
                                 ResidentColdOutcome::Retry => continue,
-                                ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
+                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     if replay_completion == ReplayCompletionPolicy::Surface {
-                                        return Ok(DeliveryStatus::ReplayCompleted(episode));
+                                        break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                     }
                                     continue 'delivery;
                                 }
@@ -1202,7 +1151,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         && let Err(failure) = self.check_outer_validity_entry(command)
                     {
                         destination.take();
-                        return error.fail(failure);
+                        return self.fail_expanded_delivery(destination, depth, failure);
                     }
                     if self.is_observed() {
                         self.observe_resident_command(command);
@@ -1218,12 +1167,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             let action = classify_expanded_command(command, protected_macros, undefined);
             if first && first_command == FirstCommandPolicy::MainLoopCharacter {
                 if is_main_loop_character(command.meaning_ref()) {
-                    return Ok(DeliveryStatus::Command);
+                    break 'delivery DeliveryStatus::Command;
                 }
                 if action == ExpandedCommandAction::Return {
                     debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
                     self.observe_expanded_delivery(command);
-                    return Ok(DeliveryStatus::Command);
+                    break 'delivery DeliveryStatus::Command;
                 }
             }
             if first
@@ -1232,7 +1181,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
                 self.observe_expanded_delivery(command);
-                return Ok(DeliveryStatus::Command);
+                break 'delivery DeliveryStatus::Command;
             }
             match action {
                 ExpandedCommandAction::EndTemplate => {
@@ -1242,7 +1191,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                         )
                     {
-                        return Ok(DeliveryStatus::AlignmentEndTemplate);
+                        break 'delivery DeliveryStatus::AlignmentEndTemplate;
                     }
                     // This loop's raw fetch is `get_next_with_replay_completion`,
                     // which is §341's body without §342's tail, so §342's
@@ -1256,7 +1205,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     ) {
                         if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
-                            return error.fail(failure);
+                            return self.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
                         continue;
@@ -1266,7 +1215,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // straight to §375, which backs up a `frozen_endv` token
                         // for this loop's own `get_next` to reread.
                         if let Err(failure) = self.insert_frozen_endv() {
-                            return error.fail(failure);
+                            return self.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
                         continue;
@@ -1275,22 +1224,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .as_mut()
                         .expect("expanded destination contains a command")
                         .convert_end_template_to_endv(self.state.frozen_endv_token());
-                    return Ok(self.finish_expanded_delivery(
+                    break 'delivery self.finish_expanded_delivery(
                         destination
                             .as_ref()
                             .expect("expanded destination contains a command"),
                         observation,
                         delivery_expanded,
                         alignment_interception,
-                    ));
+                    );
                 }
                 ExpandedCommandAction::Return => {
-                    return Ok(self.finish_expanded_delivery(
+                    break 'delivery self.finish_expanded_delivery(
                         command,
                         observation,
                         delivery_expanded,
                         alignment_interception,
-                    ));
+                    );
                 }
                 ExpandedCommandAction::Expand(dispatch) => {
                     delivery_expanded = true;
@@ -1322,11 +1271,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                         | CommandError::OuterInMacroArgument => {
                             fetch = true;
                         }
-                        failure => return error.fail(failure),
+                        failure => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
                     }
                 }
             }
-        }
+        };
+        assert_eq!(
+            self.command.transient.active_expansion_depth, active_depth,
+            "nested delivery must balance expansion depth"
+        );
+        self.command.transient.active_expansion_depth = depth;
+        Ok(status)
     }
 
     fn finish_expanded_delivery(

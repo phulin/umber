@@ -245,14 +245,6 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
 }
 
 #[test]
-fn internal_delivery_result_does_not_carry_the_rich_error_envelope() {
-    let internal = size_of::<Result<crate::DeliveryStatus, crate::processor::DeliveryFailed>>();
-    let public = size_of::<Result<crate::DeliveryStatus, crate::CommandError>>();
-
-    assert!(internal < public, "internal={internal}, public={public}");
-}
-
-#[test]
 fn destination_owned_expansion_result_excludes_suspension_payload() {
     struct FormerSuspendedExpansion<G> {
         _resume: crate::state::PendingExpansionResume,

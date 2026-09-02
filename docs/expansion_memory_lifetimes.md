@@ -393,13 +393,14 @@ only the genuinely suspended expansion frame retains that bit so a resumed
 TeX82 alignment lookahead preserves its deferred-observation decision. Each
 concrete loop returns only its final compact status and moves the command
 only to its final consumer or the exact typed expansion suspension slot. The
-expanded request owns one stack-local cold error slot. The raw entry instead
-writes ordinary command/end results directly into its caller's return slot and
-creates `DeliveryErrorSlot` only inside the cold resident-transition adapter.
-Internal delivery transitions return a zero-sized failure marker; a real raw
-failure reaches the cold failure helper, which clears destination freshness and
-constructs the rich result there. Thus an ordinary successful token neither
-copies nor reconstructs the error envelope.
+raw and expanded entries both write ordinary command/end results directly into
+their caller's return slot. Neither owns a stack-local error slot or returns an
+internal failure marker. A real failure reaches a cold helper that clears the
+destination and freshness, restores expansion depth when applicable, and
+constructs the rich result. Parked command and resume state are decoded only by
+the cold expanded-resume helper after a genuine resource suspension. Thus an
+ordinary successful token neither copies nor reconstructs an error or
+continuation envelope.
 The command slot is neither global nor a mailbox and never survives
 independently of its request. `CurrentCommand` retains only its compact
 immediate-delivery coordinate and the `OriginId` already packed in its

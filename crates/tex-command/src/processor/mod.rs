@@ -111,30 +111,6 @@ pub enum DeliveryStatus {
     AlignmentClosingBrace,
 }
 
-/// Cold error owner shared by the concrete destination loops.
-pub(super) struct DeliveryErrorSlot(Option<CommandError>);
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct DeliveryFailed;
-
-impl DeliveryErrorSlot {
-    pub(super) const fn empty() -> Self {
-        Self(None)
-    }
-
-    pub(super) fn fail<T>(&mut self, error: CommandError) -> Result<T, DeliveryFailed> {
-        debug_assert!(self.0.is_none(), "delivery owns at most one failure");
-        self.0 = Some(error);
-        Err(DeliveryFailed)
-    }
-
-    pub(super) fn take(&mut self, _: DeliveryFailed) -> CommandError {
-        self.0
-            .take()
-            .expect("delivery failure marker owns a command error")
-    }
-}
-
 pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Borrow-only capability facade for one bounded executor operation.

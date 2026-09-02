@@ -145,10 +145,12 @@ collector (see `src/conditionals.rs`).
   delivery state machine and static primitive dispatch. Its const-specialized
   raw and expanded entries advance resident input into the caller's final slot,
   settle that delivery in place, and, when requested, inspect and expand the
-  same resident command without a second command handoff. The raw entry is its
-  one delivery loop and writes the ordinary command/end result directly into
-  the caller's return slot; only its cold failure and resident-transition
-  helpers construct `CommandError` or `DeliveryErrorSlot`. It also includes one
+  same resident command without a second command handoff. The raw and expanded
+  entries are their respective single delivery loops and write ordinary
+  command/end results directly into the caller's return slot; only their cold
+  failure and resident-transition helpers construct `CommandError`. Expanded
+  continuation restoration likewise lives in a cold helper reached only for a
+  genuinely parked expansion. It also includes one
   main-control preflight entry that raw-fetches into the caller's destination,
   classifies that resident command once, publishes an ordinary unexpandable
   result directly, and passes an expandable command's exact dispatch directly
