@@ -27,6 +27,13 @@ struct PendingCharacter {
     font: LocalInstance,
     code: u8,
     depth: usize,
+    font_watermark: Option<u32>,
+}
+
+pub(super) struct DestinationFontUse {
+    pub(super) identity: FontSourceIdentity,
+    pub(super) code: u8,
+    pub(super) font_watermark: u32,
 }
 
 /// Materializes the font instances selected by reachable virtual packets.
@@ -40,37 +47,27 @@ pub(super) fn materialize_destination_font_instances(
     pdf: &DetachedPdfCompletion,
     resources: &crate::PdfVirtualFontResources,
     driver_dpi: i32,
-    artifact_font_usage: &BTreeMap<FontSourceIdentity, BTreeSet<u8>>,
+    artifact_font_uses: &[DestinationFontUse],
     fonts: &mut BTreeMap<FontSourceIdentity, PdfFontInput>,
     next_object: &mut u32,
 ) -> Result<(), PdfBuildError> {
-    let mut next_resource = fonts
-        .values()
-        .map(|font| font.resource_number)
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or(PdfBuildError::ObjectCapacity)?;
-    let roots = artifact_font_usage
+    let roots = artifact_font_uses
         .iter()
-        .filter_map(|(identity, codes)| {
-            let font = fonts.get(identity)?;
+        .filter_map(|font_use| {
+            let font = fonts.get(&font_use.identity)?;
             resources
                 .virtual_fonts
                 .contains_key(font.artifact_resource.name.as_str())
-                .then_some((*identity, font, codes))
-        })
-        .flat_map(|(identity, font, codes)| {
-            let instance = LocalInstance {
-                identity,
-                name: font.artifact_resource.name.clone(),
-                size: font.artifact_resource.at_size,
-            };
-            codes.iter().copied().map(move |code| PendingCharacter {
-                font: instance.clone(),
-                code,
-                depth: 0,
-            })
+                .then_some(PendingCharacter {
+                    font: LocalInstance {
+                        identity: font_use.identity,
+                        name: font.artifact_resource.name.clone(),
+                        size: font.artifact_resource.at_size,
+                    },
+                    code: font_use.code,
+                    depth: 0,
+                    font_watermark: Some(font_use.font_watermark),
+                })
         })
         .collect::<VecDeque<_>>();
     let resolved_map = crate::virtual_compile::resolved_font_map_lines(pdf, resources)
@@ -88,8 +85,25 @@ pub(super) fn materialize_destination_font_instances(
     let mut pending = roots;
     let mut visited = BTreeSet::new();
     let recursion_limit = tex_out::pdf::PdfFinalizationLimits::default().max_virtual_font_recursion;
+    let mut next_resource = 1;
 
-    while let Some(PendingCharacter { font, code, depth }) = pending.pop_front() {
+    while let Some(PendingCharacter {
+        font,
+        code,
+        depth,
+        font_watermark,
+    }) = pending.pop_front()
+    {
+        if let Some(font_watermark) = font_watermark {
+            // pdftex.web §32e reads a VF's local definitions at its first
+            // output use. Their internal font numbers immediately follow the
+            // live engine font watermark captured by that shipout.
+            next_resource = next_resource.max(
+                font_watermark
+                    .checked_add(1)
+                    .ok_or(PdfBuildError::ObjectCapacity)?,
+            );
+        }
         if !visited.insert((font.identity, code)) {
             continue;
         }
@@ -152,6 +166,7 @@ pub(super) fn materialize_destination_font_instances(
                             font: current.clone(),
                             code,
                             depth: depth.saturating_add(1),
+                            font_watermark: None,
                         });
                     }
                 }

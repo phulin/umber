@@ -3783,10 +3783,21 @@ impl<G> ShipoutTransaction<'_, G> {
             .page_region
             .builder_mut()
             .set_integer(crate::page::PageInteger::DeadCycles, 0);
-        self.command
-            .resident
-            .pdf
-            .commit_page(hash, output_parameters, page_parameters, pk_mode);
+        let font_watermark = u32::try_from(
+            self.command
+                .resident
+                .fonts
+                .len()
+                .saturating_sub(1),
+        )
+            .expect("font store capacity is bounded by u32");
+        self.command.resident.pdf.commit_page(
+            hash,
+            output_parameters,
+            page_parameters,
+            pk_mode,
+            font_watermark,
+        );
         let record = reservation.record();
         let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
         self.command.resident.world.record_artifact_commit(

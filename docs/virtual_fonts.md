@@ -69,6 +69,12 @@ a glyph. The finalization handoff projects the complete receipt, rather than
 reconstructing it from emitted positioned fonts or filtering it by virtual
 classification. `tex-out` then instantiates retained local TFM bytes at the
 declared size and computes glyph usage from the expanded positioned stream.
+Each committed PDF page also retains the highest one-based engine font number
+allocated when that page shipped. The detached replay walks pages, text runs,
+and character codes in their original order and assigns a newly reached VF
+leaf immediately after that watermark. This preserves section 32e's
+first-output-use resource names even though host resource acquisition and PDF
+serialization remain detached from the engine transaction.
 Local definitions that no reached packet selects remain acquisition inputs,
 not output resources. Virtual TFM names never become emitted PDF font
 resources merely because their source artifact contained characters.

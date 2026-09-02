@@ -1086,6 +1086,7 @@ pub struct PdfPageRecord<G> {
     resources_object: u32,
     contents_object: u32,
     page_object: u32,
+    font_watermark: u32,
     parameters: PdfPageParameters<G>,
 }
 
@@ -1096,6 +1097,7 @@ impl<G> Clone for PdfPageRecord<G> {
             resources_object: self.resources_object,
             contents_object: self.contents_object,
             page_object: self.page_object,
+            font_watermark: self.font_watermark,
             parameters: self.parameters.clone(),
         }
     }
@@ -1262,6 +1264,10 @@ impl<G> PdfPageRecord<G> {
     #[must_use]
     pub const fn page_object(&self) -> u32 {
         self.page_object
+    }
+    #[must_use]
+    pub const fn font_watermark(&self) -> u32 {
+        self.font_watermark
     }
     #[must_use]
     pub const fn h_origin(&self) -> Scaled {
@@ -2875,6 +2881,7 @@ impl<G> PdfState<G> {
         output: PdfOutputParameters,
         page: PdfPageParameters<G>,
         pk_mode: PdfTokenParameter<G>,
+        font_watermark: u32,
     ) {
         if !self.enabled {
             return;
@@ -2906,6 +2913,7 @@ impl<G> PdfState<G> {
             resources_object: self.next_object,
             contents_object: self.next_object + u32::from(reserved_page.is_none()) + 1,
             page_object: reserved_page.unwrap_or(self.next_object + 1),
+            font_watermark,
             parameters: page,
         };
         self.next_object += if reserved_page.is_some() {
@@ -5102,6 +5110,7 @@ fn append_fingerprint<G>(
     hasher.u32(record.resources_object);
     hasher.u32(record.contents_object);
     hasher.u32(record.page_object);
+    hasher.u32(record.font_watermark);
     hasher.i32(record.parameters.h_origin.raw());
     hasher.i32(record.parameters.v_origin.raw());
     hasher.i32(record.parameters.width.raw());

@@ -60,6 +60,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
             resources_object: page.resources_object,
             contents_object: page.contents_object,
             page_object: page.page_object,
+            font_watermark: page.font_watermark,
             h_origin: page.h_origin,
             v_origin: page.v_origin,
             width: page.width,
@@ -103,12 +104,24 @@ pub fn pdf_finalization_input_with_raw_object_files(
         .flat_map(|artifact| artifact.fonts.iter().cloned())
         .map(|font| (font.semantic_identity, font))
         .collect::<BTreeMap<_, _>>();
-    let mut artifact_font_usage = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut artifact_font_uses = Vec::new();
+    let mut seen_artifact_font_uses = BTreeSet::new();
     for (page_index, artifact) in artifacts.iter().enumerate() {
         let positioned = tex_out::positioned::lower_page(
             artifact,
             u32::try_from(page_index).unwrap_or(u32::MAX),
         )?;
+        let font_watermark = pages.get(page_index).map_or_else(
+            || {
+                positioned
+                    .fonts
+                    .iter()
+                    .map(|font| font.font_id.saturating_add(1))
+                    .max()
+                    .unwrap_or(0)
+            },
+            |page| page.font_watermark,
+        );
         for run in positioned.events.iter().filter_map(|event| match event {
             tex_out::positioned::PositionedEvent::TextRun(run) => Some(run),
             _ => None,
@@ -120,10 +133,17 @@ pub fn pdf_finalization_input_with_raw_object_files(
             else {
                 continue;
             };
-            artifact_font_usage
-                .entry(font.semantic_identity)
-                .or_default()
-                .extend(run.physical_codes.iter().flatten().copied());
+            artifact_font_uses.extend(run.physical_codes.iter().flatten().copied().filter_map(
+                |code| {
+                    seen_artifact_font_uses
+                        .insert((font.semantic_identity, code))
+                        .then_some(virtual_fonts::DestinationFontUse {
+                            identity: font.semantic_identity,
+                            code,
+                            font_watermark,
+                        })
+                },
+            ));
         }
     }
     let resolved_map = crate::virtual_compile::resolved_font_map_lines(pdf, resources)
@@ -223,7 +243,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
         pdf,
         resources,
         driver_dpi,
-        &artifact_font_usage,
+        &artifact_font_uses,
         &mut fonts,
         &mut next_object,
     )?;

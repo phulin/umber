@@ -455,6 +455,24 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
             !materialized_names.contains("unused10"),
             "an unselected VF definition has no destination identity"
         );
+        let first_local_resource = input.pages[0].font_watermark + 1;
+        let cmsy_resource = input
+            .fonts
+            .values()
+            .find(|font| font.artifact_resource.name == "cmsy10")
+            .expect("the default local font was materialized")
+            .resource_number;
+        let cmex_resource = input
+            .fonts
+            .values()
+            .find(|font| font.artifact_resource.name == "cmex10")
+            .expect("the explicitly selected local font was materialized")
+            .resource_number;
+        assert_eq!(
+            [cmsy_resource, cmex_resource],
+            [first_local_resource, first_local_resource + 1],
+            "pdftex.web §32e allocates local resources in packet first-use order"
+        );
         let cmex_instances = input
             .fonts
             .values()

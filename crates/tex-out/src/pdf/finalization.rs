@@ -90,6 +90,8 @@ pub struct PdfCommittedPageInput {
     pub resources_object: u32,
     pub contents_object: u32,
     pub page_object: u32,
+    /// Highest one-based engine font number allocated when the page shipped.
+    pub font_watermark: u32,
     pub h_origin: Scaled,
     pub v_origin: Scaled,
     pub width: Scaled,

@@ -174,7 +174,7 @@ fn page_coordinates_are_generation_typed_and_checkpointed() {
         state.enable();
         let checkpoint = state.snapshot();
         let checkpoint_copy = checkpoint.clone();
-        state.commit_page(ContentHash::new([7; 32]), output(), page, token);
+        state.commit_page(ContentHash::new([7; 32]), output(), page, token, 0);
         assert_eq!(state.pages()[0].page_attr(), id);
         assert_eq!(state.pages()[0].resources(), id);
         state.rollback(checkpoint_copy);
