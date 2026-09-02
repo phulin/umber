@@ -681,8 +681,40 @@ fn subset_charstrings_and_subrs(
     for (_, entry) in kept {
         subset.extend_from_slice(&plaintext[entry.start..entry.end]);
     }
-    subset.extend_from_slice(&plaintext[cursor..]);
+    subset.extend_from_slice(&subset_type1_trailer(&plaintext[cursor..]));
     Ok(subset)
+}
+
+/// Mirrors `writet1.c::t1_subset_end`: its `t1_getline` path normalizes the
+/// textual suffix through the eexec close marker, while bytes beyond that
+/// marker belong to the next input boundary and are not line-normalized.
+fn subset_type1_trailer(bytes: &[u8]) -> Vec<u8> {
+    const EEXEC_END: &[u8] = b"mark currentfile closefile";
+
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        let line_end = bytes[cursor..]
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+            .map_or(bytes.len(), |offset| cursor + offset);
+        let mut next_line = line_end;
+        skip_line_ending(bytes, &mut next_line);
+        let normalized_line = normalize_type1_ascii(&bytes[cursor..line_end]);
+        if normalized_line
+            .strip_suffix(b"\n")
+            .unwrap_or(&normalized_line)
+            .ends_with(EEXEC_END)
+        {
+            let mut normalized = normalize_type1_ascii(&bytes[..next_line]);
+            normalized.extend_from_slice(&bytes[next_line..]);
+            return normalized;
+        }
+        if next_line == cursor {
+            break;
+        }
+        cursor = next_line;
+    }
+    bytes.to_vec()
 }
 
 fn parse_type1_subrs<'a>(
@@ -1376,6 +1408,23 @@ mod tests {
     }
 
     #[test]
+    fn subset_trailer_normalizes_only_through_the_eexec_close_line() {
+        let trailer = b"  readonly\t put \r\tmark  currentfile closefile \r\x20\x09\x00binary";
+
+        let subset = subset_type1_trailer(trailer);
+
+        assert_eq!(
+            subset,
+            b"readonly put\nmark currentfile closefile\n\x20\x09\x00binary",
+        );
+        assert!(
+            !subset
+                .windows(b"\n mark currentfile closefile".len())
+                .any(|window| window == b"\n mark currentfile closefile")
+        );
+    }
+
+    #[test]
     fn subsets_transitive_subrs_as_a_sparse_unremapped_prefix() {
         let clear =
             b"%!PS\n/FontName /Fixture def\n/Encoding StandardEncoding def\ncurrentfile eexec\n";
@@ -1502,7 +1551,12 @@ mod tests {
             .subset(&glyphs, &subset_name)
             .expect("committed CMR subsets");
         assert!(subset.bytes().len() < program.bytes().len());
-        assert_eq!(subset.lengths(), [1391, 7338, 0]);
+        assert_eq!(subset.lengths(), [1391, 7337, 0]);
+        assert_eq!(
+            format!("{:x}", md5::Md5::digest(subset.bytes())),
+            "fce9d1c28cd155a89a22e437b3c33f91",
+            "the complete program must stay byte-exact with pinned pdfTeX",
+        );
         assert!(
             subset
                 .bytes()
@@ -1513,6 +1567,7 @@ mod tests {
             &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize],
             false,
         );
+        assert!(decrypted.ends_with(b"\nmark currentfile closefile\n"));
         let charstrings = decrypted
             .windows(b"/CharStrings".len())
             .position(|window| window == b"/CharStrings")

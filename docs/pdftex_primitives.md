@@ -496,7 +496,10 @@ unchanged; unused holes below the highest selected index become encrypted
 `writet1.c::t1_subset_ascii_part`: whitespace is normalized line by line,
 subset-invalid `/UniqueID` definitions are omitted, a built-in encoding is
 rebuilt from the requested glyph names, and the unnecessary PFB zero trailer
-is not embedded in PDF. StandardEncoding remains predefined. TrueType glyf
+is not embedded in PDF. After the CharStrings dictionary, the same line rule
+applies only to the textual suffix through `mark currentfile closefile`; it
+does not normalize CharString bytes or bytes beyond that boundary.
+StandardEncoding remains predefined. TrueType glyf
 programs use a compact named-glyph and composite closure. Both reproduce
 pdfTeX's MD5-derived six-letter subset name. Positive `\pdfgentounicode` emits UTF-16BE CMaps from global or
 `tfm:name/glyph` mappings, while per-font `\pdfnobuiltintounicode` suppresses

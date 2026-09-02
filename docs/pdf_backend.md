@@ -306,7 +306,12 @@ retained as the conventional Type-1 flex/hint helpers. pdfTeX does not remap
 Subr indices or rewrite operands: it emits the original numeric order through
 the highest used index and replaces unused holes in that prefix with a
 deterministically encrypted `return` CharString. Entries above that prefix are
-omitted.
+omitted. After the binary dictionaries, `writet1.c::t1_subset_end` returns to
+the same bounded line reader for the textual suffix through
+`mark currentfile closefile`. The suffix therefore receives the same leading,
+repeated, and trailing horizontal-space normalization without extending that
+normalization across either CharString bytes or the marker's following input
+boundary.
 This is downstream font-program/PDF finalization behavior, not core TeX or
 pdfTeX primitive semantics; it does not change token processing, execution,
 layout, or committed shipout artifacts.
