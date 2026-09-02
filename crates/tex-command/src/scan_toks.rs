@@ -778,7 +778,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
         word: TracedTokenWord,
     ) -> Result<(), CommandError> {
-        if collector.phase() == TokenCollectorPhase::Complete {
+        let phase = collector.phase();
+        if phase == TokenCollectorPhase::Complete {
             return Err(CommandError::input_invariant());
         }
         let result: Result<(), CommandError> = match collector.destination_mut() {
@@ -788,38 +789,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .arena_mut()
                 .push_buffer_token(*writer, word)
                 .map_err(attempt_command_error),
-            TokenCollectorDestination::Definition {
-                definition,
-                writing_replacement: false,
-            } => self
-                .state
-                .push_definition_parameter(*definition, word.token_word())
-                .map_err(definition_build_command_error),
-            TokenCollectorDestination::AttemptDefinition {
-                definition,
-                writing_replacement: false,
-            } => self
-                .command
-                .attempt
-                .arena_mut()
-                .push_definition_parameter(*definition, word.token_word())
-                .map_err(attempt_command_error),
-            TokenCollectorDestination::Definition {
-                definition,
-                writing_replacement: true,
-            } => self
-                .state
-                .push_definition_replacement(*definition, word.token_word())
-                .map_err(definition_build_command_error),
-            TokenCollectorDestination::AttemptDefinition {
-                definition,
-                writing_replacement: true,
-            } => self
-                .command
-                .attempt
-                .arena_mut()
-                .push_definition_replacement(*definition, word.token_word())
-                .map_err(attempt_command_error),
+            TokenCollectorDestination::Definition { definition } => match phase {
+                TokenCollectorPhase::Parameter => self
+                    .state
+                    .push_definition_parameter(*definition, word.token_word())
+                    .map_err(definition_build_command_error),
+                TokenCollectorPhase::Replacement => self
+                    .state
+                    .push_definition_replacement(*definition, word.token_word())
+                    .map_err(definition_build_command_error),
+                TokenCollectorPhase::Complete => unreachable!(),
+            },
+            TokenCollectorDestination::AttemptDefinition { definition } => match phase {
+                TokenCollectorPhase::Parameter => self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .push_definition_parameter(*definition, word.token_word())
+                    .map_err(attempt_command_error),
+                TokenCollectorPhase::Replacement => self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .push_definition_replacement(*definition, word.token_word())
+                    .map_err(attempt_command_error),
+                TokenCollectorPhase::Complete => unreachable!(),
+            },
             TokenCollectorDestination::ReplayInput {
                 builder,
                 transform,
@@ -900,28 +895,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
                 *writer = *replacement;
             }
-            TokenCollectorDestination::Definition {
-                definition,
-                writing_replacement,
-            } if !*writing_replacement => {
+            TokenCollectorDestination::Definition { definition } => {
                 self.state
                     .finish_definition_parameters(*definition)
                     .map_err(definition_build_command_error)?;
-                *writing_replacement = true;
             }
-            TokenCollectorDestination::AttemptDefinition {
-                definition,
-                writing_replacement,
-            } if !*writing_replacement => {
+            TokenCollectorDestination::AttemptDefinition { definition } => {
                 self.command
                     .attempt
                     .arena_mut()
                     .finish_definition_parameters(*definition)
                     .map_err(attempt_command_error)?;
-                *writing_replacement = true;
             }
             TokenCollectorDestination::ReplayInput { .. } => {}
-            _ => return Err(CommandError::input_invariant()),
         }
         collector
             .begin_replacement()
@@ -936,6 +922,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn finish_scan_toks_collector(
         &mut self,
         collector: &mut TokenCollector<G>,
+        origin: OriginId,
     ) -> Result<ScannedToksStorage<G>, CommandError> {
         if collector.phase() != TokenCollectorPhase::Replacement {
             return Err(CommandError::input_invariant());
@@ -954,20 +941,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .finish_token_buffer(*replacement)
                     .map_err(attempt_command_error)?,
             },
-            TokenCollectorDestination::Definition {
-                definition,
-                writing_replacement: true,
-            } => {
+            TokenCollectorDestination::Definition { definition } => {
+                self.state
+                    .set_definition_build_origin(*definition, origin)
+                    .map_err(definition_build_command_error)?;
                 let definition = self
                     .state
                     .seal_definition_build(*definition)
                     .map_err(definition_build_command_error)?;
                 ScannedToksStorage::Definition(definition)
             }
-            TokenCollectorDestination::AttemptDefinition {
-                definition,
-                writing_replacement: true,
-            } => {
+            TokenCollectorDestination::AttemptDefinition { definition } => {
                 self.command
                     .attempt
                     .arena_mut()
@@ -1496,7 +1480,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 };
             if missing_left_brace {
                 return Ok(ScannedToksBuffers {
-                    storage: self.finish_scan_toks_collector(collector)?,
+                    storage: self.finish_scan_toks_collector(collector, primary)?,
                     primary,
                     malformed_parameter,
                 });
@@ -1533,7 +1517,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.push_scan_toks_word(collector, brace)?;
         }
         Ok(ScannedToksBuffers {
-            storage: self.finish_scan_toks_collector(collector)?,
+            storage: self.finish_scan_toks_collector(collector, *primary)?,
             primary: *primary,
             malformed_parameter: *malformed_parameter,
         })
@@ -2668,10 +2652,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.is_observed(),
             )?;
             let definition = match collector.destination() {
-                TokenCollectorDestination::AttemptDefinition {
-                    definition,
-                    writing_replacement: false,
-                } => *definition,
+                TokenCollectorDestination::AttemptDefinition { definition } => *definition,
                 _ => unreachable!(),
             };
             self.finish_scan_toks_parameters(&mut collector)?;
@@ -2682,7 +2663,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // token-list assignment. The committed observation is §1225's
             // meaning mutation, whose macro body includes §482's leading
             // `end_match_token`.
-            match self.finish_scan_toks_collector(&mut collector)? {
+            match self.finish_scan_toks_collector(&mut collector, OriginId::UNKNOWN)? {
                 ScannedToksStorage::AttemptDefinition(completed) if completed == definition => {}
                 _ => return Err(CommandError::input_invariant()),
             }
@@ -2945,10 +2926,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let definition = match (collector.destination(), collector.phase()) {
             (
-                TokenCollectorDestination::AttemptDefinition {
-                    definition,
-                    writing_replacement: true,
-                },
+                TokenCollectorDestination::AttemptDefinition { definition },
                 TokenCollectorPhase::Replacement,
             ) => *definition,
             _ => return Err(CommandError::input_invariant()),

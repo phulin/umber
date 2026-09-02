@@ -1017,6 +1017,14 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.finish_definition_parameters(build)
     }
 
+    pub fn set_definition_build_origin(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        origin: crate::token::OriginId,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.admitted.set_definition_build_origin(build, origin)
+    }
+
     pub fn push_definition_replacement(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
@@ -1043,14 +1051,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.promote_definition_global(definition)
     }
 
-    pub fn set_definition_origin(
-        &mut self,
-        definition: DefinitionRef<G>,
-        origin: crate::token::OriginId,
-    ) -> Result<(), crate::DefinitionAllocationError> {
-        self.admitted.set_definition_origin(definition, origin)
-    }
-
     #[cfg(any(test, feature = "profiling"))]
     #[doc(hidden)]
     pub fn profile_reserve_definition_arena(
@@ -1059,6 +1059,15 @@ impl<'a, G> CommandContext<'a, G> {
         words: usize,
     ) -> Result<(), crate::DefinitionAllocationError> {
         self.admitted.reserve_definition_arena(rows, words)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    #[doc(hidden)]
+    pub fn profile_reserve_provenance_arena(
+        &mut self,
+        rows: usize,
+    ) -> Result<(), crate::DurableAllocationError> {
+        self.admitted.reserve_provenance_arena(rows)
     }
 
     #[inline(always)]

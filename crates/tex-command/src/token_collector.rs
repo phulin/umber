@@ -1,8 +1,9 @@
 //! Canonical in-progress token collection.
 //!
-//! `scan_toks` lists and definitions remain attempt-owned until durable
-//! publication, so they share this one phase-tagged in-progress owner. Macro
-//! arguments instead use the purpose-built `ExecutionScratch` writer: their
+//! `scan_toks` lists retain attempt-owned staging, while ordinary definitions
+//! write into their selected semantic region through the same phase-tagged
+//! in-progress owner. Macro arguments instead use the purpose-built
+//! `ExecutionScratch` writer: their
 //! brace, delimiter, range, and first-scan state never enters this generic
 //! destination dispatch. Both paths reuse `ClassifiedToken` without decoding
 //! a delivered command's spelling twice.
@@ -120,11 +121,9 @@ pub(crate) enum TokenCollectorDestination<G> {
     },
     Definition {
         definition: tex_state::DefinitionBuildKey<G>,
-        writing_replacement: bool,
     },
     AttemptDefinition {
         definition: AttemptDefinitionId,
-        writing_replacement: bool,
     },
     /// Final generation-owned storage for a standalone escaping inserted list.
     ReplayInput {
@@ -172,10 +171,7 @@ impl<G> TokenCollector<G> {
 
     pub(crate) fn definition(definition: tex_state::DefinitionBuildKey<G>) -> Self {
         Self {
-            destination: TokenCollectorDestination::Definition {
-                definition,
-                writing_replacement: false,
-            },
+            destination: TokenCollectorDestination::Definition { definition },
             phase: TokenCollectorPhase::Parameter,
             brace_depth: 0,
             pending_parameter: None,
@@ -184,10 +180,7 @@ impl<G> TokenCollector<G> {
 
     pub(crate) fn attempt_definition(definition: AttemptDefinitionId) -> Self {
         Self {
-            destination: TokenCollectorDestination::AttemptDefinition {
-                definition,
-                writing_replacement: false,
-            },
+            destination: TokenCollectorDestination::AttemptDefinition { definition },
             phase: TokenCollectorPhase::Parameter,
             brace_depth: 0,
             pending_parameter: None,

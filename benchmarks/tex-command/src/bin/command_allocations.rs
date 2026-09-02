@@ -292,7 +292,7 @@ fn run_one<G>(
         Workload::MacroDefinition => {
             black_box(
                 processor
-                    .scan_macro_definition(false)
+                    .scan_macro_definition(false, false)
                     .expect("macro definition scans"),
             );
         }

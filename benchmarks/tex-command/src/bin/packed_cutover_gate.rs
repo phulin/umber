@@ -112,6 +112,11 @@ fn main() {
         "stationary_scan_toks_progress",
         stationary_scan_toks_progress,
     );
+    run_row(
+        only,
+        "direct_definition_scanning",
+        direct_definition_scanning,
+    );
     if let Some(only) = only {
         assert!(
             BENCHMARK_ROWS.contains(&only),
@@ -144,6 +149,7 @@ const BENCHMARK_ROWS: &[&str] = &[
     "destination_owned_macro_expansion",
     "mixed_macro_resident_pipeline",
     "stationary_scan_toks_progress",
+    "direct_definition_scanning",
 ];
 
 fn run_row(only: Option<&str>, name: &str, row: fn()) {
@@ -1249,6 +1255,90 @@ fn stationary_scan_toks_progress() {
             "stationary_scan_toks_progress scans={OPERATIONS} ns_per_scan={:.2}",
             elapsed.as_nanos() as f64 / OPERATIONS as f64,
         );
+    });
+}
+
+fn direct_definition_scanning() {
+    const DEFINITIONS: usize = 500_000;
+    const WARMUPS: usize = 64;
+    const SOURCE: &str = r"\m#1{abcdefghijklmnop}";
+    const WORDS_PER_DEFINITION: usize = 17;
+
+    with_universe(|universe| {
+        {
+            let mut context = universe.command_context().expect("command context");
+            for (character, catcode) in [
+                ('{', Catcode::BeginGroup),
+                ('}', Catcode::EndGroup),
+                ('#', Catcode::Parameter),
+            ] {
+                context
+                    .assign_code(
+                        tex_state::CodeTableKind::Catcode,
+                        character,
+                        i64::from(catcode as u8),
+                        AssignmentScope::Global,
+                    )
+                    .expect("definition benchmark category code");
+            }
+        }
+        universe.intern("m").expect("definition target");
+        {
+            let mut context = universe.command_context().expect("definition reserve context");
+            context
+                .profile_reserve_definition_arena(
+                    DEFINITIONS + WARMUPS,
+                    WORDS_PER_DEFINITION * (DEFINITIONS + WARMUPS),
+                )
+                .expect("definition arena reusable capacity");
+            context
+                .profile_reserve_provenance_arena(DEFINITIONS + WARMUPS)
+                .expect("source-provenance reusable capacity");
+        }
+
+        let source = SOURCE.repeat(DEFINITIONS + WARMUPS);
+        let mut command = CommandState::default();
+        open_source(&mut command, &source);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut fuel = CommandFuelLedger::default();
+        let operation = command.begin_attempt_operation();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = processor(
+            &mut context,
+            &mut command,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut scan_one = || {
+            let scanned = processor
+                .scan_macro_definition(false, true)
+                .expect("direct definition scan");
+            black_box(scanned.definition);
+        };
+        for _ in 0..WARMUPS {
+            scan_one();
+        }
+        let mut elapsed = Duration::ZERO;
+        measure_zero("direct_definition_scanning_500000", || {
+            let start = Instant::now();
+            for _ in 0..DEFINITIONS {
+                scan_one();
+            }
+            elapsed = start.elapsed();
+        });
+        println!(
+            "direct_definition_scanning definitions={DEFINITIONS} semantic_word_writes={} header_writes={DEFINITIONS} post_publication_origin_writes=0 second_token_traversals=0 ns_per_definition={:.2}",
+            DEFINITIONS * WORDS_PER_DEFINITION,
+            elapsed.as_nanos() as f64 / DEFINITIONS as f64,
+        );
+        drop(scan_one);
+        drop(processor);
+        drop(context);
+        command
+            .commit_attempt_operation(operation)
+            .expect("definition operation commit");
     });
 }
 

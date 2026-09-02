@@ -98,6 +98,12 @@ text scans and commits each attempt before starting the next. It requires zero
 warmed allocation and prints the exact scan count for normalized
 `cycles:u`/`instructions:u` and public `memcpy`/`memmove` comparison of the
 scanner phase/progress carriers.
+The direct-definition row scans 500,000 warmed global definitions through one
+resident source and open attempt. It pre-reserves the definition and provenance
+arenas, requires zero measured allocation, and reports exact semantic-word,
+header, post-publication origin-write, and second-token-traversal counts. This
+separates collector self work and final-region publication from resident
+command-delivery ancestry without changing production allocation behavior.
 The macro-matching row also asserts that its successful first-token expansion
 does not increase the matched-word read counter: paragraph and removable-
 outer-group decisions must consume first-scan metadata rather than reread the

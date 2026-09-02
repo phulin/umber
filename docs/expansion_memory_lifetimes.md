@@ -318,15 +318,13 @@ mappings live inside their source local region and leave with it.
 Checkpoint capture stores the current key and one mutation-journal mark. The
 first post-checkpoint definition or lifecycle write to a region records its
 exact pre-write row, word, promotion, accounting, and retirement boundary. An
-origin change to a row before that boundary records one compact inverse field
-edit in the same region mutation; repeated changes to that row coalesce, and
-an appended row needs no separate edit because it leaves with the suffix.
-Settlement swaps those alternates while visiting only the journaled regions
-and fields. In particular, if checkpoint child B ends and its parent A is then
-written before B is restored, both B's lifecycle transition and A's suffix or
-origin edits are settled exactly on acceptance or rejection. Nested and leased
-suffixes use the same source-owned records; no active-chain, historical-region,
-retired-region, or promotion sweep exists.
+unpublished definition build retains its final origin and seals that origin in
+the header's only write. Published headers are immutable, so origin updates do
+not add field-edit inverses to the region journal. If checkpoint child B ends
+and its parent A is then written before B is restored, both B's lifecycle
+transition and A's suffix are settled exactly on acceptance or rejection.
+Nested and leased suffixes use the same source-owned records; no active-chain,
+historical-region, retired-region, or promotion sweep exists.
 
 The non-owning definition ref has a private four-byte region-coordinate
 component. Fixed coordinates 1 and 2 name format and global storage; every other
@@ -343,7 +341,8 @@ must instead be resolved from the admitted definition header.
 Ordinary `\def` and `\gdef` select their local-group or revision-global arena
 before scanning. The collector opens one transactional word mark there,
 validates parameter structure while writing each semantic word once, and seals
-the final header without a publication copy. Failure truncates that mark. Raw
+the final origin in the final header without a publication copy or later header
+mutation. Failure truncates that mark. Raw
 definition scanning is synchronous and owns no continuation. `\edef` and
 `\xdef` use the same final destination, but may retain the compact build key,
 scalar scan state, and existing expansion continuation when expanded scanning
@@ -553,6 +552,8 @@ reconstruction.
 The same scanner frame retains the one phase-tagged `TokenCollector` and the
 deferred-diagnostic cursor established when its destination was reserved.
 That generic owner is now exclusive to token-list and definition scanning;
+its phase tag is the only parameter-versus-replacement write authority, so a
+definition destination does not mirror or revalidate that phase.
 macro matching has no destination variant or generic publication relay. Both
 paths reuse one `ClassifiedToken`, but macro brace, delimiter, pending-
 parameter, and publication state live only in `MacroArgumentWriter`. Macro

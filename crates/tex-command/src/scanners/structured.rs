@@ -8312,9 +8312,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let definition = scanned
             .definition()
             .ok_or(CommandError::input_invariant())?;
-        self.state
-            .set_definition_origin(definition, provenance.primary)
-            .map_err(|_| CommandError::input_invariant())?;
         Ok(ScannedMacroDefinition {
             target,
             definition,

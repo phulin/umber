@@ -489,6 +489,16 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions_mut().finish_parameters(build)
     }
 
+    pub(crate) fn set_definition_build_origin(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        origin: crate::token::OriginId,
+    ) -> Result<(), crate::DefinitionBuildError> {
+        self.generation
+            .definitions_mut()
+            .set_build_origin(build, origin)
+    }
+
     pub(crate) fn push_definition_replacement(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
@@ -515,16 +525,6 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         definition: DefinitionRef<G>,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
         self.generation.definitions_mut().promote_global(definition)
-    }
-
-    pub(crate) fn set_definition_origin(
-        &mut self,
-        definition: DefinitionRef<G>,
-        origin: crate::token::OriginId,
-    ) -> Result<(), DefinitionAllocationError> {
-        self.generation
-            .definitions_mut()
-            .set_origin(definition, origin)
     }
 
     #[cfg(any(test, feature = "profiling"))]
@@ -603,6 +603,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         value: OriginRecord,
     ) -> Result<ProvenanceId<G>, DurableAllocationError> {
         self.generation.provenance_mut().allocate(value)
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    pub(crate) fn reserve_provenance_arena(
+        &mut self,
+        rows: usize,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation.provenance_mut().reserve_batch(rows)
     }
 
     /// Promotes one already-validated batch while this unique admitted borrow

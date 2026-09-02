@@ -1288,17 +1288,10 @@ struct DefinitionRegionMark {
     retired: bool,
 }
 
-#[derive(Clone, Copy)]
-struct DefinitionOriginEdit {
-    row: u32,
-    origin: crate::token::OriginId,
-}
-
 enum DefinitionRegionMutation {
     Existing {
         region: u32,
         mark: DefinitionRegionMark,
-        origin_edits: smallvec::SmallVec<[DefinitionOriginEdit; 1]>,
     },
     Created {
         region: u32,
@@ -1526,14 +1519,14 @@ impl<G> DefinitionArena<G> {
         );
     }
 
-    fn record_region_change(&mut self, region_id: u32) -> usize {
+    fn record_region_change(&mut self, region_id: u32) {
         let epoch = self.mutation_epoch.get();
         let mutation_index = u32::try_from(self.mutations.len())
             .expect("definition mutation journal capacity exhausted");
         let mutation = match region_id {
             FORMAT_REGION => {
                 if self.format.changed_epoch == epoch {
-                    return self.format.changed_mutation as usize;
+                    return;
                 }
                 self.format.changed_epoch = epoch;
                 self.format.changed_mutation = mutation_index;
@@ -1544,12 +1537,11 @@ impl<G> DefinitionArena<G> {
                         promotions: self.format.promotions.len() as u32,
                         retired: false,
                     },
-                    origin_edits: smallvec::SmallVec::new(),
                 }
             }
             GLOBAL_REGION => {
                 if self.global.changed_epoch == epoch {
-                    return self.global.changed_mutation as usize;
+                    return;
                 }
                 self.global.changed_epoch = epoch;
                 self.global.changed_mutation = mutation_index;
@@ -1560,7 +1552,6 @@ impl<G> DefinitionArena<G> {
                         promotions: self.global.promotions.len() as u32,
                         retired: false,
                     },
-                    origin_edits: smallvec::SmallVec::new(),
                 }
             }
             _ => {
@@ -1569,7 +1560,7 @@ impl<G> DefinitionArena<G> {
                     .region_mut(region_id)
                     .expect("changed local definition region exists");
                 if region.data.changed_epoch == epoch {
-                    return region.data.changed_mutation as usize;
+                    return;
                 }
                 region.data.changed_epoch = epoch;
                 region.data.changed_mutation = mutation_index;
@@ -1580,12 +1571,10 @@ impl<G> DefinitionArena<G> {
                         promotions: region.data.promotions.len() as u32,
                         retired: region.retired,
                     },
-                    origin_edits: smallvec::SmallVec::new(),
                 }
             }
         };
         self.mutations.push(mutation);
-        mutation_index as usize
     }
 
     fn record_created_region(&mut self, region: u32) {
@@ -1633,23 +1622,9 @@ impl<G> DefinitionArena<G> {
         }
     }
 
-    fn swap_origin_edits(region: &mut DefinitionRegion, edits: &mut [DefinitionOriginEdit]) {
-        for edit in edits {
-            let header = region
-                .headers
-                .get_mut(edit.row as usize)
-                .expect("journaled definition origin row remains addressable");
-            core::mem::swap(&mut header.origin, &mut edit.origin);
-        }
-    }
-
     fn undo_mutation(&mut self, mut mutation: DefinitionRegionMutation) -> AcceptedRegionMutation {
         match &mut mutation {
-            DefinitionRegionMutation::Existing {
-                region,
-                mark,
-                origin_edits,
-            } => {
+            DefinitionRegionMutation::Existing { region, mark } => {
                 let region_id = *region;
                 let mark = *mark;
                 let head_retired = self.local_retired(region_id).unwrap_or(false);
@@ -1657,9 +1632,7 @@ impl<G> DefinitionArena<G> {
                     let mut data = self
                         .region_mut(region_id)
                         .expect("changed definition region remains addressable");
-                    let suffix = Self::split_region_suffix(&mut data, mark);
-                    Self::swap_origin_edits(&mut data, origin_edits);
-                    suffix
+                    Self::split_region_suffix(&mut data, mark)
                 };
                 if region_id >= 3 {
                     self.local_slots.remove_rows(suffix.headers.len());
@@ -1688,11 +1661,7 @@ impl<G> DefinitionArena<G> {
 
     fn replay_mutation(&mut self, accepted: &mut AcceptedRegionMutation) {
         match &mut accepted.mutation {
-            DefinitionRegionMutation::Existing {
-                region,
-                origin_edits,
-                ..
-            } => {
+            DefinitionRegionMutation::Existing { region, .. } => {
                 let region_id = *region;
                 let suffix = accepted
                     .suffix
@@ -1705,7 +1674,6 @@ impl<G> DefinitionArena<G> {
                     .region_mut(region_id)
                     .expect("accepted definition region remains addressable");
                 Self::append_region_suffix(&mut data, suffix);
-                Self::swap_origin_edits(&mut data, origin_edits);
                 drop(data);
                 if region_id >= 3 {
                     self.set_local_retired(region_id, accepted.head_retired);
@@ -2162,6 +2130,15 @@ impl<G> DefinitionArena<G> {
         Ok(())
     }
 
+    pub(crate) fn set_build_origin(
+        &mut self,
+        key: DefinitionBuildKey<G>,
+        origin: crate::token::OriginId,
+    ) -> Result<(), DefinitionBuildError> {
+        self.active_build_mut(key)?.origin = origin;
+        Ok(())
+    }
+
     pub(crate) fn push_replacement(
         &mut self,
         key: DefinitionBuildKey<G>,
@@ -2311,53 +2288,6 @@ impl<G> DefinitionArena<G> {
             destination_row: row,
         });
         Ok(promoted)
-    }
-
-    pub(crate) fn set_origin(
-        &mut self,
-        id: DefinitionRef<G>,
-        origin: crate::token::OriginId,
-    ) -> Result<(), DefinitionAllocationError> {
-        let region_id = id.region();
-        let row = id.row_index();
-        let old_origin = self
-            .region(region_id)
-            .and_then(|region| region.headers.get(row as usize).map(|header| header.origin))
-            .ok_or(DefinitionAllocationError::InvalidDefinition)?;
-        let mutation_index = self.record_region_change(region_id);
-        if let DefinitionRegionMutation::Existing {
-            mark, origin_edits, ..
-        } = self
-            .mutations
-            .get_mut(mutation_index)
-            .expect("changed definition region mutation remains addressable")
-            && row < mark.headers
-        {
-            match origin_edits.binary_search_by_key(&row, |edit| edit.row) {
-                Ok(_) => {}
-                Err(index) => {
-                    origin_edits
-                        .try_reserve(1)
-                        .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-                    origin_edits.insert(
-                        index,
-                        DefinitionOriginEdit {
-                            row,
-                            origin: old_origin,
-                        },
-                    );
-                }
-            }
-        }
-        let mut region = self
-            .region_mut(region_id)
-            .ok_or(DefinitionAllocationError::InvalidDefinition)?;
-        let header = region
-            .headers
-            .get_mut(row as usize)
-            .ok_or(DefinitionAllocationError::InvalidDefinition)?;
-        header.origin = origin;
-        Ok(())
     }
 
     #[must_use]

@@ -538,7 +538,10 @@ collector (see `src/conditionals.rs`).
   the scanner word/builder lanes. Ordinary `\def`/`\gdef` select their local or
   revision-global definition region before scanning and write semantic words
   directly into one transactional arena mark; failure truncates it and sealing
-  appends only the compact header. Recovery rendering carries the borrowed
+  appends only the compact header with its final provenance. The collector's
+  phase tag is the one authority for parameter versus replacement writes; no
+  destination-local phase mirror or published-header provenance edit exists.
+  Recovery rendering carries the borrowed
   `DefinitionView` itself until its final word visit instead of returning a
   naked slice from a temporary local-region borrow. Raw definition scanning has
   no continuation.
