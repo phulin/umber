@@ -312,6 +312,11 @@ VF-leaf selection remain finalization inputs and preserve their existing
 typed identities. Destination-local VF leaves apply the same rule: equal TFM
 names with the same resolved scalable map entry keep size-specific realized
 identities and metrics while sharing the first font dictionary and subset.
+Their internal font-number ledger remains distinct from dictionary
+materialization: every VF preamble definition is loaded in declaration order,
+including definitions no packet selects, and later page-watermark deltas merge
+new engine fonts into that same timeline without erasing earlier
+destination-local allocations.
 
 Font-dictionary identity follows the subtype split in pdftex.web §32e and
 its pinned `writefont.c`/`writet3.c` delegates. Scalable Type-1 and TrueType

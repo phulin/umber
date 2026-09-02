@@ -84,8 +84,14 @@ pub(super) fn materialize_destination_font_instances(
         .collect::<Vec<_>>();
     let mut pending = roots;
     let mut visited = BTreeSet::new();
+    let mut loaded_virtual_fonts = BTreeSet::new();
+    let mut local_font_numbers = fonts
+        .iter()
+        .map(|(identity, font)| (*identity, font.resource_number))
+        .collect::<BTreeMap<_, _>>();
     let recursion_limit = tex_out::pdf::PdfFinalizationLimits::default().max_virtual_font_recursion;
-    let mut next_resource = 1;
+    let mut next_resource = 1_u32;
+    let mut engine_font_watermark = 0_u32;
 
     while let Some(PendingCharacter {
         font,
@@ -95,14 +101,17 @@ pub(super) fn materialize_destination_font_instances(
     }) = pending.pop_front()
     {
         if let Some(font_watermark) = font_watermark {
-            // pdftex.web §32e reads a VF's local definitions at its first
-            // output use. Their internal font numbers immediately follow the
-            // live engine font watermark captured by that shipout.
-            next_resource = next_resource.max(
-                font_watermark
-                    .checked_add(1)
-                    .ok_or(PdfBuildError::ObjectCapacity)?,
-            );
+            // Engine font loading and pdftex.web §32e's destination-time VF
+            // loading share one `font_ptr` timeline in pdfTeX. Umber keeps
+            // those phases detached, so a later page watermark carries only
+            // the engine-side increase. Merge that delta into the destination
+            // cursor without discarding local fonts loaded on earlier pages.
+            if font_watermark > engine_font_watermark {
+                next_resource = next_resource
+                    .checked_add(font_watermark - engine_font_watermark)
+                    .ok_or(PdfBuildError::ObjectCapacity)?;
+                engine_font_watermark = font_watermark;
+            }
         }
         if !visited.insert((font.identity, code)) {
             continue;
@@ -115,6 +124,15 @@ pub(super) fn materialize_destination_font_instances(
         let Some(program) = resources.virtual_fonts.get(&font.name) else {
             continue;
         };
+        if loaded_virtual_fonts.insert(font.identity) {
+            register_virtual_local_fonts(
+                resources,
+                &font,
+                program,
+                &mut local_font_numbers,
+                &mut next_resource,
+            )?;
+        }
         let Some(packet) = program.program.packet(u32::from(code)) else {
             // The pure finalizer owns the canonical missing-packet error.
             continue;
@@ -132,7 +150,7 @@ pub(super) fn materialize_destination_font_instances(
             &font,
             default.number,
             fonts,
-            &mut next_resource,
+            &local_font_numbers,
             next_object,
         )?;
         for command in &packet.commands {
@@ -147,7 +165,7 @@ pub(super) fn materialize_destination_font_instances(
                         &font,
                         *number,
                         fonts,
-                        &mut next_resource,
+                        &local_font_numbers,
                         next_object,
                     )?;
                 }
@@ -177,6 +195,34 @@ pub(super) fn materialize_destination_font_instances(
     Ok(())
 }
 
+fn register_virtual_local_fonts(
+    resources: &crate::PdfVirtualFontResources,
+    parent: &LocalInstance,
+    program: &crate::CachedVirtualFont,
+    local_font_numbers: &mut BTreeMap<FontSourceIdentity, u32>,
+    next_resource: &mut u32,
+) -> Result<(), PdfBuildError> {
+    // pdftex.web §32e's `do_vf` processes every local font definition before
+    // interpreting any character packet. `vf_def_font` reuses an equal
+    // name-and-size TFM; otherwise `read_font_info` consumes the next TeX
+    // internal font number. Keep that numbering ledger separate from PDF
+    // resource materialization: an unselected local definition consumes a
+    // font number even though it never creates a PDF font dictionary.
+    for local in program.program.local_fonts() {
+        let (instance, _) = load_local_instance(resources, parent, local.number)?;
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            local_font_numbers.entry(instance.identity)
+        {
+            let number = *next_resource;
+            *next_resource = next_resource
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            entry.insert(number);
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn materialize_local_instance(
     pdf: &DetachedPdfCompletion,
@@ -187,42 +233,19 @@ fn materialize_local_instance(
     parent: &LocalInstance,
     number: i32,
     fonts: &mut BTreeMap<FontSourceIdentity, PdfFontInput>,
-    next_resource: &mut u32,
+    local_font_numbers: &BTreeMap<FontSourceIdentity, u32>,
     next_object: &mut u32,
 ) -> Result<LocalInstance, PdfBuildError> {
-    let program = resources
-        .virtual_fonts
-        .get(&parent.name)
-        .expect("parent was selected from the detached VF catalogue");
-    let local = program
-        .program
-        .local_fonts()
-        .iter()
-        .find(|local| local.number == number)
-        .ok_or_else(|| PdfBuildError::MissingVirtualLocalFont {
-            font: parent.name.clone(),
-            number,
-        })?;
-    let name = String::from_utf8(local.logical_name())
-        .map_err(|_| PdfBuildError::InvalidVirtualLocalFontName(parent.name.clone()))?;
-    let cached = resources
-        .local_tfms
-        .get(&name)
-        .ok_or_else(|| PdfBuildError::MissingVirtualLocalTfm(name.clone()))?;
-    let size = tfm_fix_word_to_scaled(local.scaled_size.to_be_bytes(), parent.size)
-        .map_err(|_| PdfBuildError::VirtualFontArithmeticOverflow)?;
-    let tfm = tex_fonts::TfmFont::parse_with_size(&cached.bytes, FontSizeSpec::At(size)).map_err(
-        |error| PdfBuildError::InvalidVirtualLocalTfm {
-            font: name.clone(),
-            message: format!("{error:?}"),
-        },
-    )?;
-    let loaded = tfm.into_loaded_font(
-        name.clone(),
-        PathBuf::from(format!("{name}.tfm")),
-        tex_fonts::font_content_hash(&cached.bytes),
-    );
-    let identity = loaded.source_identity();
+    let (instance, loaded) = load_local_instance(resources, parent, number)?;
+    let LocalInstance {
+        identity,
+        ref name,
+        size,
+    } = instance;
+    let resource_number = *local_font_numbers
+        .get(&identity)
+        .expect("the containing VF registered every local definition");
+    let name = name.clone();
     if !fonts.contains_key(&identity) {
         let recipe = FontArtifactRecipe {
             name: name.clone(),
@@ -291,10 +314,6 @@ fn materialize_local_instance(
         let (resource_number, object_number) = if let Some(shared) = shared_resource {
             shared
         } else {
-            let resource_number = *next_resource;
-            *next_resource = next_resource
-                .checked_add(1)
-                .ok_or(PdfBuildError::ObjectCapacity)?;
             let object_number = (*next_object <= i32::MAX as u32)
                 .then_some(*next_object)
                 .ok_or(PdfBuildError::ObjectCapacity)?;
@@ -350,4 +369,52 @@ fn materialize_local_instance(
         name,
         size,
     })
+}
+
+fn load_local_instance(
+    resources: &crate::PdfVirtualFontResources,
+    parent: &LocalInstance,
+    number: i32,
+) -> Result<(LocalInstance, tex_fonts::LoadedFont), PdfBuildError> {
+    let program = resources
+        .virtual_fonts
+        .get(&parent.name)
+        .expect("parent was selected from the detached VF catalogue");
+    let local = program
+        .program
+        .local_fonts()
+        .iter()
+        .find(|local| local.number == number)
+        .ok_or_else(|| PdfBuildError::MissingVirtualLocalFont {
+            font: parent.name.clone(),
+            number,
+        })?;
+    let name = String::from_utf8(local.logical_name())
+        .map_err(|_| PdfBuildError::InvalidVirtualLocalFontName(parent.name.clone()))?;
+    let cached = resources
+        .local_tfms
+        .get(&name)
+        .ok_or_else(|| PdfBuildError::MissingVirtualLocalTfm(name.clone()))?;
+    let size = tfm_fix_word_to_scaled(local.scaled_size.to_be_bytes(), parent.size)
+        .map_err(|_| PdfBuildError::VirtualFontArithmeticOverflow)?;
+    let tfm = tex_fonts::TfmFont::parse_with_size(&cached.bytes, FontSizeSpec::At(size)).map_err(
+        |error| PdfBuildError::InvalidVirtualLocalTfm {
+            font: name.clone(),
+            message: format!("{error:?}"),
+        },
+    )?;
+    let loaded = tfm.into_loaded_font(
+        name.clone(),
+        PathBuf::from(format!("{name}.tfm")),
+        tex_fonts::font_content_hash(&cached.bytes),
+    );
+    let identity = loaded.source_identity();
+    Ok((
+        LocalInstance {
+            identity,
+            name,
+            size,
+        },
+        loaded,
+    ))
 }

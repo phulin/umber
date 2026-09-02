@@ -339,8 +339,9 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         bytes.extend_from_slice(&(10 * FIX_ONE).to_be_bytes());
         for (number, name) in [
             (7, b"cmsy10".as_slice()),
+            (11, b"unreached10".as_slice()),
             (9, b"cmex10".as_slice()),
-            (11, b"unused10".as_slice()),
+            (13, b"late10".as_slice()),
         ] {
             bytes.extend_from_slice(&[243, number]);
             bytes.extend_from_slice(&0u32.to_be_bytes());
@@ -352,9 +353,13 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         // pdfTeX.web §32e do_vf_packet selects the first definition before
         // executing the packet. The packet immediately switches to font 9,
         // so font 7 is selected and checkpointed without painting a glyph.
-        let commands = [235, 9, b'A'];
-        bytes.extend_from_slice(&[commands.len() as u8, b'A', 8, 0, 0]);
-        bytes.extend_from_slice(&commands);
+        for (character, commands) in [
+            (b'A', &[235, 9, b'A'][..]),
+            (b'B', &[235, 9, b'B', 235, 13, b'B'][..]),
+        ] {
+            bytes.extend_from_slice(&[commands.len() as u8, character, 8, 0, 0]);
+            bytes.extend_from_slice(commands);
+        }
         bytes.push(248);
         while !bytes.len().is_multiple_of(4) {
             bytes.push(248);
@@ -385,10 +390,11 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
                     "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
                     "\\pdfmapline{=cmsy10 CMR10 <cmr10.pfb}",
                     "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
+                    "\\pdfmapline{=late10 CMR10 <cmr10.pfb}",
                     "\\font\\f=cmr10 at 12pt ",
-                    "\\font\\g=cmr10 at 10pt ",
                     "\\shipout\\hbox{\\f A}",
-                    "\\shipout\\hbox{\\g A}\\end",
+                    "\\font\\g=cmr10 at 10pt ",
+                    "\\shipout\\hbox{\\g B}\\end",
                 )
                 .as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -411,7 +417,12 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
                 program: tex_fonts::VfProgram::parse(&root_vf).expect("test VF"),
             },
         );
-        for (name, bytes) in [("cmsy10", CMSY10), ("cmex10", CMEX10), ("unused10", CMSY10)] {
+        for (name, bytes) in [
+            ("cmsy10", CMSY10),
+            ("cmex10", CMEX10),
+            ("unreached10", CMSY10),
+            ("late10", CMSY10),
+        ] {
             resources.local_tfms.insert(
                 name.to_owned(),
                 crate::CachedLocalTfm {
@@ -452,7 +463,11 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
             "the packet's explicitly selected local font has a destination identity"
         );
         assert!(
-            !materialized_names.contains("unused10"),
+            materialized_names.contains("late10"),
+            "the later page's explicitly selected local font has a destination identity"
+        );
+        assert!(
+            !materialized_names.contains("unreached10"),
             "an unselected VF definition has no destination identity"
         );
         let first_local_resource = input.pages[0].font_watermark + 1;
@@ -468,10 +483,20 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
             .find(|font| font.artifact_resource.name == "cmex10")
             .expect("the explicitly selected local font was materialized")
             .resource_number;
+        let late_resource = input
+            .fonts
+            .values()
+            .find(|font| font.artifact_resource.name == "late10")
+            .expect("the later page's selected local font was materialized")
+            .resource_number;
         assert_eq!(
-            [cmsy_resource, cmex_resource],
-            [first_local_resource, first_local_resource + 1],
-            "pdftex.web §32e allocates local resources in packet first-use order"
+            [cmsy_resource, cmex_resource, late_resource],
+            [
+                first_local_resource,
+                first_local_resource + 2,
+                first_local_resource + 8,
+            ],
+            "pdftex.web §32e interleaves unselected VF definitions and later engine fonts in one internal-font timeline"
         );
         let cmex_instances = input
             .fonts
