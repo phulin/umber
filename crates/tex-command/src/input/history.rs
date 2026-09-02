@@ -1022,7 +1022,11 @@ impl<G> crate::CommandState<G> {
                         suppress_expandable = $row.header.frame.flags().contains(
                             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
                         );
-                        let spelling = $spelling;
+                        let spelling = if $position < $row.header.frame.limit() {
+                            $spelling
+                        } else {
+                            None
+                        };
                         match spelling {
                             Some((word, origin)) => {
                                 #[cfg(test)]
@@ -1032,9 +1036,10 @@ impl<G> crate::CommandState<G> {
                                         .packed_loads
                                         .saturating_add(1);
                                 }
-                                if $row.header.frame.advance() != Some($position) {
-                                    return Err(super::ResidentCommandColdTransition::Failure);
-                                }
+                                debug_assert_eq!(
+                                    $row.header.frame.advance_resident(),
+                                    $position
+                                );
                                 #[cfg(test)]
                                 {
                                     self.stored_token_advance_counters.cursor_advances = self
@@ -1224,8 +1229,7 @@ impl<G> crate::CommandState<G> {
                             |position| self
                                 .attempt
                                 .arena()
-                                .token_word(row.list, position as usize)
-                                .ok()
+                                .resident_token_word(&row.list, position as usize)
                                 .map(|spelling| (spelling.token_word(), spelling.origin()))
                         )
                     }

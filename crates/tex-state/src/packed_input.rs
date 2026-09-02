@@ -196,6 +196,19 @@ impl InputFrame {
         Some(consumed)
     }
 
+    /// Advances a position whose resident storage read has already proved it
+    /// is below this frame's admitted limit.
+    ///
+    /// Token owners validate the frame length when the row is admitted. A
+    /// successful safe storage read at the current position is therefore the
+    /// delivery-time proof which makes a second bounds branch redundant.
+    pub const fn advance_resident(&mut self) -> u32 {
+        debug_assert!(self.position < self.limit);
+        let consumed = self.position;
+        self.position += 1;
+        consumed
+    }
+
     /// Extends a token frame after tokens are prepended before first delivery.
     pub const fn extend_limit(&mut self, additional: u32) -> Option<()> {
         let Some(limit) = self.limit.checked_add(additional) else {

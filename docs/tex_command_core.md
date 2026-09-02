@@ -1943,8 +1943,14 @@ advances the row's compact position before ending that borrow. The replay,
 attempt, and durable variants embed the same resident token-row header. Each
 variant performs only its admitted storage-specific packed-word read before
 one shared first-touch, logical advance, `OutParameter` interception, and
-exhaustion transition. Replay alone advances its compact physical run/segment
-coordinate alongside the header's authoritative logical position. Macro-body
+exhaustion transition. A safe successful read is the proof for the header's
+single branch-free resident advance; there is no second limit decision.
+Attempt storage authenticates its owner, row, and exact extent at admission,
+then ordinary delivery directly indexes that resident storage rather than
+reconstructing a general list view. Replay alone advances its compact physical
+run/segment coordinate alongside the header's authoritative logical position;
+prefix-to-body and fixed-segment refresh execute only when those boundaries are
+reached. Macro-body
 and macro-argument branches
 likewise advance only their resident cursors. Every ordinary arm then reaches
 the same final-slot resolution and settlement tail; no arm owns a separate

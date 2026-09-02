@@ -1287,28 +1287,44 @@ impl<T> SegmentedReplayLane<T> {
         cursor: &mut ResidentReplayCursor,
         #[cfg(test)] segment_inspections: &mut u64,
     ) -> Option<&T> {
+        #[cfg(test)]
         if cursor.remaining == 0 {
             return None;
         }
+        debug_assert_ne!(cursor.remaining, 0);
         if cursor.offset == cursor.segment_end {
-            cursor.segment = cursor.segment.checked_add(1)?;
-            cursor.offset = 0;
-            let segment = self.active.get(cursor.segment as usize)?;
-            cursor.segment_end = segment.used;
-            #[cfg(test)]
-            {
-                *segment_inspections = segment_inspections.saturating_add(1);
-            }
+            self.refresh_resident_cursor(
+                cursor,
+                #[cfg(test)]
+                segment_inspections,
+            )?;
         }
-        let value = self
-            .active
-            .get(cursor.segment as usize)?
-            .storage
-            .values
-            .get(usize::from(cursor.offset))?;
+        let segment = self.active.get(cursor.segment as usize)?;
+        let value = segment.storage.values.get(usize::from(cursor.offset))?;
         cursor.offset = cursor.offset.checked_add(1)?;
         cursor.remaining -= 1;
         Some(value)
+    }
+
+    /// Crosses the uncommon exhausted-span or fixed-segment boundary.
+    #[cold]
+    #[inline(never)]
+    fn refresh_resident_cursor(
+        &self,
+        cursor: &mut ResidentReplayCursor,
+        #[cfg(test)] segment_inspections: &mut u64,
+    ) -> Option<()> {
+        debug_assert_eq!(cursor.offset, cursor.segment_end);
+        debug_assert_ne!(cursor.remaining, 0);
+        cursor.segment = cursor.segment.checked_add(1)?;
+        cursor.offset = 0;
+        let segment = self.active.get(cursor.segment as usize)?;
+        cursor.segment_end = segment.used;
+        #[cfg(test)]
+        {
+            *segment_inspections = segment_inspections.saturating_add(1);
+        }
+        Some(())
     }
 
     /// Cold indexed lookup for diagnostics, checkpoint projection, and test
@@ -1787,19 +1803,15 @@ impl<G> ReplayLane<G> {
         #[cfg(test)] segment_inspections: &mut u64,
         #[cfg(test)] run_transitions: &mut u64,
     ) -> Option<TracedTokenWord> {
-        if cursor.remaining == 0 && cursor.run == ResidentReplayRun::Prefix {
-            let entry = self.entries.get(replay.entry as usize)?;
-            if entry.released {
-                return None;
-            }
-            *cursor = self.body_resident_cursor(entry)?;
-            #[cfg(test)]
-            {
-                *run_transitions = run_transitions.saturating_add(1);
-                if cursor.run != ResidentReplayRun::Empty {
-                    *segment_inspections = segment_inspections.saturating_add(1);
-                }
-            }
+        if cursor.run == ResidentReplayRun::Prefix && cursor.remaining == 0 {
+            self.refresh_resident_run(
+                replay,
+                cursor,
+                #[cfg(test)]
+                segment_inspections,
+                #[cfg(test)]
+                run_transitions,
+            )?;
         }
         match cursor.run {
             ResidentReplayRun::Empty => None,
@@ -1827,6 +1839,31 @@ impl<G> ReplayLane<G> {
                     })
             }
         }
+    }
+
+    /// Crosses the uncommon prefix-to-body boundary of a resident replay.
+    #[cold]
+    #[inline(never)]
+    fn refresh_resident_run(
+        &self,
+        replay: ReplayPayloadId<G>,
+        cursor: &mut ResidentReplayCursor,
+        #[cfg(test)] segment_inspections: &mut u64,
+        #[cfg(test)] run_transitions: &mut u64,
+    ) -> Option<()> {
+        let entry = self.entries.get(replay.entry as usize)?;
+        if entry.released {
+            return None;
+        }
+        *cursor = self.body_resident_cursor(entry)?;
+        #[cfg(test)]
+        {
+            *run_transitions = run_transitions.saturating_add(1);
+            if cursor.run != ResidentReplayRun::Empty {
+                *segment_inspections = segment_inspections.saturating_add(1);
+            }
+        }
+        Some(())
     }
 
     /// Cold indexed lookup for diagnostic rendering, semantic projection, and

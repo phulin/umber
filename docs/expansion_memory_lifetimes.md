@@ -383,7 +383,12 @@ required brace handling, applies one-delivery suppression, and returns only a
 copy-small ready/outer result. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; warm resident
-delivery returns only its final ready/outer scalar. A macro `Param` pushes its
+delivery returns only its final ready/outer scalar. Attempt-list storage is
+authenticated with its exact extent when the row is admitted, so a resident
+word read does not repeat the attempt key/row validation or recreate a list
+view. A successful safe storage read advances the common frame once without a
+second limit branch. Replay performs prefix and fixed-segment refresh only at
+those physical boundaries. A macro `Param` pushes its
 admitted argument and continues inside the resident loop. Only EOF, line,
 retirement, replay, diagnostic, checkpoint, or failure paths materialize a cold
 status; no semantic-token value or raw-command phase crosses into a result

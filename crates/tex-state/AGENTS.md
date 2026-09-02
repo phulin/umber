@@ -179,7 +179,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/input.rs`: Storage-independent input policy, replay-kind, alignment
   phase, and source-id vocabulary shared with the command-owned input stack.
 - `src/packed_input.rs`: Fixed-width packed input-frame metadata and flags;
-  token/source replay payload ownership remains in `tex-command`.
+  token/source replay payload ownership remains in `tex-command`. Its resident
+  advance consumes the safe storage read that already proved the admitted
+  position, avoiding a second delivery-time bounds decision.
 - `src/interner.rs`: Bounded append-only session epoch for control-sequence
   names and retained spellings, with one-probe find-or-intern status, explicit
   foreign-session admission, and whole-epoch retirement.

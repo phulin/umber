@@ -619,7 +619,10 @@ impl<G> CommandState<G> {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> Result<InputLevelId, crate::AttemptError> {
-        self.attempt.arena().token_words(list)?;
+        let admitted = self.attempt.arena().token_words(list)?;
+        if admitted.len() != len as usize {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
         Ok(self.push_token_level(
             PackedTokenSpanHandle::AttemptList { list, len },
             behavior,

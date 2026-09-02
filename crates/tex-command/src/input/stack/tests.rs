@@ -51,6 +51,30 @@ fn one_exhausted_token_level_retires_once_with_its_semantic_reason() {
 }
 
 #[test]
+fn attempt_input_admission_rejects_a_mismatched_extent() {
+    let mut state = CommandState::<()>::default();
+    let list = state
+        .attempt
+        .profile_allocate_token_list([crate::test_harness::traced(tex_state::token::Token::Char {
+            ch: 'x',
+            cat: tex_state::token::Catcode::Other,
+        })])
+        .expect("attempt token list allocates");
+
+    assert_eq!(
+        state.push_attempt_list_level(
+            list,
+            2,
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Inserted,
+        ),
+        Err(crate::AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(state.input_level_count(), 0);
+}
+
+#[test]
 fn retirement_rejects_a_stale_level_identity_before_mutation() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

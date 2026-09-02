@@ -994,6 +994,37 @@ impl<G> AttemptArena<G> {
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
+    /// Reads one word from an already-admitted resident input row.
+    ///
+    /// Admission validates the attempt key, row serial, and complete list
+    /// extent before the input row becomes visible. The row cannot outlive or
+    /// truncate its attempt owner, so ordinary delivery indexes that proven
+    /// storage directly instead of reconstructing and revalidating a generic
+    /// list view for every word.
+    #[inline(always)]
+    pub(crate) fn resident_token_word(
+        &self,
+        id: &AttemptTokenListId,
+        index: usize,
+    ) -> Option<TracedTokenWord> {
+        debug_assert_eq!(id.key, self.key.0);
+        let row = self.token_lists.get(id.index())?;
+        debug_assert_eq!(row.serial, id.serial);
+        match row.value {
+            AttemptTokenStorage::Range(range) => {
+                let index = range.start as usize + index;
+                debug_assert!(index < range.start as usize + range.len as usize);
+                self.traced_words.get(index).copied()
+            }
+            AttemptTokenStorage::Buffer(buffer) => {
+                let row = self.token_buffers.get(buffer.index())?;
+                debug_assert_eq!(row.serial, buffer.serial);
+                self.token_lane.view(&row.value.sink).get(index).copied()
+            }
+            AttemptTokenStorage::PendingBuffer | AttemptTokenStorage::ConsumedBuffer => None,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn allocate_glue(&mut self, value: GlueSpec) -> Result<AttemptGlueId, AttemptError> {
         let id = AttemptGlueId::new(self.key, self.glue_values.len())?;

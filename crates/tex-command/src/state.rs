@@ -1394,15 +1394,14 @@ impl<G> CommandState<G> {
             .attempt
             .profile_allocate_token_list(words)
             .expect("profiling attempt span admits");
-        self.push_token_level(
-            crate::input::PackedTokenSpanHandle::AttemptList {
-                list,
-                len: u32::try_from(len).expect("profiling attempt span length fits u32"),
-            },
+        self.push_attempt_list_level(
+            list,
+            u32::try_from(len).expect("profiling attempt span length fits u32"),
             crate::input::TokenBehavior::Ordinary,
             crate::input::RetirementBehavior::Pop,
             crate::input::ReplayTrace::Inserted,
-        );
+        )
+        .expect("profiling attempt span extent admits");
     }
 
     /// Returns `(span selections, packed loads, cursor advances, command

@@ -279,9 +279,14 @@ collector (see `src/conditionals.rs`).
   and advances only the owning cursor scalar. Replay, attempt, and durable rows
   share one header transition for first touch, logical position advance,
   parameter interception, and exhaustion; their concrete variants perform only
-  the storage-specific word read. Replay keeps only its physical run, segment,
-  and in-segment offset outside the header and inspects segment metadata only
-  at a boundary. A
+  the storage-specific word read. A successful safe read proves the admitted
+  frame position and advances that scalar without a second bounds decision.
+  Attempt-list admission validates the exact extent once, so resident delivery
+  directly indexes its lifetime-specific storage without rebuilding a list view
+  or repeating its attempt key and row authentication. Replay keeps only its
+  physical run, segment, and in-segment offset outside the header; prefix and
+  fixed-segment refreshes are cold boundary helpers, while an ordinary word
+  reads the current segment and advances its resident coordinates. A
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
