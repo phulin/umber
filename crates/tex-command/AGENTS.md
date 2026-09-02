@@ -142,12 +142,14 @@ collector (see `src/conditionals.rs`).
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
 - `src/processor/expand.rs`: canonical destination-directed raw/expanded
-  delivery state machine and static primitive dispatch. Its const-specialized
-  raw and expanded entries advance resident input into the caller's final slot,
-  settle that delivery in place, and, when requested, inspect and expand the
-  same resident command without a second command handoff. The raw and expanded
-  entries are their respective single delivery loops and write ordinary
-  command/end results directly into the caller's return slot; only their cold
+  delivery state machine and static primitive dispatch. Its raw and expanded
+  entries initialize the caller's final slot once, keep one direct mutable
+  command borrow across ordinary fetch, settlement, classification, expansion,
+  and return, and overwrite that same value for retries. The raw and expanded
+  entries are their respective single delivery loops; only their cold
+  end/replay/failure exits clear the slot, and only genuine suspension replaces
+  and parks its command owner. There is no ordinary vacancy probe, placeholder
+  reinstall, repeated `Option` recovery, or success-path move. Only their cold
   failure and resident-transition helpers construct `CommandError`. Expanded
   continuation restoration likewise lives in a cold helper reached only for a
   genuinely parked expansion. It also includes one

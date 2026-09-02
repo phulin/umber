@@ -664,23 +664,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         debug_assert!(destination.is_none());
+        let command = destination.insert(CurrentCommand::empty());
         'delivery: loop {
             self.invalidate_delivery_freshness();
             if let Err(failure) = self.charge_command_action() {
                 return self.fail_raw_delivery(destination, failure);
-            }
-            if destination.is_none() {
-                *destination = Some(CurrentCommand::empty());
             }
             let interception = loop {
                 let transition = self.command.advance_resident_command_into(
                     self.state,
                     self.fuel,
                     self.create_source_control_sequences,
-                    destination
-                        .as_mut()
-                        .expect("raw loop owns its reusable command slot")
-                        .empty_for_raw_delivery(),
+                    command.empty_for_raw_delivery(),
                     (&mut self.observer, &mut self.immediate_write_retirement),
                 );
                 #[cfg(test)]
@@ -702,8 +697,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 match transition {
                     Ok(interception) => break interception,
                     Err(cold) => {
-                        let settled = match self.settle_resident_cold_transition(cold, destination)
-                        {
+                        let settled = match self.settle_resident_cold_transition(cold, command) {
                             Ok(settled) => settled,
                             Err(failure) => {
                                 return self.fail_raw_delivery(destination, failure);
@@ -711,9 +705,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                         };
                         match settled {
                             ResidentColdOutcome::Retry => continue,
-                            ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
+                            ResidentColdOutcome::End => {
+                                destination.take();
+                                return Ok(DeliveryStatus::End);
+                            }
                             ResidentColdOutcome::ReplayCompleted(episode) => {
                                 if replay_completion == ReplayCompletionPolicy::Surface {
+                                    destination.take();
                                     return Ok(DeliveryStatus::ReplayCompleted(episode));
                                 }
                                 continue 'delivery;
@@ -725,9 +723,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 }
             };
-            let command = destination
-                .as_mut()
-                .expect("resident delivery initializes the command slot");
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
             if command.is_direct_source_delivery() {
                 self.readmit_delivery_stamp(command.delivery_stamp());
@@ -751,7 +746,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
                     return self.fail_raw_delivery(destination, failure);
                 }
-                destination.take();
                 continue;
             }
             return Ok(DeliveryStatus::Command);
@@ -774,8 +768,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn resume_expanded_delivery(
         &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<bool, CommandError> {
+        destination: Option<CurrentCommand<G>>,
+    ) -> Result<(CurrentCommand<G>, bool), CommandError> {
         let key = self.expansion_resume.take().or_else(|| {
             self.scanner_resume
                 .as_ref()
@@ -796,10 +790,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .scratch
             .resume_expansion(key.expect("genuine suspension owns expansion work"))
             .map_err(crate::scan_toks::scratch_command_error)?;
-        if destination
-            .as_ref()
-            .is_some_and(|command| command != &retained.command)
-        {
+        if destination.is_some_and(|command| command != retained.command) {
             if let Some(child) = retained.take_child() {
                 self.abort_continuation(child)?;
             }
@@ -814,13 +805,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         self.resumed_expansion = Some(retained.resume);
         let delivery_expanded = retained.delivery_expanded;
-        *destination = Some(retained.command);
-        self.resume_current_command(
-            destination
-                .as_ref()
-                .expect("resumed expansion restores its command"),
-        );
-        Ok(delivery_expanded)
+        self.resume_current_command(&retained.command);
+        Ok((retained.command, delivery_expanded))
     }
 
     #[cold]
@@ -841,13 +827,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn settle_resident_cold_transition(
         &mut self,
         cold: ResidentCommandColdTransition,
-        destination: &mut Option<CurrentCommand<G>>,
+        command: &mut CurrentCommand<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         match cold {
-            ResidentCommandColdTransition::Failure => {
-                destination.take();
-                Err(CommandError::input_invariant())
-            }
+            ResidentCommandColdTransition::Failure => Err(CommandError::input_invariant()),
             ResidentCommandColdTransition::Empty => {
                 observe!(
                     self,
@@ -862,10 +845,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
                 match self.raw_end_restarts() {
                     Ok(true) => Ok(ResidentColdOutcome::Retry),
-                    Ok(false) => {
-                        destination.take();
-                        Ok(ResidentColdOutcome::End)
-                    }
+                    Ok(false) => Ok(ResidentColdOutcome::End),
                     Err(failure) => Err(failure),
                 }
             }
@@ -893,10 +873,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if exhausted {
                     match self.raw_end_restarts() {
                         Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => {
-                            destination.take();
-                            Ok(ResidentColdOutcome::End)
-                        }
+                        Ok(false) => Ok(ResidentColdOutcome::End),
                         Err(failure) => Err(failure),
                     }
                 } else {
@@ -921,10 +898,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if exhausted {
                     match self.raw_end_restarts() {
                         Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => {
-                            destination.take();
-                            Ok(ResidentColdOutcome::End)
-                        }
+                        Ok(false) => Ok(ResidentColdOutcome::End),
                         Err(failure) => Err(failure),
                     }
                 } else {
@@ -975,33 +949,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                 match handoff {
                     RetirementHandoff::Stop => match self.raw_end_restarts() {
                         Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => {
-                            destination.take();
-                            Ok(ResidentColdOutcome::End)
-                        }
+                        Ok(false) => Ok(ResidentColdOutcome::End),
                         Err(failure) => Err(failure),
                     },
                     RetirementHandoff::Continue => Ok(ResidentColdOutcome::Retry),
                     RetirementHandoff::Completed(episode) => {
-                        destination.take();
                         Ok(ResidentColdOutcome::ReplayCompleted(episode))
                     }
                     RetirementHandoff::EndV(level) => {
-                        let _resolution = destination
-                            .as_mut()
-                            .expect("delivery loop owns its reusable command slot")
-                            .empty_for_raw_delivery()
-                            .write_resolved_delivery(
-                                TokenWord::pack(self.state.frozen_end_template_token()),
-                                OriginId::UNKNOWN,
-                                level.0,
-                                u64::from(index),
-                                active_source,
-                                false,
-                                None,
-                                false,
-                                self.state,
-                            );
+                        let _resolution = command.empty_for_raw_delivery().write_resolved_delivery(
+                            TokenWord::pack(self.state.frozen_end_template_token()),
+                            OriginId::UNKNOWN,
+                            level.0,
+                            u64::from(index),
+                            active_source,
+                            false,
+                            None,
+                            false,
+                            self.state,
+                        );
                         #[cfg(feature = "profiling")]
                         self.fuel.record_raw_delivery(
                             !matches!(
@@ -1011,12 +977,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             _resolution.meaning_lookup(),
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
-                        self.readmit_delivery_stamp(
-                            destination
-                                .as_ref()
-                                .expect("synthetic command occupies the destination")
-                                .delivery_stamp(),
-                        );
+                        self.readmit_delivery_stamp(command.delivery_stamp());
                         Ok(ResidentColdOutcome::SyntheticCommand(
                             ResidentCommandInterception::Ready,
                         ))
@@ -1024,7 +985,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             ResidentCommandColdTransition::ReplayCompleted(episode) => {
-                destination.take();
                 Ok(ResidentColdOutcome::ReplayCompleted(episode))
             }
         }
@@ -1050,20 +1010,32 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
-        let mut delivery_expanded = false;
-        if self.expansion_resume.is_some()
+        let resuming = self.expansion_resume.is_some()
             || self
                 .scanner_resume
                 .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion)
-        {
-            delivery_expanded = match self.resume_expanded_delivery(destination) {
-                Ok(delivery_expanded) => delivery_expanded,
+                .is_some_and(crate::ScannerFrameKey::is_expansion);
+        let mut delivery_expanded = false;
+        let mut fetch = if resuming {
+            match self.resume_expanded_delivery(destination.take()) {
+                Ok((command, resumed_expanded)) => {
+                    *destination = Some(command);
+                    delivery_expanded = resumed_expanded;
+                    false
+                }
                 Err(failure) => {
                     return self.fail_expanded_delivery(destination, depth, failure);
                 }
-            };
-        }
+            }
+        } else if destination.is_some() {
+            false
+        } else {
+            *destination = Some(CurrentCommand::empty());
+            true
+        };
+        let command = destination
+            .as_mut()
+            .expect("expanded entry owns one initialized command destination");
         let Some(active_depth) = depth.checked_add(1) else {
             return self.fail_expanded_delivery(
                 destination,
@@ -1074,25 +1046,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.active_expansion_depth = active_depth;
         let mut first = true;
         let mut suppress_first_expansion_trace = delivery_expanded;
-        let mut fetch = destination.is_none();
         let status = 'delivery: loop {
             if fetch {
                 self.invalidate_delivery_freshness();
                 if let Err(failure) = self.charge_command_action() {
                     return self.fail_expanded_delivery(destination, depth, failure);
                 }
-                if destination.is_none() {
-                    *destination = Some(CurrentCommand::empty());
-                }
                 'resident: loop {
                     let transition = self.command.advance_resident_command_into(
                         self.state,
                         self.fuel,
                         self.create_source_control_sequences,
-                        destination
-                            .as_mut()
-                            .expect("delivery machine owns its reusable command slot")
-                            .empty_for_raw_delivery(),
+                        command.empty_for_raw_delivery(),
                         (&mut self.observer, &mut self.immediate_write_retirement),
                     );
                     #[cfg(test)]
@@ -1114,17 +1079,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let interception = match transition {
                         Ok(interception) => interception,
                         Err(cold) => {
-                            let settled =
-                                match self.settle_resident_cold_transition(cold, destination) {
-                                    Ok(settled) => settled,
-                                    Err(failure) => {
-                                        return self.fail_expanded_delivery(
-                                            destination,
-                                            depth,
-                                            failure,
-                                        );
-                                    }
-                                };
+                            let settled = match self.settle_resident_cold_transition(cold, command)
+                            {
+                                Ok(settled) => settled,
+                                Err(failure) => {
+                                    return self.fail_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            };
                             match settled {
                                 ResidentColdOutcome::Retry => continue,
                                 ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
@@ -1138,9 +1103,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             }
                         }
                     };
-                    let command = destination
-                        .as_mut()
-                        .expect("resident delivery initializes the command slot");
                     self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
                     if command.is_direct_source_delivery() {
                         self.readmit_delivery_stamp(command.delivery_stamp());
@@ -1150,7 +1112,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if matches!(interception, ResidentCommandInterception::Outer)
                         && let Err(failure) = self.check_outer_validity_entry(command)
                     {
-                        destination.take();
                         return self.fail_expanded_delivery(destination, depth, failure);
                     }
                     if self.is_observed() {
@@ -1159,9 +1120,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     break 'resident;
                 }
             }
-            let command = destination
-                .as_ref()
-                .expect("expanded destination contains a command");
 
             let first = std::mem::take(&mut first);
             let action = classify_expanded_command(command, protected_macros, undefined);
@@ -1220,14 +1178,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         fetch = true;
                         continue;
                     }
-                    destination
-                        .as_mut()
-                        .expect("expanded destination contains a command")
-                        .convert_end_template_to_endv(self.state.frozen_endv_token());
+                    command.convert_end_template_to_endv(self.state.frozen_endv_token());
                     break 'delivery self.finish_expanded_delivery(
-                        destination
-                            .as_ref()
-                            .expect("expanded destination contains a command"),
+                        command,
                         observation,
                         delivery_expanded,
                         alignment_interception,
@@ -1249,11 +1202,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // up for that loop; an EOF recovery paragraph was consumed
                     // by the failed match instead.
                     let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                    let failure = match self.expand_classified_into(
-                        destination,
+                    let mut command_parked = false;
+                    let failure = match self.expand_classified_occupied(
+                        command,
                         dispatch,
                         report_trace,
                         delivery_expanded,
+                        &mut command_parked,
                     ) {
                         Ok(()) => {
                             fetch = true;
@@ -1283,6 +1238,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             "nested delivery must balance expansion depth"
         );
         self.command.transient.active_expansion_depth = depth;
+        if matches!(
+            status,
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
+        ) {
+            destination.take();
+        }
         Ok(status)
     }
 
@@ -1456,6 +1417,34 @@ impl<G> CommandProcessor<'_, '_, G> {
         report_trace: bool,
         delivery_expanded: bool,
     ) -> Result<(), CommandError> {
+        let mut command = destination
+            .take()
+            .ok_or_else(CommandError::input_invariant)?;
+        let mut command_parked = false;
+        let result = self.expand_classified_occupied(
+            &mut command,
+            dispatch,
+            report_trace,
+            delivery_expanded,
+            &mut command_parked,
+        );
+        if !command_parked {
+            *destination = Some(command);
+        }
+        result
+    }
+
+    /// Expands directly from the delivery loop's continuously occupied
+    /// command destination. Only a real resource suspension moves that value
+    /// into parked work; every synchronous arm retains the same owner.
+    fn expand_classified_occupied(
+        &mut self,
+        command: &mut CurrentCommand<G>,
+        dispatch: ExpansionDispatch,
+        report_trace: bool,
+        delivery_expanded: bool,
+        command_parked: &mut bool,
+    ) -> Result<(), CommandError> {
         let resumed_here = self.resumed_expansion.is_some();
         let mut expansion_resume = self
             .resumed_expansion
@@ -1464,9 +1453,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !resumed_here && self.scanner_resume.is_some() {
             return Err(CommandError::input_invariant());
         }
-        let command = destination
-            .as_mut()
-            .ok_or_else(CommandError::input_invariant)?;
         #[cfg(feature = "profiling")]
         {
             if !is_ranked_fused_expansion(dispatch) {
@@ -1829,10 +1815,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::state::PendingExpansionChildDestination::Dispatch,
             );
             let error = result.expect_err("matched resource suspension");
+            let suspended_command = std::mem::replace(command, CurrentCommand::empty());
+            *command_parked = true;
             let pending = crate::state::PendingExpansion {
-                command: destination
-                    .take()
-                    .expect("suspension moves the command out of its destination"),
+                command: suspended_command,
                 resume: suspended_resume
                     .take()
                     .unwrap_or(crate::state::PendingExpansionResume::Dispatch),

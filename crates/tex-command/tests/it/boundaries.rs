@@ -178,7 +178,23 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("Some(CurrentCommand::empty())"));
+    assert!(expansion.contains("let command = destination.insert(CurrentCommand::empty());"));
+    assert!(expansion.contains("expanded entry owns one initialized command destination"));
+    let raw_entry = expansion
+        .split("fn raw_delivery_entry(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn fail_raw_delivery(").next())
+        .expect("locate raw delivery entry");
+    let expanded_entry = expansion
+        .split("fn expanded_delivery_entry(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
+        .expect("locate expanded delivery entry");
+    for entry in [raw_entry, expanded_entry] {
+        assert!(!entry.contains("if destination.is_none()"));
+        assert!(!entry.contains("destination.as_ref()"));
+    }
+    assert_eq!(expanded_entry.matches(".as_mut()").count(), 1);
     assert!(expansion.contains(".advance_resident_command_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
     assert!(input_history.contains("roots.alignment.classify_delivery("));
@@ -688,7 +704,7 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         );
     }
     let expansion_dispatch = expansion
-        .split("fn expand_classified_into(")
+        .split("fn expand_classified_occupied(")
         .nth(1)
         .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
         .expect("locate exact expansion dispatch");
@@ -696,6 +712,7 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         expansion
             .contains("self.expand_classified_into(destination, dispatch, report_trace, false)")
     );
+    assert!(expansion.contains("match self.expand_classified_occupied("));
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
         "an already-classified delivery must not wrap its dispatch for handoff"
@@ -712,8 +729,8 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("let mut fetch = destination.is_none();"));
-    assert!(expansion.contains("suspension moves the command out of its destination"));
+    assert!(expansion.contains("*destination = Some(CurrentCommand::empty());"));
+    assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
     assert!(!expansion.contains("delivery_driver_inner("));

@@ -185,7 +185,13 @@ reaching either loop is already a character or a packed stable
 control-sequence identity.
 
 Each loop is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. Each concrete
+`Option<CurrentCommand<G>>` slot for that active request. The raw entry
+initializes it once; the expanded entry either initializes it once or readmits
+the exact command supplied by `x_token` or genuine suspension. Each entry then
+keeps one direct mutable borrow of that initialized value through its complete
+ordinary loop. It neither probes vacancy, reinstalls a placeholder, recovers
+the command through repeated `as_ref`/`as_mut`, nor takes it on successful
+return. Each concrete
 resident arm advances only its own cursor and yields the packed word, origin,
 position, and source scalars. After that borrow ends, one branch-independent
 `EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
@@ -203,15 +209,16 @@ only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
 The raw and expanded entries are their respective single delivery loops. Their
-ordinary command/end branches write the final result directly into the caller's
-return slot, without an eager `CommandError`, error slot, zero-sized failure
+ordinary command branches leave the already-resident result directly in the
+caller's return slot, without an eager `CommandError`, error slot, zero-sized failure
 relay, or general internal status carrier. Only cold failure and resident-
 transition helpers construct a rich error. The expanded entry restores parked
 continuation state through a separate cold helper only when a genuine resource
 suspension exists; an ordinary synchronous request carries no resume state. The
-public boundary returns the compact final `DeliveryStatus`. A command moves
-out of its destination slot only into its final consumer or the one typed
-expansion suspension slot at a real resource barrier. There is no process-global
+public boundary returns the compact final `DeliveryStatus`. Cold end, replay-
+completion, and failure exits clear the provisional slot. A genuine resource
+barrier alone replaces the initialized value and moves its prior command into
+the typed expansion-suspension slot. There is no process-global
 slot, mailbox, destination inference, nested-request reuse, or second raw
 representation.
 

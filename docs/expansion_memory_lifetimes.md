@@ -370,6 +370,9 @@ source-region-owned promotion key.
 
 Raw and expanded command delivery uses separate concrete destination loops.
 Each active request owns one caller-provided `Option<CurrentCommand<G>>`.
+The raw entry initializes that option once; expanded delivery initializes it or
+readmits the exact `x_token`/suspension owner once. Each then holds one direct
+mutable borrow across ordinary resident retries, classification, and return.
 Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
 scalars. One branch-independent `EmptyCommand::write_resolved_delivery` call
@@ -387,12 +390,14 @@ status; no semantic-token value or raw-command phase crosses into a result
 relay. Nested delivery has its own slot. The expanded fetch/inspect loop
 keeps the initialized value in place while synchronous expansion mutates input, then raw delivery
 overwrites that same value for the next token; it does not clear the `Option`,
-reconstruct an empty command, or redispatch the prior meaning between
+probe its vacancy, reconstruct an empty command, recover repeated option
+borrows, take the value on success, or redispatch the prior meaning between
 expansions. The expanded loop also keeps its one has-expanded bit on the stack;
 only the genuinely suspended expansion frame retains that bit so a resumed
 TeX82 alignment lookahead preserves its deferred-observation decision. Each
-concrete loop returns only its final compact status and moves the command
-only to its final consumer or the exact typed expansion suspension slot. The
+concrete loop returns only its final compact status. Cold end, replay, and
+failure clear the provisional destination; only a genuine typed resource
+suspension replaces the initialized command and parks its prior owner. The
 raw and expanded entries both write ordinary command/end results directly into
 their caller's return slot. Neither owns a stack-local error slot or returns an
 internal failure marker. A real failure reaches a cold helper that clears the
