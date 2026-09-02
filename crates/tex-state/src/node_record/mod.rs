@@ -24,6 +24,7 @@ use crate::world::{PrintSink, StreamSlot};
 mod annex;
 mod layout;
 mod node_codec;
+mod semantic;
 mod whatsit_codec;
 
 pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};

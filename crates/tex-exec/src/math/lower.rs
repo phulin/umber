@@ -849,10 +849,7 @@ fn finish_math_chunk_prefix<G>(
                 .page_node_span_chunk_node(source, &chunk, offset)
                 .expect("owned math-list source chunk remains live");
             debug_assert_eq!(resolved, index);
-            match node {
-                Node::MathList(list) => Some(list),
-                _ => None,
-            }
+            node.math_list()
         };
         let Some(list) = list else {
             continue;

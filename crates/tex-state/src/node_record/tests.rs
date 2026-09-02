@@ -370,6 +370,11 @@ fn every_node_kind_round_trips_through_record_and_annex() {
         let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
         assert_eq!(record.kind(), Some(expected_kind));
         assert_eq!(
+            record.semantic_identity(annex.view()),
+            crate::node_sequence::semantic_node_identity(&node),
+            "{expected_kind:?} semantic identity"
+        );
+        assert_eq!(
             record.decode_owned(annex.view()),
             Some(node),
             "{expected_kind:?}"
@@ -384,6 +389,11 @@ fn every_whatsit_subtype_round_trips() {
         let node = Node::Whatsit(whatsit);
         let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
         assert_eq!(record.kind(), Some(NodeKind::Whatsit));
+        assert_eq!(
+            record.semantic_identity(annex.view()),
+            crate::node_sequence::semantic_node_identity(&node),
+            "whatsit semantic identity"
+        );
         assert_eq!(record.decode_owned(annex.view()), Some(node));
     }
 }

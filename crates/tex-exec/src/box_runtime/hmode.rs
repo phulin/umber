@@ -673,18 +673,13 @@ enum OpenTypeSourceNode {
 }
 
 impl OpenTypeSourceNode {
-    fn from_node(node: &Node) -> Self {
-        match node {
-            Node::Char { font, ch, origin } => Self::Character {
-                font: *font,
-                ch: *ch,
-                origin: *origin,
-            },
-            Node::Kern {
-                kind: KernKind::Font,
-                ..
-            } => Self::FontKern,
-            _ => Self::Other,
+    fn from_node(node: tex_state::page_node_arena::PageMaterialNodeRef<'_>) -> Self {
+        if let Some((font, ch, origin)) = node.character() {
+            Self::Character { font, ch, origin }
+        } else if node.is_font_kern() {
+            Self::FontKern
+        } else {
+            Self::Other
         }
     }
 }
@@ -719,7 +714,7 @@ impl OpenTypeSourceWalk<'_> {
                     .page_node_span_chunk_node(source, &chunk, offset)
                     .expect("OpenType source chunk remains live");
                 debug_assert_eq!(resolved, index);
-                OpenTypeSourceNode::from_node(&node)
+                OpenTypeSourceNode::from_node(node)
             };
             self.visit_node(stores, source, index, observed);
         }

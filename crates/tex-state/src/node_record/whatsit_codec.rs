@@ -365,7 +365,116 @@ fn decode_literal_mode(value: u32) -> Option<PdfLiteralMode> {
     }
 }
 
+impl NodeRecord<PageMaterialLane> {
+    pub(super) fn reencode_whatsit(
+        self,
+        annex: &mut NodeAnnexCopier<'_>,
+    ) -> Option<(Self, Option<usize>)> {
+        let subtype = self.subtype();
+        let flags = self.flags();
+        match subtype {
+            0 => {
+                let mut payload =
+                    annex.resolve_fixed_array::<OpenOutPayload, 8>(key_from_record(self))?;
+                let path_key = AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?);
+                let path = annex.detach_span(path_key)?;
+                let path_key = annex.append_span::<Utf8Span>(&path);
+                payload[..7].copy_from_slice(&path_key.words());
+                let key = annex.append_fixed::<OpenOutPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            3 => {
+                let mut payload =
+                    annex.resolve_fixed_array::<SpecialPayload, 14>(key_from_record(self))?;
+                let class_key = AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?);
+                let bytes_key = AnnexKey::<ByteSpan>::from_words(payload[7..].try_into().ok()?);
+                let class = annex.detach_span(class_key)?;
+                let bytes = annex.detach_span(bytes_key)?;
+                let class_key = annex.append_span::<Utf8Span>(&class);
+                let bytes_key = annex.append_span::<ByteSpan>(&bytes);
+                payload[..7].copy_from_slice(&class_key.words());
+                payload[7..].copy_from_slice(&bytes_key.words());
+                let key = annex.append_fixed::<SpecialPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            4 => {
+                let mut payload = annex
+                    .resolve_fixed_array::<DeferredSpecialPayload, 13>(key_from_record(self))?;
+                let class_key = AnnexKey::<Utf8Span>::from_words(payload[..7].try_into().ok()?);
+                let class = annex.detach_span(class_key)?;
+                let class_key = annex.append_span::<Utf8Span>(&class);
+                payload[..7].copy_from_slice(&class_key.words());
+                let key = annex.append_fixed::<DeferredSpecialPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            11 | 13 => {
+                let bytes = annex.detach_span(key_from_record::<ByteSpan>(self))?;
+                let key = annex.append_span::<ByteSpan>(&bytes);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            16 => {
+                let mut payload =
+                    annex.resolve_fixed_array::<PdfColorStackPayload, 10>(key_from_record(self))?;
+                let bytes = match payload[2] {
+                    0 => None,
+                    1 => Some(annex.detach_span(AnnexKey::<ByteSpan>::from_words(
+                        payload[3..].try_into().ok()?,
+                    ))?),
+                    _ => return None,
+                };
+                if let Some(bytes) = bytes {
+                    let key = annex.append_span::<ByteSpan>(&bytes);
+                    payload[3..].copy_from_slice(&key.words());
+                }
+                let key = annex.append_fixed::<PdfColorStackPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            23 => {
+                let payload = annex
+                    .resolve_fixed_array::<PdfDestinationPayload, 12>(key_from_record(self))?;
+                let key = annex.append_fixed::<PdfDestinationPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            24 => {
+                let payload =
+                    annex.resolve_fixed_array::<PdfThreadPayload, 16>(key_from_record(self))?;
+                let key = annex.append_fixed::<PdfThreadPayload>(&payload);
+                Some((
+                    Self::with_key(NodeKind::Whatsit, subtype, flags, key),
+                    annex.dependency_floor(),
+                ))
+            }
+            _ => Some((self, None)),
+        }
+    }
+}
+
 pub(super) fn decode_whatsit(record: NodeRecord, annex: NodeAnnexView<'_>) -> Option<Node> {
+    decode_whatsit_value(record, annex).map(Node::Whatsit)
+}
+
+pub(super) fn decode_whatsit_value(
+    record: NodeRecord,
+    annex: NodeAnnexView<'_>,
+) -> Option<Whatsit> {
     let subtype = record.subtype();
     let flags = record.flags();
     let words = record.words();
@@ -541,5 +650,5 @@ pub(super) fn decode_whatsit(record: NodeRecord, annex: NodeAnnexView<'_>) -> Op
         },
         _ => return None,
     };
-    Some(Node::Whatsit(value))
+    Some(value)
 }

@@ -4000,7 +4000,7 @@ impl<'a, G> CommandContext<'a, G> {
         span: crate::page_node_arena::PageListSpan,
         cursor: &crate::page_node_arena::PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, crate::node::Node), NodeArenaError> {
+    ) -> Result<(usize, crate::page_node_arena::PageMaterialNodeRef<'_>), NodeArenaError> {
         self.page_nodes
             .span_chunk_node(span, cursor, offset)
             .map_err(|_| NodeArenaError::InvalidList)

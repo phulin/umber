@@ -1364,14 +1364,10 @@ fn normalize_paragraph_chunk_prefix<G>(
             let (index, node) = stores
                 .page_node_span_chunk_node(source, &chunk, offset)
                 .expect("paragraph source chunk remains live");
-            let replacement = match node {
-                Node::Glue { spec, kind, leader }
-                    if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
-                {
-                    Some((spec, kind, leader))
-                }
-                _ => None,
-            };
+            let replacement = node.glue_spec_kind().and_then(|(spec, kind)| {
+                (spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal)
+                    .then(|| (spec, kind, node.glue_leader().flatten()))
+            });
             (index, replacement)
         };
         let Some((mut spec, kind, leader)) = replacement else {

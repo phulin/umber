@@ -262,7 +262,9 @@ Ordinary list processing is packed-block movement plus append-only output:
   post-line path consume move-only whole roots at their semantic handoffs;
 - packing, line breaking, paragraph post-processing, alignment setting, math
   lowering, and page breaking borrow short-lived `ArenaListView` or
-  `NodeCursor` views; long forward consumers use the callback traversal that
+  `NodeCursor` views; mutation-interleaved compact page consumers use
+  `PageMaterialNodeRef`, which borrows one 32-byte record and its admitted
+  annex and decodes only requested fields; long forward consumers use the callback traversal that
   follows the sole predecessor chain once and retains its continuation on the
   Rust stack, mutation-interleaved operation consumers retain only a
   coordinate-valued chunk continuation and end each node borrow before an
@@ -277,9 +279,10 @@ Ordinary list processing is packed-block movement plus append-only output:
   lookup.
 
 The same-arena counted-copy path keeps only stable source chunk/offset
-coordinates while destination mutation is exclusive. It clones each source
-node directly into the final reserved destination slot, derives optional
-identity from that same visit, and retains no temporary whole-list node owner.
+coordinates while destination mutation is exclusive. It borrows each compact
+source record, derives optional identity without materializing `Node`,
+republishes typed annex payloads, and appends the rewritten record directly to
+the destination. It retains no temporary whole-list node owner.
 
 Generated nodes use destination construction. The active-list owner first
 reserves one checked vacant slot in its current packed chunk, then lends that
@@ -320,9 +323,12 @@ transition:
 - copying a nested closure whose source must remain independently owned; or
 - cold handle-free format or continuation materialization.
 
-The copy should be fused with the traversal already required by TeX copy,
-page-break held-over extraction, packaging, or cold materialization. A
-separate promotion scan is forbidden.
+Structural copy first discovers only compact child coordinates so recursively
+rebuilt children exist before their parent records. Its construction pass
+borrows the same 32-byte source records and emits destination records directly;
+there is no complete-node projection, `Vec<Node>`, or third promotion scan.
+Other copies should remain fused with the traversal already required by TeX
+copy, page-break held-over extraction, packaging, or cold materialization.
 
 Paragraph transforms that must copy a shared source coalesce adjacent
 unchanged nodes into one semantic range before entering the counted-copy

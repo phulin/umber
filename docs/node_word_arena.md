@@ -64,9 +64,12 @@ node hashing and zero summary combination.
 
 `ArenaListView` is a copy-only direct borrow of both the coordinate lane and
 the physical pool. Its returned record references carry the pool borrow rather
-than the temporary view borrow; `NodeCursor` projects borrowed `NodeView`
-values through the admitted paired annex. `NodeCursor` retains its slice adapter for pure tests and its
-page-material variant without materialization or a guard-owned lifetime.
+than the temporary view borrow. Page-material chunk traversal returns a small
+borrowed `PageMaterialNodeRef` over that record and the admitted annex; callers
+decode only the character, kern, glue, math, language, discretionary, or
+ligature fields they need. `NodeCursor` retains its slice adapter for pure
+tests and its page-material variant without materialization or a guard-owned
+lifetime.
 
 `ActiveListBuilder` is the persistent append boundary. It is move-only and
 stores only private generation-checked coordinates plus scalar pending-range
@@ -79,9 +82,10 @@ be sealed.
 New page material crosses that boundary through one final compact-record
 reservation. Destination-directed builders publish typed annex words and the
 corresponding `NodeRecord` in the paired operation; rejection restores both
-tails. No whole owned node is resident in `NodeRegion`, and no whole-node
-return value crosses the generic arena layers. Explicit TeX/source-copy paths
-remain separately named value-copy boundaries.
+tails. Same-region range reconstruction borrows each source record, republishes
+only its typed annex payload, and writes the rewritten record directly into the
+destination builder. No whole owned node is resident in `NodeRegion`, and no
+whole-node return value crosses the generic arena layers.
 
 The `TypesetState::page_nodes` contract returns this borrowed `NodeCursor`, not
 a contiguous slice. Existing row storage continues through the slice variant
@@ -335,11 +339,15 @@ one logical coordinate space. It is not TeX copy authority and is not a
 cross-owner copy API.
 
 `\copy`, `\unhcopy`, retained-source preservation, a foreign-pool transition,
-and every explicit structural fallback traverse the exact source closure once
-under its admitted view and call destination-directed constructors. Child
-lists are recursively rebuilt under destination envelopes. Every fixed annex
-record and dynamic annex span is decoded and republished into destination-local
-annex blocks; no destination key retains a source annex space or envelope.
+and every explicit structural fallback use borrowed compact-record projections
+and destination-directed construction. Child coordinates are discovered in a
+compact-record pass, child lists are recursively rebuilt under destination
+envelopes, and a second compact-record pass writes each rewritten 32-byte
+record directly into its final destination. This replaces the former
+168-byte-node decode, `Vec<Node>` collection, and by-value reconstruction scan.
+Every fixed annex record and dynamic annex span is validated and republished
+into destination-local annex blocks; no destination key retains a source annex
+space or envelope.
 Font and generation-token values retain only the separately authorized
 immutable aliases, and are republished when their generation/store contract
 does not admit the destination. One aggregate destination operation mark

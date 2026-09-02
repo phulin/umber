@@ -87,6 +87,18 @@ pub struct NodeAnnexWriter<'a> {
     dependency_floor: usize,
 }
 
+pub(super) enum NodeAnnexCopySource<'a> {
+    SameRegion,
+    OtherRegion(&'a ForkArena<u32, NodeAnnexLane>),
+}
+
+pub(super) struct NodeAnnexCopier<'a> {
+    pool: &'a mut ChunkPool<u32>,
+    source: NodeAnnexCopySource<'a>,
+    destination: &'a mut ForkArena<u32, NodeAnnexLane>,
+    dependency_floor: usize,
+}
+
 #[derive(Clone, Copy)]
 pub struct NodeAnnexView<'a> {
     pool: &'a ChunkPool<u32>,
@@ -425,8 +437,101 @@ impl<'a> NodeAnnexView<'a> {
         self.detach_span(key)
     }
 
+    pub(super) fn resolve_fixed_array<Kind, const N: usize>(
+        self,
+        key: AnnexKey<Kind>,
+    ) -> Option<[u32; N]> {
+        let view = self.list(key)?;
+        if view.len() != N + 1 {
+            return None;
+        }
+        let mut words = [0; N];
+        for (destination, source) in words.iter_mut().zip(view.iter().skip(1)) {
+            *destination = *source;
+        }
+        Some(words)
+    }
+
+    pub(super) fn visit_span<Kind>(
+        self,
+        key: AnnexKey<Kind>,
+        mut visit: impl FnMut(u32),
+    ) -> Option<()> {
+        let view = self.list(key)?;
+        view.iter().skip(1).for_each(|word| visit(*word));
+        Some(())
+    }
+
     pub(super) fn detach_span<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
         let view = self.list(key)?;
         Some(view.iter().skip(1).copied().collect())
+    }
+}
+
+impl<'a> NodeAnnexCopier<'a> {
+    pub(super) fn same_region(
+        pool: &'a mut ChunkPool<u32>,
+        arena: &'a mut ForkArena<u32, NodeAnnexLane>,
+    ) -> Self {
+        Self {
+            pool,
+            source: NodeAnnexCopySource::SameRegion,
+            destination: arena,
+            dependency_floor: usize::MAX,
+        }
+    }
+
+    pub(super) fn between_regions(
+        pool: &'a mut ChunkPool<u32>,
+        source: &'a ForkArena<u32, NodeAnnexLane>,
+        destination: &'a mut ForkArena<u32, NodeAnnexLane>,
+    ) -> Self {
+        Self {
+            pool,
+            source: NodeAnnexCopySource::OtherRegion(source),
+            destination,
+            dependency_floor: usize::MAX,
+        }
+    }
+
+    fn source_view(&self) -> NodeAnnexView<'_> {
+        let arena = match self.source {
+            NodeAnnexCopySource::SameRegion => &*self.destination,
+            NodeAnnexCopySource::OtherRegion(arena) => arena,
+        };
+        NodeAnnexView::new(&*self.pool, arena)
+    }
+
+    pub(super) fn resolve_fixed_array<Kind, const N: usize>(
+        &self,
+        key: AnnexKey<Kind>,
+    ) -> Option<[u32; N]> {
+        self.source_view().resolve_fixed_array(key)
+    }
+
+    pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
+        self.source_view().detach_span(key)
+    }
+
+    pub(super) fn append_fixed<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
+        let mut writer = NodeAnnexWriter::new(self.pool, self.destination);
+        let key = writer.append_fixed(body);
+        if let Some(floor) = writer.dependency_floor() {
+            self.dependency_floor = self.dependency_floor.min(floor);
+        }
+        key
+    }
+
+    pub(super) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
+        let mut writer = NodeAnnexWriter::new(self.pool, self.destination);
+        let key = writer.append_span(body);
+        if let Some(floor) = writer.dependency_floor() {
+            self.dependency_floor = self.dependency_floor.min(floor);
+        }
+        key
+    }
+
+    pub(super) fn dependency_floor(&self) -> Option<usize> {
+        (self.dependency_floor != usize::MAX).then_some(self.dependency_floor)
     }
 }

@@ -3258,14 +3258,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok((dependency_floor != usize::MAX).then_some(dependency_floor))
     }
 
-    pub(crate) fn dependency_floor_for(
-        &self,
-        pool: &ChunkPool<T>,
-        value: &impl RegionValue<Lane>,
-    ) -> Result<Option<usize>, ForkArenaError> {
-        self.region_value_dependency_floor(pool, value)
-    }
-
     pub(crate) fn paired_dependency_floor_for(
         &self,
         pool: &ChunkPool<T>,
@@ -3292,6 +3284,41 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidRegion);
         }
         Ok((paired_dependency_floor != usize::MAX).then_some(paired_dependency_floor))
+    }
+
+    pub(crate) fn dependency_floors_for_region_lists(
+        &self,
+        pool: &ChunkPool<T>,
+        visit_lists: impl FnOnce(&mut dyn FnMut(ArenaListId<Lane>)) -> Option<()>,
+    ) -> Result<(Option<usize>, Option<usize>), ForkArenaError> {
+        let mut dependency_floor = usize::MAX;
+        let mut paired_dependency_floor = usize::MAX;
+        let mut valid = true;
+        let decoded = visit_lists(&mut |list| {
+            if list.is_empty() || !valid {
+                return;
+            }
+            match self.validate_list(pool, list).and_then(|()| {
+                let head = self
+                    .resolved_position(pool, list.head.raw)
+                    .ok_or(ForkArenaError::InvalidRange)?;
+                let meta = pool.payload.validate(list.tail.raw, self.owner)?;
+                Ok((head, meta.paired_dependency_floor))
+            }) {
+                Ok((head, paired)) => {
+                    dependency_floor = dependency_floor.min(head);
+                    paired_dependency_floor = paired_dependency_floor.min(paired);
+                }
+                Err(_) => valid = false,
+            }
+        });
+        if decoded.is_none() || !valid {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok((
+            (dependency_floor != usize::MAX).then_some(dependency_floor),
+            (paired_dependency_floor != usize::MAX).then_some(paired_dependency_floor),
+        ))
     }
 
     pub(crate) fn paired_dependency_floor_for_list(
@@ -3353,6 +3380,36 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.counters.resident_payload_clones.saturating_add(1);
         self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
         self.record_source_nodes_copied(1);
+        Ok(())
+    }
+
+    pub(crate) fn append_constructed_active_list_value(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        value: T,
+        dependency_floor: Option<usize>,
+        paired_dependency_floor: Option<usize>,
+    ) -> Result<(), ForkArenaError> {
+        let mut root = self.active_list_open_mut(builder)?.root;
+        self.append_payload_value_with_dependency(
+            pool,
+            &mut root,
+            value,
+            None,
+            dependency_floor,
+            true,
+        )?;
+        if let Some(paired_dependency_floor) = paired_dependency_floor {
+            let meta = pool.payload.validate_exclusive_lineage_mut(
+                root.tail.raw,
+                self.owner,
+                self.lineage,
+            )?;
+            meta.paired_dependency_floor =
+                meta.paired_dependency_floor.min(paired_dependency_floor);
+        }
+        self.active_list_open_mut(builder)?.root = root;
         Ok(())
     }
 
@@ -5655,6 +5712,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.push_with_identity(value, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_with_dependencies(
         &mut self,
         value: T,
@@ -5673,6 +5731,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn paired_dependency_floor_for(
         &self,
         source: &impl RegionValue<Lane>,
@@ -5680,6 +5739,7 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.arena.paired_dependency_floor_for(self.pool, source)
     }
 
+    #[cfg(test)]
     pub(crate) fn record_paired_dependency(
         &mut self,
         paired_dependency_floor: Option<usize>,

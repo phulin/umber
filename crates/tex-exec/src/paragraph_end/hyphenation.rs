@@ -38,21 +38,21 @@ enum HyphenationScanNode {
 }
 
 impl HyphenationScanNode {
-    fn from_node(node: &Node) -> Self {
-        match node {
-            Node::Whatsit(tex_state::node::Whatsit::Language {
+    fn from_node(node: tex_state::page_node_arena::PageMaterialNodeRef<'_>) -> Self {
+        if let Some((language, left_hyphen_min, right_hyphen_min)) = node.language() {
+            Self::Language {
                 language,
-                left_hyphen_min,
-                right_hyphen_min,
-            }) => Self::Language {
-                language: *language,
-                left: usize::from((*left_hyphen_min).max(1)),
-                right: usize::from((*right_hyphen_min).max(1)),
-            },
-            Node::MathOn(_) => Self::MathOn,
-            Node::MathOff(_) => Self::MathOff,
-            Node::Glue { .. } => Self::Glue,
-            _ => Self::Other,
+                left: usize::from(left_hyphen_min.max(1)),
+                right: usize::from(right_hyphen_min.max(1)),
+            }
+        } else if node.is_math_on() {
+            Self::MathOn
+        } else if node.is_math_off() {
+            Self::MathOff
+        } else if node.is_glue() {
+            Self::Glue
+        } else {
+            Self::Other
         }
     }
 }
@@ -108,7 +108,7 @@ impl HyphenationWalk<'_, '_> {
                     .page_node_span_chunk_node(source, chunk, offset)
                     .expect("hyphenation source chunk remains live");
                 debug_assert_eq!(resolved, index);
-                HyphenationScanNode::from_node(&node)
+                HyphenationScanNode::from_node(node)
             };
             match observed {
                 HyphenationScanNode::Language {
@@ -440,24 +440,31 @@ fn project_physical_chunk_prefix<G>(
             None
         };
         if post_override.is_some() || pre_projection.is_some() {
-            let mut replacement = {
+            let (kind, mut pre, mut post, replace, physical_replace_count) = {
                 let (resolved, node) = stores
                     .page_node_span_chunk_node(semantic, &chunk, offset)
                     .expect("hyphenated paragraph source chunk remains live");
                 debug_assert_eq!(resolved, index);
-                node.clone()
-            };
-            let Node::Disc { pre, post, .. } = &mut replacement else {
-                unreachable!("physical projection targets a discretionary")
+                node.discretionary()
+                    .expect("physical projection targets a discretionary")
             };
             if let Some(projected) = post_override {
-                *post = projected;
+                post = projected;
                 *override_index += 1;
             }
             if let Some(projected) = pre_projection {
-                *pre = projected;
+                pre = projected;
             }
-            stores.push_page_active_list(physical, replacement);
+            stores.push_page_active_list(
+                physical,
+                Node::Disc {
+                    kind,
+                    pre,
+                    post,
+                    replace,
+                    physical_replace_count,
+                },
+            );
             *retained_start = index + 1;
         }
     }
@@ -480,13 +487,7 @@ fn physical_pre_break_pending<G>(
             .page_node_span_chunk_node(semantic, chunk, offset)
             .ok()?;
         debug_assert_eq!(resolved, index);
-        let Node::Disc {
-            kind: DiscKind::AutomaticHyphen,
-            replace,
-            physical_replace_count: 2,
-            ..
-        } = node
-        else {
+        let Some((DiscKind::AutomaticHyphen, _, _, replace, 2)) = node.discretionary() else {
             return None;
         };
         let replacement = stores
@@ -515,22 +516,19 @@ fn physical_pre_break_pending<G>(
             .page_node_span_chunk_node(semantic, previous, previous_offset)
             .ok()?;
         debug_assert_eq!(resolved, index - 1);
-        match node {
-            Node::Char { font, ch, origin } => (font, vec![PendingHChar { font, ch, origin }]),
-            Node::Lig {
-                font,
-                orig,
-                origins,
-                ..
-            } => (
-                font,
-                orig.iter()
-                    .copied()
-                    .zip(origins.iter().copied())
-                    .map(|(ch, origin)| PendingHChar { font, ch, origin })
-                    .collect(),
-            ),
-            _ => return None,
+        if let Some((font, ch, origin)) = node.character() {
+            (font, vec![PendingHChar { font, ch, origin }])
+        } else {
+            let mut pending = Vec::new();
+            let font = node.visit_ligature_source(|ch, origin| {
+                pending.push(PendingHChar {
+                    font: tex_state::font::NULL_FONT,
+                    ch,
+                    origin,
+                });
+            })?;
+            pending.iter_mut().for_each(|entry| entry.font = font);
+            (font, pending)
         }
     };
     let hyphen = usable_hyphen_char(stores, font)?;

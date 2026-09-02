@@ -164,6 +164,11 @@ fn sequence_inverse_power(mut exponent: usize) -> u64 {
 
 #[must_use]
 pub(crate) fn semantic_node_identity<List: Hash>(node: &Node<List>) -> u64 {
+    semantic_value_identity(node)
+}
+
+#[must_use]
+pub(crate) fn semantic_value_identity(value: &impl Hash) -> u64 {
     let state = RandomState::with_seeds(
         0x756d_6265_725f_6e6f,
         0x6465_5f73_656d_616e,
@@ -172,7 +177,7 @@ pub(crate) fn semantic_node_identity<List: Hash>(node: &Node<List>) -> u64 {
     );
     let mut hasher = state.build_hasher();
     hasher.write(NODE_SEMANTIC_IDENTITY_DOMAIN);
-    node.hash(&mut hasher);
+    value.hash(&mut hasher);
     hasher.finish()
 }
 

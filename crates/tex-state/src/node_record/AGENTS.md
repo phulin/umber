@@ -8,7 +8,8 @@ typed word-annex codec boundary. Keep the resident record layout, header and
 scalar helpers in `layout.rs`; annex keys, markers, fixed payload codecs, and
 the standalone annex proof arena in `annex.rs`; outer node codecs in
 `node_codec.rs`; whatsit, PDF, byte, and UTF-8 codecs in
-`whatsit_codec.rs`; and private round-trip/layout tests in `tests.rs`.
+`whatsit_codec.rs`; semantic hashing directly over borrowed compact records in
+`semantic.rs`; and private round-trip/layout tests in `tests.rs`.
 
 Pool-stable logical tables belong in sibling `logical_node_table.rs` and
 aggregate ownership marks or transfer receipts belong in sibling

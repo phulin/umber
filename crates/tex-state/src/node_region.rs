@@ -10,12 +10,15 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena, ForkArenaCounters,
-    ForkArenaError, PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
+    ActiveListBuilder, AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool,
+    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, PageMaterialLane, RegionValue,
+    SealedBoundary, SequenceSummaryWork,
 };
 use crate::node::Node;
-use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
-use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
+#[cfg(test)]
+use crate::node_record::NodeAnnexWriter;
+use crate::node_record::{NodeAnnexView, NodeRecord};
+use crate::node_sequence::SemanticSequenceIdentity;
 use crate::page_node_arena::PageListId;
 
 #[cfg(test)]
@@ -1366,23 +1369,20 @@ fn copy_list_recursive<Source, Destination>(
     if stack.contains(&list) {
         return Err(ForkArenaError::InvalidRegion);
     }
-    let annex = NodeAnnexView::new(annex_pool, source_annex);
-    let source_nodes = source
-        .list(pool, list.coordinate())?
-        .iter()
-        .map(|record| {
-            record
-                .decode_owned(annex)
-                .ok_or(ForkArenaError::InvalidRange)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let source_len = source_nodes.len();
     let mut source_children = Vec::new();
-    source_nodes
-        .iter()
-        .for_each(|node| node.visit_node_lists(|child| source_children.push(*child)));
+    if let Some(tail) = source.admitted_tail_chunk(pool, list.coordinate())? {
+        collect_copy_children(
+            pool,
+            annex_pool,
+            source,
+            source_annex,
+            list.coordinate(),
+            &tail,
+            &mut source_children,
+        )?;
+    }
     stack.push(list);
-    let mut copied_count = source_len;
+    let mut copied_count = list.len();
     for child in &mut source_children {
         match copy_list_recursive::<Source, Destination>(
             pool,
@@ -1408,43 +1408,127 @@ fn copy_list_recursive<Source, Destination>(
     stack.pop();
 
     let mut copied_children = source_children.into_iter();
-    let mut identity = semantic_identity_enabled.then(SemanticSequenceIdentity::empty);
-    let mut builder = destination.begin_builder(pool)?;
-    for mut node in source_nodes {
-        let mut missing_replacement = false;
-        node.visit_node_lists_mut(|child| {
-            if let Some(replacement) = copied_children.next() {
-                *child = replacement;
-            } else {
-                missing_replacement = true;
+    let mut builder = ActiveListBuilder::vacant();
+    destination.open_active_list(pool, &mut builder)?;
+    if let Some(tail) = source.admitted_tail_chunk(pool, list.coordinate())? {
+        copy_record_chunk_prefix(
+            pool,
+            annex_pool,
+            source,
+            source_annex,
+            destination,
+            destination_annex,
+            list.coordinate(),
+            &tail,
+            &mut builder,
+            &mut copied_children,
+        )?;
+    }
+    destination.finalize_active_list(pool, &mut builder)?;
+    let coordinate = builder.take_unique_sealed()?.publish();
+    if copied_children.next().is_some() {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    let identity = if semantic_identity_enabled {
+        match list.semantic_identity() {
+            Some(hash) => Some(SemanticSequenceIdentity::from_raw(hash, list.len())),
+            None => {
+                let annex = NodeAnnexView::new(annex_pool, destination_annex);
+                let mut identity = SemanticSequenceIdentity::empty();
+                destination.list(pool, coordinate)?.for_each(|record| {
+                    identity.push_back(record.semantic_identity(annex));
+                });
+                Some(identity)
             }
-        });
-        if missing_replacement {
-            return Err(ForkArenaError::InvalidRegion);
         }
-        if let Some(sequence_identity) = identity.as_mut() {
-            let node_identity = semantic_node_identity(&node);
-            sequence_identity.push_back(node_identity);
-        }
-        let child_annex_dependency_floor = builder.paired_dependency_floor_for(&node)?;
-        let (record, annex_dependency_floor) = {
-            let mut annex = NodeAnnexWriter::new(annex_pool, destination_annex);
-            let record = NodeRecord::encode_owned(node.clone(), &mut annex);
-            (record, annex.dependency_floor())
-        };
-        builder.push_with_dependencies(record, &node)?;
-        builder.record_paired_dependency(
+    } else {
+        None
+    };
+    Ok((PageListId::from_parts(coordinate, identity), copied_count))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_copy_children(
+    pool: &ChunkPool<RegionNode>,
+    annex_pool: &ChunkPool<u32>,
+    source: &ForkArena<RegionNode, PageMaterialLane>,
+    source_annex: &ForkArena<u32, NodeAnnexLane>,
+    list: crate::fork_arena::ArenaListId<PageMaterialLane>,
+    cursor: &AdmittedListChunkCursor<PageMaterialLane>,
+    children: &mut Vec<PageListId>,
+) -> Result<(), ForkArenaError> {
+    if let Some(previous) = source.admitted_previous_chunk(pool, cursor)? {
+        collect_copy_children(
+            pool,
+            annex_pool,
+            source,
+            source_annex,
+            list,
+            &previous,
+            children,
+        )?;
+    }
+    let annex = NodeAnnexView::new(annex_pool, source_annex);
+    for offset in 0..cursor.len() {
+        let (_, record) = source.admitted_chunk_value(pool, list, cursor, offset)?;
+        record
+            .visit_node_lists(annex, |child| children.push(child))
+            .ok_or(ForkArenaError::InvalidRange)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy_record_chunk_prefix(
+    pool: &mut ChunkPool<RegionNode>,
+    annex_pool: &mut ChunkPool<u32>,
+    source: &ForkArena<RegionNode, PageMaterialLane>,
+    source_annex: &ForkArena<u32, NodeAnnexLane>,
+    destination: &mut ForkArena<RegionNode, PageMaterialLane>,
+    destination_annex: &mut ForkArena<u32, NodeAnnexLane>,
+    list: crate::fork_arena::ArenaListId<PageMaterialLane>,
+    cursor: &AdmittedListChunkCursor<PageMaterialLane>,
+    builder: &mut ActiveListBuilder<RegionNode, PageMaterialLane>,
+    copied_children: &mut impl Iterator<Item = PageListId>,
+) -> Result<(), ForkArenaError> {
+    if let Some(previous) = source.admitted_previous_chunk(pool, cursor)? {
+        copy_record_chunk_prefix(
+            pool,
+            annex_pool,
+            source,
+            source_annex,
+            destination,
+            destination_annex,
+            list,
+            &previous,
+            builder,
+            copied_children,
+        )?;
+    }
+    for offset in 0..cursor.len() {
+        let record = *source.admitted_chunk_value(pool, list, cursor, offset)?.1;
+        let (record, annex_dependency_floor) = record
+            .reencode_between_regions(annex_pool, source_annex, destination_annex, |_| {
+                copied_children.next()
+            })
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let destination_annex_view = NodeAnnexView::new(annex_pool, destination_annex);
+        let (dependency_floor, child_annex_dependency_floor) = destination
+            .dependency_floors_for_region_lists(pool, |visit| {
+                record.visit_node_lists(destination_annex_view, |child| visit(child.coordinate()))
+            })?;
+        destination.append_constructed_active_list_value(
+            pool,
+            builder,
+            record,
+            dependency_floor,
             [annex_dependency_floor, child_annex_dependency_floor]
                 .into_iter()
                 .flatten()
                 .min(),
         )?;
     }
-    let coordinate = builder.seal()?;
-    if copied_children.next().is_some() {
-        return Err(ForkArenaError::InvalidRegion);
-    }
-    Ok((PageListId::from_parts(coordinate, identity), copied_count))
+    Ok(())
 }
 
 impl RegionValue<PageMaterialLane> for RegionNode {

@@ -24,6 +24,84 @@ use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
 type PageMaterialNode = NodeRecord<PageMaterialLane>;
 type OwnedPageMaterialNode = Node<PageListId>;
 
+/// Short-lived projection of one admitted compact page-material record.
+///
+/// The projection retains the record and annex borrows instead of expanding
+/// the record into the former 168-byte owned node carrier. Callers decode only
+/// the fields needed by their scan.
+#[derive(Clone, Copy)]
+pub struct PageMaterialNodeRef<'a> {
+    record: &'a PageMaterialNode,
+    annex: NodeAnnexView<'a>,
+}
+
+impl PageMaterialNodeRef<'_> {
+    #[must_use]
+    pub fn character(self) -> Option<(crate::ids::FontId, char, crate::token::OriginId)> {
+        self.record.character()
+    }
+
+    #[must_use]
+    pub fn is_font_kern(self) -> bool {
+        self.record.is_font_kern()
+    }
+
+    #[must_use]
+    pub fn is_glue(self) -> bool {
+        self.record.is_glue()
+    }
+
+    #[must_use]
+    pub fn glue_spec_kind(self) -> Option<(crate::glue::GlueSpec, crate::node::GlueKind)> {
+        self.record.glue_spec_kind(self.annex)
+    }
+
+    #[must_use]
+    pub fn glue_leader(self) -> Option<Option<crate::node::LeaderPayload<PageListId>>> {
+        self.record.glue_leader(self.annex)
+    }
+
+    #[must_use]
+    pub fn is_math_on(self) -> bool {
+        self.record.is_math_on()
+    }
+
+    #[must_use]
+    pub fn is_math_off(self) -> bool {
+        self.record.is_math_off()
+    }
+
+    #[must_use]
+    pub fn language(self) -> Option<(u8, u8, u8)> {
+        self.record.language()
+    }
+
+    #[must_use]
+    pub fn math_list(self) -> Option<crate::math::MathListNode<PageListId>> {
+        self.record.math_list(self.annex)
+    }
+
+    #[must_use]
+    pub fn discretionary(
+        self,
+    ) -> Option<(
+        crate::node::DiscKind,
+        PageListId,
+        PageListId,
+        PageListId,
+        u8,
+    )> {
+        self.record.discretionary(self.annex)
+    }
+
+    pub fn visit_ligature_source(
+        self,
+        visit: impl FnMut(char, crate::token::OriginId),
+    ) -> Option<crate::ids::FontId> {
+        self.record.visit_ligature_source(self.annex, visit)
+    }
+}
+
 /// Scalar publication evidence derived from the completed resident node.
 pub(crate) struct ConstructedNodeMetadata {
     pub(crate) tex82_words: (usize, usize),
@@ -1452,28 +1530,29 @@ impl<'a> PageMaterialArena<'a> {
             if !selected.contains(&index) {
                 continue;
             }
-            let dependency_floor = self
+            let record = *node.record;
+            let annex = node.annex;
+            let (dependency_floor, child_annex_dependency_floor) = self
                 .region
                 .pub_arena
-                .dependency_floor_for(&self.pool.chunks, &node)?;
-            let child_annex_dependency_floor = self
-                .region
-                .pub_arena
-                .paired_dependency_floor_for(&self.pool.chunks, &node)?;
+                .dependency_floors_for_region_lists(&self.pool.chunks, |visit| {
+                    record.visit_node_lists(annex, |child| visit(child.coordinate()))
+                })?;
             let item_identity = selected_identity
                 .as_ref()
-                .map(|_| semantic_node_identity(&node));
+                .map(|_| semantic_record_identity(&record, annex));
             if let (Some(identity), Some(item_identity)) =
                 (selected_identity.as_mut(), item_identity)
             {
                 identity.push_back(item_identity);
             }
-            let (record, annex_dependency_floor) = {
-                let mut annex =
-                    NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-                let record = NodeRecord::encode_owned(node, &mut annex);
-                (record, annex.dependency_floor())
-            };
+            let (record, annex_dependency_floor) = record
+                .reencode_same_region(
+                    &mut self.pool.annex_chunks,
+                    &mut self.region.annex_arena,
+                    Some,
+                )
+                .ok_or(ForkArenaError::InvalidRange)?;
             self.region
                 .pub_arena
                 .append_reencoded_active_list_copy_value(
@@ -1840,7 +1919,7 @@ impl<'a> PageMaterialArena<'a> {
         span: PageListSpan,
         cursor: &PageListChunkCursor,
         offset: usize,
-    ) -> Result<(usize, OwnedPageMaterialNode), ForkArenaError> {
+    ) -> Result<(usize, PageMaterialNodeRef<'_>), ForkArenaError> {
         if cursor.span != span {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -1852,9 +1931,10 @@ impl<'a> PageMaterialArena<'a> {
         )?;
         Ok((
             index,
-            record
-                .decode_owned(self.annex_view())
-                .ok_or(ForkArenaError::InvalidRange)?,
+            PageMaterialNodeRef {
+                record,
+                annex: self.annex_view(),
+            },
         ))
     }
 
@@ -1955,11 +2035,7 @@ fn owned_node_children_are_live(
 }
 
 fn semantic_record_identity(record: &PageMaterialNode, annex: NodeAnnexView<'_>) -> u64 {
-    semantic_node_identity(
-        &record
-            .decode_owned(annex)
-            .expect("published compact node resolves its typed annex"),
-    )
+    record.semantic_identity(annex)
 }
 
 fn materialize_page_list(
