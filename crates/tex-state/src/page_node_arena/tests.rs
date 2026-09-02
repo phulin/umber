@@ -51,7 +51,7 @@ fn boxed(children: PageListId) -> PageMaterialNode {
 }
 
 #[test]
-fn restored_resident_slots_reallocate_only_exact_superblocks() {
+fn warmed_resident_slot_construction_is_allocation_free() {
     const ALLOCATION_OWNER: usize = 15;
     const NODES: usize = 4_096;
 
@@ -93,10 +93,7 @@ fn restored_resident_slots_reallocate_only_exact_superblocks() {
             calls: after.calls.saturating_sub(before.calls),
             requested_bytes: after.requested_bytes.saturating_sub(before.requested_bytes),
         },
-        AllocationMeasurement {
-            calls: 2,
-            requested_bytes: 2 * tex_dense_prefix::SUPERBLOCK_BYTES as u64,
-        }
+        AllocationMeasurement::default()
     );
     assert_eq!(arena.list(list).expect("measured list view").len(), NODES);
     assert_eq!(arena.counters().source_nodes_copied, 0);
@@ -454,10 +451,10 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
         );
         assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 1);
         let allocation_calls = allocation_after.calls - allocation_before.calls;
-        assert!(allocation_calls <= (size + 1).div_ceil(2_048) as u64);
+        assert_eq!(allocation_calls, 0);
         assert_eq!(
             allocation_after.requested_bytes - allocation_before.requested_bytes,
-            allocation_calls * tex_dense_prefix::SUPERBLOCK_BYTES as u64
+            0
         );
         eprintln!(
             "PAGE_SHARED_COPY_SCALE nodes={size} copied_nodes={} allocation_calls={allocation_calls} allocation_bytes={}",
@@ -513,13 +510,9 @@ fn destination_construction_is_warmed_and_linear_across_chunks() {
     for count in [1, 4_096] {
         let mark = arena.operation_mark();
         let before = arena.counters();
-        let bytes_before = arena.allocated_heap_bytes();
         construct(&mut arena, count);
         let after = arena.counters();
-        assert_eq!(
-            arena.allocated_heap_bytes() - bytes_before,
-            count.div_ceil(2_048) * tex_dense_prefix::SUPERBLOCK_BYTES
-        );
+        assert_eq!(arena.allocated_heap_bytes(), warmed_bytes);
         assert_eq!(after.whole_payload_moves - before.whole_payload_moves, 0);
         assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 0);
         assert_eq!(

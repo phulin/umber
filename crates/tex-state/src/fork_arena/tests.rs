@@ -128,7 +128,7 @@ fn coarse_pool_pages_hold_many_stable_chunks_and_reject_stale_keys() {
 }
 
 #[test]
-fn final_logical_chunk_release_drops_optional_superblock_and_reuses_stable_slot() {
+fn final_logical_chunk_release_warms_optional_superblock_and_reuses_stable_slot() {
     let mut pool =
         ChunkPool::<u64>::with_node_pool_chunk_bytes(32_768, super::NodePoolStorageClass::Node);
     let first = pool.payload.allocate(7, 9).expect("first chunk");
@@ -164,9 +164,8 @@ fn final_logical_chunk_release_drops_optional_superblock_and_reuses_stable_slot(
         "a physical block remains while its other logical chunk is live"
     );
     assert_eq!(pool.payload.release(second, 7), Ok(1));
-    assert_eq!(pool.payload.live_page_payload_bytes(), 0);
-    assert_eq!(pool.payload.vacant_page_payload_bytes(), 0);
-    assert!(pool.allocated_heap_bytes() < live_bytes);
+    assert_eq!(pool.payload.vacant_page_payload_bytes(), 65_536);
+    assert!(pool.allocated_heap_bytes() >= live_bytes);
     let vacant_bytes = pool.allocated_heap_bytes();
     assert_eq!(pool.page_count(), 1, "stable slot indexing remains intact");
     assert!(pool.payload.get(first, 7, 0).is_none());
@@ -179,16 +178,13 @@ fn final_logical_chunk_release_drops_optional_superblock_and_reuses_stable_slot(
         .expect("replacement physical block");
     assert_eq!(replacement_physical.slot, physical.slot);
     assert_ne!(replacement_physical.incarnation, physical.incarnation);
-    assert_eq!(
-        pool.allocated_heap_bytes() - vacant_bytes,
-        tex_dense_prefix::SUPERBLOCK_BYTES
-    );
+    assert_eq!(pool.allocated_heap_bytes(), vacant_bytes);
     assert!(pool.payload.get(first, 7, 0).is_none());
     assert!(pool.payload.get(second, 7, 0).is_none());
 }
 
 #[test]
-fn packed_superblock_release_returns_backing_and_rejects_stale_coordinate() {
+fn packed_superblock_release_warms_backing_and_rejects_stale_coordinate() {
     let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
         65_536,
         super::NodePoolStorageClass::Annex,
@@ -202,9 +198,8 @@ fn packed_superblock_release_returns_backing_and_rejects_stale_coordinate() {
     let live_bytes = pool.allocated_heap_bytes();
 
     arena.retire_region(&mut pool).expect("retire packed arena");
-    assert_eq!(pool.payload.live_page_payload_bytes(), 0);
-    assert_eq!(pool.payload.vacant_page_payload_bytes(), 0);
-    assert!(pool.allocated_heap_bytes() < live_bytes);
+    assert_eq!(pool.payload.vacant_page_payload_bytes(), 65_536);
+    assert!(pool.allocated_heap_bytes() >= live_bytes);
     let vacant_bytes = pool.allocated_heap_bytes();
     assert_eq!(pool.page_count(), 1, "physical slot identity is stable");
     assert!(pool.payload.get(stale.head.raw, arena.owner, 0).is_none());
@@ -217,10 +212,7 @@ fn packed_superblock_release_returns_backing_and_rejects_stale_coordinate() {
         .expect("reused packed physical block");
     assert_eq!(replacement_physical.slot, physical.slot);
     assert_ne!(replacement_physical.incarnation, physical.incarnation);
-    assert_eq!(
-        pool.allocated_heap_bytes() - vacant_bytes,
-        tex_dense_prefix::SUPERBLOCK_BYTES
-    );
+    assert_eq!(pool.allocated_heap_bytes(), vacant_bytes);
     assert!(pool.payload.get(stale.head.raw, arena.owner, 0).is_none());
 }
 

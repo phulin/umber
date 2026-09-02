@@ -589,6 +589,7 @@ impl<'owner> NativeCompileSession<'owner> {
             },
         )
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+        session.set_checkpoint_budget(0);
         let format_restore_ns = restore_started.elapsed().as_nanos();
         session
             .add_user_file(name, main.clone())

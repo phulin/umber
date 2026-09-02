@@ -249,23 +249,16 @@ impl<T> ExactSizeIterator for DenseBlockIter<'_, T> {
 struct DenseBlock<T> {
     incarnation: u32,
     live_chunks: u32,
-    /// A release-on-vacancy pool keeps only this slot's stable identity after
-    /// its final logical owner retires; other arena policies may keep an empty
-    /// backing allocation for warmed operation-local reuse.
-    block: Option<DenseBlockPayload<T>>,
+    block: DenseBlockPayload<T>,
 }
 
 impl<T> DenseBlock<T> {
     fn payload(&self) -> &DenseBlockPayload<T> {
-        self.block
-            .as_ref()
-            .expect("validated physical block has backing storage")
+        &self.block
     }
 
     fn payload_mut(&mut self) -> &mut DenseBlockPayload<T> {
-        self.block
-            .as_mut()
-            .expect("validated physical block has backing storage")
+        &mut self.block
     }
 }
 
@@ -277,14 +270,12 @@ impl<T> DenseBlock<T> {
 /// representation across its resident values.
 struct ChunkStorage<T> {
     layout: ChunkStorageLayout,
-    release_vacant_payload: bool,
     logical_space: u32,
     logical_rows: Vec<LogicalChunkRow>,
     logical_free: Vec<u32>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
     blocks: Vec<DenseBlock<T>>,
-    backed_blocks: usize,
     free_blocks: Vec<u32>,
     free_ranges: Vec<(DenseBlockKey, u32)>,
     tail_block: Option<DenseBlockKey>,
@@ -360,7 +351,6 @@ impl<T> ChunkStorage<T> {
         let slots_per_chunk = (chunk_bytes / slot_bytes).max(1);
         Self {
             layout,
-            release_vacant_payload: false,
             // Reuse the workspace's canonical space allocator and coordinate
             // vocabulary. Payload resolution remains in this transitional
             // adapter until the NodeRecord table cutover.
@@ -370,7 +360,6 @@ impl<T> ChunkStorage<T> {
             chunk_bytes,
             slots_per_chunk,
             blocks: Vec::new(),
-            backed_blocks: 0,
             free_blocks: Vec::new(),
             free_ranges: Vec::new(),
             tail_block: None,
@@ -400,16 +389,13 @@ impl<T> ChunkStorage<T> {
         #[cfg(feature = "profiling")]
         {
             let mut storage = Self::with_layout(chunk_bytes, layout);
-            storage.release_vacant_payload = true;
             storage.node_pool_storage_class = Some(class);
             storage
         }
         #[cfg(not(feature = "profiling"))]
         {
             let _ = class;
-            let mut storage = Self::with_layout(chunk_bytes, layout);
-            storage.release_vacant_payload = true;
-            storage
+            Self::with_layout(chunk_bytes, layout)
         }
     }
 
@@ -583,8 +569,7 @@ impl<T> ChunkStorage<T> {
 
     #[cfg(any(test, feature = "profiling"))]
     fn live_page_payload_bytes(&self) -> usize {
-        self.backed_blocks
-            .saturating_sub(self.vacant_page_payload_block_count())
+        self.live_page_count()
             .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES)
     }
 
@@ -594,9 +579,27 @@ impl<T> ChunkStorage<T> {
             .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES)
     }
 
-    #[cfg(any(test, feature = "profiling"))]
     fn vacant_page_payload_block_count(&self) -> usize {
-        self.backed_blocks.saturating_sub(self.live_page_count())
+        self.free_blocks.len()
+    }
+
+    #[cfg(feature = "profiling")]
+    fn profiling_physical_token(&self, key: LogicalChunkId) -> Option<u64> {
+        let (physical, _) = self.mapping(key).ok()?;
+        Some((u64::from(physical.slot) << 32) | u64::from(physical.incarnation))
+    }
+
+    #[cfg(feature = "profiling")]
+    fn profiling_live_physical_tokens(&self) -> Vec<u64> {
+        self.blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.live_chunks != 0)
+            .filter_map(|(slot, block)| {
+                let slot = u32::try_from(slot).ok()?;
+                Some((u64::from(slot) << 32) | u64::from(block.incarnation))
+            })
+            .collect()
     }
 
     #[cfg(feature = "profiling")]
@@ -632,7 +635,8 @@ impl<T> ChunkStorage<T> {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<DenseBlock<T>>())
                     .saturating_add(
-                        self.backed_blocks
+                        self.blocks
+                            .len()
                             .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES),
                     )
                     .saturating_add(
@@ -657,29 +661,16 @@ impl<T> ChunkStorage<T> {
         if let Some(&slot) = self.free_blocks.last() {
             let entry = self
                 .blocks
-                .get(slot as usize)
+                .get_mut(slot as usize)
                 .ok_or(ForkArenaError::InvalidChunk)?;
             let incarnation = entry
                 .incarnation
                 .checked_add(1)
                 .ok_or(ForkArenaError::CapacityOverflow)?;
             debug_assert_eq!(entry.live_chunks, 0);
-            debug_assert!(entry.block.as_ref().is_none_or(DenseBlockPayload::is_empty));
-            let block = entry
-                .block
-                .is_none()
-                .then(|| self.allocate_dense_block_payload())
-                .transpose()?;
-            let entry = self
-                .blocks
-                .get_mut(slot as usize)
-                .ok_or(ForkArenaError::InvalidChunk)?;
+            debug_assert!(entry.block.is_empty());
             self.free_blocks.pop();
             entry.incarnation = incarnation;
-            if let Some(block) = block {
-                entry.block = Some(block);
-                self.backed_blocks = self.backed_blocks.saturating_add(1);
-            }
             #[cfg(feature = "profiling")]
             self.record_node_pool_storage(NodePoolStorageEvent::ReuseAllocation);
             return Ok(DenseBlockKey { slot, incarnation });
@@ -690,9 +681,8 @@ impl<T> ChunkStorage<T> {
         self.blocks.push(DenseBlock {
             incarnation: 1,
             live_chunks: 0,
-            block: Some(block),
+            block,
         });
-        self.backed_blocks = self.backed_blocks.saturating_add(1);
         #[cfg(feature = "profiling")]
         self.record_node_pool_storage(NodePoolStorageEvent::FreshAllocation);
         Ok(DenseBlockKey {
@@ -717,7 +707,7 @@ impl<T> ChunkStorage<T> {
             .blocks
             .get(key.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if block.incarnation != key.incarnation || block.block.is_none() {
+        if block.incarnation != key.incarnation {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(block)
@@ -731,7 +721,7 @@ impl<T> ChunkStorage<T> {
             .blocks
             .get_mut(key.slot as usize)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        if block.incarnation != key.incarnation || block.block.is_none() {
+        if block.incarnation != key.incarnation {
             return Err(ForkArenaError::InvalidChunk);
         }
         Ok(block)
@@ -1290,7 +1280,6 @@ impl<T> ChunkStorage<T> {
         meta.used = 0;
         meta.sequence_summary = None;
         meta.previous_in_list = None;
-        let release_vacant_payload = self.release_vacant_payload;
         let block = self.dense_block_mut(physical)?;
         block.live_chunks = block
             .live_chunks
@@ -1298,13 +1287,6 @@ impl<T> ChunkStorage<T> {
             .ok_or(ForkArenaError::InvalidChunk)?;
         if block.live_chunks == 0 {
             block.payload_mut().truncate(0);
-            if release_vacant_payload {
-                block.block = None;
-                self.backed_blocks = self
-                    .backed_blocks
-                    .checked_sub(1)
-                    .expect("live physical block is counted");
-            }
             self.free_ranges.retain(|(key, _)| *key != physical);
             self.free_blocks.push(physical.slot);
             if self.tail_block == Some(physical) {
@@ -1671,6 +1653,33 @@ impl<T> ChunkPool<T> {
     #[must_use]
     pub fn allocated_heap_bytes(&self) -> usize {
         self.payload.allocated_heap_bytes()
+    }
+
+    /// Heap capacity retained by live logical owners plus stable pool
+    /// metadata. Warm vacant payload backing is reusable capacity, not a
+    /// checkpoint owner charge.
+    #[must_use]
+    pub(crate) fn live_owner_heap_bytes(&self) -> usize {
+        self.payload.allocated_heap_bytes().saturating_sub(
+            self.payload
+                .vacant_page_payload_block_count()
+                .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_page_count(&self) -> usize {
+        self.payload.live_page_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn vacant_page_payload_block_count(&self) -> usize {
+        self.payload.vacant_page_payload_block_count()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_live_physical_tokens(&self) -> Vec<u64> {
+        self.payload.profiling_live_physical_tokens()
     }
 }
 
@@ -2536,6 +2545,38 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     pub(crate) fn live_payload_chunks(&self) -> usize {
         self.live_payload_len()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_current_physical_tokens(&self, pool: &ChunkPool<T>) -> Vec<u64> {
+        let sets = match &self.ownership {
+            ForkOwnership::Accepted(accepted) => [&accepted.payload[..], &[][..]],
+            ForkOwnership::Forked {
+                prefix, current, ..
+            } => [&prefix.payload[..], &current.payload[..]],
+        };
+        sets.into_iter()
+            .flatten()
+            .filter_map(|key| pool.payload.profiling_physical_token(*key))
+            .collect()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_prior_physical_tokens(&self, pool: &ChunkPool<T>) -> Vec<u64> {
+        let ForkOwnership::Forked {
+            prefix,
+            detached_prior,
+            ..
+        } = &self.ownership
+        else {
+            return Vec::new();
+        };
+        prefix
+            .payload
+            .iter()
+            .chain(&detached_prior.payload)
+            .filter_map(|key| pool.payload.profiling_physical_token(*key))
+            .collect()
     }
 
     pub(crate) fn rebase_paired_dependency_suffix(

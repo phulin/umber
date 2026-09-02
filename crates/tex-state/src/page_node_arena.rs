@@ -539,6 +539,14 @@ impl PageMaterialRegion {
         self.region.id()
     }
 
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_physical_ownership(
+        &self,
+        pool: &NodePool,
+    ) -> crate::node_region::NodeRegionPhysicalOwnership {
+        self.region.profiling_physical_ownership(pool)
+    }
+
     pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
         self.durable_transitions
     }

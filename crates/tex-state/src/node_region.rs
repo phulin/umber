@@ -92,6 +92,14 @@ pub struct NodePool {
     closure_transitions: ClosureTransitionCounters,
 }
 
+#[cfg(feature = "profiling")]
+pub(crate) struct NodeRegionPhysicalOwnership {
+    pub(crate) current_nodes: Vec<u64>,
+    pub(crate) prior_nodes: Vec<u64>,
+    pub(crate) current_annexes: Vec<u64>,
+    pub(crate) prior_annexes: Vec<u64>,
+}
+
 /// Demand-free observations of explicit closure lifetime transitions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ClosureTransitionCounters {
@@ -145,6 +153,35 @@ impl NodePool {
     #[must_use]
     pub const fn closure_transition_counters(&self) -> ClosureTransitionCounters {
         self.closure_transitions
+    }
+
+    /// Heap capacity owned by the one shared node/annex pool.
+    ///
+    /// The page-history retention owner charges this aggregate once. Individual
+    /// page checkpoints and durable closures must not charge the same backing
+    /// again merely because their disjoint envelopes resolve through it.
+    pub(crate) fn retained_owner_bytes(&self) -> usize {
+        self.chunks
+            .live_owner_heap_bytes()
+            .saturating_add(self.annex_chunks.live_owner_heap_bytes())
+            .saturating_add(
+                self.regions
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<RegionSlot>()),
+            )
+            .saturating_add(
+                self.free_regions
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<u32>()),
+            )
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_live_physical_tokens(&self) -> (Vec<u64>, Vec<u64>) {
+        (
+            self.chunks.profiling_live_physical_tokens(),
+            self.annex_chunks.profiling_live_physical_tokens(),
+        )
     }
 
     pub(crate) fn start_region<Role>(&mut self) -> Result<NodeRegion<Role>, ForkArenaError> {
@@ -334,6 +371,25 @@ impl<Role> NodeRegion<Role> {
     #[must_use]
     pub const fn id(&self) -> NodeRegionId {
         self.id
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn profiling_physical_ownership(
+        &self,
+        pool: &NodePool,
+    ) -> NodeRegionPhysicalOwnership {
+        NodeRegionPhysicalOwnership {
+            current_nodes: self
+                .pub_arena
+                .profiling_current_physical_tokens(&pool.chunks),
+            prior_nodes: self.pub_arena.profiling_prior_physical_tokens(&pool.chunks),
+            current_annexes: self
+                .annex_arena
+                .profiling_current_physical_tokens(&pool.annex_chunks),
+            prior_annexes: self
+                .annex_arena
+                .profiling_prior_physical_tokens(&pool.annex_chunks),
+        }
     }
 
     pub(crate) fn seal_checkpoint_boundary(

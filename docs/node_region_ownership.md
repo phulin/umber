@@ -488,9 +488,9 @@ here.
 
 Logical retained-byte accounting follows the direct owner:
 
-- each live `PageRegion` is charged once for its pool pages, aggregate node and
-  annex envelopes, logical topology metadata, journal storage, and stable slot
-  metadata; vacant slots retain no payload backing;
+- the `PageRegionHistory` shared owner is charged once for live node/annex
+  pool backing plus topology metadata; warm vacant superblocks are reusable
+  capacity and are not charged to restart roots;
 - each checkpoint is charged only for its fixed boundary row and aggregate
   non-node metadata;
 - each durable node region is charged once to its register, form, or history
@@ -545,8 +545,8 @@ preflight, the infallible drop order is:
 3. retire child `OwnedNodeClosure` values and candidate active builders;
 4. settle canonical logical tables and predecessor metadata;
 5. release paired node and annex envelopes; and
-6. return empty NodePool backing allocations and recycle their stable slots
-   with fresh incarnations.
+6. recycle empty NodePool superblocks and their stable slots with fresh
+   incarnations.
 
 For shipout, detached output is built first, held-over material is established
 in the next page region second, and only then may the old page region drop. For
@@ -650,9 +650,9 @@ The deterministic performance gates are:
   later region owners, never the unchanged prefix;
 - rejection returns exact roots, chunk generations, identities, counters, and
   region order; acceptance makes superseded coordinates stale;
-- repeated pages without retained boundaries reach a stable pool slot-metadata
-  high-water after output and held-over evacuation while vacant payload bytes
-  return to zero;
+- repeated pages without retained boundaries reach a stable pool/backing
+  high-water after output and held-over evacuation, with no repeated exact
+  superblock allocation;
 - a unique `\box`/`\unhbox` transfer performs zero node copies, an explicit
   `\copy`/`\unhcopy` copies exactly the selected closure, and a move protected
   by history increments only `history_preservation_nodes_copied`;

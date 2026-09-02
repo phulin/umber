@@ -811,6 +811,7 @@ pub struct VirtualCompileSession<'store> {
     pdf_output_mode: Option<PdfOutputMode>,
     clock: JobClock,
     limits: SessionLimits,
+    checkpoint_budget: usize,
     workspace: ProjectWorkspace,
     font_cached_bytes: usize,
     attempts: u32,
@@ -1030,6 +1031,17 @@ impl<'store> VirtualCompileSession<'store> {
         self.reachability_store.clone()
     }
 
+    /// Selects restart-history retention independently of resource caching.
+    /// One-shot clients keep detached evidence but have no future edit whose
+    /// live restart roots could serve.
+    pub(crate) fn set_checkpoint_budget(&mut self, bytes: usize) {
+        assert!(
+            self.incremental.is_none() && self.candidate.is_none(),
+            "checkpoint retention is selected before execution starts"
+        );
+        self.checkpoint_budget = bytes;
+    }
+
     fn execution_budgets(&self) -> tex_exec::ExecutionBudgets {
         tex_exec::ExecutionBudgets {
             steps: self.limits.engine_steps,
@@ -1115,6 +1127,7 @@ impl<'store> VirtualCompileSession<'store> {
             pdf_output_mode: options.pdf_output_mode,
             clock: options.clock,
             limits,
+            checkpoint_budget: limits.cached_file_bytes,
             workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
             font_cached_bytes: 0,
             attempts: 0,
@@ -2097,7 +2110,7 @@ impl<'store> VirtualCompileSession<'store> {
                     self.main_path.as_str(),
                     self.initial_revision,
                     source,
-                    self.limits.cached_file_bytes,
+                    self.checkpoint_budget,
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
                 session.set_job_clock(self.clock);

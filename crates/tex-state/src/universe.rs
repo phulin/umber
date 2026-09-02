@@ -2713,6 +2713,8 @@ impl<G> Universe<G> {
             .page_region
             .seal_checkpoint()
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))?;
+        #[cfg(feature = "profiling")]
+        self.page_region.record_node_owner_census();
         let page_arena = self
             .page_region
             .arena_checkpoint(page)

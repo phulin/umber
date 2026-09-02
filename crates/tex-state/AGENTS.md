@@ -118,8 +118,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena.rs` and `src/fork_arena/tests.rs`: Safe caller-owned
   fixed-byte-chunk coarse page pools, coordinate-only typed semantic-lane
   arenas, pool-chunk-local owner-relative positions without per-region sparse
-  resolver prefixes, NodePool-only last-lineage return of vacant exact-64-KiB
-  backing while stable slots retain incarnation-based stale rejection,
+  resolver prefixes, NodePool live-owner accounting plus warm exact-64-KiB
+  vacancy reuse while stable slots retain incarnation-based stale rejection,
   resident-slot page payload publication, move-only
   detached active-list builders with explicit pool mutation, constant-time opaque-root admission into stable borrowed
   views whose ordinary reads carry owner-relative chunk/offset cursors without

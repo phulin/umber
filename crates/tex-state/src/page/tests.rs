@@ -1690,6 +1690,58 @@ fn production_uncheckpointed_pages_reuse_pool_at_a_fixed_high_water() {
 }
 
 #[test]
+fn retained_charge_tracks_live_node_backing_without_charging_warm_vacancies() {
+    let mut history = PageRegionHistory::default();
+    let chunk_capacity = history.pool.chunks.chunk_capacity();
+    let retained_before = history.retained_bytes();
+    let _rootless = publish_nodes(
+        &mut history.nodes_mut(),
+        (0..chunk_capacity).map(|value| kern(value as i32)),
+    );
+    let retained_live = history.retained_bytes();
+    let allocated_live = history.pool.chunks.allocated_heap_bytes();
+    assert!(
+        retained_live >= retained_before.saturating_add(tex_dense_prefix::SUPERBLOCK_BYTES),
+        "the shared checkpoint owner must charge its live node superblock"
+    );
+
+    history
+        .release_rootless_current_suffix()
+        .expect("rootless payload retires");
+    let retained_after = history.retained_bytes();
+    assert!(
+        retained_after < retained_live
+            && retained_live.saturating_sub(retained_after)
+                >= tex_dense_prefix::SUPERBLOCK_BYTES.saturating_sub(1024),
+        "retirement removes the semantic owner charge: before={retained_before} live={retained_live} after={retained_after}"
+    );
+    assert!(
+        history.pool.chunks.allocated_heap_bytes() <= allocated_live.saturating_add(1024),
+        "retirement may grow only bounded free-slot metadata while the exact superblock remains warm"
+    );
+}
+
+#[test]
+fn releasing_final_current_checkpoint_immediately_retires_rootless_payload() {
+    let mut history = PageRegionHistory::default();
+    let chunk_capacity = history.pool.chunks.chunk_capacity();
+    let _rootless = publish_nodes(
+        &mut history.nodes_mut(),
+        (0..chunk_capacity).map(|value| kern(value as i32)),
+    );
+    let checkpoint = history.seal_checkpoint().expect("rootless checkpoint");
+    assert_eq!(history.pool.chunks.live_page_count(), 1);
+
+    let receipt = history
+        .release_checkpoint(checkpoint)
+        .expect("final current checkpoint releases");
+    assert_eq!(receipt.rows_released, 1);
+    assert_eq!(receipt.regions_retired, 0);
+    assert_eq!(history.pool.chunks.live_page_count(), 0);
+    assert_eq!(history.pool.chunks.vacant_page_payload_block_count(), 1);
+}
+
+#[test]
 fn rootless_suffix_releases_live_chunks_but_keeps_retained_floor_and_high_water() {
     let mut history = PageRegionHistory::default();
     let chunk_capacity = history.pool.chunks.chunk_capacity();

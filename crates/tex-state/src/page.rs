@@ -1161,6 +1161,20 @@ impl PageRegionHistory {
                 .counters
                 .page_regions_dropped
                 .saturating_add(1);
+        } else if region_index == current
+            && self.regions[region_index].checkpoints.is_empty()
+            && !self.regions[region_index]
+                .builder
+                .retains_page_node_handles()
+        {
+            // The outer history owner just removed the final rollback root.
+            // Do not wait for the next named boundary to discover that this
+            // accepted suffix is rootless: continuous compilation can create
+            // a large second suffix in that interval. Return its logical
+            // envelopes now while leaving their exact backing warm for reuse.
+            self.regions[region_index]
+                .nodes
+                .release_rootless_suffix(&mut self.pool, None)?;
         }
         Ok(PageRegionReleaseReceipt {
             rows_released: 1,
@@ -1361,7 +1375,91 @@ impl PageRegionHistory {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.regions.iter().map(PageRegion::retained_bytes).sum()
+        self.pool.retained_owner_bytes().saturating_add(
+            self.regions
+                .iter()
+                .map(PageRegion::retained_bytes)
+                .fold(0_usize, usize::saturating_add),
+        )
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn record_node_owner_census(&self) {
+        if !crate::measurement::node_pool_owner_census_enabled() {
+            return;
+        }
+        use std::collections::BTreeSet;
+
+        use crate::measurement::{NodePoolOwnerCensus, NodePoolOwnerLaneCensus};
+
+        fn lane(
+            total: Vec<u64>,
+            current: Vec<u64>,
+            prior: Vec<u64>,
+            checkpoint: Vec<u64>,
+        ) -> NodePoolOwnerLaneCensus {
+            let total = total.into_iter().collect::<BTreeSet<_>>();
+            let current = current.into_iter().collect::<BTreeSet<_>>();
+            let prior = prior.into_iter().collect::<BTreeSet<_>>();
+            let checkpoint = checkpoint.into_iter().collect::<BTreeSet<_>>();
+            let page_union = current
+                .union(&prior)
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .union(&checkpoint)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            NodePoolOwnerLaneCensus {
+                live_blocks: total.len() as u64,
+                current_generation_blocks: current.len() as u64,
+                prior_generation_blocks: prior.len() as u64,
+                checkpoint_history_blocks: checkpoint.len() as u64,
+                current_prior_shared_blocks: current.intersection(&prior).count() as u64,
+                current_checkpoint_shared_blocks: current.intersection(&checkpoint).count() as u64,
+                prior_checkpoint_shared_blocks: prior.intersection(&checkpoint).count() as u64,
+                page_owner_union_blocks: page_union.len() as u64,
+                durable_or_other_blocks: total.difference(&page_union).count() as u64,
+            }
+        }
+
+        let current = self
+            .regions
+            .last()
+            .expect("page history always has a current region")
+            .nodes
+            .profiling_physical_ownership(&self.pool);
+        let mut checkpoint_nodes = Vec::new();
+        let mut checkpoint_annexes = Vec::new();
+        for region in &self.regions[..self.regions.len().saturating_sub(1)] {
+            let ownership = region.nodes.profiling_physical_ownership(&self.pool);
+            checkpoint_nodes.extend(ownership.current_nodes);
+            checkpoint_nodes.extend(ownership.prior_nodes);
+            checkpoint_annexes.extend(ownership.current_annexes);
+            checkpoint_annexes.extend(ownership.prior_annexes);
+        }
+        let (total_nodes, total_annexes) = self.pool.profiling_live_physical_tokens();
+        crate::measurement::record_node_pool_owner_census(NodePoolOwnerCensus {
+            samples: 0,
+            page_regions: self.regions.len() as u64,
+            retained_page_regions: self.regions.len().saturating_sub(1) as u64,
+            checkpoint_rows: self
+                .regions
+                .iter()
+                .map(|region| region.checkpoints.len() as u64)
+                .sum(),
+            nodes: lane(
+                total_nodes,
+                current.current_nodes,
+                current.prior_nodes,
+                checkpoint_nodes,
+            ),
+            annexes: lane(
+                total_annexes,
+                current.current_annexes,
+                current.prior_annexes,
+                checkpoint_annexes,
+            ),
+        });
     }
 
     #[must_use]
@@ -1408,6 +1506,8 @@ impl PageRegionHistory {
                 .expect("page history always has a current region")
                 .prepare_production_successor(&mut self.pool)?,
         );
+        #[cfg(feature = "profiling")]
+        self.record_node_owner_census();
         Ok(())
     }
 

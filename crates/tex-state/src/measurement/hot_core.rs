@@ -1,6 +1,9 @@
 //! Profiling-only allocation and structural census for the canonical engine.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 use crate::fork_arena::{NodePoolStorageClass, NodePoolStorageEvent};
 
@@ -356,7 +359,8 @@ pub struct NodeGraphCensus {
 
 /// Physical backing and stable-slot occupancy for one `NodePool` lane.
 ///
-/// A vacant slot retains an incarnation but no 64-KiB payload allocation.
+/// A vacant slot retains an incarnation and one warm 64-KiB payload
+/// allocation for direct reuse.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NodePoolStorageLaneCensus {
     pub fresh_allocations: u64,
@@ -377,6 +381,31 @@ pub struct NodePoolStorageLaneCensus {
 pub struct NodePoolStorageCensus {
     pub nodes: NodePoolStorageLaneCensus,
     pub annexes: NodePoolStorageLaneCensus,
+}
+
+/// Exact physical-block ownership at the largest quiescent page checkpoint.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodePoolOwnerLaneCensus {
+    pub live_blocks: u64,
+    pub current_generation_blocks: u64,
+    pub prior_generation_blocks: u64,
+    pub checkpoint_history_blocks: u64,
+    pub current_prior_shared_blocks: u64,
+    pub current_checkpoint_shared_blocks: u64,
+    pub prior_checkpoint_shared_blocks: u64,
+    pub page_owner_union_blocks: u64,
+    pub durable_or_other_blocks: u64,
+}
+
+/// Profiling-only semantic-owner snapshot for both node-pool lanes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodePoolOwnerCensus {
+    pub samples: u64,
+    pub page_regions: u64,
+    pub retained_page_regions: u64,
+    pub checkpoint_rows: u64,
+    pub nodes: NodePoolOwnerLaneCensus,
+    pub annexes: NodePoolOwnerLaneCensus,
 }
 
 impl NodeGraphCensus {
@@ -613,6 +642,36 @@ static NODE_POOL_LIVE_BLOCKS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 static NODE_POOL_PEAK_LIVE_BLOCKS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 static NODE_POOL_VACANT_SLOTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 static NODE_POOL_PEAK_VACANT_SLOTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+static NODE_POOL_OWNER_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static NODE_POOL_OWNER_ENABLED: AtomicBool = AtomicBool::new(false);
+static NODE_POOL_OWNER_PEAK: Mutex<NodePoolOwnerCensus> = Mutex::new(NodePoolOwnerCensus {
+    samples: 0,
+    page_regions: 0,
+    retained_page_regions: 0,
+    checkpoint_rows: 0,
+    nodes: NodePoolOwnerLaneCensus {
+        live_blocks: 0,
+        current_generation_blocks: 0,
+        prior_generation_blocks: 0,
+        checkpoint_history_blocks: 0,
+        current_prior_shared_blocks: 0,
+        current_checkpoint_shared_blocks: 0,
+        prior_checkpoint_shared_blocks: 0,
+        page_owner_union_blocks: 0,
+        durable_or_other_blocks: 0,
+    },
+    annexes: NodePoolOwnerLaneCensus {
+        live_blocks: 0,
+        current_generation_blocks: 0,
+        prior_generation_blocks: 0,
+        checkpoint_history_blocks: 0,
+        current_prior_shared_blocks: 0,
+        current_checkpoint_shared_blocks: 0,
+        prior_checkpoint_shared_blocks: 0,
+        page_owner_union_blocks: 0,
+        durable_or_other_blocks: 0,
+    },
+});
 
 const fn node_pool_storage_index(class: NodePoolStorageClass) -> usize {
     match class {
@@ -638,7 +697,10 @@ pub(crate) fn record_node_pool_storage(
         live_payload_bytes,
         live_blocks.saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES)
     );
-    debug_assert_eq!(vacant_payload_bytes, 0);
+    debug_assert_eq!(
+        vacant_payload_bytes,
+        vacant_slots.saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES)
+    );
     let index = node_pool_storage_index(class);
     match event {
         NodePoolStorageEvent::FreshAllocation => {
@@ -679,8 +741,12 @@ fn node_pool_storage_lane_census(index: usize) -> NodePoolStorageLaneCensus {
         live_payload_bytes: live_blocks.saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
         peak_live_payload_bytes: peak_live_blocks
             .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
-        vacant_payload_bytes: 0,
-        peak_vacant_payload_bytes: 0,
+        vacant_payload_bytes: NODE_POOL_VACANT_SLOTS[index]
+            .load(Ordering::Relaxed)
+            .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
+        peak_vacant_payload_bytes: NODE_POOL_PEAK_VACANT_SLOTS[index]
+            .load(Ordering::Relaxed)
+            .saturating_mul(tex_dense_prefix::SUPERBLOCK_BYTES as u64),
     }
 }
 
@@ -690,6 +756,42 @@ pub fn node_pool_storage_census() -> NodePoolStorageCensus {
         nodes: node_pool_storage_lane_census(0),
         annexes: node_pool_storage_lane_census(1),
     }
+}
+
+pub(crate) fn record_node_pool_owner_census(mut census: NodePoolOwnerCensus) {
+    census.samples = NODE_POOL_OWNER_SAMPLES.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut peak = NODE_POOL_OWNER_PEAK
+        .lock()
+        .expect("node-pool owner census lock is not poisoned");
+    let blocks = census
+        .nodes
+        .live_blocks
+        .saturating_add(census.annexes.live_blocks);
+    let peak_blocks = peak
+        .nodes
+        .live_blocks
+        .saturating_add(peak.annexes.live_blocks);
+    if blocks >= peak_blocks {
+        *peak = census;
+    }
+}
+
+pub fn enable_node_pool_owner_census() {
+    NODE_POOL_OWNER_ENABLED.store(true, Ordering::Relaxed);
+}
+
+#[must_use]
+pub(crate) fn node_pool_owner_census_enabled() -> bool {
+    NODE_POOL_OWNER_ENABLED.load(Ordering::Relaxed)
+}
+
+#[must_use]
+pub fn node_pool_owner_census() -> NodePoolOwnerCensus {
+    let mut census = *NODE_POOL_OWNER_PEAK
+        .lock()
+        .expect("node-pool owner census lock is not poisoned");
+    census.samples = NODE_POOL_OWNER_SAMPLES.load(Ordering::Relaxed);
+    census
 }
 
 #[must_use = "keep the allocation scope alive for the interval being measured"]

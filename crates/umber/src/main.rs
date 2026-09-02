@@ -145,6 +145,9 @@ struct HotCoreProfilingReport {
 #[cfg(feature = "profiling")]
 impl HotCoreProfilingReport {
     fn new(enabled: bool) -> Self {
+        if enabled {
+            tex_state::measurement::enable_node_pool_owner_census();
+        }
         Self {
             enabled,
             hot_core_before: tex_state::measurement::hot_core_census(),
@@ -275,6 +278,32 @@ impl Drop for HotCoreProfilingReport {
             storage.annexes.peak_live_payload_bytes,
             storage.annexes.vacant_payload_bytes,
             storage.annexes.peak_vacant_payload_bytes,
+        );
+        let owners = tex_state::measurement::node_pool_owner_census();
+        eprintln!(
+            "NODE_POOL_OWNER_CENSUS samples={} page_regions={} retained_page_regions={} checkpoint_rows={} node_live_blocks={} node_current_generation_blocks={} node_prior_generation_blocks={} node_checkpoint_history_blocks={} node_current_prior_shared_blocks={} node_current_checkpoint_shared_blocks={} node_prior_checkpoint_shared_blocks={} node_page_owner_union_blocks={} node_durable_or_other_blocks={} node_output_blocks=0 node_accepted_artifact_blocks=0 annex_live_blocks={} annex_current_generation_blocks={} annex_prior_generation_blocks={} annex_checkpoint_history_blocks={} annex_current_prior_shared_blocks={} annex_current_checkpoint_shared_blocks={} annex_prior_checkpoint_shared_blocks={} annex_page_owner_union_blocks={} annex_durable_or_other_blocks={} annex_output_blocks=0 annex_accepted_artifact_blocks=0",
+            owners.samples,
+            owners.page_regions,
+            owners.retained_page_regions,
+            owners.checkpoint_rows,
+            owners.nodes.live_blocks,
+            owners.nodes.current_generation_blocks,
+            owners.nodes.prior_generation_blocks,
+            owners.nodes.checkpoint_history_blocks,
+            owners.nodes.current_prior_shared_blocks,
+            owners.nodes.current_checkpoint_shared_blocks,
+            owners.nodes.prior_checkpoint_shared_blocks,
+            owners.nodes.page_owner_union_blocks,
+            owners.nodes.durable_or_other_blocks,
+            owners.annexes.live_blocks,
+            owners.annexes.current_generation_blocks,
+            owners.annexes.prior_generation_blocks,
+            owners.annexes.checkpoint_history_blocks,
+            owners.annexes.current_prior_shared_blocks,
+            owners.annexes.current_checkpoint_shared_blocks,
+            owners.annexes.prior_checkpoint_shared_blocks,
+            owners.annexes.page_owner_union_blocks,
+            owners.annexes.durable_or_other_blocks,
         );
     }
 }

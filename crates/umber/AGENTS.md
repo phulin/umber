@@ -64,7 +64,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_output/finalization_input/virtual_fonts.rs`: destination-local,
   handle-free discovery and atomic allocation of the sized font instances
   selected while detached virtual-font packets are lowered.
-- `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, and configurable execution/resource accounting.
+- `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, independently configurable restart-history retention, and execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
@@ -73,7 +73,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/cli_resource.rs`: retained native project/cache/distribution resolution,
   the source/digest/offline-bounded authenticated root plus touched packed-shard
   byte owners, cancellation-aware resource retries, incremental source
-  replacement, finite engine fuel/step/frame/journal/effect configuration,
+  replacement, one-shot zero restart-history ownership independent of the
+  resource cache, finite engine fuel/step/frame/journal/effect configuration,
   accepted-run telemetry handoff, and identity-pinned PDF font-closure receipt
   projection. Packed misses are authoritative; do not restore selected-record
   or selected-miss caches.

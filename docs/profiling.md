@@ -187,9 +187,10 @@ state, snapshots, rollback, formats, hashes, checkpoints, fuel, or output.
 The same report scope emits `NODE_POOL_STORAGE_CENSUS`. Its separate node and
 annex lanes give exact fresh/reuse/release event totals, current and peak live
 block counts, current and peak vacant stable-slot counts, and corresponding
-live and vacant payload bytes. NodePool last-lineage release returns the exact
-64 KiB allocation, so vacant payload bytes remain zero even while vacant slot
-metadata stays available for direct incarnation-safe reuse. The counters are
+live and vacant payload bytes. NodePool last-lineage release empties the exact
+64 KiB allocation and keeps it warm for direct incarnation-safe reuse; the
+separate owner census excludes that vacant capacity from checkpoint charges.
+The counters are
 profiling-only scalar updates at allocation and release boundaries; they do
 not scan tables, decide liveness, or change ordinary arena retention policy.
 
