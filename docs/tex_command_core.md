@@ -768,7 +768,11 @@ the transaction boundary for the resulting future input state.
 The one operation-owned frame has disjoint typed-value and `CommandError`
 storage. Every scalar boundary returns only a compact
 complete/suspended/failed status; the successful path never transfers the
-error-sized carrier. Completion consumes the value immediately. Only a genuine
+error-sized carrier. Optional-equals, keyword, and integer scans drive that
+frame directly through the same statically selected destination contract used
+by nested scalar calls; they do not first construct a second call frame and
+move its completed value or cold error. Completion consumes the value
+immediately. Only a genuine
 resource suspension installs the existing move-only continuation edge in
 generation-owned scratch and retains its key beside the operation's exact
 phase. The frame is explicitly emptied before reuse and owns no heap

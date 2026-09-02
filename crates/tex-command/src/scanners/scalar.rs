@@ -690,6 +690,14 @@ pub(crate) struct ScalarCallFrame<T> {
     error: Option<CommandError>,
 }
 
+/// Static destination used by both an executor-owned scalar frame and a
+/// nested call-local scalar. The scanner drives either destination directly;
+/// no successful value or cold error passes through an intermediate carrier.
+pub(super) trait ScalarCallDestination<T> {
+    fn put_complete(&mut self, value: T);
+    fn put_error(&mut self, error: CommandError);
+}
+
 impl<T> Default for ScalarCallFrame<T> {
     fn default() -> Self {
         Self {
@@ -725,6 +733,33 @@ impl<T> ScalarCallFrame<T> {
     }
 }
 
+impl<T> ScalarCallDestination<T> for ScalarCallFrame<T> {
+    fn put_complete(&mut self, value: T) {
+        Self::put_complete(self, value);
+    }
+
+    fn put_error(&mut self, error: CommandError) {
+        Self::put_error(self, error);
+    }
+}
+
+macro_rules! impl_scalar_frame_destination {
+    ($value:ty, $variant:path) => {
+        impl ScalarCallDestination<$value> for ScalarScanFrame {
+            fn put_complete(&mut self, value: $value) {
+                self.put_value($variant(value));
+            }
+
+            fn put_error(&mut self, error: CommandError) {
+                Self::put_error(self, error);
+            }
+        }
+    };
+}
+
+impl_scalar_frame_destination!(ScannedScalar<bool>, ScalarScanValue::Boolean);
+impl_scalar_frame_destination!(ScannedScalar<i32>, ScalarScanValue::Integer);
+
 /// Extracts a compact scalar call inside a legacy `Result`-returning scanner.
 /// Only a real cold error moves [`CommandError`] into the caller's return.
 macro_rules! scalar_value_or_return {
@@ -746,13 +781,29 @@ macro_rules! publish_scalar_result {
     ($processor:expr, $call:ident, $result:expr, $suspended:expr $(,)?) => {{
         match $result {
             Ok(value) => {
-                let status = $processor.finish_scalar_success(&mut $call.error);
+                let mut terminal_error = None;
+                let status = $processor.finish_scalar_success(&mut terminal_error);
                 if status == ScalarCallStatus::Complete {
                     $call.put_complete(value);
+                } else {
+                    $call.put_error(
+                        terminal_error
+                            .take()
+                            .expect("failed scalar completion stores its error"),
+                    );
                 }
                 status
             }
-            Err(error) => $processor.finish_scalar_error(error, $suspended, &mut $call.error),
+            Err(error) => {
+                let mut terminal_error = None;
+                let status = $processor.finish_scalar_error(error, $suspended, &mut terminal_error);
+                $call.put_error(
+                    terminal_error
+                        .take()
+                        .expect("failed scalar call stores its error"),
+                );
+                status
+            }
         }
     }};
 }
@@ -1037,10 +1088,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///
     /// The synchronous no-continuation path returns only a compact status;
     /// neither the pending-frame nor error carrier crosses this boundary.
-    pub(crate) fn take_pending_scalar_frame_into<T>(
+    pub(super) fn take_pending_scalar_frame_into<T>(
         &mut self,
         pending: &mut Option<PendingScalarFrame<G>>,
-        call: &mut ScalarCallFrame<T>,
+        call: &mut impl ScalarCallDestination<T>,
     ) -> ScalarCallStatus {
         match self.scanner_resume.as_ref() {
             None => return ScalarCallStatus::Complete,
@@ -1207,33 +1258,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn publish_scalar_call<T>(
-        &mut self,
-        frame: &mut ScalarScanFrame,
-        call: &mut ScalarCallFrame<T>,
-        status: ScalarCallStatus,
-        wrap: impl FnOnce(T) -> ScalarScanValue,
-    ) -> ScalarScanStatus {
-        frame.begin();
-        match status {
-            ScalarCallStatus::Complete => {
-                debug_assert!(self.scanner_resume.is_none());
-                frame.put_value(wrap(call.take_complete()));
-                ScalarScanStatus::Complete
-            }
-            ScalarCallStatus::Suspended => {
-                debug_assert!(self.scanner_resume.is_some());
-                frame.put_error(call.take_error());
-                ScalarScanStatus::Suspended
-            }
-            ScalarCallStatus::Failed => {
-                debug_assert!(self.scanner_resume.is_none());
-                frame.put_error(call.take_error());
-                ScalarScanStatus::Failed
-            }
-        }
-    }
-
     fn publish_retained_scalar_frame<T>(
         &mut self,
         frame: &mut ScalarScanFrame,
@@ -1259,9 +1283,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub fn scan_optional_equals_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
-        let mut call = ScalarCallFrame::default();
-        let status = self.scan_optional_equals_into_call(&mut call);
-        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Boolean)
+        frame.begin();
+        let status = self.scan_optional_equals_into_call(frame);
+        self.scalar_scan_status(status)
     }
 
     pub fn scan_keyword_into(
@@ -1269,15 +1293,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         keyword: &str,
         frame: &mut ScalarScanFrame,
     ) -> ScalarScanStatus {
-        let mut call = ScalarCallFrame::default();
-        let status = self.scan_keyword_into_call(keyword, &mut call);
-        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Boolean)
+        frame.begin();
+        let status = self.scan_keyword_into_call(keyword, frame);
+        self.scalar_scan_status(status)
     }
 
     pub fn scan_integer_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
-        let mut call = ScalarCallFrame::default();
-        let status = self.scan_integer(&mut call);
-        self.publish_scalar_call(frame, &mut call, status, ScalarScanValue::Integer)
+        frame.begin();
+        let status = self.scan_integer(frame);
+        self.scalar_scan_status(status)
     }
 
     pub fn scan_dimension_into(&mut self, frame: &mut ScalarScanFrame) -> ScalarScanStatus {
@@ -1387,6 +1411,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    fn scalar_scan_status(&self, status: ScalarCallStatus) -> ScalarScanStatus {
+        match status {
+            ScalarCallStatus::Complete => {
+                debug_assert!(self.scanner_resume.is_none());
+                ScalarScanStatus::Complete
+            }
+            ScalarCallStatus::Suspended => {
+                debug_assert!(self.scanner_resume.is_some());
+                ScalarScanStatus::Suspended
+            }
+            ScalarCallStatus::Failed => {
+                debug_assert!(self.scanner_resume.is_none());
+                ScalarScanStatus::Failed
+            }
+        }
+    }
+
     fn finish_scalar_success(
         &mut self,
         terminal_error: &mut Option<CommandError>,
@@ -1433,6 +1474,22 @@ impl<G> CommandProcessor<'_, '_, G> {
         status
     }
 
+    fn finish_scalar_destination_error<T>(
+        &mut self,
+        error: CommandError,
+        suspended: Option<PendingScalarFrame<G>>,
+        destination: &mut impl ScalarCallDestination<T>,
+    ) -> ScalarCallStatus {
+        let mut terminal_error = None;
+        let status = self.finish_scalar_error(error, suspended, &mut terminal_error);
+        destination.put_error(
+            terminal_error
+                .take()
+                .expect("failed scalar call stores its error"),
+        );
+        status
+    }
+
     /// Compatibility boundary for the structured filename scanner.
     ///
     /// Hot scalar callers publish through borrowed frames and compact status.
@@ -1457,7 +1514,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_optional_equals_into_call(
         &mut self,
-        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+        call: &mut impl ScalarCallDestination<ScannedScalar<bool>>,
     ) -> ScalarCallStatus {
         macro_rules! fail {
             ($error:expr) => {{
@@ -1500,13 +1557,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             let delivery = match self.get_x_token_into(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return self.finish_scalar_error(
+                    return self.finish_scalar_destination_error(
                         error,
                         Some(PendingScalarFrame::OptionalEquals {
                             provenance,
                             child: None,
                         }),
-                        &mut call.error,
+                        call,
                     );
                 }
             };
@@ -1616,7 +1673,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_keyword_into_call(
         &mut self,
         keyword: &str,
-        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+        call: &mut impl ScalarCallDestination<ScannedScalar<bool>>,
     ) -> ScalarCallStatus {
         macro_rules! fail {
             ($error:expr) => {{
@@ -1672,7 +1729,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let delivery = match self.get_x_token_into(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return self.finish_scalar_error(
+                    return self.finish_scalar_destination_error(
                         error,
                         Some(PendingScalarFrame::Keyword {
                             keyword,
@@ -1680,7 +1737,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             provenance,
                             child: None,
                         }),
-                        &mut call.error,
+                        call,
                     );
                 }
             };
@@ -1754,7 +1811,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Scans an integer or an internal integer quantity.
-    fn scan_integer(&mut self, call: &mut ScalarCallFrame<ScannedScalar<i32>>) -> ScalarCallStatus {
+    fn scan_integer(
+        &mut self,
+        call: &mut impl ScalarCallDestination<ScannedScalar<i32>>,
+    ) -> ScalarCallStatus {
         let mut pending = None;
         if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
             return ScalarCallStatus::Failed;

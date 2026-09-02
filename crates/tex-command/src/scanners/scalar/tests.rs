@@ -82,6 +82,11 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
         );
         let integer = scalar.take_integer();
         assert_eq!(integer.value, -42);
+        assert_eq!(
+            processor.command.scratch.parked_scanner_storage_counts(),
+            (0, 0, 0),
+            "ordinary scalar progress never enters a continuation lane"
+        );
         let mut terminator = None;
         assert_eq!(
             processor

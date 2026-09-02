@@ -176,6 +176,11 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
 
         processor.shift_case(true).expect("empty case shift");
         processor.shift_case(true).expect("nested case shift");
+        assert_eq!(
+            processor.command.scratch.parked_scanner_storage_counts(),
+            (0, 0, 0),
+            "ordinary token collection never enters a continuation lane"
+        );
         let mut shifted = Vec::new();
         for _ in 0..4 {
             shifted.push(

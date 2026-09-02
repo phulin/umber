@@ -1240,6 +1240,15 @@ impl<G> ExecutionScratch<G> {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn parked_scanner_storage_counts(&self) -> (usize, usize, usize) {
+        (
+            self.scanner_resumes.slots.len(),
+            self.continuation_resumes.slots.len(),
+            self.scanner_resumes.live_len() + self.continuation_resumes.live_len(),
+        )
+    }
+
     pub(crate) fn take_scanner_frame(
         &mut self,
         key: ScannerFrameKey<G>,

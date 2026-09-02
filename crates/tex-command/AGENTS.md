@@ -485,8 +485,9 @@ collector (see `src/conditionals.rs`).
   optional-equals, fixed-inline keyword prefix, integer, dimension, glue,
   filename, internal-value, expression, and font-selector continuation state.
   Raw resource-capable scanners remain private; executor scalar phases write
-  once into the reusable `ScalarScanFrame` owned by their resident
-  `CommandEpisode` and
+  directly into the reusable `ScalarScanFrame` owned by their resident
+  `CommandEpisode` through the same statically selected driver nested scalar
+  calls use, without a successful-value or error carrier between them, and
   return only a compact status. Internal expansion, conditional, alignment,
   and structured parents move a suspended child into their exact typed phase.
   Success, resuspension, abort, and

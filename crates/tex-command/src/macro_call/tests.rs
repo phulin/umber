@@ -165,6 +165,11 @@ fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument(
             .expect("macro command");
 
         assert_eq!(processor.macro_call(&mut call), Ok(true));
+        assert_eq!(
+            processor.command.scratch.parked_scanner_storage_counts(),
+            (0, 0, 0),
+            "ordinary macro matching never enters a continuation lane"
+        );
         let arguments = processor
             .command
             .input
