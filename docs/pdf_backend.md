@@ -301,6 +301,15 @@ between tokens; it does not execute PostScript. A used code that intentionally
 resolves to `.notdef` remains a valid blank-glyph subset instead of being
 misclassified as a missing requested CharString. Type-1 subset parsing accepts
 PostScript's CR, LF, and CRLF line endings between encrypted CharStrings.
+Descriptor construction follows pdftex.web §799 and the pinned
+`writefont.c::preset_fontmetrics`/`writet1.c::t1_scan_param` owner order.
+It first derives fallbacks from the TFM, including `/StemV` as one third of
+period's width on pdfTeX's three-place raster, then replaces them with font
+program keys when present. `/StdVW` may live in the encrypted eexec
+private-dictionary prelude; the bounded scan decrypts only that prelude and
+stops before binary Subrs or CharStrings data. Because subsetting retains this
+prelude, the descriptor observes the same `/StdVW` before and after subset
+construction without adding a second metadata owner.
 Before the binary Subrs or CharStrings records begin, subset emission also
 replays pdfTeX's encrypted private-dictionary line reader: it regenerates the
 four eexec seed bytes as zeros, collapses repeated horizontal whitespace,

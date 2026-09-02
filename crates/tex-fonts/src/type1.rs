@@ -193,9 +193,14 @@ impl PdfType1Program {
     }
 
     /// Reads `/StdVW`, the Type-1 vertical stem width used by PDF descriptors.
+    ///
+    /// Type-1 programs may put this key in the encrypted private-dictionary
+    /// prelude. The scan stops before binary Subrs or CharStrings data, matching
+    /// pdfTeX's `writet1.c::t1_scan_param` boundary.
     #[must_use]
     pub fn stem_v(&self) -> Option<i32> {
         self.cleartext_integer(b"/StdVW")
+            .or_else(|| self.encrypted_prelude_integer(b"/StdVW"))
     }
 
     #[must_use]
@@ -214,16 +219,48 @@ impl PdfType1Program {
         std::str::from_utf8(value).ok()?.parse().ok()
     }
 
+    fn encrypted_prelude_integer(&self, marker: &[u8]) -> Option<i32> {
+        let encrypted_start = usize::try_from(self.length1).ok()?;
+        let encrypted_end = encrypted_start.checked_add(usize::try_from(self.length2).ok()?)?;
+        let decrypted = eexec_crypt(self.bytes.get(encrypted_start..encrypted_end)?, false);
+        let source = decrypted.get(4..)?;
+        let boundary = encrypted_program_boundary(source)?;
+        let value = line_parameter_value(source.get(..boundary)?, marker)?;
+        std::str::from_utf8(value).ok()?.parse().ok()
+    }
+
     fn cleartext_value(&self, marker: &[u8]) -> Option<&[u8]> {
         let cleartext = self.bytes.get(..self.length1 as usize)?;
-        let start = cleartext
-            .windows(marker.len())
-            .position(|window| window == marker)?
-            + marker.len();
-        cleartext[start..]
-            .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'{' | b'}'))
-            .find(|token| !token.is_empty())
+        value_after_marker(cleartext, marker)
     }
+}
+
+fn value_after_marker<'a>(bytes: &'a [u8], marker: &[u8]) -> Option<&'a [u8]> {
+    let start = bytes
+        .windows(marker.len())
+        .position(|window| window == marker)?
+        + marker.len();
+    bytes[start..]
+        .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'{' | b'}'))
+        .find(|token| !token.is_empty())
+}
+
+fn line_parameter_value<'a>(bytes: &'a [u8], marker: &[u8]) -> Option<&'a [u8]> {
+    bytes
+        .split(|byte| matches!(byte, b'\r' | b'\n'))
+        .filter_map(|line| {
+            let start = line.iter().position(|byte| !matches!(byte, b' ' | b'\t'))?;
+            let tail = line.get(start..)?.strip_prefix(marker)?;
+            tail.first()
+                .is_some_and(|byte| byte.is_ascii_whitespace() || matches!(byte, b'[' | b'{'))
+                .then_some(tail)
+        })
+        .flat_map(|tail| {
+            tail.split(|byte| {
+                byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'{' | b'}')
+            })
+        })
+        .find(|token| !token.is_empty())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1309,6 +1346,29 @@ mod tests {
     }
 
     #[test]
+    fn reads_encrypted_std_vw_only_before_binary_program_data() {
+        fn program(encrypted_plaintext: &[u8]) -> PdfType1Program {
+            let clear = b"%!PS\ncurrentfile eexec\n";
+            let encrypted = eexec_crypt(encrypted_plaintext, true);
+            let mut pfb = vec![0x80, 1];
+            pfb.extend_from_slice(&(clear.len() as u32).to_le_bytes());
+            pfb.extend_from_slice(clear);
+            pfb.extend_from_slice(&[0x80, 2]);
+            pfb.extend_from_slice(&(encrypted.len() as u32).to_le_bytes());
+            pfb.extend_from_slice(&encrypted);
+            pfb.extend_from_slice(&[0x80, 3]);
+            PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB")
+        }
+
+        let explicit = program(b"seed/StdVW [79] ND\n/Subrs 0 array\n/StdVW [999] ND\n");
+        let binary_only =
+            program(b"seed% /StdVW [997]\n/OtherStdVW [998] ND\n/Subrs 0 array\n/StdVW [999] ND\n");
+
+        assert_eq!(explicit.stem_v(), Some(79));
+        assert_eq!(binary_only.stem_v(), None);
+    }
+
+    #[test]
     fn resolves_compact_builtin_entries_used_by_corpus_fonts() {
         let header = b"%!PS\n/Encoding 256 array\n\
             dup 10/uni03A9 put\n\
@@ -1541,6 +1601,7 @@ mod tests {
     fn subsets_committed_cmr_charstrings_and_matches_pdftex_tag() {
         let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
         let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
+        assert_eq!(program.stem_v(), Some(69));
         let glyphs = [b"A".to_vec(), b"B".to_vec(), b"C".to_vec()]
             .into_iter()
             .collect::<BTreeSet<_>>();
@@ -1550,6 +1611,7 @@ mod tests {
         let subset = program
             .subset(&glyphs, &subset_name)
             .expect("committed CMR subsets");
+        assert_eq!(subset.stem_v(), program.stem_v());
         assert!(subset.bytes().len() < program.bytes().len());
         assert_eq!(subset.lengths(), [1391, 7337, 0]);
         assert_eq!(

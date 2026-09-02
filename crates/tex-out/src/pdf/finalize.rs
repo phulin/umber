@@ -3247,8 +3247,13 @@ fn pdf_font_objects(
         "FontName",
         PdfValue::Name(PdfName::new(subset_font_name.clone())),
     )?;
-    let [tfm_ascent, tfm_descent, tfm_cap_height, tfm_x_height] =
-        type1_fallback_descriptor_metrics(&input.metrics, font.at_size);
+    let [
+        tfm_ascent,
+        tfm_descent,
+        tfm_cap_height,
+        tfm_stem_v,
+        tfm_x_height,
+    ] = type1_fallback_descriptor_metrics(&input.metrics, font.at_size);
     let (bbox, ascent, descent, cap_height, x_height, italic_angle, stem_v, fixed_pitch) =
         if let Some(program) = truetype {
             (
@@ -3270,7 +3275,7 @@ fn pdf_font_objects(
                 tfm_cap_height,
                 tfm_x_height,
                 i64::from(program.italic_angle().unwrap_or(0)),
-                i64::from(program.stem_v().unwrap_or(80)),
+                type1_descriptor_stem_v(program, tfm_stem_v),
                 program.is_fixed_pitch(),
             )
         };
@@ -3334,9 +3339,11 @@ fn pdf_font_objects(
 }
 
 /// pdfTeX's Type-1 descriptor fallbacks use named TFM characters, not the
-/// extrema of the complete character table. See pdftex.web §799 and
-/// `writefont.c::preset_fontmetrics` in the pinned 1.40.29 source.
-fn type1_fallback_descriptor_metrics(metrics: &PdfFontMetricsInput, at_size: Scaled) -> [i64; 4] {
+/// extrema of the complete character table. In particular, `/StemV` starts as
+/// one third of period's width and is replaced only when the font program has
+/// `/StdVW`. See pdftex.web §799, `writefont.c::preset_fontmetrics`, and
+/// `writet1.c::t1_scan_keys` in the pinned 1.40.29 source.
+fn type1_fallback_descriptor_metrics(metrics: &PdfFontMetricsInput, at_size: Scaled) -> [i64; 5] {
     let denominator = i64::from(at_size.raw()).max(1);
     let scale_metric =
         |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
@@ -3344,8 +3351,15 @@ fn type1_fallback_descriptor_metrics(metrics: &PdfFontMetricsInput, at_size: Sca
         scale_metric(metrics.heights[usize::from(b'h')]),
         -scale_metric(metrics.depths[usize::from(b'y')]),
         scale_metric(metrics.heights[usize::from(b'H')]),
+        scale_metric(Scaled::from_raw(
+            metrics.widths[usize::from(b'.')].raw() / 3,
+        )),
         scale_metric(metrics.x_height),
     ]
+}
+
+fn type1_descriptor_stem_v(program: &tex_fonts::PdfType1Program, fallback: i64) -> i64 {
+    program.stem_v().map_or(fallback, i64::from)
 }
 
 fn pdf_pk_font_objects(
