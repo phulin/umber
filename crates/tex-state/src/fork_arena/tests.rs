@@ -557,6 +557,56 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
 }
 
 #[test]
+fn unsealed_sequential_append_admits_only_at_packed_block_boundaries() {
+    const ALLOCATION_OWNER: usize = 15;
+    const VALUES: u32 = 4_096;
+
+    let mut pool = ChunkPool::<u32>::with_packed_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let empty = arena.operation_mark(&pool);
+    let warm = arena
+        .append_unsealed_list(&mut pool, 0..VALUES)
+        .expect("warm direct append");
+    assert_eq!(warm.len(), VALUES as usize);
+    arena
+        .restore_operation(&mut pool, empty)
+        .expect("restore warmed packed capacity");
+
+    let validations_before = pool.payload.validation_reads();
+    let allocation_before = thread_measurement(ALLOCATION_OWNER);
+    let root = {
+        let _scope = scope(ALLOCATION_OWNER);
+        arena
+            .append_unsealed_list(&mut pool, 0..VALUES)
+            .expect("measured direct append")
+    };
+    let allocation_after = thread_measurement(ALLOCATION_OWNER);
+    let allocation = AllocationMeasurement {
+        calls: allocation_after
+            .calls
+            .saturating_sub(allocation_before.calls),
+        requested_bytes: allocation_after
+            .requested_bytes
+            .saturating_sub(allocation_before.requested_bytes),
+    };
+    let blocks = (VALUES as usize).div_ceil(pool.chunk_capacity());
+    let validations = pool.payload.validation_reads() - validations_before;
+
+    assert_eq!(root.len(), VALUES as usize);
+    assert_eq!(validations, (blocks * 3) as u64);
+    assert_eq!(allocation, AllocationMeasurement::default());
+    assert_eq!(
+        arena
+            .list(&pool, root)
+            .expect("directly appended list")
+            .iter()
+            .copied()
+            .sum::<u32>(),
+        VALUES * (VALUES - 1) / 2
+    );
+}
+
+#[test]
 fn live_chunk_boundary_validation_work_is_constant_at_required_sizes() {
     let mut observed = Vec::new();
     for chunks in [1_u32, 64, 4_096] {
