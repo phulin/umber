@@ -96,8 +96,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   completed leaves directly into the borrowed caller slot while returning only
   compact control outcomes; `apply.rs` mutably borrows the cold branch owned by
   `ColdExecutionEpisode` and consumes only its semantic leaves. Ordinary cold
-  application admits the borrow-only `CommandContext` through a callback
-  which lends `Universe`'s resident command-visible owner directly and returns
+  application admits the borrow-only `CommandContext` through a callback which
+  lends `Universe`'s semantically separated command stores directly and returns
   only detached copy-small settlement facts;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
   families without introducing another executor. Residual transaction and

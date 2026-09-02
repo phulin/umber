@@ -1299,6 +1299,16 @@ Expansion-time insertion enquiries read the authoritative row through the live
 `CommandContext`; the borrow ends with that processor episode and no projection
 survives list mutation, suspension, or error re-entry.
 
+`Universe` does not collect these command-visible stores into a by-value
+resident aggregate. Session identity, retained-generation state, durable box
+and form closures, shipout scratch, and the page region remain distinct owners
+with their existing transfer and reclamation boundaries. `CommandContext` is
+only the bounded safe-reference view that brings those owners together with the
+admitted dense core for one processor episode; the same admitted view is reused
+by every raw, expanded, and scanner command in that episode. A genuine host,
+diagnostic, suspension, rollback, or publication barrier ends the borrow before
+the owning `Universe` transition runs.
+
 ## Non-negotiable prohibitions
 
 - No compactor, in-place relocation, forwarding pointer, live-id rewrite, or

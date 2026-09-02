@@ -270,6 +270,27 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
 }
 
 #[test]
+fn stored_token_position_transition_is_present_in_every_build() {
+    let source = include_str!("../history.rs");
+    let transition = source
+        .find("let consumed = $row.header.frame.advance_resident();")
+        .expect("resident stored-token delivery advances its frame");
+    let assertion = source[transition..]
+        .find("debug_assert_eq!(consumed, $position);")
+        .map(|offset| transition + offset)
+        .expect("the transition result is checked in debug builds");
+
+    assert!(transition < assertion);
+    assert!(
+        !source[..transition]
+            .lines()
+            .next_back()
+            .is_some_and(|line| line.contains("debug_assert")),
+        "the semantic position transition must not be compiled out with debug assertions"
+    );
+}
+
+#[test]
 fn warm_position_and_later_cold_token_state_rollback_in_order() {
     crate::test_harness::with_universe(|universe| {
         let behavior = TokenBehavior::Ordinary;

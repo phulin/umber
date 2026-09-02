@@ -48,14 +48,17 @@ coordinates the following live engine stores:
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
 
-The command-visible owners are physically grouped in one resident
-`CommandVisibleState` subobject of `Universe`. A processor or application
-episode borrows that owner directly alongside one admitted dense-core view and
-the page region's existing checked node/builder split. `CommandContext` is
-therefore a small borrow capability, not a field-by-field cache or copied
-state. The borrow cannot survive the episode, and checkpoint, rollback,
-retirement, format, hash, and World operations continue to mutate the same
-resident owners.
+Command-visible ownership follows semantic lifetime inside `Universe`:
+session identity and its immutable primitive registry, retained-generation
+stores, durable box/form closures, shipout scratch, and the page region remain
+separate owners. A processor episode borrows those owners directly alongside
+one admitted dense-core view and the page region's checked node/builder split.
+`CommandContext` is therefore a small safe-reference capability, not a
+field-by-field cache, copied state, raw alias, or heap-indirected aggregate.
+The same view serves every raw, expanded, and scanner delivery in the
+uninterrupted processor episode. The borrow cannot survive an execution
+barrier, and checkpoint, rollback, retirement, format, hash, and World
+operations continue to mutate the authoritative owners.
 
 The slot-local durable arenas are a migration representation. The external
 topology is implemented; moving their rows/chunks into store-level storage and

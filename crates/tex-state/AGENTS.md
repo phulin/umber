@@ -22,10 +22,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   checkpoints, bounded cursor tuples, mutation-free restore planning, and the
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
-  direct command and execution work. Its small episode view borrows the one
-  resident command-visible owner held by `Universe` plus the admitted dense
-  core and checked page-region parts; it does not reconstruct the resident
-  fields as a broad reference aggregate. This includes name-free compact
+  direct command and execution work. Its small, safe-reference-only episode
+  view borrows the session epoch, retained-generation stores, durable box/form
+  owners, operation scratch, admitted dense core, and checked page-region
+  parts directly from `Universe`; no monolithic command-state owner, copied
+  store, heap indirection, or raw alias is involved. This includes name-free compact
   control-sequence dense-row access and the destination-directed packed-token
   command write implemented beside the token encoding, typed register mutation,
   page-list/page-builder access, font metrics and detached artifact recipes,
@@ -399,8 +400,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
   mutation and allocation facade, exclusive retained-checkpoint state/node
   bank loans, immutable primitive-registry sharing, owner-checked journal
-  cursors, one resident command-visible state subobject lent directly to
-  admitted command/execution episodes, borrow-only pure-memo capability,
+  cursors, semantically separate session, retained-generation, durable-node,
+  operation-scratch, and page-region owners lent directly to admitted
+  command/execution episodes, borrow-only pure-memo capability,
   root-before-suffix shipout transactions, and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.

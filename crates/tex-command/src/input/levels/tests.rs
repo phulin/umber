@@ -267,6 +267,63 @@ fn sequential_replay_inspects_only_crossed_segment_boundaries() {
 }
 
 #[test]
+fn sequential_replay_exhaustion_stops_before_a_mid_segment_read() {
+    let mut lane = ReplayLane::<()>::default();
+    let payload = PackedTokenSpanHandle::<()>::transient(['a', 'b', 'c'].into_iter().map(traced))
+        .admit(&mut lane)
+        .expect("short replay span admits");
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
+        unreachable!("transient span is replay-owned")
+    };
+    PackedTokenSpanHandle::<()>::transient(['x', 'y'].into_iter().map(traced))
+        .admit(&mut lane)
+        .expect("following span shares the active segment");
+    let mut cursor = lane.resident_cursor(replay).expect("short resident cursor");
+    let mut inspections = 0;
+    let mut run_transitions = 0;
+    for expected in ['a', 'b', 'c'].map(traced) {
+        assert_eq!(
+            lane.advance_sequential(replay, &mut cursor, &mut inspections, &mut run_transitions),
+            Some(expected)
+        );
+    }
+    assert_eq!(cursor.remaining, 0);
+    assert_ne!(cursor.offset, cursor.segment_end);
+    assert_eq!(
+        lane.advance_sequential(replay, &mut cursor, &mut inspections, &mut run_transitions),
+        None
+    );
+    assert_eq!(inspections, 0);
+    assert_eq!(run_transitions, 0);
+}
+
+#[test]
+fn sequential_replay_exhaustion_guard_is_present_in_every_build() {
+    let source = include_str!("../levels.rs");
+    let body = source
+        .split_once(
+            "fn advance_sequential(\n        &self,\n        cursor: &mut ResidentReplayCursor,",
+        )
+        .expect("locate segmented resident replay advance")
+        .1
+        .split_once("/// Crosses the uncommon exhausted-span")
+        .expect("locate resident replay advance boundary")
+        .0;
+    let exhaustion = body
+        .find("if cursor.remaining == 0")
+        .expect("logical-span exhaustion check");
+    let function_body = body
+        .find(") -> Option<&T> {")
+        .map(|offset| offset + ") -> Option<&T> {".len())
+        .expect("segmented resident replay function body");
+    let read = body
+        .find("let segment = self.active.get")
+        .expect("direct segment read");
+    assert!(exhaustion < read);
+    assert!(!body[function_body..exhaustion].contains("#[cfg(test)]"));
+}
+
+#[test]
 fn sequential_replay_crosses_prefix_body_and_owned_runs_exactly() {
     let mut lane = ReplayLane::<()>::default();
     let payload = PackedTokenSpanHandle::<()>::backed_up(std::iter::repeat_n(

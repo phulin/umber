@@ -1036,10 +1036,8 @@ impl<G> crate::CommandState<G> {
                                         .packed_loads
                                         .saturating_add(1);
                                 }
-                                debug_assert_eq!(
-                                    $row.header.frame.advance_resident(),
-                                    $position
-                                );
+                                let consumed = $row.header.frame.advance_resident();
+                                debug_assert_eq!(consumed, $position);
                                 #[cfg(test)]
                                 {
                                     self.stored_token_advance_counters.cursor_advances = self

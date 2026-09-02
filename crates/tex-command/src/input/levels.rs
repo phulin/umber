@@ -1287,7 +1287,6 @@ impl<T> SegmentedReplayLane<T> {
         cursor: &mut ResidentReplayCursor,
         #[cfg(test)] segment_inspections: &mut u64,
     ) -> Option<&T> {
-        #[cfg(test)]
         if cursor.remaining == 0 {
             return None;
         }

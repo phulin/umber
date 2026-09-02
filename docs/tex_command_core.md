@@ -1609,13 +1609,15 @@ pub struct CommandProcessor<'episode, 'admission> {
 ```
 
 It does not own state and cannot outlive one bounded executor operation. The
-executor admits one call-local `CommandContext`, which directly borrows the
-resident command-visible state owned by `Universe` plus the admitted dense core
-and checked page views. It refreshes transient mode facts and lends that same
-small capability in place to the processor; no broad field-by-field reference
-facade is reconstructed. Page-owned facts remain direct demand-time reads
-through that context. Processor retirement ends the borrow; it does not move
-the complete admitted context out of and back into a facade.
+executor admits one call-local `CommandContext`, which is a safe-reference-only
+view over `Universe`'s separately owned session epoch, retained-generation
+stores, durable box/form owners, operation scratch, admitted dense core, and
+checked page views. It refreshes transient mode facts and lends that same small
+capability in place to every command delivered by the processor episode. No
+store is copied, boxed, cached through a raw pointer, or reconstructed as a
+monolithic command-state value. Page-owned facts remain direct demand-time
+reads through that context. Processor retirement ends the borrow; it does not
+move the complete admitted context out of and back into a facade.
 `CommandHostContext` contains only the capabilities installed for that
 operation, such as input resolution and optional read recording. Host
 capabilities never enter snapshots or formats.

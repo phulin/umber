@@ -8,6 +8,7 @@ use crate::durable_arena::{
 };
 use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError};
+use crate::env::{DurableBoxState, DurableFormState};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -17,10 +18,11 @@ use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
+use crate::shipout_scratch::ShipoutScratchArena;
 use crate::shipout_scratch::ShipoutScratchListId;
 use crate::stores::AdmittedStateMut;
 use crate::token::TokenWord;
-use crate::universe::ResidentCommandState;
+use crate::universe::{CommandSessionState, RetainedCommandState};
 use crate::world::JobClock;
 
 /// The two line sources reachable by command delivery.
@@ -645,8 +647,20 @@ impl EngineUsageRuntime {
 ///
 /// Admission validates coarse owners once. Meaning reads and definition
 /// resolution then index the dense bank and definition arena directly.
+pub(super) struct CommandLifetimeOwners<'a, G> {
+    pub(super) session: &'a mut CommandSessionState<G>,
+    pub(super) retained: &'a mut RetainedCommandState<G>,
+    pub(super) durable_boxes: &'a mut DurableBoxState,
+    pub(super) durable_forms: &'a mut DurableFormState,
+    pub(super) shipout_scratch: &'a mut ShipoutScratchArena<G>,
+}
+
 pub struct CommandContext<'a, G> {
-    resident: &'a mut ResidentCommandState<G>,
+    session: &'a mut CommandSessionState<G>,
+    resident: &'a mut RetainedCommandState<G>,
+    durable_boxes: &'a mut DurableBoxState,
+    durable_forms: &'a mut DurableFormState,
+    shipout_scratch: &'a mut ShipoutScratchArena<G>,
     admitted: AdmittedStateMut<'a, G>,
     page_nodes: PageNodeArena<'a>,
     page: &'a mut PageBuilderState,
@@ -654,13 +668,24 @@ pub struct CommandContext<'a, G> {
 
 impl<'a, G> CommandContext<'a, G> {
     pub(super) fn new(
-        resident: &'a mut ResidentCommandState<G>,
+        owners: CommandLifetimeOwners<'a, G>,
         admitted: AdmittedStateMut<'a, G>,
         page_nodes: PageNodeArena<'a>,
         page: &'a mut PageBuilderState,
     ) -> Self {
+        let CommandLifetimeOwners {
+            session,
+            retained: resident,
+            durable_boxes,
+            durable_forms,
+            shipout_scratch,
+        } = owners;
         Self {
+            session,
             resident,
+            durable_boxes,
+            durable_forms,
+            shipout_scratch,
             admitted,
             page_nodes,
             page,
@@ -705,7 +730,7 @@ impl<'a, G> CommandContext<'a, G> {
                 .saturating_sub(self.resident.engine_usage.init_pool_ptr),
             memory_words: self.resident.engine_usage.memory.reported_words(),
             memory_word_capacity: self.resident.engine_usage.memory.capacity,
-            control_sequences: self.resident.interner().multiletter_len(),
+            control_sequences: self.session.interner().multiletter_len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
             hyphenation_exceptions: hyphenation.occupied,
@@ -719,12 +744,12 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, InternerAccessError> {
-        self.resident.interner().resolve_id(symbol)
+        self.session.interner().resolve_id(symbol)
     }
 
     #[inline(always)]
     pub fn meaning(&self, symbol: Symbol) -> ResolvedMeaning<G> {
-        self.resident
+        self.session
             .interner()
             .resolve_local(symbol)
             .expect("command symbols belong to the admitted session");
@@ -798,7 +823,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn meaning_id(&self, symbol: SymbolId) -> Result<ResolvedMeaning<G>, StateError> {
         // `resolve_id` is the admission check. The compact slot is then a
         // direct index for the lifetime of this context.
-        self.resident
+        self.session
             .interner()
             .resolve_id(symbol)
             .map_err(|_| StateError::ForeignSession)?;
@@ -806,23 +831,23 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn resolve(&self, symbol: Symbol) -> &str {
-        self.resident
+        self.session
             .interner()
             .resolve_local(symbol)
             .expect("command symbols belong to the admitted session")
     }
 
     pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        self.resident
+        self.session
             .interner()
             .qualify_local(symbol)
-            .and_then(|id| self.resident.interner().kind_id(id).ok())
+            .and_then(|id| self.session.interner().kind_id(id).ok())
             .expect("command symbols belong to the admitted session")
     }
 
     #[must_use]
     pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
-        self.resident.interner().active(ch).map(SymbolId::symbol)
+        self.session.interner().active(ch).map(SymbolId::symbol)
     }
 
     /// Interns TeX82's `active_base + c` definition cell on first use.
@@ -832,7 +857,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// the cell addressable even when the active character has never had a
     /// meaning before.
     pub fn intern_active_character(&mut self, ch: char) -> Symbol {
-        let id = self.resident.interner_mut().intern_active(ch);
+        let id = self.session.interner_mut().intern_active(ch);
         self.intern_symbol(id)
     }
 
@@ -852,7 +877,7 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.resident
+        self.session
             .primitive_registry
             .meanings
             .get(usize::from(frozen.primitive_index()?))
@@ -867,7 +892,7 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.resident
+        self.session
             .primitive_registry
             .meanings
             .get(usize::from(frozen.primitive_index()?))
@@ -875,33 +900,33 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
-        self.resident.primitive_registry.meanings
+        self.session.primitive_registry.meanings
             .iter()
             .position(|candidate| {
                 matches!(candidate.resolve(), ResolvedMeaning::Static(value) if value == meaning)
             })
-            .map(|index| self.resident.primitive_registry.names[index].as_str())
+            .map(|index| self.session.primitive_registry.names[index].as_str())
     }
 
     #[must_use]
     pub fn primitive_resolved(&self, name: &str) -> Option<ResolvedMeaning<G>> {
-        self.resident
+        self.session
             .primitive_registry
             .names
             .iter()
             .position(|candidate| candidate == name)
-            .map(|index| self.resident.primitive_registry.meanings[index].resolve())
+            .map(|index| self.session.primitive_registry.meanings[index].resolve())
     }
 
     /// Resolves a previously bound immutable primitive by direct indexing.
     #[must_use]
     pub fn resolve_primitive_handle(&self, handle: crate::PrimitiveHandle<G>) -> Option<Meaning> {
-        if handle.session_epoch() != self.resident.interner().epoch_identity()
-            || handle.registry_len() != self.resident.primitive_registry.meanings.len()
+        if handle.session_epoch() != self.session.interner().epoch_identity()
+            || handle.registry_len() != self.session.primitive_registry.meanings.len()
         {
             return None;
         }
-        self.resident
+        self.session
             .primitive_registry
             .meanings
             .get(handle.index())?
@@ -1479,7 +1504,7 @@ impl<'a, G> CommandContext<'a, G> {
                 ));
             }
         }
-        self.resident.durable_boxes.metadata(index)
+        self.durable_boxes.metadata(index)
     }
 
     fn promote_output_box_if_needed(
@@ -1497,8 +1522,7 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .copy_page_root_to_durable(root)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| {
                 crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed)
@@ -1521,8 +1545,7 @@ impl<'a, G> CommandContext<'a, G> {
             .transpose()
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         let current_level = self.admitted.state_ref().current_level();
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .assign(&mut self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1563,8 +1586,7 @@ impl<'a, G> CommandContext<'a, G> {
             }
         };
         let current_level = self.admitted.state_ref().current_level();
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .assign(&mut self.page_nodes, index, durable, scope, current_level)
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1584,12 +1606,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        debug_assert!(
-            self.resident
-                .durable_boxes
-                .metadata(u8::MAX.into())
-                .is_none()
-        );
+        debug_assert!(self.durable_boxes.metadata(u8::MAX.into()).is_none());
         self.page
             .install_output_box(&self.page_nodes, value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
@@ -1608,8 +1625,7 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .copy_page_root_to_durable(value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1623,8 +1639,7 @@ impl<'a, G> CommandContext<'a, G> {
             self.promote_output_box_if_needed(index)
                 .expect("output-box copy promotion");
         }
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .copy_to_page(&mut self.page_nodes, index)
             .expect("box copy allocation")
     }
@@ -1638,8 +1653,7 @@ impl<'a, G> CommandContext<'a, G> {
                 return Some(root);
             }
         }
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .take_to_page(&mut self.page_nodes, index)
             .expect("box transfer allocation")
     }
@@ -1649,8 +1663,7 @@ impl<'a, G> CommandContext<'a, G> {
             self.page.clear_output_box();
             return;
         }
-        self.resident
-            .durable_boxes
+        self.durable_boxes
             .replace(&mut self.page_nodes, index, None)
             .expect("void box replacement cannot allocate");
     }
@@ -1864,7 +1877,7 @@ impl<'a, G> CommandContext<'a, G> {
                 return Err(error);
             }
         };
-        self.resident.durable_boxes.begin_group(frame.level());
+        self.durable_boxes.begin_group(frame.level());
         Ok(frame)
     }
 
@@ -1876,7 +1889,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.end_definition_group();
         let trace = self.admitted.state_ref().group_restoration_trace_state()?;
         let durable = self
-            .resident
             .durable_boxes
             .end_group(&mut self.page_nodes, receipt.frame().level())?;
         receipt.append_durable(durable, trace);
@@ -1903,7 +1915,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::diagnostic::Diagnostic::from_parts(
             effects,
             self.resident.interaction_mode,
-            self.resident.error_context_widths.max_print_line(),
+            self.session.error_context_widths.max_print_line(),
             trace.tracing_online(),
             trace.newline_char(),
             trace.escape_char(),
@@ -1923,7 +1935,7 @@ impl<'a, G> CommandContext<'a, G> {
                 };
             }
         }
-        let owner = self.resident.durable_boxes.value(index)?;
+        let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
@@ -1997,7 +2009,7 @@ impl<'a, G> CommandContext<'a, G> {
                 });
             }
         }
-        let owner = self.resident.durable_boxes.value(index)?;
+        let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
@@ -2015,7 +2027,7 @@ impl<'a, G> CommandContext<'a, G> {
         if index == u8::MAX.into() && !self.page.output_box().is_empty() {
             return self.page_output_box_margin_kern(side);
         }
-        let owner = self.resident.durable_boxes.value(index)?;
+        let owner = self.durable_boxes.value(index)?;
         let list = self.page_nodes.durable_list(owner).ok()?;
         let children = match (list.len(), list.get(0).map(crate::NodeView::from)) {
             (1, Some(crate::NodeView::HList(node))) => self
@@ -2184,19 +2196,19 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         let symbol = match identifier.into() {
             FontIdentifier::Symbol(symbol) => self
-                .resident
+                .session
                 .interner()
                 .qualify_local(symbol)
                 .expect("font identifier belongs to the admitted session"),
             FontIdentifier::Qualified(symbol) => symbol,
         };
         let kind = self
-            .resident
+            .session
             .interner()
             .kind_id(symbol)
             .expect("font identifier belongs to the admitted session");
         let name = self
-            .resident
+            .session
             .interner()
             .resolve_id(symbol)
             .expect("font identifier belongs to the admitted session")
@@ -3412,7 +3424,7 @@ impl<'a, G> CommandContext<'a, G> {
         );
         match record {
             Ok(record) => {
-                self.resident.durable_forms.insert(record.object(), owner);
+                self.durable_forms.insert(record.object(), owner);
                 Ok(record)
             }
             Err(error) => {
@@ -3463,7 +3475,7 @@ impl<'a, G> CommandContext<'a, G> {
         );
         match record {
             Ok(record) => {
-                self.resident.durable_forms.insert(record.object(), owner);
+                self.durable_forms.insert(record.object(), owner);
                 Ok(record)
             }
             Err(error) => {
@@ -3476,8 +3488,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn copy_pdf_form_to_page(&mut self, object: u32) -> Option<PageListId> {
-        self.resident
-            .durable_forms
+        self.durable_forms
             .copy_to_page(&mut self.page_nodes, object)
             .expect("PDF form copy must succeed")
     }
@@ -3688,8 +3699,7 @@ impl<'a, G> CommandContext<'a, G> {
             crate::ShipoutListId::Scratch(list) => {
                 let action = action(
                     crate::NodeView::from(
-                        self.resident
-                            .shipout_scratch
+                        self.shipout_scratch
                             .get(list)
                             .and_then(|nodes| nodes.get(source.index))
                             .expect("scratch shipout color source is live"),
@@ -4221,7 +4231,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         list: ShipoutScratchListId,
     ) -> Option<&[crate::ShipoutScratchNode]> {
-        self.resident.shipout_scratch.get(list)
+        self.shipout_scratch.get(list)
     }
 
     /// Materializes one page closure as a self-contained shipout-scratch
@@ -4261,7 +4271,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Opens one final shipout-scratch row for direct construction.
     pub fn begin_shipout_scratch_list(&mut self) -> ShipoutScratchListId {
-        self.resident.shipout_scratch.begin_list()
+        self.shipout_scratch.begin_list()
     }
 
     /// Appends directly to a final shipout-scratch row.
@@ -4270,7 +4280,7 @@ impl<'a, G> CommandContext<'a, G> {
         list: ShipoutScratchListId,
         node: crate::ShipoutScratchNode,
     ) {
-        self.resident.shipout_scratch.push(list, node);
+        self.shipout_scratch.push(list, node);
     }
 
     /// Visits a deferred shipout token payload without materializing it.
@@ -4353,7 +4363,6 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
-                    .resident
                     .shipout_scratch
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
@@ -4416,7 +4425,6 @@ impl<'a, G> CommandContext<'a, G> {
             }
             crate::ShipoutListId::Scratch(list) => {
                 let node = self
-                    .resident
                     .shipout_scratch
                     .get(list)
                     .and_then(|nodes| nodes.get(source.index))
@@ -5158,7 +5166,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub const fn error_context_widths(&self) -> crate::print::ErrorContextWidths {
-        self.resident.error_context_widths
+        self.session.error_context_widths
     }
 
     pub fn begin_diagnostic<'effects>(
@@ -5171,7 +5179,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::diagnostic::Diagnostic::from_parts(
             effects,
             self.resident.interaction_mode,
-            self.resident.error_context_widths.max_print_line(),
+            self.session.error_context_widths.max_print_line(),
             tracing_online,
             newline,
             escape,
@@ -5188,7 +5196,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         effects.push_ordinary_rendered(
             self.resident.interaction_mode,
-            self.resident.error_context_widths.max_print_line(),
+            self.session.error_context_widths.max_print_line(),
             text,
         );
     }
@@ -5207,7 +5215,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::diagnostic::Diagnostic::from_parts(
             effects,
             self.resident.interaction_mode,
-            self.resident.error_context_widths.max_print_line(),
+            self.session.error_context_widths.max_print_line(),
             1,
             newline,
             escape,
@@ -5223,7 +5231,7 @@ impl<'a, G> CommandContext<'a, G> {
             &mut self.resident.interaction_mode,
             newline,
             escape,
-            self.resident.error_context_widths.max_print_line(),
+            self.session.error_context_widths.max_print_line(),
             selector,
         )
     }
@@ -5234,7 +5242,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::print::ErrorReport::begin_from_parts(
             &mut self.resident.world,
             &mut self.resident.interaction_mode,
-            self.resident.error_context_widths,
+            self.session.error_context_widths,
             newline,
             escape,
             text,
@@ -5266,7 +5274,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::print::ErrorReport::bare_from_parts(
             &mut self.resident.world,
             &mut self.resident.interaction_mode,
-            self.resident.error_context_widths,
+            self.session.error_context_widths,
             newline,
             escape,
         )
@@ -5281,7 +5289,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::print::ErrorReport::resume_from_parts(
             &mut self.resident.world,
             &mut self.resident.interaction_mode,
-            self.resident.error_context_widths,
+            self.session.error_context_widths,
             newline,
             escape,
             deferred,
@@ -5294,7 +5302,7 @@ impl<'a, G> CommandContext<'a, G> {
         crate::print::ErrorReport::<G>::continue_from_parts(
             &mut self.resident.world,
             &mut self.resident.interaction_mode,
-            self.resident.error_context_widths,
+            self.session.error_context_widths,
             newline,
             escape,
             context,
@@ -5333,7 +5341,7 @@ impl<'a, G> CommandContext<'a, G> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
-        self.resident
+        self.session
             .primitive_registry
             .names
             .get(usize::from(frozen.primitive_index()?))
@@ -5343,7 +5351,7 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn primitive_token(&self, name: &str) -> Option<crate::token::Token> {
         let index = self
-            .resident
+            .session
             .primitive_registry
             .names
             .iter()
@@ -5355,7 +5363,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn symbol(&self, name: &str) -> Option<Symbol> {
-        self.resident.interner().known(name).map(SymbolId::symbol)
+        self.session.interner().known(name).map(SymbolId::symbol)
     }
 
     pub fn known_control_sequence(&mut self, name: &str) -> Option<Symbol> {
@@ -5381,7 +5389,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         let (id, created) = self
-            .resident
+            .session
             .interner_mut()
             .intern_with_status(name)
             .expect("command control-sequence interning stays within session budget");
@@ -5393,7 +5401,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern(&mut self, name: &str) -> Result<SymbolId, crate::interner::InternerError> {
-        let (id, created) = self.resident.interner_mut().intern_with_status(name)?;
+        let (id, created) = self.session.interner_mut().intern_with_status(name)?;
         if created && name.chars().nth(1).is_some() {
             self.resident.engine_usage.make_string(name);
         }
@@ -5409,7 +5417,7 @@ impl<'a, G> CommandContext<'a, G> {
         // strings, not §259 control-sequence hash entries. The interner holds
         // their typed identity only; that representation must not allocate a
         // second canonical pool string.
-        let id = self.resident.interner_mut().intern(value)?;
+        let id = self.session.interner_mut().intern(value)?;
         self.admitted
             .state()
             .admit_symbol(id.symbol())
@@ -5420,7 +5428,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {
         let (id, created) = self
-            .resident
+            .session
             .interner_mut()
             .intern_hash_with_status(name)
             .expect("command control-sequence interning stays within session budget");
@@ -5432,7 +5440,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern_internal_control_sequence(&mut self, name: &str) -> Symbol {
-        let id = self.resident.interner_mut().intern_internal(name);
+        let id = self.session.interner_mut().intern_internal(name);
         self.intern_symbol(id)
     }
 
