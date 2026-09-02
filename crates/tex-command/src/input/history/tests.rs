@@ -270,24 +270,29 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
 }
 
 #[test]
-fn stored_token_position_transition_is_present_in_every_build() {
+fn stored_token_position_transitions_are_present_in_every_build() {
     let source = include_str!("../history.rs");
-    let transition = source
-        .find("let consumed = $row.header.frame.advance_resident();")
-        .expect("resident stored-token delivery advances its frame");
-    let assertion = source[transition..]
-        .find("debug_assert_eq!(consumed, $position);")
-        .map(|offset| transition + offset)
-        .expect("the transition result is checked in debug builds");
-
-    assert!(transition < assertion);
-    assert!(
-        !source[..transition]
-            .lines()
-            .next_back()
-            .is_some_and(|line| line.contains("debug_assert")),
-        "the semantic position transition must not be compiled out with debug assertions"
+    assert_eq!(source.matches(".frame.advance_resident();").count(), 1);
+    assert_eq!(
+        source
+            .matches("debug_assert_eq!(consumed, $position);")
+            .count(),
+        1
     );
+    for transition in source.match_indices(".frame.advance_resident();") {
+        let assertion = source[transition.0..]
+            .find("debug_assert_eq!(consumed, $position);")
+            .map(|offset| transition.0 + offset)
+            .expect("the transition result is checked in debug builds");
+        assert!(transition.0 < assertion);
+        assert!(
+            !source[..transition.0]
+                .lines()
+                .next_back()
+                .is_some_and(|line| line.contains("debug_assert")),
+            "the semantic position transition must not be compiled out with debug assertions"
+        );
+    }
 }
 
 #[test]

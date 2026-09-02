@@ -192,8 +192,12 @@ keeps one direct mutable borrow of that initialized value through its complete
 ordinary loop. It neither probes vacancy, reinstalls a placeholder, recovers
 the command through repeated `as_ref`/`as_mut`, nor takes it on successful
 return. Each concrete
-resident arm advances only its own cursor and yields the packed word, origin,
-position, and source scalars. After that borrow ends, one branch-independent
+source arm retains the separate lexer transition. Every non-source resident
+arm enters one compile-time-inlined token-row transition; the arm itself owns
+only its lifetime-specific storage read and cursor update. The shared
+transition applies first-touch rollback capture, parameter interception,
+exhaustion, and yields the packed word, origin, position, and source scalars.
+It adds no runtime carrier or second storage dispatch. After that borrow ends, one branch-independent
 `EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
 and delivery facts into the caller's address and returns only the scalar packed-
 resolution fact. The authoritative `CommandState` resident transition then

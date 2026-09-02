@@ -178,10 +178,7 @@ impl<G> MacroBodyCursor<G> {
     /// coordinate, or result wrapper; the caller handles Param before lending
     /// the returned word to its final command destination.
     #[inline(always)]
-    pub(super) fn advance_word(
-        &mut self,
-        _state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<(u32, TokenWord)> {
+    pub(super) fn advance_word(&mut self) -> Option<(u32, TokenWord)> {
         self.body.advance_word()
     }
 }
@@ -393,20 +390,17 @@ impl<G> MacroArgumentCursor<G> {
     pub(super) fn advance_delivery(
         &mut self,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Result<Option<(u32, TokenWord, OriginId)>, ()> {
+    ) -> Option<(u32, TokenWord, OriginId)> {
         let absolute = self.absolute;
         if absolute >= self.range.end() {
-            return Ok(None);
+            return None;
         }
         debug_assert!(absolute >= self.range.start());
-        let Some((word, origin)) =
-            scratch.admitted_argument_parts_at_sequential(absolute, &mut self.origin_run)
-        else {
-            return Ok(None);
-        };
+        let (word, origin) =
+            scratch.admitted_argument_parts_at_sequential(absolute, &mut self.origin_run)?;
         let position = absolute - self.range.start();
-        self.absolute = absolute.checked_add(1).ok_or(())?;
-        Ok(Some((position, word, origin)))
+        self.absolute = absolute + 1;
+        Some((position, word, origin))
     }
 
     fn swap_absolute(&mut self, position: &mut u32) {

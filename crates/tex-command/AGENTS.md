@@ -349,14 +349,16 @@ collector (see `src/conditionals.rs`).
   Typed cold source operations and one `CommandState`-owned resident front
   are the only mutable access. That front reads the semantic top index once
   and matches the authoritative `InputLevel` row directly; it does not first
-  encode the row as a universal resident-top carrier and redispatch it. Each
-  concrete source, replay-token, durable-token, attempt-token, macro-body, or
-  macro-argument arm borrows only its cursor and matching first-touch journal
-  fields. All three token-backed variants embed the same resident header and
-  perform only their distinct word read before its one shared transition; no
-  storage-handle match, stored-top wrapper, advance result, or redispatch
-  survives selection. Their first warm checkpoint touch journals the header's
-  logical position; replay includes its separate physical run/segment cursor. A
+  encode the row as a universal resident-top carrier and redispatch it. Source
+  lexing remains its own state machine. Every non-source replay-token,
+  durable-token, attempt-token, macro-body, and macro-argument arm enters one
+  compile-time-inlined resident-token transition for first touch, parameter
+  handling, exhaustion, and final delivery. Each arm keeps only its concrete
+  lifetime-specific word read and cursor update; no runtime storage-handle
+  match, stored-top wrapper, advance result, or redispatch survives selection.
+  The three stored variants embed the same resident header. Their first warm
+  checkpoint touch journals the header's logical position; replay includes its
+  separate physical run/segment cursor. A
   later cold retirement, limit, or flag mutation records
   the remaining token state separately in the same ordered history. Every arm
   ends its storage borrow with only the word, origin, position, and source

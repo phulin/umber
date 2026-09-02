@@ -269,7 +269,18 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "resident front must enter {branch} exactly once"
         );
     }
-    assert_eq!(resident_front.matches("transition_token_row!(").count(), 3);
+    assert_eq!(
+        resident_front.matches("advance_stored_token_row!").count(),
+        3,
+        "all admitted stored domains must use the compact stored-row adapter"
+    );
+    assert_eq!(
+        resident_front
+            .matches("advance_resident_token_row!")
+            .count(),
+        3,
+        "the stored adapter and both specialized owners must use one resident-token state machine"
+    );
     for retired in [
         "advance_resident_top_into",
         "ResidentInputTop",
@@ -537,7 +548,8 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(recovery.contains("fn recover_off_save("));
     assert!(expansion.contains("self.retire_input_top(identity)"));
     assert!(stack.contains("fn retire_resident_ordinary_input("));
-    assert!(history.contains("self.settle_resident_ordinary_retirement("));
+    assert!(history.contains("fn finish_resident_exhaustion("));
+    assert!(history.contains(".settle_resident_ordinary_retirement("));
     assert!(history.contains("destination.reborrow()"));
     assert!(!history.contains("self.retire_input_top("));
     assert!(expansion.contains("self.check_outer_validity_entry(command)"));
