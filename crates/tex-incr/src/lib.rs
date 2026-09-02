@@ -609,7 +609,7 @@ pub struct RevisionCandidate<'store> {
     job_name: String,
     source_path: String,
     plan: CandidatePlan,
-    registered_inputs: BTreeMap<PathBuf, Arc<[u8]>>,
+    registered_inputs: BTreeMap<PathBuf, tex_state::SharedBytes>,
     profile: CommandProfile,
     compatibility: CommandCompatibility,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
@@ -1600,7 +1600,7 @@ fn initialize_candidate_runtime<G: 'static>(
     for (path, bytes) in &candidate.registered_inputs {
         if let Err(error) = universe
             .world_mut()
-            .set_shared_memory_file(path, Arc::clone(bytes))
+            .set_shared_memory_file(path, bytes.clone())
         {
             return Err(error.into());
         }
@@ -2283,7 +2283,7 @@ pub struct Session<'store> {
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     checkpoint_budget: usize,
-    registered_inputs: BTreeMap<PathBuf, Arc<[u8]>>,
+    registered_inputs: BTreeMap<PathBuf, tex_state::SharedBytes>,
     accepted_retention: Option<RetentionMetrics>,
     required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
@@ -2732,7 +2732,7 @@ impl<'store> Session<'store> {
     pub fn register_input_file(
         &mut self,
         path: &Path,
-        bytes: impl Into<Arc<[u8]>>,
+        bytes: impl Into<tex_state::SharedBytes>,
     ) -> Result<(), SessionError> {
         self.registered_inputs.insert(path.to_owned(), bytes.into());
         Ok(())

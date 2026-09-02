@@ -186,7 +186,7 @@ pub struct PdfExternalImageInput {
     pub depth: Scaled,
     pub color_space_object: Option<u32>,
     pub mask_object: Option<u32>,
-    pub bytes: Arc<[u8]>,
+    pub bytes: tex_content::SharedBytes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

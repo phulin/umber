@@ -949,7 +949,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
             root: LiveSource {
                 name: source_name,
                 source: tex_state::SourceId::new(0),
-                bytes: Arc::from(source),
+                bytes: Arc::<[u8]>::from(source).into(),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
@@ -1053,7 +1053,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
             root: LiveSource {
                 name: source_name,
                 source: tex_state::SourceId::new(0),
-                bytes: Arc::from(source),
+                bytes: Arc::<[u8]>::from(source).into(),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
@@ -2066,7 +2066,7 @@ fn run_two_phase_fixture(
             root: LiveSource {
                 name: source_identity.canonical_name().to_owned(),
                 source: tex_state::SourceId::new(0),
-                bytes: Arc::from(source_bytes),
+                bytes: Arc::<[u8]>::from(source_bytes).into(),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,

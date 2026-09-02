@@ -2,10 +2,8 @@
 
 use std::path::Path;
 
-use std::sync::Arc;
-
 use crate::world::{InputDependencyAccess, InputDependencyOutcome, World, WorldError};
-use crate::{FileContent, Universe};
+use crate::{FileContent, SharedBytes, Universe};
 
 /// Narrow mutable capability exposed to driver-owned input resolvers.
 pub trait InputReadState {
@@ -16,7 +14,7 @@ pub trait InputReadState {
     fn read_supplied_input_file(
         &mut self,
         path: &Path,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
     ) -> Result<FileContent, WorldError>;
 
     fn record_input_dependency(
@@ -44,7 +42,7 @@ impl InputReadState for InputOpenContext<'_> {
     fn read_supplied_input_file(
         &mut self,
         path: &Path,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
     ) -> Result<FileContent, WorldError> {
         self.world.read_supplied_file(path, bytes)
     }

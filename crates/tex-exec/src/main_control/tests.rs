@@ -10147,7 +10147,7 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
         }),
         natural_width: Scaled::from_raw(Scaled::UNITY),
         natural_height: Scaled::from_raw(Scaled::UNITY),
-        bytes: b"image bytes".to_vec(),
+        bytes: b"image bytes".to_vec().into(),
     }
 }
 

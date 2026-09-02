@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::Arc;
+
+use tex_content::SharedBytes;
 
 use crate::storage::{DistributionPath, JobPath, WorkspaceStorage};
 use crate::{
@@ -343,7 +344,7 @@ fn canonical_requests(requests: impl IntoIterator<Item = FileRequest>) -> Vec<Fi
 pub struct ResolvedFile {
     pub request: FileRequestKey,
     pub virtual_path: String,
-    pub bytes: Vec<u8>,
+    pub bytes: SharedBytes,
     pub expected_digest: Option<FileContentId>,
 }
 
@@ -523,7 +524,7 @@ impl ProjectWorkspace {
             replaced,
             bytes.len(),
         )?;
-        let bytes: Arc<[u8]> = bytes.into();
+        let bytes = SharedBytes::from(bytes);
         let outcome = if existing.is_some_and(|file| file.bytes() == bytes.as_ref()) {
             ProvisionOutcome::AlreadyPresent
         } else {
@@ -731,13 +732,13 @@ impl ProjectWorkspace {
                 })?;
             self.limits.check(VfsLimitKind::ResolvedBytes, attempted)?;
             self.ledger.resolved_bytes = attempted;
-            Arc::from(response.bytes)
+            response.bytes
         };
         if self.storage.resolved().get(&path).is_none() {
             self.storage.insert_resolved(
                 DistributionPath::new(path.clone())
                     .expect("distribution canonicalization fixes the root"),
-                Arc::clone(&shared),
+                shared.clone(),
                 response.request.clone(),
             );
         }

@@ -1433,7 +1433,7 @@ mod tests {
                         metadata: tex_state::PdfExternalImageMetadata::Raster(raster_metadata),
                         natural_width: Scaled::from_raw(Scaled::UNITY),
                         natural_height: Scaled::from_raw(Scaled::UNITY),
-                        bytes: Vec::new(),
+                        bytes: Vec::new().into(),
                     },
                     tex_state::PdfExternalImageDimensions {
                         width: Scaled::from_raw(Scaled::UNITY),
@@ -1478,7 +1478,7 @@ mod tests {
                         },
                         natural_width: page_box.right,
                         natural_height: page_box.top,
-                        bytes: Vec::new(),
+                        bytes: Vec::new().into(),
                     },
                     tex_state::PdfExternalImageDimensions {
                         width: page_box.right,
@@ -2649,7 +2649,7 @@ mod tests {
                         ),
                         natural_width: Scaled::from_raw(Scaled::UNITY),
                         natural_height: Scaled::from_raw(Scaled::UNITY),
-                        bytes: Vec::new(),
+                        bytes: Vec::new().into(),
                     },
                     tex_state::PdfExternalImageDimensions {
                         width: Scaled::from_raw(Scaled::UNITY),

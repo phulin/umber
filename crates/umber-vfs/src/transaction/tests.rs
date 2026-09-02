@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use proptest::prelude::*;
 
 use super::*;
@@ -178,7 +176,10 @@ fn candidate_precedence_and_retention_include_shared_accepted_bytes() {
         .expect("live")
         .expect("accepted")
         .shared_bytes();
-    assert!(Arc::ptr_eq(&accepted_bytes, &before_bytes));
+    assert!(tex_content::SharedBytes::ptr_eq(
+        &accepted_bytes,
+        &before_bytes
+    ));
     assert_eq!(
         before.retention(),
         SnapshotRetention {

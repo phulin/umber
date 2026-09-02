@@ -633,7 +633,7 @@ mod tests {
     fn font_capability_index_is_compact_and_stable_across_ordered_insertions() {
         assert_eq!(std::mem::size_of::<HostFontResourceId>(), 4);
         #[cfg(target_pointer_width = "64")]
-        assert_eq!(std::mem::size_of::<FontResource>(), 512);
+        assert_eq!(std::mem::size_of::<FontResource>(), 504);
         assert!(
             std::mem::size_of::<(PathBuf, HostFontResourceId)>()
                 < std::mem::size_of::<(PathBuf, FontResource)>(),

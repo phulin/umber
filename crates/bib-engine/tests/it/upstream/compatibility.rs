@@ -268,7 +268,7 @@ fn complete(
                             .provision(ResolvedFile {
                                 request: request.key().clone(),
                                 virtual_path: format!("/texlive/bib/{}", request.key().name()),
-                                bytes,
+                                bytes: bytes.into(),
                                 expected_digest: None,
                             })
                             .expect("requested fixture is valid");

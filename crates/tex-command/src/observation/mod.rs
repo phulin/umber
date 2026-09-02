@@ -6,8 +6,6 @@
 //! In particular, an observer is non-fallible and never participates in
 //! command state, snapshots, delivery, expansion, or scanner control flow.
 
-use std::sync::Arc;
-
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 
 use crate::command::{CommandIdentity, CurrentCommand};
@@ -731,7 +729,7 @@ pub struct EffectRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenedSourceSnapshot {
     pub id: tex_state::SourceId,
-    pub bytes: Arc<[u8]>,
+    pub bytes: tex_state::SharedBytes,
 }
 
 /// Detached backing context for a command-owned generated source.

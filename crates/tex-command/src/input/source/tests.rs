@@ -85,7 +85,7 @@ fn exact_byte_registration_preserves_every_byte() {
     )
     .expect("exact-byte registration never decodes");
 
-    assert_eq!(registered.bytes, bytes);
+    assert_eq!(registered.bytes.as_ref(), bytes.as_ref());
     assert_eq!(registered.kind, RegisteredSourceKind::ReadLine);
 }
 
@@ -106,7 +106,7 @@ fn every_registration_kind_is_retained_without_changing_backing() {
         .expect("already acquired exact backing must register");
 
         assert_eq!(registered.kind, kind);
-        assert_eq!(registered.bytes, bytes);
+        assert_eq!(registered.bytes.as_ref(), bytes.as_ref());
     }
 }
 
@@ -154,7 +154,7 @@ fn named_generated_descriptor_survives_editor_rebinding() {
     );
 
     let rebound = registered
-        .rebind_generated(SourceId::new(12), Arc::from(&b"second"[..]))
+        .rebind_generated(SourceId::new(12), (&b"second"[..]).into())
         .expect("named generated source rebinds");
     assert_eq!(
         rebound.source_descriptor(),

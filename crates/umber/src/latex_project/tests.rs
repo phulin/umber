@@ -173,7 +173,7 @@ fn resolved(request: umber_vfs::FileRequestKey, path: &str, bytes: &[u8]) -> Res
     ResourceResponse::File(ResolvedFile {
         request,
         virtual_path: path.into(),
-        bytes: bytes.to_vec(),
+        bytes: bytes.to_vec().into(),
         expected_digest: None,
     })
 }
@@ -356,7 +356,7 @@ fn finish_classic_project(session: &mut LatexProjectSession) -> LatexProjectOutp
                             ResourceResponse::File(ResolvedFile {
                                 request: file.key().clone(),
                                 virtual_path: path.into(),
-                                bytes,
+                                bytes: bytes.into(),
                                 expected_digest: None,
                             })
                         }
@@ -534,7 +534,7 @@ fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
                             ResourceResponse::File(ResolvedFile {
                                 request: file.key().clone(),
                                 virtual_path: path.into(),
-                                bytes,
+                                bytes: bytes.into(),
                                 expected_digest: None,
                             })
                         }

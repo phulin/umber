@@ -102,7 +102,7 @@ fn empty_and_consecutive_terminators_have_exact_blank_line_behavior() {
 #[test]
 fn exact_byte_line_strips_spaces_and_anchors_synthetic_endline() {
     let mut cursor = cursor(CharacterMode::EightBitExact, b"a  \r\n");
-    let bytes = Arc::clone(&cursor.backing.bytes);
+    let bytes = cursor.backing.bytes.clone();
     let line = cursor.load_next_line(13).expect("line");
     let chars = drain(line, CharacterMode::EightBitExact, &bytes);
 
@@ -120,7 +120,7 @@ fn exact_byte_line_strips_spaces_and_anchors_synthetic_endline() {
 fn unicode_cursor_decodes_scalars_but_preserves_utf8_byte_ranges() {
     let text = "é𐐀  \n";
     let mut cursor = cursor(CharacterMode::UnicodeExtended, text.as_bytes());
-    let bytes = Arc::clone(&cursor.backing.bytes);
+    let bytes = cursor.backing.bytes.clone();
     let line = cursor.load_next_line(0x03c0).expect("line");
     let chars = drain(line, CharacterMode::UnicodeExtended, &bytes);
 
@@ -140,7 +140,7 @@ fn unicode_cursor_decodes_scalars_but_preserves_utf8_byte_ranges() {
 fn unicode_ranges_cover_every_utf8_width_and_scalar_position() {
     let text = "\0¢€𐀀";
     let mut cursor = cursor(CharacterMode::UnicodeExtended, text.as_bytes());
-    let bytes = Arc::clone(&cursor.backing.bytes);
+    let bytes = cursor.backing.bytes.clone();
     let line = cursor.load_next_line(-1).expect("line");
     let chars = drain(line, CharacterMode::UnicodeExtended, &bytes);
 

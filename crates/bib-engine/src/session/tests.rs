@@ -50,7 +50,7 @@ fn requests_remote_resources_resumes_and_exposes_typed_values() {
         .provision(ResolvedFile {
             request: needs.required[0].key().clone(),
             virtual_path: "/texlive/bib/data.bib".into(),
-            bytes: DATA.to_vec(),
+            bytes: DATA.to_vec().into(),
             expected_digest: None,
         })
         .expect("remote data");
@@ -144,7 +144,7 @@ fn cache_disabled_and_enabled_results_are_identical() {
         .preload(ResolvedFile {
             request: key,
             virtual_path: "/texlive/bib/data.bib".into(),
-            bytes: DATA.to_vec(),
+            bytes: DATA.to_vec().into(),
             expected_digest: None,
         })
         .expect("data");
@@ -259,7 +259,7 @@ fn response(request: &FileRequest, path: &str, bytes: &[u8]) -> ResolvedFile {
     ResolvedFile {
         request: request.key().clone(),
         virtual_path: path.into(),
-        bytes: bytes.to_vec(),
+        bytes: bytes.to_vec().into(),
         expected_digest: None,
     }
 }

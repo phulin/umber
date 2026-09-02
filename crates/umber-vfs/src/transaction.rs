@@ -99,7 +99,7 @@ impl<'workspace> GeneratedTransaction<'workspace> {
             .check(VfsLimitKind::GeneratedFiles, next_files)?;
         self.limits.check(VfsLimitKind::StageFiles, next_files)?;
 
-        self.pending.replace(path, Arc::<[u8]>::from(bytes));
+        self.pending.replace(path, bytes.into());
         self.logical_bytes = next_bytes;
         Ok(())
     }

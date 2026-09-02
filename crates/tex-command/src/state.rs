@@ -2194,7 +2194,7 @@ impl<G> CommandState<G> {
         let raw = u32::try_from(self.input.next_source_identity)
             .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
         let id = tex_state::SourceId::new(raw);
-        let replacement = accepted.rebind_generated(id, bytes)?;
+        let replacement = accepted.rebind_generated(id, bytes.into())?;
         self.timeline
             .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
@@ -2328,6 +2328,7 @@ impl<G> CommandState<G> {
         &mut self,
         bytes: impl Into<std::sync::Arc<[u8]>>,
     ) -> Result<(), SourceRegistrationError> {
+        let bytes = bytes.into();
         let source = self.register_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
             bytes,
@@ -2385,6 +2386,7 @@ impl<G> CommandState<G> {
         name_class: SourceNameClass,
         bytes: impl Into<std::sync::Arc<[u8]>>,
     ) -> Result<(), SourceRegistrationError> {
+        let bytes = bytes.into();
         let source = self.register_source(SourceRegistration::new(
             RegisteredSourceKind::ReadLine,
             bytes,
@@ -2645,7 +2647,7 @@ impl<G> CommandState<G> {
             .current_backing();
         Some(crate::observation::OpenedSourceSnapshot {
             id: backing.id,
-            bytes: std::sync::Arc::clone(&backing.bytes),
+            bytes: backing.bytes.clone(),
         })
     }
 

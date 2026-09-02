@@ -1,4 +1,7 @@
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::ops::Deref;
+use std::sync::Arc;
 
 const DOMAIN_PREFIX: &[u8] = b"umber-content\0";
 const DOMAIN_VERSION: u8 = 2;
@@ -24,6 +27,134 @@ pub struct ContentIdentity([u8; 32]);
 
 /// Compatibility name used by the engine's existing public API.
 pub type ContentHash = ContentIdentity;
+
+/// Compact shared ownership of exact immutable content bytes.
+///
+/// A fresh `Vec<u8>` is moved into the owner without relocating its payload.
+/// Existing shared slices are wrapped without copying their payload. This
+/// gives resource admission, engine state, and detached output one common
+/// ownership vocabulary without exposing mutable backing.
+#[derive(Clone)]
+pub struct SharedBytes(Arc<SharedBytesStorage>);
+
+enum SharedBytesStorage {
+    Vector(Vec<u8>),
+    Slice(Arc<[u8]>),
+}
+
+impl SharedBytes {
+    /// Moves a freshly acquired byte vector into shared immutable ownership.
+    #[must_use]
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        Self(Arc::new(SharedBytesStorage::Vector(bytes)))
+    }
+
+    /// Wraps an existing shared slice without copying its payload.
+    #[must_use]
+    pub fn from_arc(bytes: Arc<[u8]>) -> Self {
+        Self(Arc::new(SharedBytesStorage::Slice(bytes)))
+    }
+
+    /// Returns whether two handles name the exact same immutable owner.
+    #[must_use]
+    pub fn ptr_eq(left: &Self, right: &Self) -> bool {
+        Arc::ptr_eq(&left.0, &right.0)
+    }
+}
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self.0.as_ref() {
+            SharedBytesStorage::Vector(bytes) => bytes,
+            SharedBytesStorage::Slice(bytes) => bytes,
+        }
+    }
+}
+
+impl Deref for SharedBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl From<Vec<u8>> for SharedBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::from_vec(bytes)
+    }
+}
+
+impl From<Box<[u8]>> for SharedBytes {
+    fn from(bytes: Box<[u8]>) -> Self {
+        Self::from_vec(bytes.into_vec())
+    }
+}
+
+impl From<Arc<[u8]>> for SharedBytes {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        Self::from_arc(bytes)
+    }
+}
+
+impl From<&[u8]> for SharedBytes {
+    fn from(bytes: &[u8]) -> Self {
+        Self::from_vec(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for SharedBytes {
+    fn from(bytes: &[u8; N]) -> Self {
+        Self::from(bytes.as_slice())
+    }
+}
+
+impl fmt::Debug for SharedBytes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SharedBytes")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for SharedBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for SharedBytes {}
+
+impl PartialEq<[u8]> for SharedBytes {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_ref() == other
+    }
+}
+
+impl PartialEq<&[u8]> for SharedBytes {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.as_ref() == *other
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for SharedBytes {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_ref() == other
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for SharedBytes {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_ref() == *other
+    }
+}
+
+impl Hash for SharedBytes {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state);
+    }
+}
 
 impl ContentIdentity {
     /// Identifies input bytes in the current domain-separated scheme.
@@ -240,9 +371,26 @@ fn splitmix64(mut value: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentDomain, ContentIdentity, DOMAIN_PREFIX, DOMAIN_VERSION_V1, hash_v1_parts,
-        hash_v2_parts,
+        ContentDomain, ContentIdentity, DOMAIN_PREFIX, DOMAIN_VERSION_V1, SharedBytes,
+        hash_v1_parts, hash_v2_parts,
     };
+
+    #[test]
+    fn shared_bytes_adopts_vectors_without_relocating_the_payload() {
+        let bytes = vec![1, 2, 3, 4];
+        let address = bytes.as_ptr();
+        let shared = SharedBytes::from(bytes);
+        assert_eq!(shared.as_ptr(), address);
+        assert!(SharedBytes::ptr_eq(&shared, &shared.clone()));
+    }
+
+    #[test]
+    fn shared_bytes_wraps_existing_shared_slices_without_copying_the_payload() {
+        let bytes = std::sync::Arc::<[u8]>::from([5, 6, 7]);
+        let address = bytes.as_ptr();
+        let shared = SharedBytes::from(bytes);
+        assert_eq!(shared.as_ptr(), address);
+    }
 
     #[test]
     fn domains_and_versions_separate_equal_bytes() {

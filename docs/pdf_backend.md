@@ -332,6 +332,14 @@ model before serialization. The lightweight input parser is `hayro-syntax`;
 the test-only observation boundary is specified separately in
 [Lightweight PDF test architecture](pdf_test_architecture.md).
 
+The source payload remains the admitted `tex_content::SharedBytes` owner from
+VFS or World through image inspection, host capability replay, `PdfState`,
+checkpoint and candidate settlement, terminal completion and finalization
+input. Those stages clone only the compact handle and borrow the bytes while
+parsing or writing. Imported stream decoding still owns newly decoded stream
+content, but neither external-image metadata parsing nor engine/output
+handoffs clone the complete acquired file.
+
 PNG syntax and chunk CRC validation use the maintained pure-Rust `png` crate.
 For non-interlaced 8-bit gray-alpha and RGBA sources, its low-level
 `StreamingDecoder` inflates into a fixed lookback-plus-row buffer while the PDF

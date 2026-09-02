@@ -260,7 +260,7 @@ fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResp
         } => Ok(ResourceResponse::File(ResolvedFile {
             request: file_request_key(key)?,
             virtual_path,
-            bytes,
+            bytes: bytes.into(),
             expected_digest: expected_content_id
                 .map(|digest| parse_digest(&digest).map(FileContentId::from_identity_bytes))
                 .transpose()?,

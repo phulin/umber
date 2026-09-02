@@ -1576,7 +1576,7 @@ impl<'store> VirtualCompileSession<'store> {
         &mut self,
         request: FileRequestKey,
         virtual_path: &str,
-        bytes: Vec<u8>,
+        bytes: tex_state::SharedBytes,
     ) -> Result<(), CompileError> {
         let key = ResourceRequestKey::File(request.clone());
         let was_bound = self.resource_is_bound(&key);
@@ -1615,7 +1615,7 @@ impl<'store> VirtualCompileSession<'store> {
         virtual_path: &str,
         bytes: Vec<u8>,
     ) -> Result<(), CompileError> {
-        self.restore_cached_file(request, virtual_path, bytes)
+        self.restore_cached_file(request, virtual_path, bytes.into())
     }
 
     pub fn provide_resources(

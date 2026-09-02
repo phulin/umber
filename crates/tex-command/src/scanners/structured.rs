@@ -4,8 +4,6 @@
 //! canonical filename scanning only. Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
-use std::sync::Arc;
-
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
@@ -1722,7 +1720,7 @@ impl WriteStreamSelector {
 pub struct RegisteredInput {
     pub file_name: ScannedFileName,
     pub source: SourceId,
-    pub bytes: Arc<[u8]>,
+    pub bytes: tex_state::SharedBytes,
 }
 
 /// The typed result of TeX82's `init_col` entry lookahead.

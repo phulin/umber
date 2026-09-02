@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tex_command::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandObserver,
     CommandProvenance, DiagnosticRecord, EffectRecord, GeneratedSourceRecord, GeometryRecord,
@@ -31,7 +29,7 @@ fn translator() -> LiveSessionTranslator {
         LiveSource {
             name: "trip.tex".into(),
             source: SourceId::new(1),
-            bytes: Arc::from(&b"X\n"[..]),
+            bytes: (&b"X\n"[..]).into(),
         },
     )
 }
@@ -45,7 +43,7 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
         LiveSource {
             name: "root.tex".into(),
             source: SourceId::new(1),
-            bytes: Arc::from(&b"R\n"[..]),
+            bytes: (&b"R\n"[..]).into(),
         },
     );
     translator.translate_captured([
@@ -53,7 +51,7 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
             name: "generated".into(),
             source: OpenedSourceSnapshot {
                 id: generated,
-                bytes: Arc::from(&b"G\n"[..]),
+                bytes: (&b"G\n"[..]).into(),
             },
         }),
         CommandObservation::Command(CommandDeliveryRecord {
@@ -126,10 +124,10 @@ fn delayed_geometry_uses_its_captured_source_instead_of_the_live_frame() {
         LiveSource {
             name: "root.tex".into(),
             source: root,
-            bytes: Arc::from(&b"root\n"[..]),
+            bytes: (&b"root\n"[..]).into(),
         },
     );
-    translator.activate_source("nested.tex", nested, Arc::from(&b"nested\n"[..]));
+    translator.activate_source("nested.tex", nested, (&b"nested\n"[..]).into());
     translator.committed(CommandObservation::Geometry(GeometryRecord::Shipout {
         page_width_sp: 10,
         page_height_sp: 20,
@@ -156,7 +154,7 @@ fn typed_finalizer_projects_trip_and_positionless_geometry_once() {
         LiveSource {
             name: "trip.tex".into(),
             source: SourceId::new(1),
-            bytes: Arc::from(&b"X\n"[..]),
+            bytes: (&b"X\n"[..]).into(),
         },
     );
     translator.committed(CommandObservation::Effect(EffectRecord {
@@ -414,7 +412,7 @@ fn input_effect_source_identity_resolves_after_unobserved_source_allocations() {
         LiveSource {
             name: "etrip.tex".into(),
             source: SourceId::new(1),
-            bytes: Arc::from(&b""[..]),
+            bytes: (&b""[..]).into(),
         },
     );
     translator.translate_captured([
@@ -424,7 +422,7 @@ fn input_effect_source_identity_resolves_after_unobserved_source_allocations() {
             value: ObservationValue::None,
             source: Some(OpenedSourceSnapshot {
                 id: SourceId::new(41),
-                bytes: Arc::from(&b"\\endgroup\n"[..]),
+                bytes: (&b"\\endgroup\n"[..]).into(),
             }),
         }),
         CommandObservation::Command(CommandDeliveryRecord {
@@ -499,7 +497,7 @@ fn repeated_packed_name_uses_each_opened_source_snapshot_until_its_retirement() 
             value: ObservationValue::None,
             source: Some(OpenedSourceSnapshot {
                 id: SourceId::new(id),
-                bytes: Arc::from(bytes),
+                bytes: bytes.into(),
             }),
         })
     };

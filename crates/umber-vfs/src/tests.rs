@@ -167,7 +167,7 @@ fn virtual_files_share_bytes_and_separate_content_from_path_binding_identity() {
         FileOrigin::User,
     );
 
-    assert!(Arc::ptr_eq(&first.shared_bytes(), &bytes));
+    assert_eq!(first.shared_bytes().as_ptr(), bytes.as_ptr());
     assert_eq!(first.bytes(), b"identical");
     assert_eq!(first.content_id(), second.content_id());
     assert_ne!(first.binding_id(), second.binding_id());

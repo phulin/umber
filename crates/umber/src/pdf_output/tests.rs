@@ -70,6 +70,83 @@ fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
 }
 
 #[test]
+fn external_pdf_resource_keeps_one_owner_through_finalization() {
+    const IMAGE: &[u8] =
+        include_bytes!("../../../../tests/corpus/pdf/minimal_rule/expected.umber.pdf");
+
+    let (completion, acquired) = crate::with_engine_universe(|stores| {
+        stores.set_interaction_mode(InteractionMode::Nonstop);
+        prepare_pdftex_run_stores(stores);
+        let image = IMAGE.to_vec();
+        let acquired_address = image.as_ptr();
+        stores
+            .world_mut()
+            .set_memory_file("figure.pdf", image)
+            .expect("seed external PDF");
+        let acquired = stores
+            .world_mut()
+            .read_file("figure.pdf")
+            .expect("read acquired external PDF")
+            .shared_bytes();
+        assert_eq!(acquired.as_ptr(), acquired_address);
+
+        let mut host =
+            FileSessionResolvers::new(Path::new("image-owner.tex"), Vec::new(), Vec::new());
+        run_input_collecting_artifacts_with_profile(
+            stores,
+            RetainedRootRequest::authored_job(
+                "image-owner",
+                concat!(
+                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\pdfximage{figure.pdf}",
+                    "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+                )
+                .as_bytes(),
+                tex_command::CommandProfile::PDFTEX14029,
+            ),
+            &mut host,
+            tex_command::CommandProfile::PDFTEX14029,
+        )
+        .expect("external PDF page ships");
+        let completion = stores
+            .command_context()
+            .expect("admit external-image completion")
+            .detach_pdf_completion()
+            .expect("detach external-image PDF");
+        (completion, acquired)
+    })
+    .expect("fresh external-image universe");
+
+    let [image] = completion.images() else {
+        panic!("expected exactly one external image");
+    };
+    assert!(tex_state::SharedBytes::ptr_eq(
+        &image.shared_bytes(),
+        &acquired
+    ));
+    let input = pdf_finalization_input(
+        &completion,
+        DEFAULT_PDF_PK_RESOLUTION,
+        &crate::PdfVirtualFontResources::default(),
+    )
+    .expect("external-image finalization input");
+    let finalized_image = input.images.values().next().expect("final image input");
+    assert!(tex_state::SharedBytes::ptr_eq(
+        &finalized_image.bytes,
+        &acquired
+    ));
+
+    let first = tex_out::pdf::finalize_pdf(&input).expect("first deterministic finalization");
+    let second = tex_out::pdf::finalize_pdf(&input).expect("second deterministic finalization");
+    assert_eq!(first.bytes, second.bytes);
+    test_support::pdf_query::PdfQuery::new(
+        &first.bytes,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts external-image PDF");
+}
+
+#[test]
 fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
     const FIX_ONE: i32 = 1 << 20;
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

@@ -701,7 +701,7 @@ impl<G> InputStack<G> {
                 match slot
                     .cursor
                     .backing
-                    .rehome_generated(std::sync::Arc::clone(&bytes))
+                    .rehome_generated(std::sync::Arc::clone(&bytes).into())
                 {
                     Ok(prepared) => replacement = Some(prepared),
                     Err(error) => {

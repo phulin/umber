@@ -47,11 +47,11 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ContentHash;
 use crate::durable_arena::TokenListId;
 use crate::ids::FontId;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
+use crate::{ContentHash, SharedBytes};
 use std::collections::BTreeMap;
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
@@ -236,7 +236,7 @@ pub struct PdfExternalImageSource {
     pub metadata: PdfExternalImageMetadata,
     pub natural_width: Scaled,
     pub natural_height: Scaled,
-    pub bytes: Vec<u8>,
+    pub bytes: SharedBytes,
 }
 
 /// Final dimensions recorded by `\pdfximage` after optional scaling.
@@ -362,7 +362,7 @@ pub struct PdfExternalImageRecord {
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
     color_space_object: i32,
-    bytes: Vec<u8>,
+    bytes: SharedBytes,
     mask_object: Option<u32>,
 }
 
@@ -596,7 +596,7 @@ impl<T> Extend<(u32, T)> for PdfDenseMap<T> {
 
 #[derive(Debug, Default)]
 struct PdfPayloadArena {
-    rows: PdfRows<Box<[u8]>>,
+    rows: PdfRows<SharedBytes>,
     bytes: usize,
     accepted_bytes: Option<usize>,
 }
@@ -606,15 +606,20 @@ impl PdfPayloadArena {
         self.rows.len()
     }
 
-    fn store(&mut self, bytes: Vec<u8>) -> PdfPayloadId {
+    fn store(&mut self, bytes: impl Into<SharedBytes>) -> PdfPayloadId {
+        let bytes = bytes.into();
         let id = PdfPayloadId(self.len());
         self.bytes = self.bytes.saturating_add(bytes.len());
-        self.rows.push(bytes.into_boxed_slice());
+        self.rows.push(bytes);
         id
     }
 
     fn get(&self, id: PdfPayloadId) -> &[u8] {
         self.rows.get(id.0).expect("PDF payload id is live")
+    }
+
+    fn shared(&self, id: PdfPayloadId) -> SharedBytes {
+        self.rows.get(id.0).expect("PDF payload id is live").clone()
     }
 
     fn truncate(&mut self, len: usize) {
@@ -689,6 +694,12 @@ impl PdfExternalImageRecord {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Returns the singular immutable payload owner retained from acquisition.
+    #[must_use]
+    pub fn shared_bytes(&self) -> SharedBytes {
+        self.bytes.clone()
     }
 
     #[must_use]
@@ -3553,7 +3564,7 @@ impl<G> PdfState<G> {
             metadata: entry.metadata,
             dimensions: entry.dimensions,
             color_space_object: entry.color_space_object,
-            bytes: self.payloads.get(entry.payload).to_vec(),
+            bytes: self.payloads.shared(entry.payload),
             mask_object: entry.mask_object,
         }
     }

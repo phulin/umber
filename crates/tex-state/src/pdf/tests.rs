@@ -305,8 +305,9 @@ fn snapshots_own_pdf_collections_and_rollback_them_atomically() {
 }
 
 #[test]
-fn external_image_payload_is_owned_not_shared() {
+fn external_image_payload_keeps_the_acquired_shared_owner() {
     let mut state = PdfState::<()>::default();
+    let bytes = crate::SharedBytes::from(vec![1, 2, 3]);
     let record = state
         .allocate_external_image(
             PdfExternalImageSource {
@@ -322,7 +323,7 @@ fn external_image_payload_is_owned_not_shared() {
                 }),
                 natural_width: Scaled::from_raw(1),
                 natural_height: Scaled::from_raw(1),
-                bytes: vec![1, 2, 3],
+                bytes: bytes.clone(),
             },
             PdfExternalImageDimensions {
                 width: Scaled::from_raw(1),
@@ -333,6 +334,15 @@ fn external_image_payload_is_owned_not_shared() {
         )
         .expect("test fixture is valid");
     assert_eq!(record.bytes(), &[1, 2, 3]);
+    assert!(crate::SharedBytes::ptr_eq(&record.shared_bytes(), &bytes));
+    let queried = state
+        .external_image_record(record.id())
+        .expect("allocated image remains queryable");
+    let last = state
+        .last_external_image()
+        .expect("allocated image is last");
+    assert!(crate::SharedBytes::ptr_eq(&queried.shared_bytes(), &bytes));
+    assert!(crate::SharedBytes::ptr_eq(&last.shared_bytes(), &bytes));
 }
 
 #[test]
@@ -353,7 +363,7 @@ fn checkpoint_fork_and_restore_do_not_copy_image_or_form_payload_bytes() {
                 }),
                 natural_width: Scaled::from_raw(1),
                 natural_height: Scaled::from_raw(1),
-                bytes: vec![3; 1024 * 1024],
+                bytes: vec![3; 1024 * 1024].into(),
             },
             PdfExternalImageDimensions {
                 width: Scaled::from_raw(1),
@@ -720,7 +730,7 @@ fn pdf_checkpoint_capture_allocates_nothing_independent_of_payload_size() {
                     }),
                     natural_width: Scaled::from_raw(1),
                     natural_height: Scaled::from_raw(1),
-                    bytes: vec![7; payload_len],
+                    bytes: vec![7; payload_len].into(),
                 },
                 PdfExternalImageDimensions {
                     width: Scaled::from_raw(1),

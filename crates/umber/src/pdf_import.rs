@@ -21,7 +21,7 @@ pub(crate) struct InspectedPdfPage {
 }
 
 pub(crate) fn inspect_pdf_page(
-    bytes: Arc<[u8]>,
+    bytes: tex_state::SharedBytes,
     selection: &tex_exec::PdfImagePageSelection,
     page_box: PdfImagePageBox,
 ) -> Result<InspectedPdfPage, String> {
@@ -123,7 +123,7 @@ fn name_tree_destination<'a>(node: &Dict<'a>, wanted: &[u8], depth: usize) -> Op
         .find_map(|kid| name_tree_destination(&kid, wanted, depth + 1))
 }
 
-fn load_pdf(bytes: Arc<[u8]>) -> Result<Pdf, String> {
+fn load_pdf(bytes: tex_state::SharedBytes) -> Result<Pdf, String> {
     Pdf::new(Arc::new(bytes)).map_err(|error| format!("{error:?}"))
 }
 

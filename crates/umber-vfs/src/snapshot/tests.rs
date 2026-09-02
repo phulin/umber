@@ -69,7 +69,7 @@ fn exact_lookup_obeys_root_specific_precedence() {
         .preload(ResolvedFile {
             request,
             virtual_path: "/texlive/plain.tex".into(),
-            bytes: b"plain".to_vec(),
+            bytes: b"plain".to_vec().into(),
             expected_digest: None,
         })
         .expect("resource");
@@ -169,7 +169,7 @@ fn retention_counts_generation_bindings_and_stale_clones_fail_reads() {
         .preload(ResolvedFile {
             request: FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request"),
             virtual_path: "/texlive/plain.tex".into(),
-            bytes: b"123456".to_vec(),
+            bytes: b"123456".to_vec().into(),
             expected_digest: None,
         })
         .expect("resource");

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use tex_content::{ContentDomain, ContentIdentity};
+use tex_content::{ContentDomain, ContentIdentity, SharedBytes};
 
 use crate::{FileOrigin, FileRequestKey, VirtualFile, VirtualPath};
 
@@ -96,7 +96,7 @@ impl ResolvedFiles {
 }
 
 impl UserFiles {
-    pub(crate) fn replace(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+    pub(crate) fn replace(&mut self, path: JobPath, bytes: SharedBytes) {
         let path = path.0;
         self.0.insert(
             path.clone(),
@@ -109,7 +109,7 @@ impl ResolvedFiles {
     pub(crate) fn insert(
         &mut self,
         path: DistributionPath,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
         request: FileRequestKey,
     ) {
         let path = path.0;
@@ -121,7 +121,7 @@ impl ResolvedFiles {
 }
 
 impl GeneratedFiles {
-    pub(crate) fn replace(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+    pub(crate) fn replace(&mut self, path: JobPath, bytes: SharedBytes) {
         let path = path.0;
         self.0.insert(
             path.clone(),
@@ -157,7 +157,7 @@ impl WorkspaceStorage {
         &self.generation.resolved
     }
 
-    pub(crate) fn replace_user(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+    pub(crate) fn replace_user(&mut self, path: JobPath, bytes: SharedBytes) {
         let generation = Arc::make_mut(&mut self.generation);
         Arc::make_mut(&mut generation.user).replace(path, bytes);
     }
@@ -165,7 +165,7 @@ impl WorkspaceStorage {
     pub(crate) fn insert_resolved(
         &mut self,
         path: DistributionPath,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
         request: FileRequestKey,
     ) {
         let generation = Arc::make_mut(&mut self.generation);

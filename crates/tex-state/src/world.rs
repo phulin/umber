@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "profiling")]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
-pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
+pub use tex_content::{ContentDomain, ContentHash, ContentIdentity, SharedBytes};
 
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
@@ -566,7 +566,7 @@ impl Eq for CommittedArtifact {}
 pub struct FileContent {
     record: InputRecordId,
     path: PathBuf,
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     hash: ContentHash,
     modification_date: Option<FileModificationDate>,
     origin: InputOrigin,
@@ -582,7 +582,7 @@ impl FileContent {
     fn from_shared(
         record: InputRecordId,
         path: PathBuf,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
         modification_date: Option<FileModificationDate>,
         origin: InputOrigin,
     ) -> Self {
@@ -614,8 +614,8 @@ impl FileContent {
     }
 
     #[must_use]
-    pub fn shared_bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
+    pub fn shared_bytes(&self) -> SharedBytes {
+        self.bytes.clone()
     }
 
     #[must_use]
@@ -1957,7 +1957,7 @@ impl DetachedWorldStorage {
 struct AcceptedInputBlock {
     parent: Option<Arc<Self>>,
     records: Arc<Vec<InputRecord>>,
-    contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
+    contents: Arc<BTreeMap<ContentHash, SharedBytes>>,
     len: usize,
     total_len: usize,
 }
@@ -2031,7 +2031,7 @@ impl AcceptedInputBlock {
             .or_else(|| self.parent.as_ref()?.content(hash))
     }
 
-    fn content_root(&self, hash: ContentHash) -> Option<Arc<[u8]>> {
+    fn content_root(&self, hash: ContentHash) -> Option<SharedBytes> {
         self.contents
             .get(&hash)
             .cloned()
@@ -2177,7 +2177,7 @@ pub struct World {
     accepted_inputs: Option<Arc<AcceptedInputBlock>>,
     inputs: Arc<Vec<InputRecord>>,
     input_identities: IdentityAllocator,
-    input_contents: Arc<BTreeMap<ContentHash, Arc<[u8]>>>,
+    input_contents: Arc<BTreeMap<ContentHash, SharedBytes>>,
     accepted_input_dependencies: Option<Arc<AcceptedInputDependencyBlock>>,
     input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     input_dependency_journal: Arc<Vec<(Arc<Path>, Option<InputDependency>)>>,
@@ -3011,16 +3011,17 @@ impl World {
         path: impl Into<PathBuf>,
         bytes: impl Into<Vec<u8>>,
     ) -> Result<(), WorldError> {
-        self.set_shared_memory_file(path, Arc::from(bytes.into()))
+        self.set_shared_memory_file(path, SharedBytes::from(bytes.into()))
     }
 
     /// Adds or replaces one already-shared immutable file in an in-memory world.
     pub fn set_shared_memory_file(
         &mut self,
         path: impl Into<PathBuf>,
-        bytes: Arc<[u8]>,
+        bytes: impl Into<SharedBytes>,
     ) -> Result<(), WorldError> {
         let path = path.into();
+        let bytes = bytes.into();
         let WorldBackend::Memory(memory) = &mut self.backend else {
             return Err(WorldError::new(
                 "set memory file",
@@ -3070,10 +3071,10 @@ impl World {
     /// Reads a file as bytes, records the hash, and returns both together.
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         let path = path.as_ref();
-        let (bytes, modification_date, origin): (Arc<[u8]>, _, _) =
+        let (bytes, modification_date, origin): (SharedBytes, _, _) =
             match self.pending_output_bytes(path)? {
                 Some(bytes) => (
-                    Arc::from(bytes),
+                    SharedBytes::from(bytes),
                     Some(FileModificationDate::utc(self.job_clock)),
                     InputOrigin::SameRunGenerated,
                 ),
@@ -3106,7 +3107,7 @@ impl World {
         };
         Ok(Some(self.register_input_content(
             path,
-            Arc::from(bytes),
+            SharedBytes::from(bytes),
             Some(FileModificationDate::utc(self.job_clock)),
             InputOrigin::SameRunGenerated,
         )))
@@ -3147,17 +3148,17 @@ impl World {
     pub(crate) fn read_supplied_file(
         &mut self,
         path: &Path,
-        supplied: Arc<[u8]>,
+        supplied: SharedBytes,
     ) -> Result<FileContent, WorldError> {
         let pending = self.pending_output_bytes(path)?;
         if let WorldBackend::Memory(memory) = &mut self.backend {
             Arc::make_mut(memory)
                 .files
-                .insert(path.to_owned(), Arc::clone(&supplied));
+                .insert(path.to_owned(), supplied.clone());
         }
         let (bytes, modification_date, origin) = match pending {
             Some(bytes) => (
-                Arc::from(bytes),
+                SharedBytes::from(bytes),
                 Some(FileModificationDate::utc(self.job_clock)),
                 InputOrigin::SameRunGenerated,
             ),
@@ -3173,7 +3174,7 @@ impl World {
     fn register_input_content(
         &mut self,
         path: &Path,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
         modification_date: Option<FileModificationDate>,
         origin: InputOrigin,
     ) -> FileContent {
@@ -3253,15 +3254,17 @@ impl World {
         Ok(bytes)
     }
 
-    fn materialized_file_bytes(&self, path: &Path) -> Result<Arc<[u8]>, WorldError> {
+    fn materialized_file_bytes(&self, path: &Path) -> Result<SharedBytes, WorldError> {
         match &self.backend {
-            WorldBackend::Real { .. } => Ok(Arc::from(std::fs::read(path).map_err(|err| {
-                WorldError::new("read file", Some(path.to_owned()), err.to_string())
-            })?)),
+            WorldBackend::Real { .. } => {
+                Ok(SharedBytes::from(std::fs::read(path).map_err(|err| {
+                    WorldError::new("read file", Some(path.to_owned()), err.to_string())
+                })?))
+            }
             WorldBackend::Memory(memory) => memory
                 .outputs
                 .get(path)
-                .map(|bytes| Arc::from(bytes.as_slice()))
+                .map(|bytes| SharedBytes::from(bytes.as_slice()))
                 .or_else(|| memory.files.get(path).cloned())
                 .ok_or_else(|| {
                     WorldError::new(
@@ -3309,7 +3312,7 @@ impl World {
             WorldBackend::Memory(memory) => {
                 Arc::make_mut(memory)
                     .files
-                    .insert(path.to_owned(), Arc::from(bytes.as_ref()));
+                    .insert(path.to_owned(), SharedBytes::from(bytes.as_ref()));
                 Ok(())
             }
         }
@@ -3435,7 +3438,7 @@ impl World {
             WorldBackend::Memory(memory) => {
                 let memory = Arc::make_mut(memory);
                 for (path, bytes) in files {
-                    memory.files.insert(path, Arc::from(bytes));
+                    memory.files.insert(path, SharedBytes::from(bytes));
                 }
                 Ok(())
             }
@@ -4957,7 +4960,7 @@ impl World {
             .or_else(|| self.accepted_inputs.as_ref()?.content(hash))
     }
 
-    fn input_content_root(&self, hash: ContentHash) -> Option<Arc<[u8]>> {
+    fn input_content_root(&self, hash: ContentHash) -> Option<SharedBytes> {
         self.input_contents
             .get(&hash)
             .cloned()
@@ -6651,7 +6654,7 @@ fn verify_artifact_identity(
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MemoryBackend {
-    files: BTreeMap<PathBuf, Arc<[u8]>>,
+    files: BTreeMap<PathBuf, SharedBytes>,
     modification_dates: BTreeMap<PathBuf, FileModificationDate>,
     outputs: BTreeMap<PathBuf, Vec<u8>>,
     artifacts: BTreeMap<ContentHash, Vec<u8>>,

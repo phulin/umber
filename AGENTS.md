@@ -38,7 +38,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-command`: canonical raw command delivery, expansion, scanning,
   conditions, alignments, and profile dispatch (currently the architectural
   boundary skeleton).
-- `crates/tex-content`: shared versioned, domain-separated content identity.
+- `crates/tex-content`: shared immutable byte ownership plus versioned,
+  domain-separated content identity.
 - `crates/tex-dense-prefix`: isolated exact-64-KiB typed initialized-prefix allocation substrate and the workspace's reviewed raw-memory boundary.
 - `crates/tex-dense-arena`: safe flat-block-table arenas, lifetime-specific nonforking wrappers, and bounded `Copy` generation-fork proof layer.
 - `crates/tex-oracle`: versioned canonical semantic-event schema, fixture

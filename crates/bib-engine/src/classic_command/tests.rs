@@ -36,7 +36,7 @@ fn warning_and_recoverable_error_histories_publish_and_fatal_history_is_partial(
         Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: format!("/texlive/classic/{}", request.key().name()),
-            bytes,
+            bytes: bytes.into(),
             expected_digest: None,
         })
     });
@@ -65,7 +65,7 @@ fn warning_and_recoverable_error_histories_publish_and_fatal_history_is_partial(
             Some(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
         });
@@ -91,7 +91,7 @@ fn warning_and_recoverable_error_histories_publish_and_fatal_history_is_partial(
             Some(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
         });
@@ -129,7 +129,7 @@ fn large_style_reallocation_precedes_style_warning_in_the_log_and_not_the_termin
         Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: format!("/texlive/classic/{}", request.key().name()),
-            bytes,
+            bytes: bytes.into(),
             expected_digest: None,
         })
     });

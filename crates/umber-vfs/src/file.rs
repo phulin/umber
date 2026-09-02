@@ -1,7 +1,5 @@
 use std::fmt;
-use std::sync::Arc;
-
-use tex_content::{ContentDomain, ContentIdentity};
+use tex_content::{ContentDomain, ContentIdentity, SharedBytes};
 
 use crate::{FileRequestKey, VirtualPath};
 
@@ -83,7 +81,7 @@ pub enum FileOrigin {
 #[derive(Clone, Debug)]
 pub struct VirtualFile {
     path: VirtualPath,
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     content_id: FileContentId,
     binding_id: PathBindingId,
     origin: FileOrigin,
@@ -91,7 +89,7 @@ pub struct VirtualFile {
 
 impl VirtualFile {
     #[must_use]
-    pub fn new(path: VirtualPath, bytes: impl Into<Arc<[u8]>>, origin: FileOrigin) -> Self {
+    pub fn new(path: VirtualPath, bytes: impl Into<SharedBytes>, origin: FileOrigin) -> Self {
         let bytes = bytes.into();
         let content_id = FileContentId::for_bytes(&bytes);
         let binding_id = PathBindingId::for_path_and_content(&path, content_id);
@@ -115,8 +113,8 @@ impl VirtualFile {
     }
 
     #[must_use]
-    pub fn shared_bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
+    pub fn shared_bytes(&self) -> SharedBytes {
+        self.bytes.clone()
     }
 
     #[must_use]

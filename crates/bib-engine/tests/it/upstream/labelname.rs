@@ -35,7 +35,7 @@ fn process_fixture(control_name: &str) -> bib_engine::ProcessedBibliography {
                         .provision(ResolvedFile {
                             request: request.key().clone(),
                             virtual_path: format!("/texlive/bib/{}", request.key().name()),
-                            bytes: crate::fixtures::read(path),
+                            bytes: crate::fixtures::read(path).into(),
                             expected_digest: None,
                         })
                         .expect("requested fixture is valid");

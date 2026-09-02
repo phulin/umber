@@ -257,7 +257,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
                         .ok()
                         .filter(|object| *object != 0),
                     mask_object: image.mask_object(),
-                    bytes: Arc::from(image.bytes()),
+                    bytes: image.shared_bytes(),
                 },
             )
         })

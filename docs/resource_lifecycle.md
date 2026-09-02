@@ -169,6 +169,15 @@ canonical VFS path. Font and PK bindings additionally retain their canonical
 program or instance identity. Nothing is visible to VFS or engine lookup
 before `Admitted`.
 
+Exact acquired file bytes have one `tex_content::SharedBytes` owner. Native
+read vectors move into that owner without relocating their payload; existing
+shared slices are wrapped without copying. VFS bindings, World records,
+parsers, capability replay, incremental candidates, PDF state and detached
+output pass cloned compact handles or borrowed slices. They must not convert
+the payload between `Vec<u8>` and `Arc<[u8]>` or create consumer-specific byte
+owners. Serialization and format decode may allocate their destination bytes,
+but no live-session handoff may duplicate an admitted payload.
+
 ## Resolution and verification
 
 Provider composition and admission use different vocabularies:

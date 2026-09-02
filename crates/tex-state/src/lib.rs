@@ -267,7 +267,7 @@ pub use world::{
     InputOrigin, InputRecord, InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES,
     MemoryMaterializationCheckpoint, MemoryOutput, PageOutputPublicationReceipt,
     PageOutputPublicationReceiptId, PrintSink, ReadTarget, RenderOriginIter, RenderOrigins,
-    RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState, ShellEscapePolicy,
+    RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState, SharedBytes, ShellEscapePolicy,
     ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot, TerminalInputPosition,
     TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact, World, WorldCommitMode,
     WorldError, WorldSnapshot,

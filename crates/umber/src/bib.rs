@@ -44,7 +44,7 @@ pub fn run(args: impl Iterator<Item = String>) -> Result<(), BibCliError> {
         Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: format!("/texlive/bib/{}", request.key().name()),
-            bytes,
+            bytes: bytes.into(),
             expected_digest: None,
         })
     });

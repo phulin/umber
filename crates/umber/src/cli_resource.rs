@@ -867,7 +867,7 @@ impl LocalResolver {
             _ => return None,
         }
         .ok()?;
-        let bytes = content.bytes().to_vec();
+        let bytes = content.shared_bytes();
         self.resolved_inputs
             .borrow_mut()
             .push((content.path().to_owned(), bytes.len()));
@@ -956,7 +956,7 @@ impl LocalResolver {
         )
         .ok()?;
         let path = content.path().to_owned();
-        let bytes = content.bytes().to_vec();
+        let bytes = content.shared_bytes();
         self.resolved_inputs
             .borrow_mut()
             .push((path.clone(), bytes.len()));
@@ -1228,7 +1228,7 @@ impl DistributionResolver {
                                     )
                                     .to_le_bytes(),
                                 ),
-                                bytes: file.bytes,
+                                bytes: file.bytes.to_vec(),
                             })),
                             Err(NativeRunError::DistributionUnavailable(_)) => {
                                 responses.push(ResourceResponse::PkFontUnavailable(request.clone()))
@@ -1452,9 +1452,11 @@ impl DistributionResolver {
         let response_started = Instant::now();
         let hash_before = telemetry.content_hash_time;
         for (manifest_key, entry) in required {
-            let data = bytes
-                .remove(&manifest_key)
-                .expect("fetched required object");
+            let data = tex_state::SharedBytes::from(
+                bytes
+                    .remove(&manifest_key)
+                    .expect("fetched required object"),
+            );
             let keys = original_files
                 .remove(&manifest_key)
                 .expect("original file request");
@@ -1488,7 +1490,7 @@ impl DistributionResolver {
                 request: key,
                 expected_digest: Some(expected_digest),
                 virtual_path: entry.virtual_path.clone(),
-                bytes: data,
+                bytes: data.into(),
             }));
         }
         drop(hints);

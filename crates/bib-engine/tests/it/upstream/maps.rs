@@ -51,7 +51,7 @@ pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
                                     .expect("fixture path names a file")
                                     .to_string_lossy()
                             ),
-                            bytes: crate::fixtures::read(&fixture),
+                            bytes: crate::fixtures::read(&fixture).into(),
                             expected_digest: None,
                         })
                         .expect("provision committed fixture");

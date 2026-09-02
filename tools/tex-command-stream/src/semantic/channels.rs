@@ -179,7 +179,7 @@ pub fn portable_diagnostic_channel(run: &SemanticRun) -> Vec<u8> {
         tex_observe::LiveSource {
             name: run.diagnostic_root_name.clone(),
             source: root_id,
-            bytes: Arc::clone(&run.diagnostic_root_bytes),
+            bytes: Arc::clone(&run.diagnostic_root_bytes).into(),
         },
     );
     translator.translate_captured(run.observations.iter().cloned());

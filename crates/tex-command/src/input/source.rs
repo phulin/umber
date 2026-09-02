@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tex_state::source_map::SourceDescriptor;
 use tex_state::world::FileContent;
-use tex_state::{InputRecordId, SourceId};
+use tex_state::{InputRecordId, SharedBytes, SourceId};
 
 pub use tex_state::packed_input::SourceRole;
 
@@ -99,7 +99,7 @@ pub struct SourceRegistration {
     /// Explicit host/VFS classification. `None` means inherit the enclosing
     /// external source when this registration is opened as nested input.
     role: Option<SourceRole>,
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     world_record: Option<InputRecordId>,
     modification_date: Option<tex_state::FileModificationDate>,
     name: Option<Arc<str>>,
@@ -110,7 +110,7 @@ pub struct SourceRegistration {
 impl SourceRegistration {
     /// Constructs a registration from already acquired bytes.
     #[must_use]
-    pub fn new(kind: RegisteredSourceKind, bytes: impl Into<Arc<[u8]>>) -> Self {
+    pub fn new(kind: RegisteredSourceKind, bytes: impl Into<SharedBytes>) -> Self {
         Self {
             kind,
             role: None,
@@ -206,8 +206,8 @@ impl SourceRegistration {
 
     /// Returns shared ownership of the exact immutable physical backing.
     #[must_use]
-    pub fn shared_bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
+    pub fn shared_bytes(&self) -> SharedBytes {
+        self.bytes.clone()
     }
 
     /// Returns the §537 name attached by [`Self::with_name`], if any.
@@ -438,7 +438,7 @@ pub(crate) struct RegisteredSource {
     pub(crate) kind: RegisteredSourceKind,
     pub(crate) role: Option<SourceRole>,
     pub(crate) mode: CharacterMode,
-    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) bytes: SharedBytes,
     /// tex.web §537's `a_make_name_string` name, carried from the
     /// [`SourceRegistration`] that produced this backing. See
     /// [`SourceRegistration::with_name`].
@@ -465,7 +465,7 @@ impl RegisteredSource {
     pub(crate) fn rebind_generated(
         &self,
         id: SourceId,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
     ) -> Result<Self, SourceRegistrationError> {
         u64::try_from(bytes.len()).map_err(|_| SourceRegistrationError::BackingTooLarge)?;
         if self.mode == CharacterMode::UnicodeExtended
@@ -487,7 +487,7 @@ impl RegisteredSource {
         }
         let descriptor = Arc::new(SourceDescriptor::editor_revision(
             self.name.as_deref(),
-            Arc::clone(&bytes),
+            bytes.clone(),
         ));
         Ok(Self {
             id,
@@ -504,7 +504,7 @@ impl RegisteredSource {
 
     pub(crate) fn rehome_generated(
         &self,
-        bytes: Arc<[u8]>,
+        bytes: SharedBytes,
     ) -> Result<Self, SourceRegistrationError> {
         self.rebind_generated(self.id, bytes)
     }
@@ -550,11 +550,11 @@ impl RegisteredSource {
         let descriptor = registration.world_record.map_or_else(
             || {
                 registration.name.as_ref().map_or_else(
-                    || SourceDescriptor::generated(Arc::clone(&registration.bytes)),
+                    || SourceDescriptor::generated(registration.bytes.clone()),
                     |name| {
                         SourceDescriptor::named_generated(
                             name.to_string(),
-                            Arc::clone(&registration.bytes),
+                            registration.bytes.clone(),
                         )
                     },
                 )

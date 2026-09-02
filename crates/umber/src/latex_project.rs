@@ -878,7 +878,7 @@ impl<'store> LatexProjectSession<'store> {
                 .restore_cached_file(
                     request.clone(),
                     response.path().as_str(),
-                    response.bytes().to_vec(),
+                    response.shared_bytes(),
                 )
                 .map_err(LatexProjectError::Compile)?;
         }
@@ -906,7 +906,7 @@ impl<'store> LatexProjectSession<'store> {
                                     supplied.push(ResourceResponse::File(ResolvedFile {
                                         request: file.key().clone(),
                                         virtual_path: response.path().to_string(),
-                                        bytes: response.bytes().to_vec(),
+                                        bytes: response.shared_bytes(),
                                         expected_digest: None,
                                     }));
                                 } else if self.workspace.is_unavailable(file.key()) {
@@ -959,7 +959,7 @@ impl<'store> LatexProjectSession<'store> {
                             supplied.push(ResourceResponse::File(ResolvedFile {
                                 request: file.key().clone(),
                                 virtual_path: response.path().to_string(),
-                                bytes: response.bytes().to_vec(),
+                                bytes: response.shared_bytes(),
                                 expected_digest: None,
                             }));
                         } else if self.workspace.is_unavailable(file.key()) {

@@ -13,7 +13,7 @@ fn response(kind: FileKind, name: &str, path: &str, bytes: &[u8]) -> ResolvedFil
     ResolvedFile {
         request: key(kind, name),
         virtual_path: path.to_owned(),
-        bytes: bytes.to_vec(),
+        bytes: bytes.to_vec().into(),
         expected_digest: None,
     }
 }

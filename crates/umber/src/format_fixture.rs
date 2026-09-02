@@ -903,7 +903,7 @@ pub(crate) fn construct_format_in_worker(
                 LiveSource {
                     name: recipe.construction_source_name.clone(),
                     source: root,
-                    bytes: source_bytes,
+                    bytes: source_bytes.into(),
                 },
             );
             let guards = GuardCheckpoints::new(recipe.guards)?;

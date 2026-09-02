@@ -63,7 +63,7 @@ fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
     let root = LiveSource {
         name: "root.tex".into(),
         source: SourceId::new(7),
-        bytes: Arc::from(&b"x"[..]),
+        bytes: (&b"x"[..]).into(),
     };
     let mut translator = LiveSessionTranslator::for_root(SchemaVersion::V1, "terminal", root);
     translator.translate_captured([
@@ -618,7 +618,7 @@ fn glue_component_enquiry_results_keep_their_typed_values() {
     let root = LiveSource {
         name: "root.tex".into(),
         source: SourceId::new(7),
-        bytes: Arc::from(&b""[..]),
+        bytes: (&b""[..]).into(),
     };
     let mut translator = LiveSessionTranslator::for_root(SchemaVersion::V1, "terminal", root);
     translator.translate_captured([

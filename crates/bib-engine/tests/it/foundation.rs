@@ -176,7 +176,7 @@ fn classic_control_resolves_aux_bst_and_datasource_resources() {
         .provision(ResolvedFile {
             request: included.required[0].key().clone(),
             virtual_path: "/texlive/classic/chapter.aux".into(),
-            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec(),
+            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec().into(),
             expected_digest: None,
         })
         .expect("included AUX");
@@ -206,7 +206,7 @@ fn classic_control_resolves_aux_bst_and_datasource_resources() {
             .provision(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
             .expect("classic resource");
@@ -248,7 +248,7 @@ fn auto_detection_waits_for_included_aux_before_reporting_ambiguity() {
         .provision(ResolvedFile {
             request: needs.required[0].key().clone(),
             virtual_path: "/texlive/classic/included.aux".into(),
-            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec(),
+            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec().into(),
             expected_digest: None,
         })
         .expect("included AUX");
@@ -312,7 +312,7 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
             .provision(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
             .expect("fixture resource");
@@ -485,7 +485,7 @@ fn execute_standard_style(
             .provision(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
             .expect("fixture resource");
@@ -528,7 +528,7 @@ fn execute_real_world_command(
         Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: format!("/texlive/classic/{}", request.key().name()),
-            bytes,
+            bytes: bytes.into(),
             expected_digest: None,
         })
     });

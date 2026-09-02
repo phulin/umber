@@ -880,7 +880,10 @@ impl Startup {
         for (name, bytes) in &self.fonts {
             let metrics = universe
                 .input_open_context()
-                .read_supplied_input_file(Path::new(name), Arc::<[u8]>::from(bytes.clone()))
+                .read_supplied_input_file(
+                    Path::new(name),
+                    Arc::<[u8]>::from(bytes.clone()).into(),
+                )
                 .map_err(|error| {
                     RunnerError::Replay(format!("font metrics {name} cannot be supplied: {error}"))
                 })?;
@@ -912,7 +915,7 @@ impl Startup {
         recorder.activate_source(
             self.root_name.clone(),
             root,
-            Arc::<[u8]>::from(self.root_bytes.clone()),
+            Arc::<[u8]>::from(self.root_bytes.clone()).into(),
         );
 
         let mut verified_prefix = 0;

@@ -9,7 +9,7 @@ use crate::identity::{AcceptedIdentityTail, HandleIdentity, IdentityAllocator, I
 use crate::input::SourceId;
 use crate::state_hash::{SemanticSequenceIdentity, semantic_scalar_root};
 use crate::token::OriginId;
-use crate::world::{ContentHash, InputRecordId};
+use crate::world::{ContentHash, InputRecordId, SharedBytes};
 
 static NEXT_LOGICAL_SOURCE_POSITION: AtomicU64 = AtomicU64::new(0);
 
@@ -136,7 +136,7 @@ impl SourceSpan {
 /// Shared immutable content for a generated or in-memory input.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedSource {
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     hash: ContentHash,
     logical_path: Option<Arc<String>>,
     editor_revision: bool,
@@ -144,7 +144,8 @@ pub struct GeneratedSource {
 
 impl GeneratedSource {
     #[must_use]
-    pub fn new(bytes: Arc<[u8]>) -> Self {
+    pub fn new(bytes: impl Into<SharedBytes>) -> Self {
+        let bytes = bytes.into();
         let hash = ContentHash::from_bytes(&bytes);
         Self {
             bytes,
@@ -155,16 +156,16 @@ impl GeneratedSource {
     }
 
     #[must_use]
-    pub fn named(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
+    pub fn named(logical_path: impl Into<String>, bytes: impl Into<SharedBytes>) -> Self {
         let mut source = Self::new(bytes);
         source.logical_path = Some(Arc::new(logical_path.into()));
         source
     }
 
-    fn editor_revision(logical_path: Option<&str>, bytes: Arc<[u8]>) -> Self {
+    fn editor_revision(logical_path: Option<&str>, bytes: SharedBytes) -> Self {
         let mut source = logical_path.map_or_else(
-            || Self::new(Arc::clone(&bytes)),
-            |path| Self::named(path, Arc::clone(&bytes)),
+            || Self::new(bytes.clone()),
+            |path| Self::named(path, bytes.clone()),
         );
         source.editor_revision = true;
         source
@@ -172,7 +173,7 @@ impl GeneratedSource {
 
     #[must_use]
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
-        Self::new(Arc::from(bytes.into()))
+        Self::new(SharedBytes::from(bytes.into()))
     }
 
     #[must_use]
@@ -181,8 +182,8 @@ impl GeneratedSource {
     }
 
     #[cfg(test)]
-    pub(crate) fn backing(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
+    pub(crate) fn backing(&self) -> SharedBytes {
+        self.bytes.clone()
     }
 
     #[must_use]
@@ -212,7 +213,7 @@ impl GeneratedSource {
     fn same_backing(&self, other: &Self) -> bool {
         self.hash == other.hash
             && self.logical_path == other.logical_path
-            && (Arc::ptr_eq(&self.bytes, &other.bytes) || self.bytes == other.bytes)
+            && (SharedBytes::ptr_eq(&self.bytes, &other.bytes) || self.bytes == other.bytes)
     }
 }
 
@@ -236,12 +237,12 @@ impl SourceDescriptor {
     }
 
     #[must_use]
-    pub fn generated(bytes: Arc<[u8]>) -> Self {
+    pub fn generated(bytes: impl Into<SharedBytes>) -> Self {
         Self::Generated(GeneratedSource::new(bytes))
     }
 
     #[must_use]
-    pub fn named_generated(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
+    pub fn named_generated(logical_path: impl Into<String>, bytes: impl Into<SharedBytes>) -> Self {
         Self::Generated(GeneratedSource::named(logical_path, bytes))
     }
 
@@ -251,8 +252,8 @@ impl SourceDescriptor {
     /// than an additional future-semantic input.
     #[doc(hidden)]
     #[must_use]
-    pub fn editor_revision(logical_path: Option<&str>, bytes: Arc<[u8]>) -> Self {
-        Self::Generated(GeneratedSource::editor_revision(logical_path, bytes))
+    pub fn editor_revision(logical_path: Option<&str>, bytes: impl Into<SharedBytes>) -> Self {
+        Self::Generated(GeneratedSource::editor_revision(logical_path, bytes.into()))
     }
 
     #[must_use]

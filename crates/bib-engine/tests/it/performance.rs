@@ -53,7 +53,7 @@ fn classic_native_session_performance_budget() {
             .provision(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes,
+                bytes: bytes.into(),
                 expected_digest: None,
             })
             .expect("plain resource");

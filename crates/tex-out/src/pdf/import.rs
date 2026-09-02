@@ -17,7 +17,7 @@ pub(crate) struct ImportedPdfPage {
 }
 
 pub(crate) fn import_pdf_page(
-    bytes: Arc<[u8]>,
+    bytes: tex_content::SharedBytes,
     page_number: u32,
     next_object: &mut u32,
     limits: super::PdfFinalizationLimits,
@@ -58,7 +58,7 @@ pub(crate) fn import_pdf_page(
     })
 }
 
-fn load_pdf(bytes: Arc<[u8]>) -> Result<Pdf, String> {
+fn load_pdf(bytes: tex_content::SharedBytes) -> Result<Pdf, String> {
     Pdf::new(Arc::new(bytes)).map_err(|error| format!("{error:?}"))
 }
 

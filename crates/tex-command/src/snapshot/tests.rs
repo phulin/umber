@@ -1154,8 +1154,8 @@ fn source_accept_and_prefix_release_drop_each_obsolete_backing_owner() {
         assert_eq!(Arc::strong_count(&prior_bytes), 1);
         let retained_root_owners = Arc::strong_count(&root_bytes);
         let retained_current_owners = Arc::strong_count(&current_bytes);
-        assert_eq!(retained_root_owners, 3);
-        assert_eq!(retained_current_owners, 3);
+        assert_eq!(retained_root_owners, 2);
+        assert_eq!(retained_current_owners, 2);
 
         let floor = candidate
             .publish_summary(universe)
@@ -1163,7 +1163,7 @@ fn source_accept_and_prefix_release_drop_each_obsolete_backing_owner() {
         candidate
             .release_checkpoint_summary(&root, Some(&floor))
             .expect("obsolete source prefix releases");
-        assert_eq!(Arc::strong_count(&root_bytes), retained_root_owners - 2);
+        assert_eq!(Arc::strong_count(&root_bytes), retained_root_owners - 1);
         assert_eq!(Arc::strong_count(&prior_bytes), 1);
         assert_eq!(Arc::strong_count(&current_bytes), retained_current_owners);
         assert_eq!(candidate.input.levels.counters().displaced_payloads, 0);

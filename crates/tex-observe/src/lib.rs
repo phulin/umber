@@ -76,7 +76,7 @@ impl ObservedEvent {
 pub struct LiveSource {
     pub name: String,
     pub source: SourceId,
-    pub bytes: Arc<[u8]>,
+    pub bytes: tex_state::SharedBytes,
 }
 
 /// Terminal state supplied by the host after normal engine execution returns.
@@ -160,7 +160,7 @@ type Recorder = LiveSessionTranslator;
 struct ActiveSource {
     name: String,
     source: SourceId,
-    bytes: Arc<[u8]>,
+    bytes: tex_state::SharedBytes,
     /// Physical line starts, calculated once when the source becomes active.
     ///
     /// Command observation needs a line and byte-column for every direct
@@ -289,7 +289,12 @@ impl LiveSessionTranslator {
         ));
     }
 
-    pub fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
+    pub fn activate_source(
+        &mut self,
+        name: impl Into<String>,
+        source: SourceId,
+        bytes: tex_state::SharedBytes,
+    ) {
         let name = name.into();
         let line_starts = source_line_starts(&bytes);
         if let Some(known) = self.sources.iter_mut().find(|known| known.source == source) {
@@ -307,7 +312,12 @@ impl LiveSessionTranslator {
         self.current_source = Some(source);
     }
 
-    fn activate_registered_input(&mut self, name: &str, source: SourceId, bytes: Arc<[u8]>) {
+    fn activate_registered_input(
+        &mut self,
+        name: &str,
+        source: SourceId,
+        bytes: tex_state::SharedBytes,
+    ) {
         self.record_source_open(CANONICAL_ROOT_PUSH_NAME, name, source);
         self.activate_source(name.to_owned(), source, bytes);
     }
@@ -381,7 +391,7 @@ impl CommandObserver for Recorder {
             self.activate_source(
                 record.name.clone(),
                 record.source.id,
-                Arc::clone(&record.source.bytes),
+                record.source.bytes.clone(),
             );
             return;
         }
@@ -394,7 +404,7 @@ impl CommandObserver for Recorder {
         {
             // The effect carries the command-core capability hand-off, while
             // the portable trace observes only the resulting source push.
-            self.activate_registered_input(channel, source.id, Arc::clone(&source.bytes));
+            self.activate_registered_input(channel, source.id, source.bytes.clone());
             return;
         }
         let source_id = observation_source(&observation).or(self.current_source);
@@ -404,7 +414,7 @@ impl CommandObserver for Recorder {
         let source = source_id.and_then(|source| self.source(source));
         let source_name =
             source.map_or_else(|| self.default_source.clone(), |source| source.name.clone());
-        let source_bytes = source.map(|source| Arc::clone(&source.bytes));
+        let source_bytes = source.map(|source| source.bytes.clone());
         let source_line_starts = source.map(|source| Arc::clone(&source.line_starts));
         self.events.push(translate_observation(
             &source_name,

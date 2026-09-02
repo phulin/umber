@@ -131,7 +131,7 @@ impl<G> ResourceWorldBackend for Universe<G> {
         bytes: Arc<[u8]>,
     ) -> Result<FileContent, WorldError> {
         self.input_open_context()
-            .read_supplied_input_file(path, bytes)
+            .read_supplied_input_file(path, bytes.into())
     }
 }
 

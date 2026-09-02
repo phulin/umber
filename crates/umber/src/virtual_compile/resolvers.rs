@@ -366,7 +366,7 @@ pub(crate) fn parse_image(
         metadata: PdfExternalImageMetadata::Raster(metadata),
         natural_width: pixels_to_scaled(metadata.width, request.resolution),
         natural_height: pixels_to_scaled(metadata.height, request.resolution),
-        bytes: content.bytes().to_vec(),
+        bytes: content.shared_bytes(),
     })
 }
 
@@ -406,7 +406,7 @@ fn parse_pdf_image(
         },
         natural_width,
         natural_height,
-        bytes: content.bytes().to_vec(),
+        bytes: content.shared_bytes(),
     })
 }
 
@@ -957,7 +957,7 @@ mod tests {
             .provide_resources(vec![ResourceResponse::File(ResolvedFile {
                 request: probe.key().clone(),
                 virtual_path: "/texlive/hyphen.cfg".into(),
-                bytes: b"cfg".to_vec(),
+                bytes: b"cfg".to_vec().into(),
                 expected_digest: None,
             })])
             .expect("positive probe response");
@@ -1040,6 +1040,7 @@ mod tests {
             .set_memory_file("rotated.pdf", bytes)
             .expect("seed rotated PDF");
         let content = world.read_file("rotated.pdf").expect("read rotated PDF");
+        let acquired_bytes = content.shared_bytes();
         let source = parse_pdf_image(
             &content,
             &PdfImageRequest {
@@ -1051,6 +1052,10 @@ mod tests {
             },
         )
         .expect("parse rotated PDF");
+        assert!(tex_state::SharedBytes::ptr_eq(
+            &source.bytes,
+            &acquired_bytes
+        ));
         let PdfExternalImageMetadata::PdfPage {
             page_box, rotation, ..
         } = source.metadata

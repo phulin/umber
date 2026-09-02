@@ -175,7 +175,7 @@ struct RootCoordinateMap {
     doc_starts: Arc<[u64]>,
     fragments: Arc<[SourceFragment]>,
     registrations: Arc<Vec<RegisteredSource>>,
-    backing: Option<Arc<[u8]>>,
+    backing: Option<crate::SharedBytes>,
 }
 
 impl Clone for FragmentStore {

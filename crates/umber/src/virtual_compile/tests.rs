@@ -778,7 +778,7 @@ fn answer_single_file(result: CompileAttemptResult, bytes: Option<&[u8]>) -> Res
             ResourceResponse::File(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/{}", request.key().name()),
-                bytes: bytes.to_vec(),
+                bytes: bytes.to_vec().into(),
                 expected_digest: None,
             })
         },
@@ -869,7 +869,7 @@ fn accepted_dependencies_record_required_positive_and_shadowing_negative_paths()
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request,
             virtual_path: "/texlive/generated.aux".to_owned(),
-            bytes: b"\\relax".to_vec(),
+            bytes: b"\\relax".to_vec().into(),
             expected_digest: None,
         })])
         .expect("provide generated-input fallback");
@@ -2412,7 +2412,7 @@ fn positive_probe_can_promote_to_required_input_before_dump() {
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: missing[0].key().clone(),
             virtual_path: "/texlive/optional.cfg".to_owned(),
-            bytes: b"\\message{OPTIONAL-PRESENT}\\endinput".to_vec(),
+            bytes: b"\\message{OPTIONAL-PRESENT}\\endinput".to_vec().into(),
             expected_digest: None,
         })])
         .expect("positive probe response");
@@ -2449,7 +2449,7 @@ fn hinted_file_is_provided_only_after_a_typed_request() {
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: request.key().clone(),
             virtual_path: "/texlive/tex/latex/example/hinted.tex".to_owned(),
-            bytes: b"\\message{PREFETCHED}".to_vec(),
+            bytes: b"\\message{PREFETCHED}".to_vec().into(),
             expected_digest: None,
         })])
         .expect("typed response");
@@ -2474,7 +2474,8 @@ fn resolved_nested_probe_retries_through_endinput_to_root_dump() {
             request: wrapper.key().clone(),
             virtual_path: "/texlive/wrapper.tex".into(),
             bytes: b"\\openin0=optional.dfu \\ifeof0 \\else \\input optional.dfu \\fi \\endinput"
-                .to_vec(),
+                .to_vec()
+                .into(),
             expected_digest: None,
         })])
         .expect("wrapper response");
@@ -2485,7 +2486,7 @@ fn resolved_nested_probe_retries_through_endinput_to_root_dump() {
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: probed[0].key().clone(),
             virtual_path: "/texlive/optional.dfu".into(),
-            bytes: b"\\endinput".to_vec(),
+            bytes: b"\\endinput".to_vec().into(),
             expected_digest: None,
         })])
         .expect("positive probe response");
@@ -2515,7 +2516,8 @@ fn unavailable_nested_probe_retries_through_endinput_to_root_dump() {
             request: wrapper.key().clone(),
             virtual_path: "/texlive/wrapper.tex".into(),
             bytes: b"\\openin0=optional.dfu \\ifeof0 \\else \\input optional.dfu \\fi \\endinput"
-                .to_vec(),
+                .to_vec()
+                .into(),
             expected_digest: None,
         })])
         .expect("wrapper response");
@@ -2870,7 +2872,7 @@ fn retained_resource_retry_charges_live_input_frames_once() {
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request,
             virtual_path: "/texlive/remote.tex".to_owned(),
-            bytes: b"\\relax".to_vec(),
+            bytes: b"\\relax".to_vec().into(),
             expected_digest: None,
         })])
         .expect("remote input response");
@@ -2927,7 +2929,7 @@ fn cancelled_edit_drops_its_run_but_keeps_accepted_output_and_late_bytes_cache_o
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: late[0].key().clone(),
             virtual_path: "/texlive/late.tex".to_owned(),
-            bytes: b"verified late bytes".to_vec(),
+            bytes: b"verified late bytes".to_vec().into(),
             expected_digest: None,
         })])
         .expect("late immutable response may warm the cache");
@@ -3774,13 +3776,13 @@ fn source_session_installs_positive_prefetch_responses_for_the_next_attempt() {
             ResourceResponse::File(ResolvedFile {
                 request: required.key().clone(),
                 virtual_path: "/texlive/required.tex".into(),
-                bytes: b"\\input remote \\endinput".to_vec(),
+                bytes: b"\\input remote \\endinput".to_vec().into(),
                 expected_digest: None,
             }),
             ResourceResponse::File(ResolvedFile {
                 request: remote.key().clone(),
                 virtual_path: "/texlive/remote.tex".into(),
-                bytes: b"prefetched".to_vec(),
+                bytes: b"prefetched".to_vec().into(),
                 expected_digest: None,
             }),
         ])
@@ -4111,7 +4113,7 @@ fn unavailable_openin_retries_into_tex_missing_file_semantics() {
         session.provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: key,
             virtual_path: "/texlive/optional.cfg".to_owned(),
-            bytes: Vec::new(),
+            bytes: Vec::new().into(),
             expected_digest: None,
         })]),
         Err(CompileError::ConflictingResolvedBinding(_))
@@ -4210,7 +4212,7 @@ fn generated_output_reopens_after_a_negative_probe_and_unrelated_suspension() {
         .provide_resources(vec![ResourceResponse::File(ResolvedFile {
             request: unrelated[0].key().clone(),
             virtual_path: "/texlive/unrelated.cfg".to_owned(),
-            bytes: b"\\endinput".to_vec(),
+            bytes: b"\\endinput".to_vec().into(),
             expected_digest: None,
         })])
         .expect("unrelated resource response");
@@ -4497,7 +4499,7 @@ fn nested_classic_tfm_file_retry_resumes_the_enclosing_operation() {
             request: tfm.key().clone(),
             virtual_path: "/texlive/cmti8.tfm".to_owned(),
             expected_digest: None,
-            bytes: CMR10.to_vec(),
+            bytes: CMR10.to_vec().into(),
         })])
         .expect("TFM response");
     let attempt = session.compile_attempt();
