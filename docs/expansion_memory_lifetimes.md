@@ -890,8 +890,10 @@ lexer/frame first touches, cold typed source-owner swaps, row replacement and
 reuse, retirement, rollback/redo, candidate settlement, and prefix release.
 Each row carries its own packed rollback epoch/state marker, so these operations
 select the row and its capture authority together without a parallel vector.
-The common stored-token cursor uses its former four padding bytes for the span
-length, leaving the explicit-tag `InputLevel` at 88 bytes after the marker move.
+Replay, attempt, and durable variants embed one authoritative token-row header.
+Its packed frame owns the sole span length and logical position beside behavior,
+retirement, trace, and the row rollback marker, leaving the explicit-tag
+`InputLevel` at 88 bytes without a side lane.
 Only the first owner-changing transition of a checkpoint-visible source row is
 retained in an interval; later transitions drop their displaced intermediate
 owners, because rollback needs the initial owner and redo recovers the final
@@ -908,10 +910,11 @@ Each source slot caches its current line's contribution to TeX's `buffer`, and
 the input stack owns one scalar sum across live slots. Cold line/backing owner
 and row transitions update those values; byte/scalar cursor advancement does
 not inspect or recount the line. Replay-backed stored-token advancement
-journals its one resident cursor, which owns the logical word position together
-with the replay run/segment/in-segment coordinate, on the first warm touch in a
-checkpoint interval; it does not also mutate or journal a packed-frame
-position. Durable and attempt rows retain their packed-frame position. If the
+journals the header position together with its storage-only run/segment/in-
+segment cursor on the first warm touch in a checkpoint interval. Durable and
+attempt rows journal that same header position. All three then enter one shared
+advance, parameter, and exhaustion transition after their distinct word read.
+If the
 same row later takes a cold retirement, limit, or flag transition, a separately
 ordered cold-state inverse captures that state once; rollback and candidate
 redo preserve both transitions without constructing a complete token frame on

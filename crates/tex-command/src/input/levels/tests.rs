@@ -2,8 +2,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
     BackedUpToken, BackupTreatment, InputLevelId, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayLane, ReplayTokenCursor, ReplayTrace, RetirementBehavior, StoredReplayReason,
-    TokenBehavior, TokenCursor, packed_token_frame,
+    ReplayLane, ReplayTokenRow, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    TokenRowHeader, packed_token_frame,
 };
 
 fn traced(ch: char) -> TracedTokenWord {
@@ -150,23 +150,22 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     let payload = PackedTokenSpanHandle::transient([traced('x')])
         .admit(&mut lane)
         .expect("replay admission");
-    let PackedTokenSpanHandle::Replay { replay, len } = payload else {
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
         unreachable!("transient input is replay-owned")
     };
-    let cursor: ReplayTokenCursor<()> = ReplayTokenCursor {
+    let cursor: ReplayTokenRow<()> = ReplayTokenRow {
         replay,
         resident: lane
             .resident_cursor(replay)
             .expect("resident replay cursor"),
-        common: TokenCursor::new(behavior, retirement, trace, len, frame),
-        rollback: super::RowRollbackMarker::default(),
+        header: TokenRowHeader::new(behavior, retirement, trace, frame),
     };
 
-    assert_eq!(cursor.frame.position(), 1);
-    assert_eq!(cursor.frame.identity(), 5);
-    assert_eq!(cursor.retirement, RetirementBehavior::StopAtEnd);
+    assert_eq!(cursor.header.frame.position(), 1);
+    assert_eq!(cursor.header.frame.identity(), 5);
+    assert_eq!(cursor.header.retirement, RetirementBehavior::StopAtEnd);
     assert!(matches!(
-        cursor.behavior,
+        cursor.header.behavior,
         TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
     ));
 }
@@ -212,14 +211,14 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenCursor<()>>(), 40);
+    assert_eq!(std::mem::size_of::<TokenRowHeader<()>>(), 48);
     assert_eq!(std::mem::size_of::<tex_state::ResidentMacroBodyCursor>(), 4);
     assert_eq!(std::mem::size_of::<super::RowRollbackMarker>(), 8);
     assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 72);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 56);
-    assert_eq!(std::mem::size_of::<super::ReplayTokenCursor<()>>(), 72);
-    assert_eq!(std::mem::size_of::<super::DurableTokenCursor<()>>(), 80);
-    assert_eq!(std::mem::size_of::<super::AttemptTokenCursor<()>>(), 72);
+    assert_eq!(std::mem::size_of::<super::ReplayTokenRow<()>>(), 72);
+    assert_eq!(std::mem::size_of::<super::DurableTokenRow<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::AttemptTokenRow<()>>(), 72);
     assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
     assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
     assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 48);

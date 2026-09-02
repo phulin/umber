@@ -104,9 +104,9 @@ pub(crate) fn packed_token_frame(
 #[repr(u8)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
-    ReplayTokens(ReplayTokenCursor<G>),
-    DurableTokens(DurableTokenCursor<G>),
-    AttemptTokens(AttemptTokenCursor<G>),
+    ReplayTokens(ReplayTokenRow<G>),
+    DurableTokens(DurableTokenRow<G>),
+    AttemptTokens(AttemptTokenRow<G>),
     /// Resident immutable replacement span. This row is the macro call: it
     /// carries the non-owning definition coordinate, the optional local
     /// region lease, and (only for parameterized macros) the argument set.
@@ -273,63 +273,39 @@ pub(crate) enum SourceRetirement {
     EndReadLine,
 }
 
-/// One token-list cursor.
+/// One authoritative header shared by every token-backed input row.
 ///
-/// The four classified fields deliberately keep storage ownership, delivery
-/// semantics, end-of-level handling, and diagnostic explanation independent.
+/// Storage ownership remains in the concrete row variant. Everything that
+/// selects delivery, rollback, retirement, provenance context, and the next
+/// semantic word position lives here exactly once.
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TokenCursor<G> {
+pub(crate) struct TokenRowHeader<G> {
     pub(crate) behavior: TokenBehavior,
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
     pub(crate) frame: PackedInputFrame,
-    pub(crate) len: u32,
     generation: PhantomData<fn() -> G>,
+    pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ReplayTokenCursor<G> {
+pub(crate) struct ReplayTokenRow<G> {
+    pub(crate) header: TokenRowHeader<G>,
     pub(crate) replay: ReplayPayloadId<G>,
     pub(crate) resident: ResidentReplayCursor,
-    pub(crate) common: TokenCursor<G>,
-    pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct DurableTokenCursor<G> {
+pub(crate) struct DurableTokenRow<G> {
+    pub(crate) header: TokenRowHeader<G>,
     pub(crate) list: tex_state::TokenListId<G>,
-    pub(crate) common: TokenCursor<G>,
-    pub(super) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptTokenCursor<G> {
+pub(crate) struct AttemptTokenRow<G> {
+    pub(crate) header: TokenRowHeader<G>,
     pub(crate) list: AttemptTokenListId,
-    pub(crate) common: TokenCursor<G>,
-    pub(super) rollback: RowRollbackMarker,
 }
-
-macro_rules! impl_common_token_cursor {
-    ($cursor:ident) => {
-        impl<G> core::ops::Deref for $cursor<G> {
-            type Target = TokenCursor<G>;
-
-            fn deref(&self) -> &Self::Target {
-                &self.common
-            }
-        }
-
-        impl<G> core::ops::DerefMut for $cursor<G> {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.common
-            }
-        }
-    };
-}
-
-impl_common_token_cursor!(ReplayTokenCursor);
-impl_common_token_cursor!(DurableTokenCursor);
-impl_common_token_cursor!(AttemptTokenCursor);
 
 /// First-class input cursor over one admitted absolute macro-argument range.
 ///
@@ -438,12 +414,11 @@ impl<G> MacroArgumentCursor<G> {
     }
 }
 
-impl<G> TokenCursor<G> {
+impl<G> TokenRowHeader<G> {
     pub(crate) fn new(
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
-        len: u32,
         frame: PackedInputFrame,
     ) -> Self {
         Self {
@@ -451,8 +426,8 @@ impl<G> TokenCursor<G> {
             retirement,
             trace,
             frame,
-            len,
             generation: PhantomData,
+            rollback: RowRollbackMarker::default(),
         }
     }
 
@@ -465,19 +440,13 @@ impl<G> TokenCursor<G> {
     }
 }
 
-impl<G> ReplayTokenCursor<G> {
-    pub(crate) const fn position(&self) -> usize {
-        self.resident.position() as usize
-    }
-}
-
 impl<G> InputLevel<G> {
     pub(super) const fn rollback_marker(&self) -> RowRollbackMarker {
         match self {
             Self::Source(level) => level.rollback,
-            Self::ReplayTokens(cursor) => cursor.rollback,
-            Self::DurableTokens(cursor) => cursor.rollback,
-            Self::AttemptTokens(cursor) => cursor.rollback,
+            Self::ReplayTokens(row) => row.header.rollback,
+            Self::DurableTokens(row) => row.header.rollback,
+            Self::AttemptTokens(row) => row.header.rollback,
             Self::MacroBody(cursor) => cursor.rollback,
             Self::MacroArgument(cursor) => cursor.rollback,
         }
@@ -486,9 +455,9 @@ impl<G> InputLevel<G> {
     pub(super) fn rollback_marker_mut(&mut self) -> &mut RowRollbackMarker {
         match self {
             Self::Source(level) => &mut level.rollback,
-            Self::ReplayTokens(cursor) => &mut cursor.rollback,
-            Self::DurableTokens(cursor) => &mut cursor.rollback,
-            Self::AttemptTokens(cursor) => &mut cursor.rollback,
+            Self::ReplayTokens(row) => &mut row.header.rollback,
+            Self::DurableTokens(row) => &mut row.header.rollback,
+            Self::AttemptTokens(row) => &mut row.header.rollback,
             Self::MacroBody(cursor) => &mut cursor.rollback,
             Self::MacroArgument(cursor) => &mut cursor.rollback,
         }
@@ -501,29 +470,29 @@ impl<G> InputLevel<G> {
         core::mem::swap(self.rollback_marker_mut(), displaced.rollback_marker_mut());
     }
 
-    pub(crate) fn stored_common(&self) -> Option<&TokenCursor<G>> {
+    pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader<G>> {
         match self {
-            Self::ReplayTokens(cursor) => Some(&cursor.common),
-            Self::DurableTokens(cursor) => Some(&cursor.common),
-            Self::AttemptTokens(cursor) => Some(&cursor.common),
+            Self::ReplayTokens(row) => Some(&row.header),
+            Self::DurableTokens(row) => Some(&row.header),
+            Self::AttemptTokens(row) => Some(&row.header),
             _ => None,
         }
     }
 
-    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenCursor<G>> {
+    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenRowHeader<G>> {
         match self {
-            Self::ReplayTokens(cursor) => Some(&mut cursor.common),
-            Self::DurableTokens(cursor) => Some(&mut cursor.common),
-            Self::AttemptTokens(cursor) => Some(&mut cursor.common),
+            Self::ReplayTokens(row) => Some(&mut row.header),
+            Self::DurableTokens(row) => Some(&mut row.header),
+            Self::AttemptTokens(row) => Some(&mut row.header),
             _ => None,
         }
     }
 
     pub(crate) fn stored_position(&self) -> Option<usize> {
         match self {
-            Self::ReplayTokens(cursor) => Some(cursor.position()),
-            Self::DurableTokens(cursor) => Some(cursor.position()),
-            Self::AttemptTokens(cursor) => Some(cursor.position()),
+            Self::ReplayTokens(row) => Some(row.header.position()),
+            Self::DurableTokens(row) => Some(row.header.position()),
+            Self::AttemptTokens(row) => Some(row.header.position()),
             Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
         }
     }
@@ -532,9 +501,15 @@ impl<G> InputLevel<G> {
     /// reclassifying or loading its already-admitted storage domain.
     pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
         match self {
-            Self::ReplayTokens(cursor) => Some(cursor.position() >= cursor.len as usize),
-            Self::DurableTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
-            Self::AttemptTokens(cursor) => Some(cursor.frame.position() >= cursor.len),
+            Self::ReplayTokens(row) => {
+                Some(row.header.frame.position() >= row.header.frame.limit())
+            }
+            Self::DurableTokens(row) => {
+                Some(row.header.frame.position() >= row.header.frame.limit())
+            }
+            Self::AttemptTokens(row) => {
+                Some(row.header.frame.position() >= row.header.frame.limit())
+            }
             Self::Source(_) | Self::MacroBody(_) | Self::MacroArgument(_) => None,
         }
     }
@@ -542,17 +517,17 @@ impl<G> InputLevel<G> {
     #[cold]
     pub(crate) fn stored_span_cold(&self) -> Option<PackedTokenSpanHandle<G>> {
         match self {
-            Self::ReplayTokens(cursor) => Some(PackedTokenSpanHandle::Replay {
-                replay: cursor.replay,
-                len: cursor.len,
+            Self::ReplayTokens(row) => Some(PackedTokenSpanHandle::Replay {
+                replay: row.replay,
+                len: row.header.frame.limit(),
             }),
-            Self::DurableTokens(cursor) => Some(PackedTokenSpanHandle::DurableList {
-                list: cursor.list.clone(),
-                len: cursor.len,
+            Self::DurableTokens(row) => Some(PackedTokenSpanHandle::DurableList {
+                list: row.list.clone(),
+                len: row.header.frame.limit(),
             }),
-            Self::AttemptTokens(cursor) => Some(PackedTokenSpanHandle::AttemptList {
-                list: cursor.list,
-                len: cursor.len,
+            Self::AttemptTokens(row) => Some(PackedTokenSpanHandle::AttemptList {
+                list: row.list,
+                len: row.header.frame.limit(),
             }),
             _ => None,
         }
@@ -704,6 +679,7 @@ pub(crate) enum InputLevelInlineState {
         position: u32,
     },
     ReplayCursor {
+        position: u32,
         cursor: ResidentReplayCursor,
     },
     Tokens {
@@ -724,8 +700,8 @@ impl InputLevelInlineState {
         Self::TokenPosition { position }
     }
 
-    pub(crate) const fn replay_cursor(cursor: ResidentReplayCursor) -> Self {
-        Self::ReplayCursor { cursor }
+    pub(crate) const fn replay_cursor(position: u32, cursor: ResidentReplayCursor) -> Self {
+        Self::ReplayCursor { position, cursor }
     }
 
     pub(crate) const fn new(frame: PackedInputFrame, retirement: RetirementBehavior) -> Self {
@@ -901,9 +877,9 @@ impl<G> InputLevel<G> {
     pub(crate) const fn source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         match self {
             Self::Source(source) => source.frame.source_context(),
-            Self::ReplayTokens(tokens) => tokens.common.frame.source_context(),
-            Self::DurableTokens(tokens) => tokens.common.frame.source_context(),
-            Self::AttemptTokens(tokens) => tokens.common.frame.source_context(),
+            Self::ReplayTokens(tokens) => tokens.header.frame.source_context(),
+            Self::DurableTokens(tokens) => tokens.header.frame.source_context(),
+            Self::AttemptTokens(tokens) => tokens.header.frame.source_context(),
             Self::MacroBody(body) => body.active_source(),
             Self::MacroArgument(argument) => argument.active_source(),
         }
@@ -915,9 +891,9 @@ impl<G> InputLevel<G> {
     ) {
         match self {
             Self::Source(level) => level.frame.set_source_context(source),
-            Self::ReplayTokens(tokens) => tokens.frame.set_source_context(source),
-            Self::DurableTokens(tokens) => tokens.frame.set_source_context(source),
-            Self::AttemptTokens(tokens) => tokens.frame.set_source_context(source),
+            Self::ReplayTokens(tokens) => tokens.header.frame.set_source_context(source),
+            Self::DurableTokens(tokens) => tokens.header.frame.set_source_context(source),
+            Self::AttemptTokens(tokens) => tokens.header.frame.set_source_context(source),
             Self::MacroBody(body) => body.set_active_source(source),
             Self::MacroArgument(argument) => argument.set_active_source(source),
         }
@@ -926,12 +902,13 @@ impl<G> InputLevel<G> {
     pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
         match self {
             Self::ReplayTokens(tokens) => match state {
-                InputLevelInlineState::ReplayCursor { cursor } => {
+                InputLevelInlineState::ReplayCursor { position, cursor } => {
+                    tokens.header.frame.swap_position(position);
                     core::mem::swap(&mut tokens.resident, cursor);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
-                    std::mem::swap(&mut tokens.frame, frame);
-                    std::mem::swap(&mut tokens.retirement, retirement);
+                    std::mem::swap(&mut tokens.header.frame, frame);
+                    std::mem::swap(&mut tokens.header.retirement, retirement);
                 }
                 InputLevelInlineState::TokenPosition { .. }
                 | InputLevelInlineState::MacroBody { .. }
@@ -941,11 +918,11 @@ impl<G> InputLevel<G> {
             },
             Self::DurableTokens(tokens) => match state {
                 InputLevelInlineState::TokenPosition { position } => {
-                    tokens.frame.swap_position(position);
+                    tokens.header.frame.swap_position(position);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
-                    std::mem::swap(&mut tokens.frame, frame);
-                    std::mem::swap(&mut tokens.retirement, retirement);
+                    std::mem::swap(&mut tokens.header.frame, frame);
+                    std::mem::swap(&mut tokens.header.retirement, retirement);
                 }
                 InputLevelInlineState::ReplayCursor { .. }
                 | InputLevelInlineState::MacroBody { .. }
@@ -955,11 +932,11 @@ impl<G> InputLevel<G> {
             },
             Self::AttemptTokens(tokens) => match state {
                 InputLevelInlineState::TokenPosition { position } => {
-                    tokens.frame.swap_position(position);
+                    tokens.header.frame.swap_position(position);
                 }
                 InputLevelInlineState::Tokens { frame, retirement } => {
-                    std::mem::swap(&mut tokens.frame, frame);
-                    std::mem::swap(&mut tokens.retirement, retirement);
+                    std::mem::swap(&mut tokens.header.frame, frame);
+                    std::mem::swap(&mut tokens.header.retirement, retirement);
                 }
                 InputLevelInlineState::ReplayCursor { .. }
                 | InputLevelInlineState::MacroBody { .. }
@@ -1098,7 +1075,6 @@ struct ReplayLaneCursor {
 pub(crate) struct ResidentReplayCursor {
     run: ResidentReplayRun,
     segment: u32,
-    position: u32,
     remaining: u32,
     offset: u16,
     segment_end: u16,
@@ -1116,21 +1092,13 @@ impl ResidentReplayCursor {
     pub(crate) const EMPTY: Self = Self {
         run: ResidentReplayRun::Empty,
         segment: 0,
-        position: 0,
         remaining: 0,
         offset: 0,
         segment_end: 0,
     };
 
-    pub(crate) const fn position(self) -> u32 {
-        self.position
-    }
-
-    const fn empty_at(position: u32) -> Self {
-        Self {
-            position,
-            ..Self::EMPTY
-        }
+    const fn empty() -> Self {
+        Self::EMPTY
     }
 }
 
@@ -1299,16 +1267,14 @@ impl<T> SegmentedReplayLane<T> {
         start: ReplayLaneCursor,
         len: u32,
         run: ResidentReplayRun,
-        position: u32,
     ) -> Option<ResidentReplayCursor> {
         if len == 0 {
-            return Some(ResidentReplayCursor::empty_at(position));
+            return Some(ResidentReplayCursor::empty());
         }
         let segment = self.active.get(start.segment as usize)?;
         (start.offset < segment.used).then_some(ResidentReplayCursor {
             run,
             segment: start.segment,
-            position,
             remaining: len,
             offset: start.offset,
             segment_end: segment.used,
@@ -1334,7 +1300,6 @@ impl<T> SegmentedReplayLane<T> {
                 *segment_inspections = segment_inspections.saturating_add(1);
             }
         }
-        let next_position = cursor.position.checked_add(1)?;
         let value = self
             .active
             .get(cursor.segment as usize)?
@@ -1342,7 +1307,6 @@ impl<T> SegmentedReplayLane<T> {
             .values
             .get(usize::from(cursor.offset))?;
         cursor.offset = cursor.offset.checked_add(1)?;
-        cursor.position = next_position;
         cursor.remaining -= 1;
         Some(value)
     }
@@ -1791,28 +1755,19 @@ impl<G> ReplayLane<G> {
             return None;
         }
         if let Some(prefix) = entry.prefix_words.filter(|prefix| prefix.len != 0) {
-            return self.words.resident_cursor(
-                prefix.start,
-                prefix.len,
-                ResidentReplayRun::Prefix,
-                0,
-            );
+            return self
+                .words
+                .resident_cursor(prefix.start, prefix.len, ResidentReplayRun::Prefix);
         }
-        self.body_resident_cursor(entry, 0)
+        self.body_resident_cursor(entry)
     }
 
-    fn body_resident_cursor(
-        &self,
-        entry: &ReplayEntry,
-        position: u32,
-    ) -> Option<ResidentReplayCursor> {
+    fn body_resident_cursor(&self, entry: &ReplayEntry) -> Option<ResidentReplayCursor> {
         match &entry.body_words {
-            ReplayBodyWords::Segmented(words) => self.words.resident_cursor(
-                words.start,
-                words.len,
-                ResidentReplayRun::SegmentedBody,
-                position,
-            ),
+            ReplayBodyWords::Segmented(words) => {
+                self.words
+                    .resident_cursor(words.start, words.len, ResidentReplayRun::SegmentedBody)
+            }
             ReplayBodyWords::Owned(words) => words.lane.resident_cursor(
                 ReplayLaneCursor {
                     segment: 0,
@@ -1820,7 +1775,6 @@ impl<G> ReplayLane<G> {
                 },
                 words.len,
                 ResidentReplayRun::OwnedBody,
-                position,
             ),
         }
     }
@@ -1838,7 +1792,7 @@ impl<G> ReplayLane<G> {
             if entry.released {
                 return None;
             }
-            *cursor = self.body_resident_cursor(entry, cursor.position)?;
+            *cursor = self.body_resident_cursor(entry)?;
             #[cfg(test)]
             {
                 *run_transitions = run_transitions.saturating_add(1);

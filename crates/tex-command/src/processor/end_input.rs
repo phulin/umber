@@ -332,11 +332,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// one-token backup has ended before that hand-off and must be retired
     /// without fetching whatever lies beneath it.
     pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
-        let Some(level @ InputLevel::ReplayTokens(cursor)) = self.command.input.levels.last()
-        else {
+        let Some(level @ InputLevel::ReplayTokens(row)) = self.command.input.levels.last() else {
             return Ok(());
         };
-        if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+        if !matches!(row.header.behavior, TokenBehavior::BackedUp(_))
             || level
                 .stored_indexed_token_at_cold(
                     PackedTokenSources::new(
@@ -350,7 +349,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command
                     .input
                     .replay
-                    .indexed_get_cold(cursor.replay, 0)
+                    .indexed_get_cold(row.replay, 0)
                     .map(|spelling| spelling.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
@@ -360,7 +359,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return Ok(());
         }
-        match self.retire_input_top(cursor.identity())? {
+        match self.retire_input_top(row.header.identity())? {
             RetirementHandoff::Continue => Ok(()),
             RetirementHandoff::Stop
             | RetirementHandoff::EndV(_)

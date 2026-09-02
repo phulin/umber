@@ -111,7 +111,7 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
         levels
             .matches("pub(super) rollback: RowRollbackMarker")
             .count(),
-        6
+        4
     );
     assert!(!history.contains("rollback_markers"));
     for retired_lane in [
@@ -241,9 +241,9 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     );
     for branch in [
         "InputLevel::Source(source) =>",
-        "InputLevel::ReplayTokens(cursor) =>",
-        "InputLevel::DurableTokens(cursor) =>",
-        "InputLevel::AttemptTokens(cursor) =>",
+        "InputLevel::ReplayTokens(row) =>",
+        "InputLevel::AttemptTokens(row) =>",
+        "InputLevel::DurableTokens(row) =>",
         "InputLevel::MacroBody(top) =>",
         "InputLevel::MacroArgument(top) =>",
     ] {
@@ -253,6 +253,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "resident front must enter {branch} exactly once"
         );
     }
+    assert_eq!(resident_front.matches("transition_token_row!(").count(), 3);
     for retired in [
         "advance_resident_top_into",
         "ResidentInputTop",
@@ -290,7 +291,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")
         .nth(1)
-        .and_then(|tail| tail.split("impl<G> TokenCursor<G>").next())
+        .and_then(|tail| tail.split("impl<G> TokenRowHeader<G>").next())
         .expect("locate macro-argument cursor implementation");
     assert!(!macro_argument_cursor.contains("fn advance_word("));
     assert!(macro_argument_cursor.contains("fn advance_delivery("));

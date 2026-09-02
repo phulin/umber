@@ -19,13 +19,14 @@ pub(crate) use history::{
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    AttemptTokenCursor, BackedUpToken, BackupTreatment, DurableTokenCursor, InputLevel,
-    InputLevelId, InputLevelInlineState, MacroArgumentCursor, MacroBodyCursor, PackedInputFrame,
+    AttemptTokenRow, BackedUpToken, BackupTreatment, DurableTokenRow, InputLevel, InputLevelId,
+    InputLevelInlineState, MacroArgumentCursor, MacroBodyCursor, PackedInputFrame,
     PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTokenCursor, ReplayTrace,
+    ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTokenRow, ReplayTrace,
     ReplayTransientMark, ResidentReplayCursor, RetirementBehavior, SourceLevel,
     SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
-    SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenCursor, packed_token_frame,
+    SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenRowHeader,
+    packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
@@ -166,8 +167,8 @@ impl<G> InputState<G> {
     ) -> Result<(), ()> {
         self.replay.rollback_transient(mark);
         for level in self.levels.iter() {
-            if let InputLevel::ReplayTokens(cursor) = level {
-                self.replay.reactivate(cursor.replay);
+            if let InputLevel::ReplayTokens(row) = level {
+                self.replay.reactivate(row.replay);
             }
         }
         self.replay.end_transient().map_err(|_| ())

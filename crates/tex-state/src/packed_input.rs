@@ -140,6 +140,11 @@ impl InputFrame {
         self.position
     }
 
+    #[must_use]
+    pub const fn limit(self) -> u32 {
+        self.limit
+    }
+
     /// Swaps only the hot delivery position with one ordered undo value.
     ///
     /// Input identity, source, limit, kind, and flags are immutable for a

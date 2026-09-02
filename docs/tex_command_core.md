@@ -1929,10 +1929,13 @@ repeated owner validation returns through the processor. Terminal token input
 and a v-template still waiting for `do_endv` remain explicit cold token
 boundaries; source EOF remains the cold file-warning/framing boundary. The
 source branch lends its row and checked slot together, tokenizes one word, and
-advances the row's compact position before ending that borrow. The stored-token
-branch lends its cursor directly, selects its admitted replay, attempt, or
-durable span, loads one packed word, advances its one owning cursor, and
-intercepts `OutParameter` in place. Macro-body and macro-argument branches
+advances the row's compact position before ending that borrow. The replay,
+attempt, and durable variants embed the same resident token-row header. Each
+variant performs only its admitted storage-specific packed-word read before
+one shared first-touch, logical advance, `OutParameter` interception, and
+exhaustion transition. Replay alone advances its compact physical run/segment
+coordinate alongside the header's authoritative logical position. Macro-body
+and macro-argument branches
 likewise advance only their resident cursors. Every ordinary arm then reaches
 the same final-slot resolution and settlement tail; no arm owns a separate
 command admission. `advance_resident_command_into` neither looks the top up

@@ -7,10 +7,10 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use crate::execution_scratch::ArgumentSetId;
 
 use super::{
-    AttemptTokenCursor, CompactSourceStepQueries, DurableTokenCursor, InputLevel, InputLevelId,
-    PackedTokenSpanHandle, ReplayTokenCursor, ReplayTrace, RetirementBehavior,
+    AttemptTokenRow, CompactSourceStepQueries, DurableTokenRow, InputLevel, InputLevelId,
+    PackedTokenSpanHandle, ReplayTokenRow, ReplayTrace, RetirementBehavior,
     SourceControlSequenceKind, SourceNameClass, SourceToken, StoredReplayReason, TokenBehavior,
-    TokenCursor,
+    TokenRowHeader,
 };
 
 /// Completed command-state outcome of one resident input transition.
@@ -175,22 +175,22 @@ impl<G> RetiredInputLevel<G> {
                     source_slot.expect("source retirement projection receives its live slot"),
                 ),
             },
-            InputLevel::ReplayTokens(cursor) => Self::Tokens {
-                identity: cursor.identity(),
-                retirement: cursor.retirement,
-                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
-                replay: Some(cursor.replay),
+            InputLevel::ReplayTokens(row) => Self::Tokens {
+                identity: row.header.identity(),
+                retirement: row.header.retirement,
+                reason: input_retirement_reason(&row.header.behavior, &row.header.trace),
+                replay: Some(row.replay),
             },
-            InputLevel::DurableTokens(cursor) => Self::Tokens {
-                identity: cursor.identity(),
-                retirement: cursor.retirement,
-                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            InputLevel::DurableTokens(row) => Self::Tokens {
+                identity: row.header.identity(),
+                retirement: row.header.retirement,
+                reason: input_retirement_reason(&row.header.behavior, &row.header.trace),
                 replay: None,
             },
-            InputLevel::AttemptTokens(cursor) => Self::Tokens {
-                identity: cursor.identity(),
-                retirement: cursor.retirement,
-                reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            InputLevel::AttemptTokens(row) => Self::Tokens {
+                identity: row.header.identity(),
+                retirement: row.header.retirement,
+                reason: input_retirement_reason(&row.header.behavior, &row.header.trace),
                 replay: None,
             },
             InputLevel::MacroBody(cursor) => Self::MacroBody {
@@ -512,16 +512,16 @@ impl<G> CommandState<G> {
     pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self.scratch.argument_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
-            let InputLevel::ReplayTokens(cursor) = level else {
+            let InputLevel::ReplayTokens(row) = level else {
                 return words;
             };
             let owned = if matches!(
-                self.input.replay.ownership(cursor.replay),
+                self.input.replay.ownership(row.replay),
                 Some(
                     super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp
                 )
             ) {
-                cursor.len as usize
+                row.header.frame.limit() as usize
             } else {
                 0
             };
@@ -581,8 +581,7 @@ impl<G> CommandState<G> {
         let mut frame =
             super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
         frame.set_source_context(self.input.levels.current_source_context());
-        let len = u32::try_from(span.frame_len()).expect("input token span length fits u32");
-        let common = TokenCursor::new(behavior, retirement, trace, len, frame);
+        let header = TokenRowHeader::new(behavior, retirement, trace, frame);
         let level = match span {
             PackedTokenSpanHandle::Replay { replay, .. } => {
                 let resident = self
@@ -590,26 +589,17 @@ impl<G> CommandState<G> {
                     .replay
                     .resident_cursor(replay)
                     .expect("admitted replay span has a resident coordinate");
-                InputLevel::ReplayTokens(ReplayTokenCursor {
+                InputLevel::ReplayTokens(ReplayTokenRow {
+                    header,
                     replay,
                     resident,
-                    common,
-                    rollback: super::levels::RowRollbackMarker::default(),
                 })
             }
             PackedTokenSpanHandle::DurableList { list, .. } => {
-                InputLevel::DurableTokens(DurableTokenCursor {
-                    list,
-                    common,
-                    rollback: super::levels::RowRollbackMarker::default(),
-                })
+                InputLevel::DurableTokens(DurableTokenRow { header, list })
             }
             PackedTokenSpanHandle::AttemptList { list, .. } => {
-                InputLevel::AttemptTokens(AttemptTokenCursor {
-                    list,
-                    common,
-                    rollback: super::levels::RowRollbackMarker::default(),
-                })
+                InputLevel::AttemptTokens(AttemptTokenRow { header, list })
             }
         };
         self.push_input_level(level);
@@ -1141,9 +1131,9 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
 pub(crate) fn input_level_identity<G>(level: &InputLevel<G>) -> InputLevelId {
     match level {
         InputLevel::Source(level) => level.identity(),
-        InputLevel::ReplayTokens(level) => level.identity(),
-        InputLevel::DurableTokens(level) => level.identity(),
-        InputLevel::AttemptTokens(level) => level.identity(),
+        InputLevel::ReplayTokens(level) => level.header.identity(),
+        InputLevel::DurableTokens(level) => level.header.identity(),
+        InputLevel::AttemptTokens(level) => level.header.identity(),
         InputLevel::MacroBody(level) => level.identity(),
         InputLevel::MacroArgument(level) => level.identity(),
     }

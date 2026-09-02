@@ -2059,11 +2059,11 @@ impl<G> CommandState<G> {
             return Ok(());
         }
         let exhausted_backed_up_endv = match top {
-            InputLevel::ReplayTokens(cursor) => {
-                matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && self.input.replay.ownership(cursor.replay)
+            InputLevel::ReplayTokens(row) => {
+                matches!(row.header.behavior, TokenBehavior::BackedUp(_))
+                    && self.input.replay.ownership(row.replay)
                         == Some(crate::input::PackedTokenOwnership::BackedUp)
-                    && cursor.position() >= cursor.len as usize
+                    && row.header.frame.position() >= row.header.frame.limit()
             }
             _ => false,
         };

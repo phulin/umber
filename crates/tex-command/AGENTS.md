@@ -264,20 +264,22 @@ collector (see `src/conditionals.rs`).
   through the ordinary token path.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over one `PackedTokenSpanHandle` shape. Every concrete
-  row owns its packed rollback epoch/state marker directly; the stored-span
-  length occupies the common cursor's former tail padding, so the explicit-tag
-  `InputLevel` remains 88 bytes without a metadata side lane. Replay, macro
+  token row embeds one authoritative `TokenRowHeader` carrying its packed
+  frame, rollback marker, behavior, retirement, and trace; the frame's limit is
+  the sole stored-span length, so the explicit-tag `InputLevel` remains 88
+  bytes without a metadata side lane. Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
   caller's final `CurrentCommand` through a reference-only `EmptyCommand`
   reborrow, resolves the resident packed word directly, returns only the
   scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
-  and advances only the owning cursor scalar. Replay-backed rows keep their
-  logical word position in the same resident coordinate as the current replay
-  run, physical segment, and in-segment offset; their common packed frame is
-  immutable during warm delivery. Ordinary words load from that sole cursor
-  directly and inspect segment metadata only at a boundary. A
+  and advances only the owning cursor scalar. Replay, attempt, and durable rows
+  share one header transition for first touch, logical position advance,
+  parameter interception, and exhaustion; their concrete variants perform only
+  the storage-specific word read. Replay keeps only its physical run, segment,
+  and in-segment offset outside the header and inspects segment metadata only
+  at a boundary. A
   source frame installs its external-source identity in the common packed
   frame, and replay/macro frames inherit that context at admission. Delivery
   consequently carries the active source to main control with one top-row read
@@ -343,11 +345,11 @@ collector (see `src/conditionals.rs`).
   encode the row as a universal resident-top carrier and redispatch it. Each
   concrete source, replay-token, durable-token, attempt-token, macro-body, or
   macro-argument arm borrows only its cursor and matching first-touch journal
-  fields. Stored rows lend their
-  cursor directly: no storage-handle match, stored-top wrapper, advance result, or redispatch
-  survives selection. Their first warm checkpoint touch journals the scalar
-  resident replay cursor, including its logical position and run/segment
-  coordinate; durable and attempt rows journal their packed-frame position. A
+  fields. All three token-backed variants embed the same resident header and
+  perform only their distinct word read before its one shared transition; no
+  storage-handle match, stored-top wrapper, advance result, or redispatch
+  survives selection. Their first warm checkpoint touch journals the header's
+  logical position; replay includes its separate physical run/segment cursor. A
   later cold retirement, limit, or flag mutation records
   the remaining token state separately in the same ordered history. Every arm
   ends its storage borrow with only the word, origin, position, and source
