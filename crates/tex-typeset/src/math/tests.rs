@@ -1392,6 +1392,56 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 }
 
 #[test]
+fn fraction_preserves_vertical_numerator_until_rebox_changes_its_width() {
+    // TeX82 §§715, 720, 738, and 746 retain the box type returned by
+    // `clean_box` in the fraction stack. A scripted math accent is already a
+    // vbox; only §715's unequal-width rebox changes that source to an hbox.
+    let mut universe = setup_universe();
+    let mut accent = MathNoad::new(
+        NoadKind::Accent {
+            accent: math_char('^'),
+        },
+        MathField::MathChar(math_char('k')),
+    );
+    accent.subscript = MathField::MathChar(math_char('b'));
+    let numerator = universe.publish_page_nodes(&[Node::MathNoad(accent)]);
+    let params = MathParams::read(&universe);
+
+    for (denominator_chars, numerator_is_vertical) in
+        [(&['a'][..], true), (&['a', 'b', 'c'][..], false)]
+    {
+        let denominator = denominator_chars
+            .iter()
+            .copied()
+            .map(|ch| Node::MathNoad(noad(NoadClass::Ord, ch)))
+            .collect::<Vec<_>>();
+        let denominator = universe.publish_page_nodes(&denominator);
+        let input = universe.publish_page_nodes(&[Node::FractionNoad(MathFraction {
+            numerator,
+            denominator,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        })]);
+
+        let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+        let [MathNode::HList(fraction)] = root_nodes(&layout).as_slice() else {
+            panic!("expected fraction hbox");
+        };
+        let [_, MathNode::VList(stack), _] = list_nodes(&layout, fraction.list).as_slice() else {
+            panic!("expected delimited fraction stack");
+        };
+        let numerator = list_nodes(&layout, stack.list)[0];
+        assert_eq!(
+            matches!(numerator, MathNode::VList(_)),
+            numerator_is_vertical,
+            "denominator={denominator_chars:?}"
+        );
+    }
+}
+
+#[test]
 fn fraction_rebox_keeps_an_empty_denominator_structurally_empty() {
     let mut universe = setup_universe();
     let numerator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);

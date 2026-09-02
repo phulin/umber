@@ -177,7 +177,7 @@ fn fraction_vlist(
     let numerator_depth = numerator.depth;
     let list = if thickness.raw() == 0 {
         ctx.layout.hlist([
-            MathNode::HList(numerator),
+            boxed_node(numerator),
             MathNode::Kern {
                 amount: sub(
                     sub(shift_up, numerator_depth),
@@ -185,12 +185,12 @@ fn fraction_vlist(
                 ),
                 kind: KernKind::Font,
             },
-            MathNode::HList(denominator),
+            boxed_node(denominator),
         ])
     } else {
         let delta = Scaled::from_raw(tex_arith::half(thickness.raw()));
         ctx.layout.hlist([
-            MathNode::HList(numerator),
+            boxed_node(numerator),
             MathNode::Kern {
                 amount: sub(sub(shift_up, numerator_depth), add(axis_height, delta)),
                 kind: KernKind::Font,
@@ -204,7 +204,7 @@ fn fraction_vlist(
                 amount: sub(sub(axis_height, delta), sub(denominator.height, shift_down)),
                 kind: KernKind::Font,
             },
-            MathNode::HList(denominator),
+            boxed_node(denominator),
         ])
     };
     MathBox {
