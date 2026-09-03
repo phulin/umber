@@ -458,6 +458,70 @@ fn ifodd_and_ifcase_literal_operands_use_the_numeric_control_lane() {
 }
 
 #[test]
+fn ifdim_literal_operands_use_the_shared_dimension_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let if_dim = install(universe, "ifdim", ExpandablePrimitive::IfDim);
+        let number = install(universe, "number", ExpandablePrimitive::Number);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_dim,
+                number,
+                other('1'),
+                other('.'),
+                other('5'),
+                other('p'),
+                other('t'),
+                space(),
+                other('<'),
+                space(),
+                other('2'),
+                other('p'),
+                other('t'),
+                space(),
+                other('Y'),
+                otherwise,
+                other('N'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let status = processor.get_x_token_into(&mut destination);
+        assert!(status.is_ok(), "ifdim delivery failed: {status:?}");
+        let command = destination.expect("ifdim result command");
+        assert!(
+            matches!(
+                command.meaning(),
+                ResolvedMeaning::Static(Meaning::CharToken { ch: 'Y', .. })
+            ),
+            "ifdim selected unexpected command: {:?}",
+            command.meaning()
+        );
+        assert_expanded_end(&mut processor);
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            processor.command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "ifdim and its nested number must stay in one delivery loop"
+        );
+    });
+}
+
+#[test]
 fn ifx_compares_raw_operands_without_expanding_them() {
     crate::test_harness::with_universe(|universe| {
         let if_x = install(universe, "ifx", ExpandablePrimitive::IfX);

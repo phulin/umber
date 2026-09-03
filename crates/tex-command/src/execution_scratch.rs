@@ -1530,6 +1530,45 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_number_control()
     }
 
+    pub(crate) fn push_if_dimension_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_if_dimension_control(condition, inverted)
+    }
+
+    pub(crate) fn top_if_dimension_control(
+        &self,
+    ) -> Result<
+        Option<crate::expansion_work::control::SynchronousIfDimensionControl>,
+        ScratchError,
+    > {
+        self.expansion_work.top_if_dimension_control()
+    }
+
+    pub(crate) fn set_if_dimension_phase(
+        &mut self,
+        phase: crate::expansion_work::control::SynchronousIfDimensionPhase,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.set_if_dimension_phase(phase)
+    }
+
+    pub(crate) fn await_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.await_if_dimension_operand()
+    }
+
+    pub(crate) fn resume_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.resume_if_dimension_operand()
+    }
+
+    pub(crate) fn pop_if_dimension_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousIfDimensionControl, ScratchError> {
+        self.expansion_work.pop_if_dimension_control()
+    }
+
     pub(crate) fn push_number_control(
         &mut self,
         opener: tex_state::token::OriginId,

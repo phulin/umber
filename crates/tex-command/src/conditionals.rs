@@ -524,6 +524,452 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
+    /// Begins the compact literal `\ifdim` protocol.  Internal dimensions
+    /// remain available through the established scalar evaluator; this lane
+    /// handles the ordinary decimal `pt` form without retaining a scanner
+    /// command while nested expandable operands are delivered.
+    pub(super) fn begin_if_dimension_continuation(
+        &mut self,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+        let condition = self.command.conditions.push_with_inversion(
+            ConditionalKind::IfDim,
+            source_line,
+            inverted,
+        );
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or_else(CommandError::input_invariant)?;
+        self.trace_conditional_enter(&frame);
+        self.observe_condition("push", &frame, None);
+        if let Err(error) = self
+            .command
+            .scratch
+            .push_if_dimension_control(condition, inverted)
+            .map_err(crate::scan_toks::scratch_command_error)
+        {
+            let _ = self.command.conditions.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Converts the compact decimal accumulator to TeX scaled points.  The
+    /// hot dimension lane keeps at most nine fractional digits, which is
+    /// sufficient for a bounded integer arithmetic path and avoids a heap
+    /// backed digit buffer in the continuation record.
+    fn hot_dimension_value(
+        value: i64,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        negative: bool,
+    ) -> i32 {
+        let fraction = if decimal && fraction_digits != 0 {
+            let digits = i64::from(fraction);
+            let mut denominator = 1_i64;
+            for _ in 0..fraction_digits.min(9) {
+                denominator = denominator.saturating_mul(10);
+            }
+            (digits
+                .saturating_mul(i64::from(tex_state::scaled::Scaled::UNITY))
+                .saturating_add(denominator / 2)
+                / denominator)
+                .min(i64::from(tex_state::scaled::Scaled::UNITY) - 1)
+        } else {
+            0
+        };
+        let raw = value
+            .saturating_mul(i64::from(tex_state::scaled::Scaled::UNITY))
+            .saturating_add(fraction);
+        let raw = raw.min(i64::from(i32::MAX));
+        let raw = i32::try_from(raw).unwrap_or(i32::MAX);
+        if negative { raw.saturating_neg() } else { raw }
+    }
+
+    fn complete_if_dimension_values(
+        &mut self,
+        left: i32,
+        relation: IfRelation,
+        right: i32,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_if_dimension_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        self.complete_boolean(
+            control.condition,
+            relation.compare(left, right) ^ control.inverted,
+        )
+    }
+
+    /// Advances one `\ifdim` operand from the settled hot command.  Nested
+    /// expandable commands have already returned to this loop; only a
+    /// character projection crosses the control boundary.
+    pub(super) fn advance_if_dimension_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<IfDimensionAdvance, CommandError> {
+        use crate::expansion_work::control::SynchronousIfDimensionPhase as Phase;
+        let control = self
+            .command
+            .scratch
+            .top_if_dimension_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let character = command.character_token();
+        let category = command.character_catcode();
+        let is_space = category == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|ch| ch.is_ascii_digit())
+            .map(|ch| i64::from(ch as u8 - b'0'));
+        let relation = character.and_then(|ch| match ch {
+            '<' => Some(IfRelation::Less),
+            '=' => Some(IfRelation::Equal),
+            '>' => Some(IfRelation::Greater),
+            _ => None,
+        });
+        let accumulate = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let accumulate_fraction = |fraction: i32, digits: u8, digit: i64| {
+            if digits >= 9 {
+                (fraction, digits)
+            } else {
+                (
+                    fraction
+                        .saturating_mul(10)
+                        .saturating_add(i32::try_from(digit).unwrap_or(9)),
+                    digits + 1,
+                )
+            }
+        };
+        match control.phase {
+            Phase::NeedLeft => {
+                if is_space {
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if character == Some('+') || character == Some('-') {
+                    self.command.scratch.set_if_dimension_phase(Phase::Left {
+                        negative: character == Some('-'),
+                        value: 0,
+                        fraction: 0,
+                        fraction_digits: 0,
+                        decimal: false,
+                        unit: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_dimension_phase(Phase::Left {
+                        negative: false,
+                        value: digit,
+                        fraction: 0,
+                        fraction_digits: 0,
+                        decimal: false,
+                        unit: 0,
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_number_for_hot_conditional()?;
+                self.command
+                    .scratch
+                    .set_if_dimension_phase(Phase::NeedRelation { left: 0 })?;
+                Ok(IfDimensionAdvance::Continue)
+            }
+            Phase::AwaitLeft { .. } | Phase::AwaitRelation { .. } | Phase::AwaitRight { .. } => {
+                Err(CommandError::input_invariant())
+            }
+            Phase::Left {
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => {
+                if unit == 0 && !decimal {
+                    if let Some(digit) = digit {
+                        self.command.scratch.set_if_dimension_phase(Phase::Left {
+                            negative,
+                            value: accumulate(value, digit),
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            unit,
+                            seen_digit: true,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                    if character == Some('.') || character == Some(',') {
+                        self.command.scratch.set_if_dimension_phase(Phase::Left {
+                            negative,
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal: true,
+                            unit,
+                            seen_digit,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                } else if decimal && unit == 0 {
+                    if let Some(digit) = digit {
+                        let (fraction, fraction_digits) =
+                            accumulate_fraction(fraction, fraction_digits, digit);
+                        self.command.scratch.set_if_dimension_phase(Phase::Left {
+                            negative,
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            unit,
+                            seen_digit: true,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                }
+                if character == Some('p') && unit == 0 && seen_digit {
+                    self.command.scratch.set_if_dimension_phase(Phase::Left {
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit: 1,
+                        seen_digit,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if character == Some('t') && unit == 1 {
+                    self.command.scratch.set_if_dimension_phase(Phase::Left {
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit: 2,
+                        seen_digit,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if unit == 2 {
+                    let left = Self::hot_dimension_value(
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        negative,
+                    );
+                    if is_space {
+                        self.command
+                            .scratch
+                            .set_if_dimension_phase(Phase::NeedRelation { left })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                    if let Some(relation) = relation {
+                        self.command.scratch.set_if_dimension_phase(Phase::Right {
+                            left,
+                            relation,
+                            negative: false,
+                            value: 0,
+                            fraction: 0,
+                            fraction_digits: 0,
+                            decimal: false,
+                            unit: 0,
+                            seen_digit: false,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_number_for_hot_conditional()?;
+                self.command
+                    .scratch
+                    .set_if_dimension_phase(Phase::NeedRelation {
+                        left: Self::hot_dimension_value(
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            negative,
+                        ),
+                    })?;
+                Ok(IfDimensionAdvance::Continue)
+            }
+            Phase::NeedRelation { left } => {
+                if is_space {
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if let Some(relation) = relation {
+                    self.command.scratch.set_if_dimension_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative: false,
+                        value: 0,
+                        fraction: 0,
+                        fraction_digits: 0,
+                        decimal: false,
+                        unit: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_relation_for_hot_conditional()?;
+                self.command.scratch.set_if_dimension_phase(Phase::Right {
+                    left,
+                    relation: IfRelation::Equal,
+                    negative: false,
+                    value: 0,
+                    fraction: 0,
+                    fraction_digits: 0,
+                    decimal: false,
+                    unit: 0,
+                    seen_digit: false,
+                })?;
+                Ok(IfDimensionAdvance::Continue)
+            }
+            Phase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => {
+                if unit == 0 && !decimal {
+                    if is_space && !seen_digit {
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                    if (character == Some('+') || character == Some('-')) && !seen_digit {
+                        self.command.scratch.set_if_dimension_phase(Phase::Right {
+                            left,
+                            relation,
+                            negative: character == Some('-'),
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            unit,
+                            seen_digit,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                    if let Some(digit) = digit {
+                        self.command.scratch.set_if_dimension_phase(Phase::Right {
+                            left,
+                            relation,
+                            negative,
+                            value: accumulate(value, digit),
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            unit,
+                            seen_digit: true,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                    if character == Some('.') || character == Some(',') {
+                        self.command.scratch.set_if_dimension_phase(Phase::Right {
+                            left,
+                            relation,
+                            negative,
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal: true,
+                            unit,
+                            seen_digit,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                } else if decimal && unit == 0 {
+                    if let Some(digit) = digit {
+                        let (fraction, fraction_digits) =
+                            accumulate_fraction(fraction, fraction_digits, digit);
+                        self.command.scratch.set_if_dimension_phase(Phase::Right {
+                            left,
+                            relation,
+                            negative,
+                            value,
+                            fraction,
+                            fraction_digits,
+                            decimal,
+                            unit,
+                            seen_digit: true,
+                        })?;
+                        return Ok(IfDimensionAdvance::Continue);
+                    }
+                }
+                if character == Some('p') && unit == 0 && seen_digit {
+                    self.command.scratch.set_if_dimension_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit: 1,
+                        seen_digit,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if character == Some('t') && unit == 1 {
+                    self.command.scratch.set_if_dimension_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit: 2,
+                        seen_digit,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
+                }
+                if unit == 2 {
+                    let right = Self::hot_dimension_value(
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        negative,
+                    );
+                    if is_space {
+                        self.complete_if_dimension_values(left, relation, right)?;
+                        return Ok(IfDimensionAdvance::Complete);
+                    }
+                    self.back_input(command.materialize())?;
+                    self.complete_if_dimension_values(left, relation, right)?;
+                    return Ok(IfDimensionAdvance::Complete);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_number_for_hot_conditional()?;
+                self.complete_if_dimension_values(left, relation, 0)?;
+                Ok(IfDimensionAdvance::Complete)
+            }
+        }
+    }
+
     /// Consumes one settled command in the hot integer protocol.  The
     /// command is materialized only for an actual backup/recovery boundary;
     /// character digits and relation symbols stay in the compact command
@@ -1062,6 +1508,12 @@ pub(crate) enum IfRelation {
 /// Result of one compact numeric operand instruction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum IfNumberAdvance {
+    Continue,
+    Complete,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum IfDimensionAdvance {
     Continue,
     Complete,
 }

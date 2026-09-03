@@ -1103,6 +1103,201 @@ impl<G> ExpansionWork<G> {
         Ok(control)
     }
 
+    /// Starts the compact literal `\ifdim` protocol.
+    pub(crate) fn push_if_dimension_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::IfDimension(
+            SynchronousIfDimensionControl {
+                condition,
+                inverted,
+                phase: SynchronousIfDimensionPhase::NeedLeft,
+            },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed if-dimension-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn top_if_dimension_control(
+        &self,
+    ) -> Result<Option<SynchronousIfDimensionControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::IfDimension(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn set_if_dimension_phase(
+        &mut self,
+        phase: SynchronousIfDimensionPhase,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfDimension(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = phase;
+        Ok(())
+    }
+
+    pub(crate) fn await_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfDimension(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfDimensionPhase::NeedLeft => {
+                SynchronousIfDimensionPhase::AwaitLeft {
+                    negative: false,
+                    value: 0,
+                    fraction: 0,
+                    fraction_digits: 0,
+                    decimal: false,
+                    unit: 0,
+                    seen_digit: false,
+                }
+            }
+            SynchronousIfDimensionPhase::Left {
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::AwaitLeft {
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            },
+            SynchronousIfDimensionPhase::NeedRelation { left } => {
+                SynchronousIfDimensionPhase::AwaitRelation { left }
+            }
+            SynchronousIfDimensionPhase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::AwaitRight {
+                left,
+                relation,
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            },
+            SynchronousIfDimensionPhase::AwaitLeft { .. }
+            | SynchronousIfDimensionPhase::AwaitRelation { .. }
+            | SynchronousIfDimensionPhase::AwaitRight { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    pub(crate) fn resume_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfDimension(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfDimensionPhase::AwaitLeft {
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::Left {
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            },
+            SynchronousIfDimensionPhase::AwaitRelation { left } => {
+                SynchronousIfDimensionPhase::NeedRelation { left }
+            }
+            SynchronousIfDimensionPhase::AwaitRight {
+                left,
+                relation,
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                fraction,
+                fraction_digits,
+                decimal,
+                unit,
+                seen_digit,
+            },
+            SynchronousIfDimensionPhase::NeedLeft
+            | SynchronousIfDimensionPhase::Left { .. }
+            | SynchronousIfDimensionPhase::NeedRelation { .. }
+            | SynchronousIfDimensionPhase::Right { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    pub(crate) fn pop_if_dimension_control(
+        &mut self,
+    ) -> Result<SynchronousIfDimensionControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::IfDimension(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if !matches!(
+            control.phase,
+            SynchronousIfDimensionPhase::NeedRelation { .. }
+                | SynchronousIfDimensionPhase::Right { .. }
+        ) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Starts a compact integer conversion (`\number` or `\romannumeral`).
     pub(crate) fn push_number_control(
         &mut self,

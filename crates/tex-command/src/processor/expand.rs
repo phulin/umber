@@ -1201,6 +1201,37 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            let if_dimension_control = self
+                .command
+                .scratch
+                .top_if_dimension_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = if_dimension_control {
+                if matches!(
+                    action,
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                ) && !matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
+                        ..
+                    }
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRelation {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRight {
+                            ..
+                        }
+                ) {
+                    match self.advance_if_dimension_continuation(command)? {
+                        crate::conditionals::IfDimensionAdvance::Continue
+                        | crate::conditionals::IfDimensionAdvance::Complete => {
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             let number_control = self
                 .command
                 .scratch
@@ -1256,6 +1287,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     @ (ExpandablePrimitive::If
                         | ExpandablePrimitive::IfCat
                         | ExpandablePrimitive::IfNum
+                        | ExpandablePrimitive::IfDim
                         | ExpandablePrimitive::IfOdd
                         | ExpandablePrimitive::IfCase),
             )) = action
@@ -1264,6 +1296,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok_or_else(CommandError::input_invariant)?;
                 if matches!(kind, crate::conditionals::ConditionalKind::If | crate::conditionals::ConditionalKind::IfCat) {
                     self.begin_if_compare_continuation(kind, false)?;
+                } else if kind == crate::conditionals::ConditionalKind::IfDim {
+                    self.begin_if_dimension_continuation(false)?;
                 } else {
                     self.begin_if_number_continuation(kind, false)?;
                 }
@@ -1555,6 +1589,45 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     }
                                     | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
                                         ..
+                                }
+                            )
+                        });
+                    let if_dimension_was_awaiting = self
+                        .command
+                        .scratch
+                        .top_if_dimension_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
+                                    ..
+                                }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRelation {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRight {
+                                        ..
+                                    }
+                            )
+                        });
+                    let if_dimension_should_await = self
+                        .command
+                        .scratch
+                        .top_if_dimension_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfDimensionPhase::NeedLeft
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::Left {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::NeedRelation {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::Right {
+                                        ..
                                     }
                             )
                         });
@@ -1597,6 +1670,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .await_if_number_operand()
                             .map_err(crate::scan_toks::scratch_command_error)?;
                     }
+                    if if_dimension_should_await {
+                        self.command
+                            .scratch
+                            .await_if_dimension_operand()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                    }
                     if number_should_await {
                         self.command
                             .scratch
@@ -1625,6 +1704,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 self.command
                                     .scratch
                                     .resume_if_number_operand()
+                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            }
+                            if if_dimension_should_await || if_dimension_was_awaiting {
+                                self.command
+                                    .scratch
+                                    .resume_if_dimension_operand()
                                     .map_err(crate::scan_toks::scratch_command_error)?;
                             }
                             if number_should_await || number_was_awaiting {

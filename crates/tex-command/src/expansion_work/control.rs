@@ -250,6 +250,67 @@ pub(crate) struct SynchronousIfNumberControl {
     pub(crate) phase: SynchronousIfNumberPhase,
 }
 
+/// Compact literal `\ifdim` operand state.  The hot protocol intentionally
+/// handles the common `<integer>[.<fraction>]pt` form; internal dimensions
+/// continue through the typed scalar lane at the cold semantic boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousIfDimensionPhase {
+    NeedLeft,
+    AwaitLeft {
+        negative: bool,
+        value: i64,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        unit: u8,
+        seen_digit: bool,
+    },
+    Left {
+        negative: bool,
+        value: i64,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        unit: u8,
+        seen_digit: bool,
+    },
+    NeedRelation {
+        left: i32,
+    },
+    AwaitRelation {
+        left: i32,
+    },
+    AwaitRight {
+        left: i32,
+        relation: crate::conditionals::IfRelation,
+        negative: bool,
+        value: i64,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        unit: u8,
+        seen_digit: bool,
+    },
+    Right {
+        left: i32,
+        relation: crate::conditionals::IfRelation,
+        negative: bool,
+        value: i64,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        unit: u8,
+        seen_digit: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousIfDimensionControl {
+    pub(crate) condition: crate::processor::status::ConditionId,
+    pub(crate) inverted: bool,
+    pub(crate) phase: SynchronousIfDimensionPhase,
+}
+
 /// Compact scanner state for `\number` and `\romannumeral`.  The rendered
 /// result is inserted only after the scalar boundary; while digits are being
 /// requested this record retains no rich command or token-list owner.
@@ -335,6 +396,7 @@ pub(crate) enum ExpansionControl<G> {
     ExpandAfterSync(SynchronousExpandAfterControl<G>),
     IfCompare(SynchronousIfCompareControl),
     IfNumber(SynchronousIfNumberControl),
+    IfDimension(SynchronousIfDimensionControl),
     Number(SynchronousNumberControl),
     FontName(SynchronousFontNameControl),
     Primitive(PrimitiveControl<G>),
@@ -344,6 +406,7 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
+    assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
     assert!(core::mem::size_of::<SynchronousFontNameControl>() <= 32);
 };
