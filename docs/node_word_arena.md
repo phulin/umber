@@ -710,9 +710,10 @@ Stored `ArenaListId` integers remain untrusted until admission. Admission
 checks coordinate space, logical and physical incarnations, semantic owner,
 initialized endpoint prefixes, and endpoint ranges once, and resolves the
 head/tail typed-block coordinates. An admitted chunk cursor carries only that
-direct proof and scalar position. Iteration borrows the cursor's initialized
-typed-block slice once, advances its slice iterator locally for every value,
-and reacquires a slice only at a real block boundary. It does not compare the
+direct proof and scalar position. Forward consumers borrow the complete
+remaining initialized typed-block slice and settle the cursor once; the
+pull-based iterator remains only as a mixed/reverse compatibility adapter.
+They reacquire a slice only at a real block boundary. They do not compare the
 source root, owner, arena position, logical incarnation, or physical incarnation
 again. A predecessor crossing admits the next logical block once. Rollback,
 transfer, or reuse invalidates the integer root, which is rejected the next
@@ -722,9 +723,13 @@ handle.
 The packed annex append path follows the same split. A logical/physical block
 is admitted once at the start of a run or after a genuine block transition.
 One borrow-scoped append capability holds that physical payload and its logical
-chunk metadata for the complete contiguous run. Values inside it perform only
-one final write plus initialized-prefix and local-cursor advancement; aggregate
-root length and counters publish once when the run ends. Logical list
+chunk metadata for the complete contiguous run. Copied annex bodies write from
+their authoritative borrowed slice and advance the initialized prefix once;
+aggregate root length and counters publish once when the run ends. Page-list
+reconstruction admits a source subspan and an exact optional-slot destination
+slice together. Disjoint ranges of one physical block are split under the
+exclusive pool borrow, transformed in place, and settled once without a raw
+pointer, temporary payload, or second representation. Logical list
 boundaries within a block update scalar root bookkeeping only.
 Allocation, warm-block reuse, owner/lineage/incarnation checks, vacancy proof,
 and predecessor installation remain at genuine block admission. Integer

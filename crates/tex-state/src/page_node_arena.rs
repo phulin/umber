@@ -1704,7 +1704,7 @@ impl<'a> PageMaterialArena<'a> {
     fn append_reencoded_chunk_range(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
-        mut cursor: PageListChunkCursor,
+        cursor: PageListChunkCursor,
         selected: &Range<usize>,
         selected_identity: &mut Option<SemanticSequenceIdentity>,
         copied: &mut usize,
@@ -1718,47 +1718,61 @@ impl<'a> PageMaterialArena<'a> {
                 copied,
             )?;
         }
-        while let Some((index, node)) = self.span_next_chunk_node(&mut cursor) {
-            if !selected.contains(&index) {
-                continue;
-            }
-            let record = *node.record;
-            let annex = node.annex;
-            let (dependency_floor, child_annex_dependency_floor) = self
-                .region
-                .pub_arena
-                .dependency_floors_for_region_lists(&self.pool.chunks, |visit| {
-                    record.visit_node_lists(annex, |child| visit(child.coordinate()))
-                })?;
-            let item_identity = selected_identity
-                .as_ref()
-                .map(|_| semantic_record_identity(&record, annex));
-            if let (Some(identity), Some(item_identity)) =
-                (selected_identity.as_mut(), item_identity)
-            {
-                identity.push_back(item_identity);
-            }
-            let (record, annex_dependency_floor) = record
-                .reencode_same_region(
-                    &mut self.pool.annex_chunks,
-                    &mut self.region.annex_arena,
-                    Some,
-                )
-                .ok_or(ForkArenaError::InvalidRange)?;
-            self.region
-                .pub_arena
-                .append_reencoded_active_list_copy_value(
-                    &mut self.pool.chunks,
-                    &mut builder.inner,
-                    record,
-                    item_identity,
-                    dependency_floor,
-                    [annex_dependency_floor, child_annex_dependency_floor]
+        let chunk_start = cursor.inner.logical_start();
+        let chunk_end = chunk_start + cursor.inner.len();
+        let start = selected.start.max(chunk_start);
+        let end = selected.end.min(chunk_end);
+        if start >= end {
+            return Ok(());
+        }
+        let (dependency_floor, source_paired_dependency_floor) = self
+            .region
+            .pub_arena
+            .admitted_chunk_dependency_floors(&self.pool.chunks, &cursor.inner)?;
+        let identity_enabled = selected_identity.is_some();
+        let mut local_start = start - chunk_start;
+        let local_end = end - chunk_start;
+        while local_start < local_end {
+            let written = self.region.pub_arena.transform_admitted_active_list_run(
+                &mut self.pool.chunks,
+                &mut builder.inner,
+                &cursor.inner,
+                local_start..local_end,
+                identity_enabled,
+                |_, record, destination| {
+                    let record = *record;
+                    let annex =
+                        NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
+                    let item_identity =
+                        identity_enabled.then(|| semantic_record_identity(&record, annex));
+                    if let (Some(identity), Some(item_identity)) =
+                        (selected_identity.as_mut(), item_identity)
+                    {
+                        identity.push_back(item_identity);
+                    }
+                    let (record, annex_dependency_floor) = record
+                        .reencode_same_region(
+                            &mut self.pool.annex_chunks,
+                            &mut self.region.annex_arena,
+                            Some,
+                        )
+                        .ok_or(ForkArenaError::InvalidRange)?;
+                    *destination = Some(record);
+                    Ok(crate::fork_arena::ConstructedRunValue {
+                        item_identity,
+                        dependency_floor,
+                        paired_dependency_floor: [
+                            annex_dependency_floor,
+                            source_paired_dependency_floor,
+                        ]
                         .into_iter()
                         .flatten()
                         .min(),
-                )?;
-            *copied += 1;
+                    })
+                },
+            )?;
+            local_start += written;
+            *copied += written;
         }
         Ok(())
     }

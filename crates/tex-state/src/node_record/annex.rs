@@ -381,10 +381,7 @@ impl<'a> NodeAnnexWriter<'a> {
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
-            .append_unsealed_fixed_list(
-                self.pool,
-                core::iter::once(publication_serial).chain(body.iter().copied()),
-            )
+            .append_unsealed_fixed_copy_parts(self.pool, publication_serial, body)
             .expect("fixed typed annex publication fits one paired-region chunk");
         let position = self
             .arena
@@ -398,10 +395,7 @@ impl<'a> NodeAnnexWriter<'a> {
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
-            .append_unsealed_list(
-                self.pool,
-                core::iter::once(publication_serial).chain(body.iter().copied()),
-            )
+            .append_unsealed_copy_parts(self.pool, publication_serial, body)
             .expect("typed annex publication fits its paired region");
         let position = self
             .arena
@@ -457,9 +451,12 @@ impl<'a> NodeAnnexView<'a> {
             return None;
         }
         let mut words = [0; N];
-        for (destination, source) in words.iter_mut().zip(view.iter().skip(1)) {
-            *destination = *source;
-        }
+        let mut written = 0_usize;
+        view.for_each_range(1..view.len(), |_, source| {
+            words[written] = *source;
+            written += 1;
+        });
+        debug_assert_eq!(written, N);
         Some(words)
     }
 
@@ -469,16 +466,14 @@ impl<'a> NodeAnnexView<'a> {
         mut visit: impl FnMut(u32),
     ) -> Option<()> {
         let view = self.list(key)?;
-        view.iter().skip(1).for_each(|word| visit(*word));
+        view.for_each_range(1..view.len(), |_, word| visit(*word));
         Some(())
     }
 
     pub(super) fn detach_span<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
         let view = self.list(key)?;
         let mut words = Vec::with_capacity(view.len().saturating_sub(1));
-        for word in view.iter().skip(1) {
-            words.push(*word);
-        }
+        view.for_each_range(1..view.len(), |_, word| words.push(*word));
         Some(words)
     }
 }

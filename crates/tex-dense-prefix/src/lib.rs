@@ -222,6 +222,15 @@ impl<T> Superblock<T> {
         unsafe { core::slice::from_raw_parts(self.allocation.as_ptr().cast(), self.len) }
     }
 
+    /// Exclusively borrows the complete dense initialized prefix.
+    #[must_use]
+    pub fn initialized_mut(&mut self) -> &mut [T] {
+        // SAFETY: the allocation start has `T` alignment and exactly `len`
+        // consecutive slots are initialized. The exclusive block borrow
+        // prevents any other reference to those values for the slice lifetime.
+        unsafe { core::slice::from_raw_parts_mut(self.allocation.as_ptr().cast(), self.len) }
+    }
+
     /// Appends a `Copy` slice as one initialized range.
     pub fn extend_copy_from_slice(&mut self, values: &[T]) -> Result<(), CapacityError>
     where

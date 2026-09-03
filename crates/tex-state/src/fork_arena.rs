@@ -363,6 +363,7 @@ struct AdmittedDenseBlock {
 /// metadata directly; neither vector is indexed again until the capability is
 /// dropped at the block boundary.
 struct AdmittedAppendRun<'a, T> {
+    #[allow(dead_code)] // Used by the opt-in iterator-shaped benchmark adapter.
     key: LogicalChunkId,
     payload: &'a mut DenseBlockPayload<T>,
     meta: &'a mut ChunkMeta,
@@ -381,6 +382,7 @@ struct AdmittedAppendBlock {
 }
 
 impl<T> AdmittedAppendRun<'_, T> {
+    #[allow(dead_code)] // Used by the opt-in iterator-shaped benchmark adapter.
     fn push(&mut self, value: T) {
         assert!(self.offset < self.end, "admitted append run has capacity");
         debug_assert!(self.meta.live && self.meta.generation == self.key.incarnation);
@@ -395,12 +397,59 @@ impl<T> AdmittedAppendRun<'_, T> {
         self.meta.dependency_metadata_complete = false;
     }
 
+    #[allow(dead_code)] // Used by the opt-in iterator-shaped benchmark adapter.
     fn has_capacity(&self) -> bool {
         self.offset < self.end
     }
 
     fn is_full(&self) -> bool {
         self.offset == self.end
+    }
+
+    /// Copies one header value and as much of the following borrowed body as
+    /// fits, then publishes the initialized prefix once for the complete run.
+    fn extend_copy_parts(&mut self, first: Option<T>, body: &[T]) -> usize
+    where
+        T: Copy,
+    {
+        let available = (self.end - self.offset) as usize;
+        let count = available.min(body.len().saturating_add(usize::from(first.is_some())));
+        if count == 0 {
+            return 0;
+        }
+        let header_count = usize::from(first.is_some());
+        let body_count = count - header_count;
+        match self.payload {
+            DenseBlockPayload::Optional(block) => {
+                let cells = &mut block.initialized_mut()[self.index..self.index + count];
+                let mut destination = cells.iter_mut();
+                if let Some(first) = first {
+                    let slot = destination.next().expect("admitted header destination");
+                    debug_assert!(slot.is_none());
+                    *slot = Some(first);
+                }
+                for (slot, value) in destination.zip(&body[..body_count]) {
+                    debug_assert!(slot.is_none());
+                    *slot = Some(*value);
+                }
+            }
+            DenseBlockPayload::Packed(block) => {
+                if let Some(first) = first {
+                    block
+                        .extend_copy_from_slice(core::slice::from_ref(&first))
+                        .expect("admitted header retains exact-block capacity");
+                }
+                block
+                    .extend_copy_from_slice(&body[..body_count])
+                    .expect("admitted body retains exact-block capacity");
+            }
+        }
+        self.index += count;
+        self.offset += count as u32;
+        self.meta.used = self.offset;
+        self.meta.sealed = self.offset == self.end;
+        self.meta.dependency_metadata_complete = false;
+        count
     }
 }
 
@@ -420,7 +469,135 @@ struct ReservationCompletion {
     dependency_floor: Option<usize>,
 }
 
+/// Metadata produced while constructing one final value in an admitted run.
+pub(crate) struct ConstructedRunValue {
+    pub(crate) item_identity: Option<u64>,
+    pub(crate) dependency_floor: Option<usize>,
+    pub(crate) paired_dependency_floor: Option<usize>,
+}
+
 impl<T> ChunkStorage<T> {
+    fn reserve_optional_run(
+        &mut self,
+        key: LogicalChunkId,
+        arena: u32,
+        lineage: u32,
+        count: usize,
+        identity_enabled: bool,
+    ) -> Result<(u32, Option<SemanticSequenceIdentity>), ForkArenaError> {
+        if count == 0 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let meta = self.validate_lineage(key, arena, lineage)?;
+        if meta.sealed || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
+            return Err(ForkArenaError::ChunkShared);
+        }
+        if meta.used != 0 && meta.sequence_summary.is_some() != identity_enabled {
+            return Err(ForkArenaError::IdentityModeMismatch);
+        }
+        let start = meta.used;
+        let end = start
+            .checked_add(u32::try_from(count).map_err(|_| ForkArenaError::CapacityOverflow)?)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        if end as usize > self.slots_per_chunk {
+            return Err(ForkArenaError::CapacityOverflow);
+        }
+        let block = self
+            .admit_dense_block(key)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        let first = block.base as usize + start as usize;
+        let last = block.base as usize + end as usize;
+        let DenseBlockPayload::Optional(payload) = self.blocks[block.page as usize].payload()
+        else {
+            return Err(ForkArenaError::InvalidRange);
+        };
+        if payload.initialized()[first..last]
+            .iter()
+            .any(Option::is_some)
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let capacity = self.slots_per_chunk;
+        let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
+        let prefix_summary = meta.sequence_summary;
+        meta.used = end;
+        meta.sealed = end as usize == capacity;
+        meta.dependency_metadata_complete = false;
+        if identity_enabled {
+            let summary = meta
+                .sequence_summary
+                .get_or_insert(SemanticSequenceIdentity::empty());
+            for _ in 0..count {
+                summary.push_back(0);
+            }
+        }
+        Ok((start, prefix_summary))
+    }
+
+    fn with_optional_source_destination<R>(
+        &mut self,
+        source: AdmittedDenseBlock,
+        source_range: Range<u32>,
+        destination: LogicalChunkId,
+        destination_range: Range<u32>,
+        build: impl FnOnce(&[Option<T>], &mut [Option<T>]) -> R,
+    ) -> Result<R, ForkArenaError> {
+        let destination = self
+            .admit_dense_block(destination)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        let source_start = source.base as usize + source_range.start as usize;
+        let source_end = source.base as usize + source_range.end as usize;
+        let destination_start = destination.base as usize + destination_range.start as usize;
+        let destination_end = destination.base as usize + destination_range.end as usize;
+        let source_page = source.page as usize;
+        let destination_page = destination.page as usize;
+        if source_page == destination_page {
+            let DenseBlockPayload::Optional(block) = self.blocks[source_page].payload_mut() else {
+                return Err(ForkArenaError::InvalidRange);
+            };
+            let cells = block.initialized_mut();
+            if source_end <= destination_start {
+                let (before, after) = cells.split_at_mut(destination_start);
+                return Ok(build(
+                    &before[source_start..source_end],
+                    &mut after[..destination_end - destination_start],
+                ));
+            }
+            if destination_end <= source_start {
+                let (before, after) = cells.split_at_mut(source_start);
+                return Ok(build(
+                    &after[..source_end - source_start],
+                    &mut before[destination_start..destination_end],
+                ));
+            }
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if source_page < destination_page {
+            let (before, after) = self.blocks.split_at_mut(destination_page);
+            let DenseBlockPayload::Optional(source_block) = before[source_page].payload() else {
+                return Err(ForkArenaError::InvalidRange);
+            };
+            let DenseBlockPayload::Optional(destination_block) = after[0].payload_mut() else {
+                return Err(ForkArenaError::InvalidRange);
+            };
+            return Ok(build(
+                &source_block.initialized()[source_start..source_end],
+                &mut destination_block.initialized_mut()[destination_start..destination_end],
+            ));
+        }
+        let (before, after) = self.blocks.split_at_mut(source_page);
+        let DenseBlockPayload::Optional(destination_block) = before[destination_page].payload_mut()
+        else {
+            return Err(ForkArenaError::InvalidRange);
+        };
+        let DenseBlockPayload::Optional(source_block) = after[0].payload() else {
+            return Err(ForkArenaError::InvalidRange);
+        };
+        Ok(build(
+            &source_block.initialized()[source_start..source_end],
+            &mut destination_block.initialized_mut()[destination_start..destination_end],
+        ))
+    }
     /// Creates a pool whose logical chunk capacity is derived from a byte
     /// budget. At least one value fits even when `T` exceeds that budget.
     #[must_use]
@@ -3521,6 +3698,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// tail, allowing subsequent small typed records to share the same exact
     /// initialized-prefix block. Region boundaries seal that tail before any
     /// fork, transfer, or retained checkpoint can observe it.
+    #[allow(dead_code)] // Retained for the opt-in generic arena benchmark adapter.
     pub(crate) fn append_unsealed_list(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -3537,6 +3715,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.append_unsealed_list_from_mark(pool, values, operation)
     }
 
+    #[allow(dead_code)] // Retained for the opt-in generic arena benchmark adapter.
     fn append_unsealed_list_from_mark(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -3587,6 +3766,133 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(root)
     }
 
+    /// Publishes one copied header followed by one borrowed `Copy` body.
+    ///
+    /// Each physical destination run is admitted once, filled directly from
+    /// the caller's final source slices, and settled once. No iterator or
+    /// element-sized arena publication capability survives inside the run.
+    pub(crate) fn append_unsealed_copy_parts(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        header: T,
+        body: &[T],
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: Copy,
+    {
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let operation = self.operation_mark(pool);
+        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation)
+    }
+
+    fn append_unsealed_copy_parts_from_mark(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        header_value: T,
+        body: &[T],
+        operation: OperationMark<Lane>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: Copy,
+    {
+        let logical_space = pool.payload.logical_space();
+        let mut root = ArenaListId::empty();
+        let mut header = Some(header_value);
+        let mut body_start = 0_usize;
+        while header.is_some() || body_start < body.len() {
+            let appended = (|| {
+                let remaining = body.len() - body_start + usize::from(header.is_some());
+                let root_capacity = (u32::MAX - root.len) as usize;
+                if root_capacity == 0 {
+                    return Err(ForkArenaError::CapacityOverflow);
+                }
+                let key = self.payload_reservation_target(pool, &root)?;
+                let (start, count, became_full) = {
+                    let mut run =
+                        pool.payload
+                            .admit_untracked_append_run(key, self.owner, self.lineage)?;
+                    let start = run.offset;
+                    let limit = remaining.min(root_capacity);
+                    let body_end = body_start + limit.saturating_sub(usize::from(header.is_some()));
+                    let count = run.extend_copy_parts(header, &body[body_start..body_end]);
+                    (start, count as u32, run.is_full())
+                };
+                if count == 0 {
+                    return Err(ForkArenaError::CapacityOverflow);
+                }
+                if header.take().is_some() {
+                    body_start += count as usize - 1;
+                } else {
+                    body_start += count as usize;
+                }
+                self.complete_admitted_payload_run(
+                    &mut root,
+                    key,
+                    start,
+                    count,
+                    became_full,
+                    logical_space,
+                );
+                Ok(())
+            })();
+            if let Err(error) = appended {
+                self.restore_operation(pool, operation)
+                    .expect("copy-parts append restores its own operation mark");
+                return Err(error);
+            }
+        }
+        Ok(root)
+    }
+
+    /// Fixed-record counterpart of [`Self::append_unsealed_copy_parts`].
+    /// Rotation happens before the one admitted destination run so the record
+    /// remains wholly inside one logical chunk.
+    pub(crate) fn append_unsealed_fixed_copy_parts(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        header: T,
+        body: &[T],
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: Copy,
+    {
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let needed = body
+            .len()
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        if needed > pool.payload.chunk_capacity() {
+            return Err(ForkArenaError::CapacityOverflow);
+        }
+        let operation = self.operation_mark(pool);
+        if let Some(key) = self.live_key_at(self.live_payload_len().saturating_sub(1)) {
+            let used = pool.payload.used(key, self.owner)? as usize;
+            if !pool.payload.is_sealed(key, self.owner)?
+                && pool.payload.chunk_capacity().saturating_sub(used) < needed
+            {
+                let unused = pool.payload.seal(key, self.owner)?;
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+                self.counters.unused_sealed_bytes = self
+                    .counters
+                    .unused_sealed_bytes
+                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+            }
+        }
+        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation)
+    }
+
     /// Focused performance-gate access to ordinary unsealed packed-list
     /// publication. Production codecs remain the only non-testing caller.
     #[cfg(feature = "testing")]
@@ -3601,6 +3907,7 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     /// Appends one independently addressed fixed record wholly within one
     /// logical chunk, rotating a short tail before publication when needed.
+    #[allow(dead_code)] // Compatibility helper for non-slice test payloads.
     pub(crate) fn append_unsealed_fixed_list(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -3988,6 +4295,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
+    #[allow(dead_code)] // Compatibility helper for scalar construction tests.
     pub(crate) fn append_reencoded_active_list_copy_value(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -4022,6 +4330,130 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
         self.record_source_nodes_copied(1);
         Ok(())
+    }
+
+    /// Transforms one admitted source subspan into one exact final destination
+    /// run. Source and destination may occupy distinct ranges of the same
+    /// physical optional-slot block; the storage layer lends disjoint slices
+    /// in that case. Payload and chunk metadata settle once after the run.
+    pub(crate) fn transform_admitted_active_list_run(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        builder: &mut ActiveListBuilder<T, Lane>,
+        source: &AdmittedListChunkCursor<Lane>,
+        selected: Range<usize>,
+        identity_enabled: bool,
+        mut transform: impl FnMut(
+            &Self,
+            &T,
+            &mut Option<T>,
+        ) -> Result<ConstructedRunValue, ForkArenaError>,
+    ) -> Result<usize, ForkArenaError> {
+        if selected.start > selected.end || selected.end > source.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        if selected.is_empty() {
+            return Ok(0);
+        }
+        let operation = self.operation_mark(pool);
+        let previous_root = self.active_list_open_mut(builder)?.root;
+        let mut root = previous_root;
+        let key = self.payload_reservation_target(pool, &root)?;
+        let used = pool.payload.used(key, self.owner)? as usize;
+        let count = selected
+            .len()
+            .min(pool.payload.chunk_capacity().saturating_sub(used))
+            .min((u32::MAX - root.len) as usize);
+        if count == 0 {
+            return Err(ForkArenaError::CapacityOverflow);
+        }
+        let (destination_start, prefix_summary) = pool.payload.reserve_optional_run(
+            key,
+            self.owner,
+            self.lineage,
+            count,
+            identity_enabled,
+        )?;
+        let source_start = source.start
+            + u32::try_from(selected.start).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let source_end =
+            source_start + u32::try_from(count).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let destination_end = destination_start + count as u32;
+        let mut run_summary = identity_enabled.then(SemanticSequenceIdentity::empty);
+        let mut dependency_floor = usize::MAX;
+        let mut paired_dependency_floor = usize::MAX;
+        let transformed = pool.payload.with_optional_source_destination(
+            source.block,
+            source_start..source_end,
+            key,
+            destination_start..destination_end,
+            |source, destination| {
+                for (source, destination) in source.iter().zip(destination) {
+                    let source = source.as_ref().expect("admitted source run is initialized");
+                    let metadata = transform(&*self, source, destination)?;
+                    if destination.is_none() {
+                        return Err(ForkArenaError::InvalidRange);
+                    }
+                    match (&mut run_summary, metadata.item_identity) {
+                        (Some(summary), Some(identity)) => summary.push_back(identity),
+                        (None, None) => {}
+                        _ => return Err(ForkArenaError::IdentityModeMismatch),
+                    }
+                    if let Some(floor) = metadata.dependency_floor {
+                        dependency_floor = dependency_floor.min(floor);
+                    }
+                    if let Some(floor) = metadata.paired_dependency_floor {
+                        paired_dependency_floor = paired_dependency_floor.min(floor);
+                    }
+                }
+                Ok(())
+            },
+        );
+        if let Err(error) = transformed {
+            self.active_builder = false;
+            let restored = self.restore_operation(pool, operation);
+            self.active_builder = true;
+            restored.expect("failed admitted run restores its exact destination suffix");
+            return Err(error);
+        }
+        {
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            meta.sequence_summary = match (prefix_summary, run_summary) {
+                (Some(prefix), Some(run)) => Some(prefix.concat(run)),
+                (None, Some(run)) => Some(run),
+                (None, None) => None,
+                (Some(_), None) => return Err(ForkArenaError::IdentityModeMismatch),
+            };
+            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+            meta.paired_dependency_floor =
+                meta.paired_dependency_floor.min(paired_dependency_floor);
+            meta.dependency_metadata_complete = true;
+        }
+        self.complete_admitted_payload_run(
+            &mut root,
+            key,
+            destination_start,
+            count as u32,
+            destination_end as usize == pool.payload.chunk_capacity(),
+            pool.payload.logical_space(),
+        );
+        self.active_list_open_mut(builder)?.root = root;
+        self.counters.whole_payload_copies = self
+            .counters
+            .whole_payload_copies
+            .saturating_add(count as u64);
+        self.counters.resident_payload_clones = self
+            .counters
+            .resident_payload_clones
+            .saturating_add(count as u64);
+        self.counters.new_semantic_nodes = self
+            .counters
+            .new_semantic_nodes
+            .saturating_sub(count as u64);
+        self.record_source_nodes_copied(count);
+        Ok(count)
     }
 
     pub(crate) fn append_constructed_active_list_value(
@@ -6756,6 +7188,23 @@ impl<'a, T> ArenaChunkSlice<'a, T> {
     pub fn iter(self) -> impl DoubleEndedIterator<Item = &'a T> + ExactSizeIterator + 'a {
         self.cells.iter()
     }
+
+    /// Visits the already-admitted initialized cells without rebuilding an
+    /// element-stepping arena iterator.
+    pub fn for_each(self, mut visit: impl FnMut(&'a T)) {
+        match self.cells {
+            DenseBlockSlice::Optional(cells) => {
+                for cell in cells {
+                    visit(cell.as_ref().expect("admitted chunk range is initialized"));
+                }
+            }
+            DenseBlockSlice::Packed(cells) => {
+                for cell in cells {
+                    visit(cell);
+                }
+            }
+        }
+    }
 }
 
 impl<T, Lane> Clone for ArenaListView<'_, T, Lane> {
@@ -6988,6 +7437,15 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             .expect("an admitted direct list remains valid during its immutable borrow")
     }
 
+    /// Visits one logical range through the authoritative initialized slices.
+    pub fn for_each_range(&self, selected: Range<usize>, mut visit: impl FnMut(usize, &'a T)) {
+        let _: core::ops::ControlFlow<core::convert::Infallible> =
+            self.try_for_each_range(selected, |index, value| {
+                visit(index, value);
+                core::ops::ControlFlow::Continue(())
+            });
+    }
+
     fn visit_range_chunk_prefix<B>(
         &self,
         cursor: AdmittedChunkCursor<Lane>,
@@ -7087,11 +7545,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
 
     /// Visits every value in logical order through direct chunk slices.
     pub fn for_each(&self, mut visit: impl FnMut(&'a T)) {
-        let _: core::ops::ControlFlow<core::convert::Infallible> =
-            self.try_for_each_range(0..self.len(), |_, value| {
-                visit(value);
-                core::ops::ControlFlow::Continue(())
-            });
+        self.for_each_range(0..self.len(), |_, value| visit(value));
     }
 }
 
@@ -7271,6 +7725,42 @@ impl<T, Lane> ForkArena<T, Lane> {
         let value = pool.payload.admitted_capability_value(cursor.block, offset);
         cursor.next += 1;
         Some((logical, value))
+    }
+
+    pub(crate) fn admitted_chunk_dependency_floors(
+        &self,
+        pool: &ChunkPool<T>,
+        cursor: &AdmittedListChunkCursor<Lane>,
+    ) -> Result<(Option<usize>, Option<usize>), ForkArenaError> {
+        if self.live_key_at(cursor.position) != Some(cursor.key) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let meta = pool.payload.validate(cursor.key, self.owner)?;
+        if !meta.dependency_metadata_complete {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok((
+            (meta.dependency_floor != usize::MAX).then_some(meta.dependency_floor),
+            (meta.paired_dependency_floor != usize::MAX).then_some(meta.paired_dependency_floor),
+        ))
+    }
+
+    /// Takes the complete remaining initialized slice from one admitted chunk
+    /// and settles its scalar cursor once.
+    pub(crate) fn admitted_remaining_chunk<'a>(
+        &'a self,
+        pool: &'a ChunkPool<T>,
+        cursor: &mut AdmittedListChunkCursor<Lane>,
+    ) -> Option<(usize, ArenaChunkSlice<'a, T>)> {
+        if cursor.next == cursor.end {
+            return None;
+        }
+        let logical = cursor.logical_start + (cursor.next - cursor.start) as usize;
+        let cells = pool
+            .payload
+            .admitted_dense_slice(cursor.block, cursor.next..cursor.end)?;
+        cursor.next = cursor.end;
+        Some((logical, ArenaChunkSlice { cells }))
     }
 }
 

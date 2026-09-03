@@ -1477,10 +1477,17 @@ fn collect_copy_children(
         collect_copy_children(pool, annex_pool, source, source_annex, previous, children)?;
     }
     let annex = NodeAnnexView::new(annex_pool, source_annex);
-    while let Some((_, record)) = source.admitted_next_chunk_value(pool, &mut cursor) {
-        record
+    let Some((_, records)) = source.admitted_remaining_chunk(pool, &mut cursor) else {
+        return Ok(());
+    };
+    let mut valid = true;
+    records.for_each(|record| {
+        valid &= record
             .visit_node_lists(annex, |child| children.push(child))
-            .ok_or(ForkArenaError::InvalidRange)?;
+            .is_some();
+    });
+    if !valid {
+        return Err(ForkArenaError::InvalidRange);
     }
     Ok(())
 }
