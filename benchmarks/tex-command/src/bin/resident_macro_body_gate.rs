@@ -12,6 +12,7 @@ use tex_state::token::{Token, TokenWord};
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 const DIRECTORY_PREFIX_CHUNKS: usize = 320;
+const INLINE_DEFINITION_WORD_CAPACITY: usize = 8;
 const DEFINITION_WORD_CHUNK_CAPACITY: usize = 4_096;
 
 fn main() {
@@ -29,13 +30,15 @@ fn run_fixture(words: usize) {
 
 fn run_in_universe<G>(universe: &mut Universe<G>, words: usize) {
     let relax = TokenWord::pack(Token::frozen_relax());
-    let prefix = vec![relax; DIRECTORY_PREFIX_CHUNKS * DEFINITION_WORD_CHUNK_CAPACITY];
+    let prefix = vec![
+        relax;
+        INLINE_DEFINITION_WORD_CAPACITY
+            + DIRECTORY_PREFIX_CHUNKS * DEFINITION_WORD_CHUNK_CAPACITY
+    ];
     universe
         .allocate_definition(&[], &prefix)
         .expect("resident directory prefix");
-    let replacement = (0..words)
-        .map(|_| relax)
-        .collect::<Vec<_>>();
+    let replacement = (0..words).map(|_| relax).collect::<Vec<_>>();
     let definition = universe
         .allocate_definition(&[], &replacement)
         .expect("resident definition fixture");
@@ -51,8 +54,11 @@ fn run_in_universe<G>(universe: &mut Universe<G>, words: usize) {
     {
         let _scope = hot_core_allocation_scope(allocation_owner);
         for expected_position in 0..words {
-            let (position, word) = black_box(body.advance_word()).expect("resident word");
-            assert_eq!(position as usize, expected_position);
+            let (word, boundary) =
+                black_box(body.read_current_word(expected_position as u32)).expect("resident word");
+            if boundary {
+                body.advance_chunk_cold();
+            }
             checksum = checksum.wrapping_add(u64::from(word.raw()));
         }
     }
@@ -62,7 +68,7 @@ fn run_in_universe<G>(universe: &mut Universe<G>, words: usize) {
         8_193 => 2,
         _ => unreachable!("fixed gate shape"),
     };
-    assert!(body.advance_word().is_none());
+    assert!(body.read_current_word(words as u32).is_none());
     assert_eq!(body.profile_region_owner_count(), owner_count);
     assert_eq!(tex_state::definition_retain_count(), definition_retains);
     assert_eq!(allocations_after.calls - allocations_before.calls, 0);

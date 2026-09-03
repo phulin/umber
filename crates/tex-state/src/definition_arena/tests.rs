@@ -1260,7 +1260,7 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
             &parameters,
             &words,
         );
-        let (_, _, body) = arena
+        let (_, _, mut body) = arena
             .admit_macro_body(definition)
             .expect("resident local body");
         assert_eq!(std::rc::Rc::strong_count(&body.owner), 2);
@@ -1277,6 +1277,13 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
         assert_eq!(body.word(1), Some(words[1]));
         assert_eq!(body.word(2), Some(words[2]));
         assert_eq!(body.word(3), None);
+        for (position, expected) in words.iter().copied().enumerate() {
+            let (word, boundary) = body
+                .read_current_word(position as u32)
+                .expect("retired local body remains directly readable");
+            assert_eq!(word, expected);
+            assert!(!boundary);
+        }
     });
 }
 
@@ -1417,6 +1424,117 @@ fn resident_body_read_work_is_exact_for_one_full_and_multiple_chunks() {
                 }
             );
         });
+    }
+}
+
+#[test]
+fn resident_body_admitted_cursor_reads_directly_and_rebuilds_after_rollback() {
+    with_generation(|mut generation| {
+        let words =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY + 3;
+        let replacement = (0..words)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &replacement)
+            .expect("direct cursor fixture");
+        super::reset_resident_macro_body_read_counters();
+        let (_, _, mut body) = generation
+            .definitions()
+            .admit_macro_body(definition)
+            .expect("resident body");
+
+        let checkpoint =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
+        for (position, expected) in replacement.iter().copied().enumerate().take(checkpoint) {
+            let (word, boundary) = body
+                .read_current_word(position as u32)
+                .expect("admitted direct word");
+            assert_eq!(word, expected);
+            if boundary {
+                body.advance_chunk_cold();
+            }
+        }
+        let (word, boundary) = body
+            .read_current_word(checkpoint as u32)
+            .expect("word before physical boundary");
+        assert_eq!(word, replacement[checkpoint]);
+        assert!(boundary);
+        body.advance_chunk_cold();
+
+        body.restore_position(checkpoint as u32);
+        let (word, boundary) = body
+            .read_current_word(checkpoint as u32)
+            .expect("replayed direct word");
+        assert_eq!(word, replacement[checkpoint]);
+        assert!(boundary);
+        body.advance_chunk_cold();
+        let (word, _) = body
+            .read_current_word((checkpoint + 1) as u32)
+            .expect("word after physical boundary");
+        assert_eq!(word, replacement[checkpoint + 1]);
+
+        let counters = super::resident_macro_body_read_counters();
+        assert_eq!(counters.admission_chunk_lookups, 1);
+        assert_eq!(counters.region_owner_acquisitions, 1);
+        assert_eq!(counters.direct_chunk_slot_reads, (checkpoint + 3) as u64);
+        assert_eq!(counters.chunk_boundary_transitions, 3);
+        assert_eq!(counters.whole_body_copies, 0);
+    });
+}
+
+#[test]
+fn resident_body_direct_cursor_handles_edge_lengths_and_starts() {
+    for (start, expected_boundaries) in
+        [(0_usize, [1_u64, 1, 1]), (8, [0, 0, 1]), (4104, [0, 0, 1])]
+    {
+        for (length, expected_boundaries) in [
+            (4095_usize, expected_boundaries[0]),
+            (4096, expected_boundaries[1]),
+            (4097, expected_boundaries[2]),
+        ] {
+            with_generation(|mut generation| {
+                if start != 0 {
+                    let filler = vec![TokenWord::from_raw(0); start];
+                    generation
+                        .definitions_mut()
+                        .allocate(&[], &filler)
+                        .expect("edge-start filler");
+                }
+                let replacement = (0..length)
+                    .map(|index| TokenWord::from_raw(index as u32 + 1))
+                    .collect::<Vec<_>>();
+                let definition = generation
+                    .definitions_mut()
+                    .allocate(&[], &replacement)
+                    .expect("edge-length definition");
+                super::reset_resident_macro_body_read_counters();
+                let (_, _, mut body) = generation
+                    .definitions()
+                    .admit_macro_body(definition)
+                    .expect("edge body admission");
+                let mut boundaries = 0;
+                for (position, expected) in replacement.iter().copied().enumerate() {
+                    let (word, boundary) = body
+                        .read_current_word(position as u32)
+                        .expect("edge direct word");
+                    assert_eq!(word, expected);
+                    if boundary {
+                        boundaries += 1;
+                        body.advance_chunk_cold();
+                    }
+                }
+                assert_eq!(boundaries, expected_boundaries);
+                assert!(body.read_current_word(length as u32).is_none());
+                let counters = super::resident_macro_body_read_counters();
+                assert_eq!(counters.admission_chunk_lookups, 1);
+                assert_eq!(counters.region_owner_acquisitions, 1);
+                assert_eq!(counters.direct_chunk_slot_reads, length as u64);
+                assert_eq!(counters.chunk_boundary_transitions, expected_boundaries);
+                assert_eq!(counters.whole_body_copies, 0);
+            });
+        }
     }
 }
 

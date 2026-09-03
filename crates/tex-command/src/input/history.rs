@@ -984,7 +984,14 @@ impl<G> crate::CommandState<G> {
                 if append_error.is_some() {
                     return Err(crate::CommandError::input_invariant());
                 }
-                (consumed.unwrap_or(0), false)
+                let consumed = consumed.unwrap_or(0);
+                if consumed != 0 {
+                    let boundary = body.body.advance_current_run(consumed);
+                    if boundary {
+                        body.body.advance_chunk_cold();
+                    }
+                }
+                (consumed, false)
             }
             super::ResidentTokenStorage::MacroArgument(argument) => {
                 let consumed = scratch
@@ -1818,9 +1825,11 @@ impl<G> InputStack<G> {
                     super::ResidentTokenStorage::MacroArgument(argument) => {
                         InputLevelInlineState::macro_argument(position, argument.origin_run)
                     }
+                    super::ResidentTokenStorage::MacroBody(_) => {
+                        InputLevelInlineState::macro_body(position)
+                    }
                     super::ResidentTokenStorage::Durable(_)
-                    | super::ResidentTokenStorage::Attempt(_)
-                    | super::ResidentTokenStorage::MacroBody(_) => {
+                    | super::ResidentTokenStorage::Attempt(_) => {
                         InputLevelInlineState::token_position(position)
                     }
                 };
@@ -1852,10 +1861,16 @@ impl<G> InputStack<G> {
         {
             return;
         }
-        let cursor = self.rows[index]
-            .stored_common()
-            .expect("cold token capture names a token row");
-        let state = InputLevelInlineState::new(cursor.frame, cursor.retirement());
+        let state = match &self.rows[index] {
+            super::InputLevel::Resident(super::ResidentTokenRow {
+                header,
+                storage: super::ResidentTokenStorage::MacroBody(_),
+            }) => InputLevelInlineState::macro_body_frame(header.frame),
+            super::InputLevel::Resident(row) => {
+                InputLevelInlineState::new(row.header.frame, row.header.retirement())
+            }
+            super::InputLevel::Source(_) => unreachable!("cold token capture names a token row"),
+        };
         self.rows[index]
             .rollback_marker_mut()
             .set(self.interval, RowRollbackState::Cold);

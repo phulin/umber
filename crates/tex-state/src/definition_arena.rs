@@ -364,6 +364,20 @@ fn local_region_address(key: u32) -> Option<(usize, u16)> {
     Some(((encoded_address - 3) as usize, incarnation))
 }
 
+#[inline(always)]
+fn definition_word_chunk_coordinate(index: u32) -> (u32, usize) {
+    let inline = INLINE_DEFINITION_WORD_CAPACITY as u32;
+    if index < inline {
+        (0, index as usize)
+    } else {
+        let overflow = index - inline;
+        (
+            1 + overflow / DEFINITION_WORD_CHUNK_CAPACITY as u32,
+            overflow as usize % DEFINITION_WORD_CHUNK_CAPACITY,
+        )
+    }
+}
+
 struct DefinitionRegion {
     headers: Vec<DefinitionHeader>,
     owner: Option<Rc<DefinitionRegionOwner>>,
@@ -468,24 +482,71 @@ impl DefinitionRegion {
     }
 }
 
-struct DefinitionWordChunk {
-    words: Box<[Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]>,
+/// One fixed physical word block.
+///
+/// The cells are private to the definition arena. Builders are the only code
+/// which can write them, while admitted readers retain an `Rc` to this block
+/// and load a slot without borrowing the region directory. The two variants
+/// keep the small common prefix cheap while giving overflow blocks a uniform
+/// per-physical-chunk handle.
+enum DefinitionWordChunk {
+    Inline([Cell<TokenWord>; INLINE_DEFINITION_WORD_CAPACITY]),
+    Overflow(Box<[Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]>),
 }
 
 impl DefinitionWordChunk {
-    fn new() -> Result<Self, DefinitionBuildError> {
+    fn new_inline() -> Self {
+        Self::Inline(std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))))
+    }
+
+    fn new_overflow() -> Result<Self, DefinitionBuildError> {
+        Ok(Self::Overflow(Self::try_new_words()?))
+    }
+
+    fn try_new_words<const N: usize>() -> Result<Box<[Cell<TokenWord>; N]>, DefinitionBuildError> {
         let mut words = Vec::new();
         words
-            .try_reserve_exact(DEFINITION_WORD_CHUNK_CAPACITY)
+            .try_reserve_exact(N)
             .map_err(|_| DefinitionBuildError::AllocationFailed)?;
-        words.resize_with(DEFINITION_WORD_CHUNK_CAPACITY, || {
-            Cell::new(TokenWord::from_raw(0))
-        });
-        let words = words
+        words.resize_with(N, || Cell::new(TokenWord::from_raw(0)));
+        words
             .into_boxed_slice()
             .try_into()
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
-        Ok(Self { words })
+            .map_err(|_| DefinitionBuildError::AllocationFailed)
+    }
+
+    #[inline(always)]
+    fn get(&self, slot: usize) -> Option<TokenWord> {
+        match self {
+            Self::Inline(words) => words.get(slot).map(Cell::get),
+            Self::Overflow(words) => words.get(slot).map(Cell::get),
+        }
+    }
+
+    #[inline(always)]
+    fn set(&self, slot: usize, word: TokenWord) -> Option<()> {
+        let cell = match self {
+            Self::Inline(words) => words.get(slot),
+            Self::Overflow(words) => words.get(slot),
+        }?;
+        cell.set(word);
+        Some(())
+    }
+
+    #[inline(always)]
+    fn cells(&self) -> &[Cell<TokenWord>] {
+        match self {
+            Self::Inline(words) => words.as_slice(),
+            Self::Overflow(words) => words.as_slice(),
+        }
+    }
+
+    #[inline(always)]
+    const fn capacity(&self) -> usize {
+        match self {
+            Self::Inline(_) => INLINE_DEFINITION_WORD_CAPACITY,
+            Self::Overflow(_) => DEFINITION_WORD_CHUNK_CAPACITY,
+        }
     }
 }
 
@@ -498,15 +559,15 @@ struct DefinitionRegionOwner {
     /// constant-time slot access instead of a linked-page walk. Tiny regions
     /// never acquire an overflow block. The boxed word arrays never move and
     /// have no owner or lifetime independent of this region.
-    inline_words: [Cell<TokenWord>; INLINE_DEFINITION_WORD_CAPACITY],
-    overflow_words: RefCell<Vec<DefinitionWordChunk>>,
+    inline_words: Rc<DefinitionWordChunk>,
+    overflow_words: RefCell<Vec<Rc<DefinitionWordChunk>>>,
     headers: RefCell<Vec<DefinitionHeader>>,
 }
 
 impl DefinitionRegionOwner {
     fn new() -> Self {
         Self {
-            inline_words: std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))),
+            inline_words: Rc::new(DefinitionWordChunk::new_inline()),
             overflow_words: RefCell::new(Vec::new()),
             headers: RefCell::new(Vec::new()),
         }
@@ -514,15 +575,18 @@ impl DefinitionRegionOwner {
 
     fn push_word(&self, index: u32, word: TokenWord) -> Result<(), DefinitionBuildError> {
         let index = index as usize;
-        if let Some(slot) = self.inline_words.get(index) {
-            slot.set(word);
+        if index < INLINE_DEFINITION_WORD_CAPACITY {
+            self.inline_words
+                .set(index, word)
+                .expect("inline definition word slot exists");
             return Ok(());
         }
         let overflow = index - INLINE_DEFINITION_WORD_CAPACITY;
         let chunk = overflow / DEFINITION_WORD_CHUNK_CAPACITY;
         self.ensure_chunk(chunk)?;
-        self.overflow_words.borrow()[chunk].words[overflow % DEFINITION_WORD_CHUNK_CAPACITY]
-            .set(word);
+        self.overflow_words.borrow()[chunk]
+            .set(overflow % DEFINITION_WORD_CHUNK_CAPACITY, word)
+            .expect("overflow definition word slot exists");
         Ok(())
     }
 
@@ -534,7 +598,7 @@ impl DefinitionRegionOwner {
                 .try_reserve_exact(additional)
                 .map_err(|_| DefinitionBuildError::AllocationFailed)?;
             while words.len() <= chunk {
-                words.push(DefinitionWordChunk::new()?);
+                words.push(Rc::new(DefinitionWordChunk::new_overflow()?));
             }
         }
         Ok(())
@@ -556,8 +620,8 @@ impl DefinitionRegionOwner {
     #[inline(always)]
     fn word(&self, index: u32) -> Option<TokenWord> {
         let index = index as usize;
-        if let Some(word) = self.inline_words.get(index) {
-            return Some(word.get());
+        if index < INLINE_DEFINITION_WORD_CAPACITY {
+            return self.inline_words.get(index);
         }
         let overflow = index.checked_sub(INLINE_DEFINITION_WORD_CAPACITY)?;
         let chunk = overflow / DEFINITION_WORD_CHUNK_CAPACITY;
@@ -569,17 +633,7 @@ impl DefinitionRegionOwner {
         self.overflow_words
             .borrow()
             .get(chunk as usize)?
-            .words
             .get(offset)
-            .map(Cell::get)
-    }
-
-    fn has_word(&self, index: u32) -> bool {
-        if (index as usize) < INLINE_DEFINITION_WORD_CAPACITY {
-            return true;
-        }
-        let overflow = index as usize - INLINE_DEFINITION_WORD_CAPACITY;
-        overflow / DEFINITION_WORD_CHUNK_CAPACITY < self.overflow_words.borrow().len()
     }
 
     /// Lends the one physical word span containing `start`.
@@ -599,7 +653,7 @@ impl DefinitionRegionOwner {
         let end = end as usize;
         if start < INLINE_DEFINITION_WORD_CAPACITY {
             let end = end.min(INLINE_DEFINITION_WORD_CAPACITY);
-            return Some(consume(&self.inline_words[start..end]));
+            return Some(consume(&self.inline_words.cells()[start..end]));
         }
         let overflow = start - INLINE_DEFINITION_WORD_CAPACITY;
         let chunk = overflow / DEFINITION_WORD_CHUNK_CAPACITY;
@@ -607,7 +661,21 @@ impl DefinitionRegionOwner {
         let words = self.overflow_words.borrow();
         let chunk = words.get(chunk)?;
         let len = (end - start).min(DEFINITION_WORD_CHUNK_CAPACITY - offset);
-        Some(consume(&chunk.words[offset..offset + len]))
+        Some(consume(&chunk.cells()[offset..offset + len]))
+    }
+
+    /// Clones one immutable physical chunk handle for an admitted cursor.
+    ///
+    /// The directory borrow ends before the handle reaches the resident row;
+    /// subsequent word reads therefore touch only the retained chunk.
+    fn chunk_handle(&self, chunk: u32) -> Option<Rc<DefinitionWordChunk>> {
+        if chunk == 0 {
+            return Some(Rc::clone(&self.inline_words));
+        }
+        self.overflow_words
+            .borrow()
+            .get(chunk.checked_sub(1)? as usize)
+            .map(Rc::clone)
     }
 }
 
@@ -1091,22 +1159,22 @@ pub fn resident_macro_body_read_counters() -> ResidentMacroBodyReadCounters {
 
 /// Store-minted resident coordinate for one executing macro replacement body.
 ///
-/// The definition store resolves the opaque reference and immutable header
-/// once at admission, including validation of the initial coarse chunk. The
-/// coordinate retains the exact replacement extent and the exact region owner;
-/// downstream command code can neither inspect nor manufacture its storage
-/// coordinates. Safe Rust requires a short constant-time borrow of the
-/// region's inline prefix or flat overflow directory for each word: caching a direct chunk borrow
-/// beside its owning `Rc` would be self-referential. The command input row owns
-/// the sole logical position and lends it for each indexed read; only an
-/// inline/overflow or 4,096-word overflow crossing changes the derived storage
-/// coordinate.
+/// Admission validates the opaque reference, replacement span, and first
+/// physical chunk once. The row then owns the region lifetime, one immutable
+/// chunk handle, and scalar logical/physical cursor state. Ordinary delivery
+/// reads the retained chunk directly; only a physical crossing reborrows the
+/// region's flat directory in the cold helper below.
 pub struct ResidentMacroBody<G> {
     definition: DefinitionRef<G>,
     owner: Rc<DefinitionRegionOwner>,
     parameter_start: u32,
     start: u32,
     end: u32,
+    position: u32,
+    chunk_index: u32,
+    chunk_slot: usize,
+    remaining_in_chunk: u32,
+    current_chunk: Option<Rc<DefinitionWordChunk>>,
 }
 
 /// One immutable macro definition admitted for activation.
@@ -1151,19 +1219,142 @@ impl<G> ResidentMacroBody<G> {
 
     /// Reads one parameter-text word from the resident definition owner.
     #[must_use]
-    #[inline(always)]
+    #[cold]
+    #[inline(never)]
     pub fn parameter_word(&self, position: usize) -> Option<TokenWord> {
         (position < self.parameter_len()).then_some(())?;
         self.owner.word(self.parameter_start + position as u32)
     }
 
     #[must_use]
-    #[inline(always)]
+    #[cold]
+    #[inline(never)]
     pub fn word(&self, position: usize) -> Option<TokenWord> {
         (position < self.len()).then_some(())?;
         let absolute = self.start + position as u32;
         self.record_word_read(absolute);
         self.owner.word(absolute)
+    }
+
+    /// Reads and advances one already-admitted replacement word.
+    ///
+    /// The returned flag is true only when this word exhausted a physical
+    /// chunk while the logical replacement continues. The caller must route
+    /// that flag to [`Self::advance_chunk_cold`] before the next read.
+    #[inline(always)]
+    pub fn read_current_word(&mut self, position: u32) -> Option<(TokenWord, bool)> {
+        let length = self.end - self.start;
+        if position != self.position || position >= length {
+            return None;
+        }
+        let word = self.current_chunk.as_ref()?.get(self.chunk_slot)?;
+        debug_assert!(self.remaining_in_chunk != 0);
+        self.position += 1;
+        self.chunk_slot += 1;
+        self.remaining_in_chunk -= 1;
+        self.record_direct_word_read();
+        let boundary = self.remaining_in_chunk == 0 && self.position < length;
+        Some((word, boundary))
+    }
+
+    /// Advances a direct contiguous read from the current physical chunk.
+    ///
+    /// The span consumer uses this after its append succeeds. It keeps the
+    /// logical frame position authoritative while updating the admitted
+    /// physical cursor once for the entire consumed prefix.
+    #[inline(always)]
+    pub fn advance_current_run(&mut self, count: u32) -> bool {
+        if count == 0 || count > self.remaining_in_chunk {
+            return false;
+        }
+        self.position += count;
+        self.chunk_slot += count as usize;
+        self.remaining_in_chunk -= count;
+        self.record_direct_word_reads(count);
+        self.remaining_in_chunk == 0 && self.position < self.end - self.start
+    }
+
+    /// Rebuilds the physical cursor from the logical rollback coordinate.
+    ///
+    /// Checkpoints retain only the packed input position. Re-admission here
+    /// is cold and clones no body words; it merely reacquires the one chunk
+    /// handle containing that position.
+    #[cold]
+    pub fn restore_position(&mut self, position: u32) {
+        let length = self.end - self.start;
+        assert!(
+            position <= length,
+            "macro body rollback position is in range"
+        );
+        self.position = position;
+        if length == 0 {
+            self.current_chunk = None;
+            self.chunk_index = 0;
+            self.chunk_slot = 0;
+            self.remaining_in_chunk = 0;
+            return;
+        }
+        let logical = position.min(length - 1);
+        let absolute = self
+            .start
+            .checked_add(logical)
+            .expect("admitted macro body absolute position fits");
+        let (chunk_index, offset) = definition_word_chunk_coordinate(absolute);
+        let chunk = self
+            .owner
+            .chunk_handle(chunk_index)
+            .expect("admitted macro body rollback chunk remains live");
+        let chunk_capacity = chunk.capacity();
+        let (slot, remaining) = if position < length {
+            let current_absolute = self
+                .start
+                .checked_add(position)
+                .expect("admitted macro body position fits");
+            let (_, slot) = definition_word_chunk_coordinate(current_absolute);
+            let available = length - position;
+            (slot, available.min((chunk_capacity - slot) as u32))
+        } else {
+            (offset + 1, 0)
+        };
+        self.current_chunk = Some(chunk);
+        self.chunk_index = chunk_index;
+        self.chunk_slot = slot;
+        self.remaining_in_chunk = remaining;
+    }
+
+    /// Acquires the next physical chunk after a direct reader reports a
+    /// boundary. This is deliberately cold: ordinary words never borrow the
+    /// region owner or directory.
+    #[cold]
+    #[inline(never)]
+    pub fn advance_chunk_cold(&mut self) {
+        let length = self.end - self.start;
+        assert!(
+            self.position < length,
+            "macro chunk boundary is not exhausted"
+        );
+        assert_eq!(self.remaining_in_chunk, 0);
+        let absolute = self
+            .start
+            .checked_add(self.position)
+            .expect("admitted macro body boundary fits");
+        let (chunk_index, slot) = definition_word_chunk_coordinate(absolute);
+        assert_eq!(slot, 0, "macro body boundary starts a fresh chunk");
+        assert_eq!(
+            chunk_index,
+            self.chunk_index + 1,
+            "macro body crosses the next physical chunk"
+        );
+        let chunk = self
+            .owner
+            .chunk_handle(chunk_index)
+            .expect("admitted macro body next chunk remains live");
+        let remaining = (length - self.position).min(chunk.capacity() as u32);
+        self.current_chunk = Some(chunk);
+        self.chunk_index = chunk_index;
+        self.chunk_slot = 0;
+        self.remaining_in_chunk = remaining;
+        self.record_chunk_boundary_transition();
     }
 
     /// Lends the physical replacement span beginning at `position`.
@@ -1180,6 +1371,16 @@ impl<G> ResidentMacroBody<G> {
     ) -> Option<R> {
         (position < self.len()).then_some(())?;
         let absolute = self.start.checked_add(position as u32)?;
+        if self.position == position as u32 {
+            let chunk = self.current_chunk.as_ref()?;
+            let end = self
+                .chunk_slot
+                .saturating_add(self.remaining_in_chunk as usize)
+                .min(chunk.capacity());
+            if self.chunk_slot < end {
+                return Some(consume(&chunk.cells()[self.chunk_slot..end]));
+            }
+        }
         self.owner.with_word_span(absolute, self.end, consume)
     }
 
@@ -1200,12 +1401,44 @@ impl<G> ResidentMacroBody<G> {
         });
     }
 
+    #[inline(always)]
+    fn record_direct_word_read(&self) {
+        self.record_direct_word_reads(1);
+    }
+
+    #[inline(always)]
+    fn record_direct_word_reads(&self, _count: u32) {
+        #[cfg(any(test, feature = "testing"))]
+        RESIDENT_MACRO_BODY_READ_COUNTERS.set({
+            let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
+            counters.direct_chunk_slot_reads = counters
+                .direct_chunk_slot_reads
+                .saturating_add(u64::from(_count));
+            counters
+        });
+    }
+
+    #[inline(always)]
+    fn record_chunk_boundary_transition(&self) {
+        record_chunk_boundary_transition();
+    }
+
     #[cfg(any(test, feature = "profiling", feature = "testing"))]
     #[doc(hidden)]
     #[must_use]
     pub fn profile_region_owner_count(&self) -> usize {
         Rc::strong_count(&self.owner)
     }
+}
+
+#[inline(always)]
+fn record_chunk_boundary_transition() {
+    #[cfg(any(test, feature = "testing"))]
+    RESIDENT_MACRO_BODY_READ_COUNTERS.set({
+        let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
+        counters.chunk_boundary_transitions = counters.chunk_boundary_transitions.saturating_add(1);
+        counters
+    });
 }
 
 impl<G> core::fmt::Debug for ResidentMacroBody<G> {
@@ -1408,10 +1641,24 @@ fn admit_resident_macro_body<G>(
 ) -> Option<ResidentMacroBody<G>> {
     let replacement_start = header.start.checked_add(header.parameter_len)?;
     let replacement_len = header.end.checked_sub(replacement_start)?;
-    let owner = region.owner.as_ref()?;
-    if replacement_len != 0 && !owner.has_word(replacement_start) {
+    if header.start > replacement_start || header.end > region.word_head {
         return None;
     }
+    let owner = region.owner.as_ref()?;
+    let (current_chunk, chunk_index, chunk_slot, remaining_in_chunk) = if replacement_len == 0 {
+        (None, 0, 0, 0)
+    } else {
+        let (chunk_index, chunk_slot) = definition_word_chunk_coordinate(replacement_start);
+        let current_chunk = owner.chunk_handle(chunk_index)?;
+        let remaining_in_chunk = replacement_len
+            .min(u32::try_from(current_chunk.capacity().checked_sub(chunk_slot)?).ok()?);
+        (
+            Some(current_chunk),
+            chunk_index,
+            chunk_slot,
+            remaining_in_chunk,
+        )
+    };
     #[cfg(any(test, feature = "testing"))]
     RESIDENT_MACRO_BODY_READ_COUNTERS.set({
         let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
@@ -1429,6 +1676,11 @@ fn admit_resident_macro_body<G>(
         parameter_start: header.start,
         start: replacement_start,
         end: header.end,
+        position: 0,
+        chunk_index,
+        chunk_slot,
+        remaining_in_chunk,
+        current_chunk,
     })
 }
 

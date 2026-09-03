@@ -2092,12 +2092,15 @@ enum RetirementBehavior {
 ```
 
 `PackedInputFrame` is the sole semantic cursor for every resident row.
-`MacroBodyCursor` retains only the store-minted immutable definition coordinate
-and activation metadata; delivery indexes it with the common frame position.
+`MacroBodyCursor` retains activation metadata while its store-minted
+`ResidentMacroBody` retains the definition-region lifetime, current immutable
+chunk handle, and physical chunk scalars; delivery still indexes it with the
+common frame position.
 `MacroArgumentCursor` retains only its admitted range, slot, and current
 provenance run; delivery derives the absolute scratch coordinate from the same
-common position. Rollback journals that position once and the provenance run
-only where required, so neither macro lifetime keeps a second cursor.
+common position. Rollback journals the logical position once; a macro-body
+physical cursor is rebuilt from that position, while the argument provenance
+run is journaled only where required.
 On the supported 64-bit host the body row is the macro call. Eqtb stores the
 eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
@@ -2122,10 +2125,11 @@ Every ordinary token-list source is adapted once at level creation into a
 instead borrows a `DefinitionView` synchronously, records its compact
 `DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
 then pushes the specialized body row. Resident selection yields that bare
-cursor, reads one packed
-word, and increments the store-owned cursor. Exact per-word structural counters
-exist only in test builds; profiling fixtures derive known sequential reads and
-chunk crossings at their boundary. It tests `Token::Param` before the
+then pushes the specialized body row. Resident selection indexes the admitted
+current chunk, reads one packed word, and increments the logical and physical
+cursors; a physical crossing calls one cold next-chunk transition. Exact
+per-word structural counters exist only in test builds; profiling fixtures
+derive known sequential reads and chunk crossings at their boundary. It tests `Token::Param` before the
 final `CurrentCommand` write; a parameter pushes its already-admitted argument
 cursor and continues in the same loop. Otherwise the sole packed resolver
 writes the reusable destination with at most one dense control-sequence
@@ -2135,6 +2139,11 @@ lookup, `RefCell` borrow, owner operation, allocation, or token copy. Parameter
 replay uses its sealed fixed-block range. The semantic lane stores four-byte
 `TokenWord` values; exact provenance occupies coordinate-change runs alongside
 the lane, not a twelve-byte value for every captured token.
+
+The exposed-row journal stores a macro body's logical frame position. Rollback
+rebuilds its current chunk, slot, and remaining count from that position; only
+cold frame mutations retain a full frame inverse. No checkpoint carries a body
+word copy or a per-token physical coordinate.
 
 A replay-backed token row also admits one sequential resident coordinate: its
 logical word position, current prefix/body run, physical segment, in-segment
@@ -2167,11 +2176,12 @@ span to the top entry and delivers that span before its body without shifting
 either span.
 
 Macro replacement, argument-range, durable-list, and attempt-list spans remain
-direct coordinates into their existing owners. A macro-replacement span is
-only its length; the adjacent `MacroBody` behavior carries the authoritative
-activation identity, whose definition owner supplies replacement words. These
-spans do not enter the replay lane, acquire a shared token buffer, or copy their
-packed words at admission.
+direct coordinates into their existing owners. A macro-replacement span keeps
+its logical length beside the admitted body cursor's current chunk handle; the
+adjacent `MacroBody` behavior carries the authoritative activation identity,
+whose definition owner supplies replacement words. These spans do not enter the
+replay lane, acquire a shared token buffer, or copy their packed words at
+admission.
 
 The generation-tied `InputStack` separates each stable row payload from its
 mutable execution phase. Every token row owns one common packed frame and one
@@ -2350,7 +2360,8 @@ words, and an absolute index maps directly to chunk and offset. Parameter
 admission resolves `(argument set, slot)` once into a first-class
 `MacroArgumentCursor`; replay never enters the generic packed-span dispatch,
 searches the input stack, or walks chunk links. Macro-body and argument rows
-both use specialized compact span cursors rather than `PackedInputFrame`.
+both use specialized physical span cursors alongside the common
+`PackedInputFrame`; only the frame position is semantic rollback state.
 If an older body retires beneath a pending tail child, the child keeps its
 coordinates while its writer is live. After publication, if the last active
 ancestor retires before the pending child is sealed, that still-unadmitted

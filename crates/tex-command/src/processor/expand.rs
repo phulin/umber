@@ -81,6 +81,33 @@ fn next_word_from_current_frame(
     })
 }
 
+/// Reads one word from an admitted macro replacement cursor.
+///
+/// The hot path checks the logical frame bound, indexes the retained
+/// immutable chunk, and advances the body/frame scalars. A physical crossing
+/// is reported by the body and settled by its cold directory transition only
+/// after the final word of the current chunk.
+#[inline(always)]
+fn next_macro_body_word_from_current_frame<G>(
+    frame: &mut PackedInputFrame,
+    body: &mut crate::input::MacroBodyCursor<G>,
+) -> Option<CurrentFrameWord> {
+    let position = frame.position();
+    if position >= frame.limit() {
+        return None;
+    }
+    let (word, boundary) = body.body.read_current_word(position)?;
+    debug_assert_eq!(frame.advance_resident(), position);
+    if boundary {
+        body.body.advance_chunk_cold();
+    }
+    Some(CurrentFrameWord {
+        word,
+        origin: OriginId::UNKNOWN,
+        position,
+    })
+}
+
 /// Which of TeX82 §380's two expanded-fetch procedures is driving delivery.
 ///
 /// `get_x_token` and `x_token` agree on every command but one. §380's
@@ -1637,12 +1664,9 @@ macro_rules! define_delivery_loop {
                                                     .saturating_add(1);
                                             }
                                             drive_selected_cursor! {
-                                                read: next_word_from_current_frame(
+                                                read: next_macro_body_word_from_current_frame(
                                                     &mut row.header.frame,
-                                                    |position| body.body.word(position as usize).map(|word| (
-                                                        word,
-                                                        tex_state::token::OriginId::UNKNOWN,
-                                                    )),
+                                                    body,
                                                 ),
                                                 arguments: Some(body.arguments),
                                                 on_word: {

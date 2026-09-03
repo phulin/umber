@@ -347,15 +347,14 @@ only for cold format/memo/import batches whose source is already outside the
 live scanner.
 
 Each region owner keeps one flat append-only directory of stable 4,096-word
-allocations. Admission validates the replacement's initial chunk once and
-retains the one exact region owner. The input row continues to journal only its
-existing scalar body position; a read derives the chunk/offset pair and performs
-one constant-time flat-directory slot access, while the derived chunk changes
-only at a 4,096-word crossing. This is the smallest safe-Rust representation:
-retaining a direct chunk borrow beside the `Rc` which owns it would be
-self-referential, and giving the chunk an `Rc`, raw pointer, or independent
-lifetime would violate whole-region ownership. There is no linked directory
-page traversal or per-word `OnceCell` probe.
+allocations. Each physical chunk is allocated once behind a shared handle.
+Admission validates the replacement extent and initial chunk once, then the
+input row retains the region lifetime, current chunk handle, and physical
+cursor scalars while journaling only its logical body position. A read indexes
+the retained chunk directly; only a 4,096-word crossing reacquires the next
+handle through the flat directory. Rollback reconstructs those physical
+scalars from the logical position. There is no linked directory page
+traversal, per-word `OnceCell` probe, raw pointer, self-reference, or body copy.
 
 ```rust
 pub struct DefinitionRef<G> {
@@ -458,7 +457,9 @@ and lets that canonical row decode its compact definition key once into the
 final slot. `CurrentCommand` acquires no definition owner. A committed local
 macro body obtains one coarse region lease in its specialized input row;
 format and revision-global rows store only the key. Parameter and replacement
-reads borrow the arena span directly. Admission acquires one guard
+reads borrow the arena span directly, with replacement reads indexing the
+admitted current chunk and acquiring the next handle only at a physical
+boundary. Admission acquires one guard
 for the episode, not one lock or heap allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
@@ -495,8 +496,9 @@ struct SuspendedExecution<G> {
 ```
 
 Resume retains the admitted input row and continues at the resident body's
-store-owned absolute cursor. Rollback swaps one opaque coordinate rather than
-maintaining parallel command- and store-side positions. A local-definition row retains the one direct region lease admitted at
+current immutable chunk. Rollback journals the packed frame position and
+reconstructs the body's physical chunk cursor from that coordinate rather than
+copying body words. A local-definition row retains the one direct region lease admitted at
 the push boundary; a format or revision-global row has no lifetime operation.
 The continuation never contains a Rust reference into an arena, no runtime
 type is self-referential, and suspension never admits a second current

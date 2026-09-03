@@ -716,6 +716,12 @@ pub(crate) enum InputLevelInlineState {
         position: u32,
         origin_run: u32,
     },
+    MacroBody {
+        position: u32,
+    },
+    MacroBodyFrame {
+        frame: PackedInputFrame,
+    },
 }
 
 impl InputLevelInlineState {
@@ -736,6 +742,14 @@ impl InputLevelInlineState {
             position,
             origin_run,
         }
+    }
+
+    pub(crate) const fn macro_body(position: u32) -> Self {
+        Self::MacroBody { position }
+    }
+
+    pub(crate) const fn macro_body_frame(frame: PackedInputFrame) -> Self {
+        Self::MacroBodyFrame { frame }
     }
 }
 
@@ -938,6 +952,20 @@ impl<G> InputLevel<G> {
                     };
                     tokens.header.frame.swap_position(position);
                     std::mem::swap(&mut argument.origin_run, origin_run);
+                }
+                InputLevelInlineState::MacroBody { position } => {
+                    let ResidentTokenStorage::MacroBody(body) = &mut tokens.storage else {
+                        unreachable!("resident inverse kind changed")
+                    };
+                    tokens.header.frame.swap_position(position);
+                    body.body.restore_position(*position);
+                }
+                InputLevelInlineState::MacroBodyFrame { frame } => {
+                    let ResidentTokenStorage::MacroBody(body) = &mut tokens.storage else {
+                        unreachable!("resident inverse kind changed")
+                    };
+                    std::mem::swap(&mut tokens.header.frame, frame);
+                    body.body.restore_position(tokens.header.frame.position());
                 }
             },
             Self::Source(_) => unreachable!("a source frame uses the source lexer lane"),
