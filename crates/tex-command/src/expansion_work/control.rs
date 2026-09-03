@@ -140,6 +140,7 @@ pub(crate) enum ThePhase {
     },
     DimensionExpression {
         target: Meaning,
+        as_number: bool,
         expression: i32,
         expression_sign: i8,
         term: i32,

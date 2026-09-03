@@ -562,6 +562,54 @@ fn number_integer_expression_uses_the_shared_expression_lane() {
 }
 
 #[test]
+fn number_dimension_expression_uses_the_shared_dimension_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let dimexpr = install_static(
+            universe,
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::DimExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                number,
+                dimexpr,
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'p',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Other,
+                },
+                relax,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(
+            collect_expanded_characters(universe, &mut command),
+            "65536X"
+        );
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn the_dimension_expression_lane_preserves_fixed_point_addition() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

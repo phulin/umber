@@ -209,6 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .ok_or_else(CommandError::input_invariant)?;
         let ThePhase::DimensionExpression {
             target,
+            as_number,
             expression,
             expression_sign,
             term,
@@ -291,10 +292,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .pop_the_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            this.expand_the_value(
-                opener,
-                crate::InternalValue::Dimension(tex_state::scaled::Scaled::from_raw(result)),
-            )
+            if as_number {
+                this.push_rendered_text(&result.to_string(), opener);
+                Ok(())
+            } else {
+                this.expand_the_value(
+                    opener,
+                    crate::InternalValue::Dimension(tex_state::scaled::Scaled::from_raw(result)),
+                )
+            }
         };
         let reset = |this: &mut Self,
                      expression,
@@ -307,6 +313,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .set_the_phase(ThePhase::DimensionExpression {
                     target,
+                    as_number,
                     expression,
                     expression_sign,
                     term,
@@ -332,6 +339,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .set_the_phase(ThePhase::DimensionExpression {
                         target,
+                        as_number,
                         expression,
                         expression_sign,
                         term,
@@ -362,6 +370,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .set_the_phase(ThePhase::DimensionExpression {
                         target,
+                        as_number,
                         expression,
                         expression_sign,
                         term,
@@ -382,6 +391,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .set_the_phase(ThePhase::DimensionExpression {
                         target,
+                        as_number,
                         expression,
                         expression_sign,
                         term,
@@ -402,6 +412,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .set_the_phase(ThePhase::DimensionExpression {
                         target,
+                        as_number,
                         expression,
                         expression_sign,
                         term,
@@ -422,6 +433,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .set_the_phase(ThePhase::DimensionExpression {
                     target,
+                    as_number,
                     expression,
                     expression_sign,
                     term,
@@ -786,6 +798,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                         term_active: false,
                         negative: false,
                         value: 0,
+                        seen_digit: false,
+                    },
+                )?;
+                return Ok(false);
+            }
+            if !control.roman
+                && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr)
+            {
+                let opener = self
+                    .command
+                    .scratch
+                    .pop_number_control()
+                    .map_err(crate::scan_toks::scratch_command_error)?
+                    .opener;
+                self.begin_the_continuation(opener)?;
+                self.command.scratch.set_the_phase(
+                    crate::expansion_work::control::ThePhase::DimensionExpression {
+                        target: meaning,
+                        as_number: true,
+                        expression: 0,
+                        expression_sign: 1,
+                        term: 0,
+                        term_operator: 0,
+                        term_active: false,
+                        negative: false,
+                        value: 0,
+                        fraction: 0,
+                        fraction_digits: 0,
+                        decimal: false,
+                        unit: 0,
                         seen_digit: false,
                     },
                 )?;

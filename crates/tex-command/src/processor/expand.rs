@@ -1566,6 +1566,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             self.command.scratch.set_the_phase(
                                 crate::expansion_work::control::ThePhase::DimensionExpression {
                                     target: meaning,
+                                    as_number: false,
                                     expression: 0,
                                     expression_sign: 1,
                                     term: 0,
