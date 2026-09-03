@@ -1344,7 +1344,7 @@ mod tests {
 
             let format = stores.dump_format().expect("runtime result is not dumped");
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                 World::default(),
                 format,
                 |loaded| {
@@ -1386,7 +1386,7 @@ mod tests {
                 .dump_format()
                 .expect("runtime image state is not dumped");
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                 World::default(),
                 format,
                 |loaded| {
@@ -1910,7 +1910,7 @@ mod tests {
             world.set_pdf_time_micros(2_000_000);
             world.set_shell_escape_policy(ShellEscapePolicy::Enabled);
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                 world,
                 format,
                 |loaded| {
@@ -2130,7 +2130,7 @@ mod tests {
             source.set_meaning(revision, Meaning::Relax);
             let format = source.dump_format().expect("dump shadowed format");
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                 World::default(),
                 format,
                 |loaded| {
@@ -2874,7 +2874,7 @@ mod tests {
             let format = stores.dump_format().expect("pdfTeX parameter format");
             let format_bytes = format.as_bytes().to_vec();
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                 World::default(),
                 format,
                 |loaded| {

@@ -351,6 +351,18 @@ pub enum EngineMode {
 }
 
 impl EngineMode {
+    /// Capacity profile owned by the executable binary for this mode.
+    #[must_use]
+    pub const fn capacity_profile(self) -> tex_state::EngineCapacityProfile {
+        match self.binary_identity() {
+            tex_exec::EngineBinaryIdentity::Tex82 => tex_state::EngineCapacityProfile::Tex82Etex,
+            tex_exec::EngineBinaryIdentity::Etex26
+            | tex_exec::EngineBinaryIdentity::Pdftex14029 => {
+                tex_state::EngineCapacityProfile::Texlive2026
+            }
+        }
+    }
+
     #[must_use]
     pub const fn binary_identity(self) -> tex_exec::EngineBinaryIdentity {
         match self {

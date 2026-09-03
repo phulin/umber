@@ -1584,7 +1584,7 @@ mod tests {
             let format = tex_state::DetachedFormatImage::try_from_bytes(format.as_bytes().to_vec())
                 .expect("validated format copy");
             tex_state::with_materialized_format(
-                crate::engine_interner_budget(),
+                tex_state::EngineCapacityProfile::Tex82Etex.interner_budget(),
                 World::memory(),
                 format,
                 |stores| use_stores.take().expect("single format callback")(stores),

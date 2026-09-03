@@ -617,7 +617,15 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
             .map_err(FormatError::InvalidState)?;
     let capacity_profile = engine_usage.capacity_profile();
     let capacities = engine_usage.capacities();
-    let names: Vec<FormatName> = decode_rows(required_section(&container, 256)?)?;
+    let names_section = required_section(&container, 256)?;
+    preflight_name_rows(
+        names_section,
+        capacities.interner_slot_capacity(),
+        capacities.hash_entries(),
+        capacities.interner_byte_capacity(),
+        capacity_profile,
+    )?;
+    let names: Vec<FormatName> = decode_rows(names_section)?;
     let names_lookup =
         crate::frozen_lookup::decode(&required_section(&container, 257)?.bytes, names.len())
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
@@ -699,6 +707,95 @@ fn decode_rows<T: for<'de> Deserialize<'de>>(
         ));
     }
     Ok(payload.rows)
+}
+
+fn preflight_name_rows(
+    section: &crate::format_container::DecodedSection,
+    maximum: usize,
+    hash_capacity: usize,
+    byte_capacity: usize,
+    capacity_profile: crate::EngineCapacityProfile,
+) -> Result<(), FormatError> {
+    // bincode's fixed-width representation of VersionedRows<Vec<T>> starts
+    // with the u32 section version and a u64 vector length. Inspect those
+    // fields before deserializing the vector so hostile counts cannot trigger
+    // an unbounded allocation. A FormatName has at least kind, hash flag, and
+    // the fixed-width String length, so the payload also bounds its count.
+    const VERSIONED_VEC_HEADER: usize = 12;
+    const MIN_FORMAT_NAME_ROW: usize = 10;
+    if section.bytes.len() < VERSIONED_VEC_HEADER {
+        return Err(FormatError::Truncated);
+    }
+    let version = u32::from_le_bytes(
+        section.bytes[..4]
+            .try_into()
+            .expect("validated version field width"),
+    );
+    if version != SECTION_VERSION {
+        return Err(FormatError::InvalidState(
+            "unsupported format section version".to_owned(),
+        ));
+    }
+    let encoded_count = u64::from_le_bytes(
+        section.bytes[4..12]
+            .try_into()
+            .expect("validated row-count field width"),
+    );
+    let count = usize::try_from(encoded_count)
+        .map_err(|_| FormatError::InvalidState("format name count exceeds usize".to_owned()))?;
+    if count > maximum {
+        return Err(FormatError::InvalidState(
+            "format name count exceeds profile interner capacity".to_owned(),
+        ));
+    }
+    if count > (section.bytes.len() - VERSIONED_VEC_HEADER) / MIN_FORMAT_NAME_ROW {
+        return Err(FormatError::InvalidState(
+            "format name count exceeds section payload".to_owned(),
+        ));
+    }
+    let mut cursor = VERSIONED_VEC_HEADER;
+    let mut name_bytes = 0_usize;
+    let mut hash_entries = 0_usize;
+    for _ in 0..count {
+        let row_end = cursor
+            .checked_add(2 + core::mem::size_of::<u64>())
+            .ok_or(FormatError::Truncated)?;
+        if row_end > section.bytes.len() {
+            return Err(FormatError::Truncated);
+        }
+        let encoded_length = u64::from_le_bytes(
+            section.bytes[cursor + 2..row_end]
+                .try_into()
+                .expect("validated name-length field width"),
+        );
+        if section.bytes[cursor] == 2 && section.bytes[cursor + 1] != 0 {
+            hash_entries = hash_entries.checked_add(1).ok_or_else(|| {
+                FormatError::InvalidState("format hash count overflow".to_owned())
+            })?;
+            if hash_entries > hash_capacity {
+                return Err(FormatError::InvalidState(format!(
+                    "invalid format hash occupancy: entries={hash_entries}, capacity={hash_capacity}, profile={:?}",
+                    capacity_profile
+                )));
+            }
+        }
+        let length = usize::try_from(encoded_length).map_err(|_| {
+            FormatError::InvalidState("format name length exceeds usize".to_owned())
+        })?;
+        name_bytes = name_bytes.checked_add(length).ok_or_else(|| {
+            FormatError::InvalidState("format name byte count overflow".to_owned())
+        })?;
+        cursor = row_end.checked_add(length).ok_or(FormatError::Truncated)?;
+        if cursor > section.bytes.len() {
+            return Err(FormatError::Truncated);
+        }
+    }
+    if name_bytes > byte_capacity {
+        return Err(FormatError::InvalidState(
+            "format name bytes exceed profile interner capacity".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 struct LogicalRows<'a> {
@@ -838,6 +935,30 @@ fn validate_logical_rows(
         return Err(FormatError::InvalidState(format!(
             "invalid format hash occupancy: entries={hash_entries}, capacity={}, profile={capacity_profile:?}",
             capacities.hash_entries()
+        )));
+    }
+    if names.len() > capacities.interner_slot_capacity() {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format name occupancy: rows={}, capacity={}, profile={capacity_profile:?}",
+            names.len(),
+            capacities.interner_slot_capacity()
+        )));
+    }
+    let control_sequence_names = names.iter().filter(|name| name.kind != 5).count();
+    if control_sequence_names > capacities.interner_control_sequence_capacity() {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format control-sequence occupancy: names={control_sequence_names}, capacity={}, profile={capacity_profile:?}",
+            capacities.interner_control_sequence_capacity()
+        )));
+    }
+    let name_bytes = names
+        .iter()
+        .try_fold(0_usize, |total, name| total.checked_add(name.text.len()))
+        .ok_or_else(|| FormatError::InvalidState("format name byte count overflow".to_owned()))?;
+    if name_bytes > capacities.interner_byte_capacity() {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format name byte occupancy: bytes={name_bytes}, capacity={}, profile={capacity_profile:?}",
+            capacities.interner_byte_capacity()
         )));
     }
     let validate_words = |words: &[u32]| {
@@ -1171,6 +1292,23 @@ pub struct FormatMaterializationConfig {
     pub provenance_budgets: ProvenanceBudgets,
 }
 
+fn prepare_format_interner(
+    interner: &mut crate::session_epoch::InternerLease,
+    decoded: &DecodedFormat,
+) -> Result<(), FormatError> {
+    let profile = decoded
+        .metadata
+        .string_pool
+        .capacity_profile()
+        .ok_or_else(|| FormatError::InvalidState("unknown format interner profile".to_owned()))?;
+    interner.select_capacity_profile(profile).map_err(|error| {
+        FormatError::InvalidState(format!("format interner profile: {error:?}"))
+    })?;
+    interner
+        .preflight_format_names(&decoded.names)
+        .map_err(|error| FormatError::InvalidState(format!("format interner capacity: {error:?}")))
+}
+
 /// One fresh opaque destination for a single staged image.
 pub struct FormatDestination<G> {
     identity: u64,
@@ -1212,14 +1350,16 @@ impl<G> FormatDestination<G> {
         image: DetachedFormatImage,
         interner: crate::session_epoch::InternerLease,
     ) -> Result<FormatStaging<G>, FormatError> {
+        let DetachedFormatImage { bytes, decoded } = image;
+        let mut interner = interner;
+        prepare_format_interner(&mut interner, &decoded)?;
         let generation = self
             .generation
             .take()
             .ok_or(FormatError::DestinationConsumed)?;
-        let core = StateCore::new_format(generation, image.decoded.names.len())
+        let core = StateCore::new_format(generation, decoded.names.len())
             .map_err(|_| FormatError::AllocationFailed)?;
         let mut universe = Universe::new_format_candidate(interner, core);
-        let DetachedFormatImage { bytes, decoded } = image;
         drop(bytes);
         let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
         universe.install_format_logical_rows(decoded)?;
@@ -1335,7 +1475,10 @@ pub(crate) fn materialize_retained_format<G>(
     image: DetachedFormatImage,
     wants_page_node_semantic_identity: bool,
 ) -> Result<Universe<G>, FormatError> {
-    let core = StateCore::new_format(generation, image.decoded.names.len())
+    let DetachedFormatImage { bytes, decoded } = image;
+    let mut interner = interner;
+    prepare_format_interner(&mut interner, &decoded)?;
+    let core = StateCore::new_format(generation, decoded.names.len())
         .map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
     if wants_page_node_semantic_identity {
@@ -1351,7 +1494,6 @@ pub(crate) fn materialize_retained_format<G>(
         }
         universe.page_region.nodes_mut().enable_semantic_identity();
     }
-    let DetachedFormatImage { bytes, decoded } = image;
     drop(bytes);
     let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
     universe.install_format_logical_rows(decoded)?;

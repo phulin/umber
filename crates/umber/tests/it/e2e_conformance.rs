@@ -1878,8 +1878,7 @@ fn assert_format_image_contract(format: &[u8], engine: EngineMode) {
         let image = tex_state::DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec())
             .expect("validated detached format image copy");
         tex_state::with_materialized_format(
-            tex_state::interner::InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
-                .expect("test interner budget"),
+            tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
             world,
             image,
             |loaded| {

@@ -187,11 +187,6 @@ impl RetainedRootRequest {
 
 struct NoCheckpoints;
 
-fn engine_interner_budget() -> tex_state::interner::InternerBudget {
-    tex_state::interner::InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
-        .expect("the Umber engine interner budget is valid")
-}
-
 /// Runs one engine episode inside a fresh generation brand.
 ///
 /// The higher-ranked callback prevents runtime ids, checkpoints, or arena
@@ -199,7 +194,10 @@ fn engine_interner_budget() -> tex_state::interner::InternerBudget {
 pub fn with_engine_universe<R>(
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, tex_state::StateError> {
-    tex_state::with_universe(engine_interner_budget(), use_universe)
+    tex_state::with_universe_for_profile(
+        tex_state::EngineCapacityProfile::Texlive2026,
+        use_universe,
+    )
 }
 
 /// Installs a host-owned world before entering one freshly branded episode.
@@ -1144,7 +1142,7 @@ mod primitive_mode_tests {
             .image
         });
         tex_state::with_materialized_format(
-            engine_interner_budget(),
+            tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
             World::default(),
             image,
             |loaded| {
@@ -1275,7 +1273,7 @@ mod primitive_mode_tests {
             });
 
             tex_state::with_materialized_format(
-                engine_interner_budget(),
+                mode.capacity_profile().interner_budget(),
                 World::default(),
                 image,
                 |loaded| {
@@ -1873,8 +1871,7 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 mod tests {
     use super::{
         DriverFile, FinalizationCommit, FinalizationError, PlannedFinalization, TexRunStatus,
-        engine_interner_budget, prepare_pdftex_run_stores,
-        run_input_collecting_artifacts_with_profile,
+        prepare_pdftex_run_stores, run_input_collecting_artifacts_with_profile,
         run_memory_collecting_initex_artifacts_with_profile, terminal_text_from_effects,
         with_engine_universe, with_engine_world,
     };
@@ -2277,7 +2274,7 @@ mod tests {
                     tex_state::DetachedFormatImage::try_from_bytes(format.as_bytes().to_vec())
                         .expect("validated format copy");
                 tex_state::with_materialized_format(
-                    engine_interner_budget(),
+                    tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
                     world,
                     loaded_format,
                     |stores| {

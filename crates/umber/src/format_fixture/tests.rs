@@ -66,7 +66,7 @@ fn inspect_loaded<R>(
         ..
     } = loaded;
     tex_state::with_materialized_format(
-        crate::engine_interner_budget(),
+        recipe.engine.capacity_profile().interner_budget(),
         world,
         image.into_detached(),
         |universe| {
@@ -494,7 +494,7 @@ fn recipe_hyphenation_capacity_reaches_the_loaded_usage_report() {
         .expect("custom-capacity raw format");
 
     tex_state::with_materialized_format(
-        crate::engine_interner_budget(),
+        tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
         test_world(),
         fixture.image.clone().into_detached(),
         |universe| {

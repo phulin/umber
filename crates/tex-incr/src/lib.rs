@@ -30,7 +30,6 @@ use tex_exec::{
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::env::banks::IntParam;
-use tex_state::interner::InternerBudget;
 use tex_state::{
     ArtifactOrigin, AssignmentScope, CodeTableKind, CommittedArtifact, ContentHash,
     DetachedFormatImage, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
@@ -47,20 +46,10 @@ pub use history::{BoundaryKey, BoundaryRecord};
 use history::{HistoryComparison, RevisionEditMap, compare_histories};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
-const SESSION_INTERNER_NAMES: u32 = 65_536;
-const SESSION_INTERNER_SLOTS: u32 = 131_072;
-const SESSION_INTERNER_BYTES: u32 = 16 * 1024 * 1024;
-
 /// Creates the caller-owned reachability domain for one incremental session.
 #[must_use]
 pub fn new_reachability_store() -> tex_state::ReachabilityStore {
-    let budget = InternerBudget::new(
-        SESSION_INTERNER_NAMES,
-        SESSION_INTERNER_SLOTS,
-        SESSION_INTERNER_BYTES,
-    )
-    .expect("the incremental session interner budget is valid");
-    tex_state::ReachabilityStore::new(budget)
+    tex_state::ReachabilityStore::new_for_profile(tex_state::EngineCapacityProfile::Texlive2026)
 }
 
 /// Monotonic identity of an immutable editor buffer.

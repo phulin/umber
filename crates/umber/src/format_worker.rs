@@ -1226,7 +1226,7 @@ mod tests {
         let image = tex_state::DetachedFormatImage::try_from_bytes(constructed.image.clone())
             .expect("forgery is a detached format image");
         tex_state::with_materialized_format(
-            crate::engine_interner_budget(),
+            tex_state::EngineCapacityProfile::Tex82Etex.interner_budget(),
             World::memory(),
             image,
             |_| (),

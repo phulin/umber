@@ -453,66 +453,74 @@ impl LoadedFormatFixture {
             interaction_mode,
             error_context_widths,
         } = self;
-        with_format_destination(crate::engine_interner_budget(), world, |destination| {
-            destination.set_provenance_config(FormatMaterializationConfig {
-                provenance_demand,
-                provenance_budgets: ProvenanceBudgets::default(),
-            });
-            let staging = destination.stage(image.into_detached())?;
-            destination
-                .materialize(staging, |universe| {
-                    recipe.engine.install_after_format(universe);
-                    if let Some(mode) = interaction_mode {
-                        universe.set_interaction_mode(mode);
-                    }
-                    if let Some(widths) = error_context_widths {
-                        universe.set_error_context_widths(widths);
-                    }
-                    let mut session = EngineSession::new(universe, recipe.engine.command_profile());
-                    session.set_preloaded_format(tex_exec::PreloadedFormat {
-                        dump_name: recipe.format_name.clone(),
-                        format_name: recipe.format_ident_name.clone(),
-                        year: recipe.clock.year,
-                        month: recipe.clock.month,
-                        day: recipe.clock.day,
-                    });
-                    session.set_engine_binary(config.engine_binary);
-                    session.set_fuel_limit(guards.command_fuel)?;
-                    let source = tex_command::SourceRegistration::new(source_kind, source)
-                        .with_name(format!("./{source_name}"));
-                    match config.completion {
-                        tex_exec::RootCompletionPolicy::RequireTeXEnd => session
-                            .register_retained_root_with_invocation(
-                                source_name,
-                                &config.startup_line,
-                                source,
-                            )?,
-                        tex_exec::RootCompletionPolicy::StopAtRootEof => session
-                            .register_retained_fragment_with_invocation(
-                                source_name,
-                                &config.startup_line,
-                                source,
-                            )?,
-                    };
-                    let checkpoints = GuardCheckpoints::new(guards)?;
-                    let mut checkpoint_sink = &checkpoints;
-                    let result = session.run_with_observer(
-                        &mut LoadedResourceHost::new(resources, &recipe.resources),
-                        &mut checkpoint_sink,
-                        observer,
-                    );
-                    let result = finish_guarded_run(result, &checkpoints)?;
-                    drop(session);
-                    let projection =
-                        capture_loaded_projection(universe, &config.projection, config.completion)?;
-                    Ok(LoadedFormatRun { result, projection })
-                })
-                .map_err(|error| {
-                    tex_state::FormatError::InvalidState(format!(
-                        "format destination publication failed: {error:?}"
-                    ))
-                })
-        })
+        with_format_destination(
+            recipe.engine.capacity_profile().interner_budget(),
+            world,
+            |destination| {
+                destination.set_provenance_config(FormatMaterializationConfig {
+                    provenance_demand,
+                    provenance_budgets: ProvenanceBudgets::default(),
+                });
+                let staging = destination.stage(image.into_detached())?;
+                destination
+                    .materialize(staging, |universe| {
+                        recipe.engine.install_after_format(universe);
+                        if let Some(mode) = interaction_mode {
+                            universe.set_interaction_mode(mode);
+                        }
+                        if let Some(widths) = error_context_widths {
+                            universe.set_error_context_widths(widths);
+                        }
+                        let mut session =
+                            EngineSession::new(universe, recipe.engine.command_profile());
+                        session.set_preloaded_format(tex_exec::PreloadedFormat {
+                            dump_name: recipe.format_name.clone(),
+                            format_name: recipe.format_ident_name.clone(),
+                            year: recipe.clock.year,
+                            month: recipe.clock.month,
+                            day: recipe.clock.day,
+                        });
+                        session.set_engine_binary(config.engine_binary);
+                        session.set_fuel_limit(guards.command_fuel)?;
+                        let source = tex_command::SourceRegistration::new(source_kind, source)
+                            .with_name(format!("./{source_name}"));
+                        match config.completion {
+                            tex_exec::RootCompletionPolicy::RequireTeXEnd => session
+                                .register_retained_root_with_invocation(
+                                    source_name,
+                                    &config.startup_line,
+                                    source,
+                                )?,
+                            tex_exec::RootCompletionPolicy::StopAtRootEof => session
+                                .register_retained_fragment_with_invocation(
+                                    source_name,
+                                    &config.startup_line,
+                                    source,
+                                )?,
+                        };
+                        let checkpoints = GuardCheckpoints::new(guards)?;
+                        let mut checkpoint_sink = &checkpoints;
+                        let result = session.run_with_observer(
+                            &mut LoadedResourceHost::new(resources, &recipe.resources),
+                            &mut checkpoint_sink,
+                            observer,
+                        );
+                        let result = finish_guarded_run(result, &checkpoints)?;
+                        drop(session);
+                        let projection = capture_loaded_projection(
+                            universe,
+                            &config.projection,
+                            config.completion,
+                        )?;
+                        Ok(LoadedFormatRun { result, projection })
+                    })
+                    .map_err(|error| {
+                        tex_state::FormatError::InvalidState(format!(
+                            "format destination publication failed: {error:?}"
+                        ))
+                    })
+            },
+        )
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?
     }
 }
