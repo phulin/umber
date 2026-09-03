@@ -1723,6 +1723,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRight {
                                         ..
                                     }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndexAwait {
+                                        ..
+                                    }
                             )
                         });
                     let if_dimension_should_await = self
@@ -1741,6 +1744,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         ..
                                     }
                                     | crate::expansion_work::control::SynchronousIfDimensionPhase::Right {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndex {
                                         ..
                                     }
                             )

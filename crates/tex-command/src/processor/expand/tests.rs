@@ -253,6 +253,63 @@ fn ifnum_register_operands_use_the_shared_index_lane() {
 }
 
 #[test]
+fn ifdim_register_operands_use_the_shared_index_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let ifdim = install_static(
+            universe,
+            "ifdim",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim),
+        );
+        let dimen = install_static(
+            universe,
+            "dimen",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Dimen),
+        );
+        let fi = install_static(
+            universe,
+            "fi",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                ifdim,
+                dimen,
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'p',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Other,
+                },
+                fi,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

@@ -1247,6 +1247,20 @@ impl<G> ExpansionWork<G> {
                 unit,
                 seen_digit,
             },
+            SynchronousIfDimensionPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfDimensionPhase::RegisterIndexAwait { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             SynchronousIfDimensionPhase::AwaitLeft { .. }
             | SynchronousIfDimensionPhase::AwaitRelation { .. }
             | SynchronousIfDimensionPhase::AwaitRight { .. } => {
@@ -1304,10 +1318,22 @@ impl<G> ExpansionWork<G> {
                 unit,
                 seen_digit,
             },
+            SynchronousIfDimensionPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfDimensionPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
             SynchronousIfDimensionPhase::NeedLeft
             | SynchronousIfDimensionPhase::Left { .. }
             | SynchronousIfDimensionPhase::NeedRelation { .. }
-            | SynchronousIfDimensionPhase::Right { .. } => {
+            | SynchronousIfDimensionPhase::Right { .. }
+            | SynchronousIfDimensionPhase::RegisterIndex { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
             }
         };
@@ -1326,6 +1352,7 @@ impl<G> ExpansionWork<G> {
             control.phase,
             SynchronousIfDimensionPhase::NeedRelation { .. }
                 | SynchronousIfDimensionPhase::Right { .. }
+                | SynchronousIfDimensionPhase::RegisterIndex { .. }
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
