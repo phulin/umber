@@ -70,34 +70,6 @@ impl<G> AlignmentLookahead<G> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ReplayCompletionPolicy {
-    Consume,
-    Surface,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ExpandedObservationPolicy {
-    Commit,
-    RawOnly,
-    DeferIfExpanded,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FirstCommandPolicy {
-    Raw,
-    Ordinary,
-    MainLoopCharacter,
-    PreflightRaw,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AlignmentInterceptionPolicy {
-    Scalar,
-    Surface,
-    None,
-}
-
 /// Compact outcome from a destination-directed command delivery request.
 ///
 /// Command-bearing variants initialize the caller's command destination;

@@ -14,10 +14,7 @@ use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
-use super::{
-    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, DeliveryStatus,
-    ExpandedObservationPolicy, FirstCommandPolicy, ReplayCompletionPolicy,
-};
+use super::{AlignmentLookahead, CommandProcessor, DeliveryStatus};
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
@@ -31,8 +28,15 @@ enum ResidentColdOutcome {
     Retry,
     End,
     ReplayCompleted(crate::CommandReplayEpisode),
-    SyntheticCommand(Option<Catcode>),
-    CharacterRun,
+    SyntheticCommand { literal_catcode: Option<Catcode> },
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum ResidentStorageKind {
+    Stored,
+    MacroBody,
+    MacroArgument,
 }
 
 struct CurrentFrameWord {
@@ -54,6 +58,38 @@ enum InputFrameTransition<G> {
         slot: u8,
         arguments: Option<ArgumentSetId<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
+    },
+}
+
+/// One packed word selected from a resident token row. The selection keeps
+/// the row's already-admitted coordinates beside the word so the delivery
+/// loops can either resolve it into the hot command or consume an ordinary
+/// character directly in the main-control run.
+enum ResidentWordRead<G> {
+    NoResident,
+    Source {
+        resident_index: usize,
+    },
+    Parameter {
+        slot: u8,
+        arguments: Option<ArgumentSetId<G>>,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+    },
+    Exhausted {
+        resident_index: usize,
+        identity: InputLevelId,
+    },
+    Word {
+        word: TokenWord,
+        origin: OriginId,
+        identity: u64,
+        position: u64,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+        suppress_expandable: bool,
+        #[cfg(test)]
+        storage_kind: ResidentStorageKind,
+        #[cfg(feature = "profiling")]
+        raw_kind: crate::fuel::RawDeliveryKind,
     },
 }
 
@@ -108,45 +144,6 @@ fn next_macro_body_word_from_current_frame<G>(
     })
 }
 
-/// Which of TeX82 §380's two expanded-fetch procedures is driving delivery.
-///
-/// `get_x_token` and `x_token` agree on every command but one. §380's
-/// `get_x_token` disposes of an `end_template` itself --
-/// `cur_cs:=frozen_endv; cur_cmd:=endv; goto done` -- rewriting the live
-/// command without touching the input stack. `x_token` has no such case: it
-/// calls §366 `expand` for everything above `max_command`, and §375's
-/// ``@<Insert a token containing |frozen_endv|@>`` is
-/// `cur_tok:=cs_token_flag+frozen_endv; back_input`, so a backup level is
-/// pushed and `x_token`'s own `get_next` rereads the token as a fresh raw
-/// `endv` delivery.
-///
-/// The difference is observable, not cosmetic: the `x_token` form emits a
-/// backup push, its recovery record, and a raw `endv` delivery that the
-/// `get_x_token` form never produces, and it leaves the backup level to be
-/// retired after `endv` has been acted on. Callers must therefore say which
-/// procedure they are, never inherit a default.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ExpandedFetch {
-    /// §380's `get_x_token`, reached from §1030's `big_switch`.
-    GetXToken,
-    /// §380's `x_token`: §1038's `main_loop_lookahead` after its bare
-    /// `get_next`, and §1152's active-character treatment, both of which
-    /// enter expansion with a command already in hand.
-    XToken,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum ProtectedMacroHandling {
-    Expand,
-    Preserve,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum UndefinedHandling {
-    Diagnose,
-    Preserve,
-}
-
 fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
     match meaning {
         ResolvedMeaning::Static(meaning) => Some(*meaning),
@@ -185,21 +182,11 @@ fn expanded_classifications() -> u64 {
 }
 
 #[inline(always)]
-fn classify_expanded_command<G>(
-    command: &CurrentCommand<G>,
-    protected: ProtectedMacroHandling,
-    undefined: UndefinedHandling,
-) -> ExpandedCommandAction {
+fn classify_expanded_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
 
     match command.meaning_ref() {
-        ResolvedMeaning::Macro { flags, .. }
-            if protected == ProtectedMacroHandling::Preserve
-                && flags.contains(MeaningFlags::PROTECTED) =>
-        {
-            ExpandedCommandAction::Return
-        }
         ResolvedMeaning::Macro { .. } => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
         ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)) => {
             ExpandedCommandAction::EndTemplate
@@ -211,8 +198,7 @@ fn classify_expanded_command<G>(
             ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(*primitive))
         }
         ResolvedMeaning::Static(Meaning::Undefined)
-            if undefined == UndefinedHandling::Diagnose
-                && !matches!(command.spelling().semantic_token(), Token::Param(_)) =>
+            if !matches!(command.spelling().semantic_token(), Token::Param(_)) =>
         {
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
         }
@@ -221,22 +207,12 @@ fn classify_expanded_command<G>(
 }
 
 #[inline(always)]
-fn classify_hot_command<G>(
-    command: &HotCommand<G>,
-    protected: ProtectedMacroHandling,
-    undefined: UndefinedHandling,
-) -> ExpandedCommandAction {
+fn classify_hot_command<G>(command: &HotCommand<G>) -> ExpandedCommandAction {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
 
     let word = command.command_word();
     match word.class() {
-        CommandClass::Macro
-            if protected == ProtectedMacroHandling::Preserve
-                && word.flags().contains(MeaningFlags::PROTECTED) =>
-        {
-            ExpandedCommandAction::Return
-        }
         CommandClass::Macro => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
         CommandClass::Expandable => match word.expandable_primitive() {
             Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
@@ -246,10 +222,7 @@ fn classify_hot_command<G>(
             }
             None => ExpandedCommandAction::Return,
         },
-        CommandClass::Undefined
-            if undefined == UndefinedHandling::Diagnose
-                && command.spelling_word().out_parameter_slot().is_none() =>
-        {
+        CommandClass::Undefined if command.spelling_word().out_parameter_slot().is_none() => {
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
         }
         _ => ExpandedCommandAction::Return,
@@ -290,12 +263,1574 @@ fn is_ranked_fused_expansion(dispatch: ExpansionDispatch) -> bool {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Selects one word from the already-admitted resident row. This is the
+    /// small cursor instruction shared by scalar delivery and the main-loop
+    /// character path; source rows and all exhaustion transitions stay in the
+    /// cold reader below.
+    #[inline(always)]
+    fn next_resident_word(&mut self) -> Result<ResidentWordRead<G>, CommandError> {
+        let command_state = &mut *self.command;
+        let Some(resident_index) = command_state.roots.input.levels.top.checked_sub(1) else {
+            return Ok(ResidentWordRead::NoResident);
+        };
+        #[cfg(test)]
+        {
+            command_state
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses = command_state
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses
+                .saturating_add(1);
+            command_state
+                .raw_delivery_path_counters
+                .resident_transitions = command_state
+                .raw_delivery_path_counters
+                .resident_transitions
+                .saturating_add(1);
+        }
+
+        let InputLevel::Resident(row) = &mut command_state.roots.input.levels.rows[resident_index]
+        else {
+            return Ok(ResidentWordRead::Source { resident_index });
+        };
+        let exhausted_identity = row.header.identity();
+        let identity = exhausted_identity.0;
+        let active_source = row.header.frame.source_context();
+        let suppress_expandable = row.header.frame.flags().contains(
+            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+        );
+        #[cfg(test)]
+        let storage_kind = match &row.storage {
+            ResidentTokenStorage::MacroBody(_) => ResidentStorageKind::MacroBody,
+            ResidentTokenStorage::MacroArgument(_) => ResidentStorageKind::MacroArgument,
+            ResidentTokenStorage::Replay { .. }
+            | ResidentTokenStorage::Attempt(_)
+            | ResidentTokenStorage::Durable(_) => ResidentStorageKind::Stored,
+        };
+        #[cfg(feature = "profiling")]
+        let raw_kind = match &row.storage {
+            ResidentTokenStorage::MacroArgument(_) => crate::fuel::RawDeliveryKind::MacroArgument,
+            ResidentTokenStorage::Replay { .. }
+            | ResidentTokenStorage::Attempt(_)
+            | ResidentTokenStorage::Durable(_)
+            | ResidentTokenStorage::MacroBody(_) => crate::fuel::RawDeliveryKind::StoredToken,
+        };
+
+        let current = match &mut row.storage {
+            ResidentTokenStorage::Replay { replay, cursor } => {
+                #[cfg(test)]
+                {
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .replay_domain_dispatches = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .replay_domain_dispatches
+                        .saturating_add(1);
+                    command_state.stored_token_advance_counters.span_selections = command_state
+                        .stored_token_advance_counters
+                        .span_selections
+                        .saturating_add(1);
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                next_word_from_current_frame(&mut row.header.frame, |_position| {
+                    command_state
+                        .roots
+                        .input
+                        .replay
+                        .advance_sequential(
+                            *replay,
+                            cursor,
+                            #[cfg(test)]
+                            &mut command_state
+                                .stored_token_advance_counters
+                                .replay_segment_inspections,
+                            #[cfg(test)]
+                            &mut command_state
+                                .stored_token_advance_counters
+                                .replay_run_transitions,
+                        )
+                        .map(|word| (word.token_word(), word.origin()))
+                })
+            }
+            ResidentTokenStorage::Attempt(list) => {
+                #[cfg(test)]
+                {
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .attempt_domain_dispatches = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .attempt_domain_dispatches
+                        .saturating_add(1);
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                next_word_from_current_frame(&mut row.header.frame, |position| {
+                    command_state
+                        .attempt
+                        .arena()
+                        .resident_token_word(list, position as usize)
+                        .map(|word| (word.token_word(), word.origin()))
+                })
+            }
+            ResidentTokenStorage::Durable(list) => {
+                #[cfg(test)]
+                {
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .durable_domain_dispatches = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .durable_domain_dispatches
+                        .saturating_add(1);
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .stored_token_branch_entries
+                        .saturating_add(1);
+                }
+                next_word_from_current_frame(&mut row.header.frame, |position| {
+                    list.word_at(position as usize)
+                        .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
+                })
+            }
+            ResidentTokenStorage::MacroBody(body) => {
+                #[cfg(test)]
+                {
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .macro_body_domain_dispatches = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .macro_body_domain_dispatches
+                        .saturating_add(1);
+                }
+                next_macro_body_word_from_current_frame(&mut row.header.frame, body)
+            }
+            ResidentTokenStorage::MacroArgument(argument) => {
+                #[cfg(test)]
+                {
+                    command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .macro_argument_branch_entries = command_state
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .macro_argument_branch_entries
+                        .saturating_add(1);
+                }
+                next_word_from_current_frame(&mut row.header.frame, |position| {
+                    argument.advance_delivery(position, &command_state.scratch)
+                })
+            }
+        };
+
+        let Some(CurrentFrameWord {
+            word,
+            origin,
+            position,
+        }) = current
+        else {
+            return Ok(ResidentWordRead::Exhausted {
+                resident_index,
+                identity: exhausted_identity,
+            });
+        };
+
+        #[cfg(test)]
+        match storage_kind {
+            ResidentStorageKind::Stored => {
+                command_state.stored_token_advance_counters.packed_loads = command_state
+                    .stored_token_advance_counters
+                    .packed_loads
+                    .saturating_add(1);
+                command_state.stored_token_advance_counters.cursor_advances = command_state
+                    .stored_token_advance_counters
+                    .cursor_advances
+                    .saturating_add(1);
+            }
+            ResidentStorageKind::MacroBody => {
+                command_state.macro_kernel_counters.body_words = command_state
+                    .macro_kernel_counters
+                    .body_words
+                    .saturating_add(1);
+                command_state.macro_kernel_counters.body_cursor_advances = command_state
+                    .macro_kernel_counters
+                    .body_cursor_advances
+                    .saturating_add(1);
+            }
+            ResidentStorageKind::MacroArgument => {
+                command_state.macro_kernel_counters.argument_words = command_state
+                    .macro_kernel_counters
+                    .argument_words
+                    .saturating_add(1);
+                command_state.macro_kernel_counters.argument_cursor_advances = command_state
+                    .macro_kernel_counters
+                    .argument_cursor_advances
+                    .saturating_add(1);
+            }
+        }
+
+        let arguments = match &row.storage {
+            ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
+            _ if !matches!(row.header.behavior(), TokenBehavior::Parameter) => Some(None),
+            _ => None,
+        };
+        if let Some(arguments) = arguments
+            && let Some(slot) = word.out_parameter_slot()
+        {
+            #[cfg(test)]
+            match storage_kind {
+                ResidentStorageKind::Stored => {
+                    command_state
+                        .stored_token_advance_counters
+                        .parameter_interceptions = command_state
+                        .stored_token_advance_counters
+                        .parameter_interceptions
+                        .saturating_add(1);
+                }
+                ResidentStorageKind::MacroBody => {
+                    command_state.macro_kernel_counters.body_parameter_pushes = command_state
+                        .macro_kernel_counters
+                        .body_parameter_pushes
+                        .saturating_add(1);
+                }
+                ResidentStorageKind::MacroArgument => {}
+            }
+            return Ok(ResidentWordRead::Parameter {
+                slot,
+                arguments,
+                active_source,
+            });
+        }
+
+        Ok(ResidentWordRead::Word {
+            word,
+            origin,
+            identity,
+            position: u64::from(position),
+            active_source,
+            suppress_expandable,
+            #[cfg(test)]
+            storage_kind,
+            #[cfg(feature = "profiling")]
+            raw_kind,
+        })
+    }
+
+    /// Substitution changes the input stack and therefore stays on the cold
+    /// transition side of the delivery boundary. The resident reader only
+    /// reports the parameter coordinate; each concrete loop retries its own
+    /// fetch after this one transition.
+    #[cold]
+    #[inline(never)]
+    fn retry_parameter_delivery(
+        &mut self,
+        slot: u8,
+        arguments: Option<ArgumentSetId<G>>,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+        command: &mut HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        match self.transition_input_frame(
+            InputFrameTransition::Parameter {
+                slot,
+                arguments,
+                active_source,
+            },
+            command,
+        )? {
+            ResidentColdOutcome::Retry => Ok(()),
+            ResidentColdOutcome::End
+            | ResidentColdOutcome::ReplayCompleted(_)
+            | ResidentColdOutcome::SyntheticCommand { .. } => Err(CommandError::input_invariant()),
+        }
+    }
+
+    /// The concrete TeX82 §341 raw-token loop. It owns one fuel charge for
+    /// each semantic raw token and retries only through cold input transitions.
+    #[inline(always)]
+    pub(super) fn raw_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.invalidate_delivery_freshness();
+        let depth = self.command.transient.active_expansion_depth;
+        let mut command = HotCommand::empty();
+        if let Err(failure) = self.charge_command_action() {
+            return self.fail_expanded_delivery(destination, depth, failure);
+        }
+        let literal_catcode = 'fetch: loop {
+            let selected = match self.next_resident_word() {
+                Ok(selected) => selected,
+                Err(failure) => {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+            };
+            match selected {
+                ResidentWordRead::NoResident => {
+                    let cold = match self.transition_input_frame(
+                        InputFrameTransition::Boundary(ResidentBoundary::Empty),
+                        &mut command,
+                    ) {
+                        Ok(cold) => cold,
+                        Err(failure) => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
+                    };
+                    match cold {
+                        ResidentColdOutcome::Retry => continue 'fetch,
+                        ResidentColdOutcome::End => {
+                            destination.take();
+                            return Ok(DeliveryStatus::End);
+                        }
+                        ResidentColdOutcome::ReplayCompleted(episode) => {
+                            destination.take();
+                            return Ok(DeliveryStatus::ReplayCompleted(episode));
+                        }
+                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                            break 'fetch literal_catcode;
+                        }
+                    }
+                }
+                ResidentWordRead::Source { resident_index } => {
+                    let cold = match self.transition_input_frame(
+                        InputFrameTransition::Source { resident_index },
+                        &mut command,
+                    ) {
+                        Ok(cold) => cold,
+                        Err(failure) => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
+                    };
+                    match cold {
+                        ResidentColdOutcome::Retry => continue 'fetch,
+                        ResidentColdOutcome::End => {
+                            destination.take();
+                            return Ok(DeliveryStatus::End);
+                        }
+                        ResidentColdOutcome::ReplayCompleted(episode) => {
+                            destination.take();
+                            return Ok(DeliveryStatus::ReplayCompleted(episode));
+                        }
+                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                            break 'fetch literal_catcode;
+                        }
+                    }
+                }
+                ResidentWordRead::Parameter {
+                    slot,
+                    arguments,
+                    active_source,
+                } => {
+                    self.retry_parameter_delivery(slot, arguments, active_source, &mut command)?;
+                    continue 'fetch;
+                }
+                ResidentWordRead::Exhausted {
+                    resident_index,
+                    identity,
+                } => {
+                    let cold = match self.transition_input_frame(
+                        InputFrameTransition::ResidentExhausted {
+                            resident_index,
+                            identity,
+                        },
+                        &mut command,
+                    ) {
+                        Ok(cold) => cold,
+                        Err(failure) => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
+                    };
+                    match cold {
+                        ResidentColdOutcome::Retry => continue 'fetch,
+                        ResidentColdOutcome::End => {
+                            destination.take();
+                            return Ok(DeliveryStatus::End);
+                        }
+                        ResidentColdOutcome::ReplayCompleted(episode) => {
+                            destination.take();
+                            return Ok(DeliveryStatus::ReplayCompleted(episode));
+                        }
+                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                            break 'fetch literal_catcode;
+                        }
+                    }
+                }
+                ResidentWordRead::Word {
+                    word,
+                    origin,
+                    identity,
+                    position,
+                    active_source,
+                    suppress_expandable,
+                    #[cfg(test)]
+                    storage_kind,
+                    #[cfg(feature = "profiling")]
+                    raw_kind,
+                } => {
+                    #[cfg(test)]
+                    match storage_kind {
+                        ResidentStorageKind::Stored => {
+                            self.command.stored_token_advance_counters.command_writes = self
+                                .command
+                                .stored_token_advance_counters
+                                .command_writes
+                                .saturating_add(1);
+                            self.command.raw_delivery_path_counters.stored_direct = self
+                                .command
+                                .raw_delivery_path_counters
+                                .stored_direct
+                                .saturating_add(1);
+                        }
+                        ResidentStorageKind::MacroBody => {
+                            self.command.macro_kernel_counters.body_command_writes = self
+                                .command
+                                .macro_kernel_counters
+                                .body_command_writes
+                                .saturating_add(1);
+                        }
+                        ResidentStorageKind::MacroArgument => {
+                            self.command.macro_kernel_counters.argument_command_writes = self
+                                .command
+                                .macro_kernel_counters
+                                .argument_command_writes
+                                .saturating_add(1);
+                            self.command
+                                .raw_delivery_path_counters
+                                .macro_argument_direct = self
+                                .command
+                                .raw_delivery_path_counters
+                                .macro_argument_direct
+                                .saturating_add(1);
+                        }
+                    }
+                    let resolution = command.write_resolved_delivery(
+                        word,
+                        origin,
+                        identity,
+                        position,
+                        active_source,
+                        false,
+                        None,
+                        suppress_expandable,
+                        self.state,
+                    );
+                    #[cfg(test)]
+                    if matches!(storage_kind, ResidentStorageKind::Stored) {
+                        self.command.stored_token_advance_counters.meaning_lookups = self
+                            .command
+                            .stored_token_advance_counters
+                            .meaning_lookups
+                            .saturating_add(u64::from(resolution.meaning_lookup()));
+                    }
+                    #[cfg(feature = "profiling")]
+                    self.fuel.record_raw_delivery(
+                        self.command.delivery_mode.scanner_active(),
+                        resolution.meaning_lookup(),
+                        raw_kind,
+                    );
+                    break 'fetch resolution.literal_catcode();
+                }
+            }
+        };
+        self.command.delivery_mode.begin_token(
+            command.suppresses_expandable_control_sequence(),
+            command.is_outer(),
+        );
+        self.command.roots.alignment.account_literal_brace(
+            &mut self.command.timeline,
+            &mut command,
+            literal_catcode,
+        );
+        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        if command.is_direct_source_delivery() {
+            self.readmit_delivery_stamp(command.delivery_stamp());
+        } else {
+            self.publish_resident_delivery();
+        }
+        if self.command.delivery_mode.requires_slow_settlement()
+            && let Err(failure) = self.settle_exceptional_delivery(&mut command)
+        {
+            return self.fail_expanded_delivery(destination, depth, failure);
+        }
+        *destination = Some(command.materialize());
+        Ok(DeliveryStatus::Command)
+    }
+
+    /// The concrete TeX82 §380 `get_x_token` loop. Expansion remains in the
+    /// continuously occupied hot command; only scanner/diagnostic/resource
+    /// boundaries materialize or park it.
+    #[inline(always)]
+    pub(super) fn expanded_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.invalidate_delivery_freshness();
+        let depth = self.command.transient.active_expansion_depth;
+        let Some(active_depth) = depth.checked_add(1) else {
+            return self.fail_expanded_delivery(
+                destination,
+                depth,
+                CommandError::input_invariant(),
+            );
+        };
+        self.command.transient.active_expansion_depth = active_depth;
+        let resuming = self.expansion_resume.is_some()
+            || self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_expansion);
+        let (mut command, mut fetch, mut delivery_expanded) = if resuming {
+            match self.resume_expanded_delivery(destination.take()) {
+                Ok((command, resumed_expanded)) => {
+                    (HotCommand::from_current(command), false, resumed_expanded)
+                }
+                Err(failure) => return self.fail_expanded_delivery(destination, depth, failure),
+            }
+        } else if let Some(command) = destination.take() {
+            (HotCommand::from_current(command), false, false)
+        } else {
+            (HotCommand::empty(), true, false)
+        };
+        let mut suppress_first_expansion_trace = delivery_expanded;
+        let status = 'delivery: loop {
+            if fetch {
+                self.invalidate_delivery_freshness();
+                if let Err(failure) = self.charge_command_action() {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+                let literal_catcode = 'fetch: loop {
+                    let selected = match self.next_resident_word() {
+                        Ok(selected) => selected,
+                        Err(failure) => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
+                    };
+                    match selected {
+                        ResidentWordRead::NoResident => {
+                            let cold = match self.transition_input_frame(
+                                InputFrameTransition::Boundary(ResidentBoundary::Empty),
+                                &mut command,
+                            ) {
+                                Ok(cold) => cold,
+                                Err(failure) => {
+                                    return self.fail_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            };
+                            match cold {
+                                ResidentColdOutcome::Retry => continue 'fetch,
+                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::ReplayCompleted(episode) => {
+                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
+                                }
+                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                                    break 'fetch literal_catcode;
+                                }
+                            }
+                        }
+                        ResidentWordRead::Source { resident_index } => {
+                            let cold = match self.transition_input_frame(
+                                InputFrameTransition::Source { resident_index },
+                                &mut command,
+                            ) {
+                                Ok(cold) => cold,
+                                Err(failure) => {
+                                    return self.fail_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            };
+                            match cold {
+                                ResidentColdOutcome::Retry => continue 'fetch,
+                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::ReplayCompleted(episode) => {
+                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
+                                }
+                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                                    break 'fetch literal_catcode;
+                                }
+                            }
+                        }
+                        ResidentWordRead::Parameter {
+                            slot,
+                            arguments,
+                            active_source,
+                        } => {
+                            self.retry_parameter_delivery(
+                                slot,
+                                arguments,
+                                active_source,
+                                &mut command,
+                            )?;
+                            continue 'fetch;
+                        }
+                        ResidentWordRead::Exhausted {
+                            resident_index,
+                            identity,
+                        } => {
+                            let cold = match self.transition_input_frame(
+                                InputFrameTransition::ResidentExhausted {
+                                    resident_index,
+                                    identity,
+                                },
+                                &mut command,
+                            ) {
+                                Ok(cold) => cold,
+                                Err(failure) => {
+                                    return self.fail_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            };
+                            match cold {
+                                ResidentColdOutcome::Retry => continue 'fetch,
+                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::ReplayCompleted(episode) => {
+                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
+                                }
+                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                                    break 'fetch literal_catcode;
+                                }
+                            }
+                        }
+                        ResidentWordRead::Word {
+                            word,
+                            origin,
+                            identity,
+                            position,
+                            active_source,
+                            suppress_expandable,
+                            #[cfg(test)]
+                            storage_kind,
+                            #[cfg(feature = "profiling")]
+                            raw_kind,
+                        } => {
+                            #[cfg(test)]
+                            match storage_kind {
+                                ResidentStorageKind::Stored => {
+                                    self.command.stored_token_advance_counters.command_writes =
+                                        self.command
+                                            .stored_token_advance_counters
+                                            .command_writes
+                                            .saturating_add(1);
+                                    self.command.raw_delivery_path_counters.stored_direct = self
+                                        .command
+                                        .raw_delivery_path_counters
+                                        .stored_direct
+                                        .saturating_add(1);
+                                }
+                                ResidentStorageKind::MacroBody => {
+                                    self.command.macro_kernel_counters.body_command_writes = self
+                                        .command
+                                        .macro_kernel_counters
+                                        .body_command_writes
+                                        .saturating_add(1);
+                                }
+                                ResidentStorageKind::MacroArgument => {
+                                    self.command.macro_kernel_counters.argument_command_writes =
+                                        self.command
+                                            .macro_kernel_counters
+                                            .argument_command_writes
+                                            .saturating_add(1);
+                                    self.command
+                                        .raw_delivery_path_counters
+                                        .macro_argument_direct = self
+                                        .command
+                                        .raw_delivery_path_counters
+                                        .macro_argument_direct
+                                        .saturating_add(1);
+                                }
+                            }
+                            let resolution = command.write_resolved_delivery(
+                                word,
+                                origin,
+                                identity,
+                                position,
+                                active_source,
+                                false,
+                                None,
+                                suppress_expandable,
+                                self.state,
+                            );
+                            #[cfg(test)]
+                            if matches!(storage_kind, ResidentStorageKind::Stored) {
+                                self.command.stored_token_advance_counters.meaning_lookups = self
+                                    .command
+                                    .stored_token_advance_counters
+                                    .meaning_lookups
+                                    .saturating_add(u64::from(resolution.meaning_lookup()));
+                            }
+                            #[cfg(feature = "profiling")]
+                            self.fuel.record_raw_delivery(
+                                self.command.delivery_mode.scanner_active(),
+                                resolution.meaning_lookup(),
+                                raw_kind,
+                            );
+                            break 'fetch resolution.literal_catcode();
+                        }
+                    }
+                };
+                self.command.delivery_mode.begin_token(
+                    command.suppresses_expandable_control_sequence(),
+                    command.is_outer(),
+                );
+                self.command.roots.alignment.account_literal_brace(
+                    &mut self.command.timeline,
+                    &mut command,
+                    literal_catcode,
+                );
+                self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+                if command.is_direct_source_delivery() {
+                    self.readmit_delivery_stamp(command.delivery_stamp());
+                } else {
+                    self.publish_resident_delivery();
+                }
+                if self.command.delivery_mode.requires_slow_settlement()
+                    && let Err(failure) = self.settle_exceptional_delivery(&mut command)
+                {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+            }
+
+            let action = classify_hot_command(&command);
+            match action {
+                ExpandedCommandAction::Return => {
+                    break 'delivery self.finish_expanded_command(&command, delivery_expanded);
+                }
+                ExpandedCommandAction::EndTemplate => {
+                    if matches!(
+                        command.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    ) {
+                        break 'delivery DeliveryStatus::AlignmentEndTemplate;
+                    }
+                    command.convert_end_template_to_endv(self.state.frozen_endv_token());
+                    break 'delivery self.finish_expanded_command(&command, delivery_expanded);
+                }
+                ExpandedCommandAction::Expand(dispatch) => {
+                    delivery_expanded = true;
+                    let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
+                    let mut command_parked = false;
+                    let failure = match self.expand_classified_occupied(
+                        &mut command,
+                        dispatch,
+                        report_trace,
+                        delivery_expanded,
+                        &mut command_parked,
+                    ) {
+                        Ok(()) => {
+                            fetch = true;
+                            continue;
+                        }
+                        Err(failure) => failure,
+                    };
+                    match failure {
+                        CommandError::ParagraphInMacroArgument
+                        | CommandError::OuterInMacroArgument => {
+                            fetch = true;
+                        }
+                        failure => {
+                            return self.fail_expanded_delivery(destination, depth, failure);
+                        }
+                    }
+                }
+            }
+        };
+        debug_assert_eq!(
+            self.command.transient.active_expansion_depth, active_depth,
+            "expanded delivery balances its depth"
+        );
+        self.command.transient.active_expansion_depth = depth;
+        if matches!(
+            status,
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
+        ) {
+            destination.take();
+        } else {
+            *destination = Some(command.materialize());
+        }
+        Ok(status)
+    }
+
+    /// Completes a source or synthetic `endv` command after the main-loop
+    /// reader has crossed a cold input boundary. Such a command still needs
+    /// the ordinary delivery settlement, but it never belongs to the warm
+    /// character-run body.
+    #[cold]
+    #[inline(never)]
+    fn finish_main_loop_synthetic(
+        &mut self,
+        command: &mut HotCommand<G>,
+        literal_catcode: Option<Catcode>,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.fuel.charge()?;
+        self.command.delivery_mode.begin_token(
+            command.suppresses_expandable_control_sequence(),
+            command.is_outer(),
+        );
+        self.command.roots.alignment.account_literal_brace(
+            &mut self.command.timeline,
+            command,
+            literal_catcode,
+        );
+        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        if command.is_direct_source_delivery() {
+            self.readmit_delivery_stamp(command.delivery_stamp());
+        } else {
+            self.publish_resident_delivery();
+        }
+        if self.command.delivery_mode.requires_slow_settlement() {
+            self.settle_exceptional_delivery(command)?;
+        }
+        *destination = Some(command.materialize());
+        Ok(DeliveryStatus::CharacterRunBoundary)
+    }
+
+    /// Consumes the direct ordinary-character prefix owned by main control.
+    /// The consumer is mandatory here; no other delivery loop carries it.
+    #[inline(always)]
+    pub(super) fn main_character_run(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
+        self.invalidate_delivery_freshness();
+        let mut command = HotCommand::empty();
+        let mut consumed_characters = false;
+        #[cfg(feature = "profiling")]
+        let mut character_run_count = 0_u32;
+        #[cfg(feature = "profiling")]
+        let mut character_run_kind = None;
+
+        loop {
+            let Some(resident_index) = self.command.roots.input.levels.top.checked_sub(1) else {
+                if consumed_characters {
+                    #[cfg(feature = "profiling")]
+                    if let Some(kind) = character_run_kind.take() {
+                        self.fuel.record_raw_run(false, kind, character_run_count);
+                    }
+                    return Ok(DeliveryStatus::CharacterRun);
+                }
+                let cold = self.transition_input_frame(
+                    InputFrameTransition::Boundary(ResidentBoundary::Empty),
+                    &mut command,
+                )?;
+                match cold {
+                    ResidentColdOutcome::Retry => continue,
+                    ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
+                    ResidentColdOutcome::ReplayCompleted(episode) => {
+                        return Ok(DeliveryStatus::ReplayCompleted(episode));
+                    }
+                    ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                        return self.finish_main_loop_synthetic(
+                            &mut command,
+                            literal_catcode,
+                            destination,
+                        );
+                    }
+                }
+            };
+
+            let is_source = matches!(
+                self.command.roots.input.levels.rows[resident_index],
+                InputLevel::Source(_)
+            );
+            if is_source {
+                #[cfg(test)]
+                {
+                    self.command
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .typed_top_accesses = self
+                        .command
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .typed_top_accesses
+                        .saturating_add(1);
+                    self.command
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .source_branch_entries = self
+                        .command
+                        .roots
+                        .input
+                        .levels
+                        .cursor_mutations
+                        .source_branch_entries
+                        .saturating_add(1);
+                    self.command.raw_delivery_path_counters.resident_transitions = self
+                        .command
+                        .raw_delivery_path_counters
+                        .resident_transitions
+                        .saturating_add(1);
+                }
+                if self.command.delivery_mode.allows_character_run()
+                    && self
+                        .advance_source_character_run(resident_index, consume)?
+                        .is_some()
+                {
+                    return Ok(DeliveryStatus::CharacterRun);
+                }
+                let cold = self.transition_input_frame(
+                    InputFrameTransition::Source { resident_index },
+                    &mut command,
+                )?;
+                match cold {
+                    ResidentColdOutcome::Retry => continue,
+                    ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
+                    ResidentColdOutcome::ReplayCompleted(episode) => {
+                        return Ok(DeliveryStatus::ReplayCompleted(episode));
+                    }
+                    ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                        return self.finish_main_loop_synthetic(
+                            &mut command,
+                            literal_catcode,
+                            destination,
+                        );
+                    }
+                }
+            }
+
+            let selected = self.next_resident_word()?;
+            let ResidentWordRead::Word {
+                word,
+                origin,
+                identity,
+                position,
+                active_source,
+                suppress_expandable,
+                #[cfg(test)]
+                storage_kind,
+                #[cfg(feature = "profiling")]
+                raw_kind,
+            } = selected
+            else {
+                match selected {
+                    ResidentWordRead::NoResident => unreachable!("top row was selected"),
+                    ResidentWordRead::Source { .. } => unreachable!("source handled above"),
+                    ResidentWordRead::Parameter {
+                        slot,
+                        arguments,
+                        active_source,
+                    } => {
+                        self.retry_parameter_delivery(
+                            slot,
+                            arguments,
+                            active_source,
+                            &mut command,
+                        )?;
+                        continue;
+                    }
+                    ResidentWordRead::Exhausted { .. } if consumed_characters => {
+                        #[cfg(feature = "profiling")]
+                        if let Some(kind) = character_run_kind.take() {
+                            self.fuel.record_raw_run(false, kind, character_run_count);
+                        }
+                        return Ok(DeliveryStatus::CharacterRun);
+                    }
+                    ResidentWordRead::Exhausted {
+                        resident_index,
+                        identity,
+                    } => {
+                        match self.transition_input_frame(
+                            InputFrameTransition::ResidentExhausted {
+                                resident_index,
+                                identity,
+                            },
+                            &mut command,
+                        )? {
+                            ResidentColdOutcome::Retry => continue,
+                            ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
+                            ResidentColdOutcome::ReplayCompleted(episode) => {
+                                return Ok(DeliveryStatus::ReplayCompleted(episode));
+                            }
+                            ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
+                                return self.finish_main_loop_synthetic(
+                                    &mut command,
+                                    literal_catcode,
+                                    destination,
+                                );
+                            }
+                        }
+                    }
+                    ResidentWordRead::Word { .. } => unreachable!("word was matched above"),
+                }
+            };
+
+            let is_character = matches!(
+                word.semantic_token(),
+                Token::Char {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                }
+            );
+            if is_character && self.command.delivery_mode.allows_character_run() {
+                self.fuel.charge()?;
+                consumed_characters = true;
+                #[cfg(feature = "profiling")]
+                {
+                    character_run_kind = Some(raw_kind);
+                    character_run_count = character_run_count.saturating_add(1);
+                }
+                let Token::Char { ch, .. } = word.semantic_token() else {
+                    unreachable!("main-loop character predicate accepts only characters")
+                };
+                if consume(self.state, self.fuel, self.diagnostic_effects, ch, origin) {
+                    continue;
+                }
+                #[cfg(feature = "profiling")]
+                if let Some(kind) = character_run_kind.take() {
+                    self.fuel.record_raw_run(false, kind, character_run_count);
+                }
+                return Ok(DeliveryStatus::CharacterRun);
+            }
+
+            self.fuel.charge()?;
+            #[cfg(feature = "profiling")]
+            if let Some(kind) = character_run_kind.take() {
+                self.fuel.record_raw_run(false, kind, character_run_count);
+            }
+            #[cfg(test)]
+            match storage_kind {
+                ResidentStorageKind::Stored => {
+                    self.command.stored_token_advance_counters.command_writes = self
+                        .command
+                        .stored_token_advance_counters
+                        .command_writes
+                        .saturating_add(1);
+                    self.command.raw_delivery_path_counters.stored_direct = self
+                        .command
+                        .raw_delivery_path_counters
+                        .stored_direct
+                        .saturating_add(1);
+                }
+                ResidentStorageKind::MacroBody => {
+                    self.command.macro_kernel_counters.body_command_writes = self
+                        .command
+                        .macro_kernel_counters
+                        .body_command_writes
+                        .saturating_add(1);
+                }
+                ResidentStorageKind::MacroArgument => {
+                    self.command.macro_kernel_counters.argument_command_writes = self
+                        .command
+                        .macro_kernel_counters
+                        .argument_command_writes
+                        .saturating_add(1);
+                    self.command
+                        .raw_delivery_path_counters
+                        .macro_argument_direct = self
+                        .command
+                        .raw_delivery_path_counters
+                        .macro_argument_direct
+                        .saturating_add(1);
+                }
+            }
+            let resolution = command.write_resolved_delivery(
+                word,
+                origin,
+                identity,
+                position,
+                active_source,
+                false,
+                None,
+                suppress_expandable,
+                self.state,
+            );
+            #[cfg(feature = "profiling")]
+            self.fuel.record_raw_delivery(
+                self.command.delivery_mode.scanner_active(),
+                resolution.meaning_lookup(),
+                raw_kind,
+            );
+            self.command.delivery_mode.begin_token(
+                command.suppresses_expandable_control_sequence(),
+                command.is_outer(),
+            );
+            self.command.roots.alignment.account_literal_brace(
+                &mut self.command.timeline,
+                &mut command,
+                resolution.literal_catcode(),
+            );
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+            if command.is_direct_source_delivery() {
+                self.readmit_delivery_stamp(command.delivery_stamp());
+            } else {
+                self.publish_resident_delivery();
+            }
+            if self.command.delivery_mode.requires_slow_settlement()
+                && let Err(failure) = self.settle_exceptional_delivery(&mut command)
+            {
+                return Err(failure);
+            }
+            *destination = Some(command.materialize());
+            return Ok(DeliveryStatus::CharacterRunBoundary);
+        }
+    }
+
+    /// Replay-aware raw delivery is a cold entry for the same raw owner. The
+    /// public ordinary wrapper consumes completion statuses; replay callers
+    /// keep them visible.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn raw_next_with_replay_completion(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.raw_next(destination)
+    }
+
+    /// Replay-aware ordinary expansion enters the canonical expanded loop and
+    /// leaves its completion status visible to the caller.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn expanded_next_with_replay_completion(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next(destination)
+    }
+
+    /// The protected entry is intentionally out of line. Its full protected
+    /// classifier is installed below once a raw command has been settled.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn protected_expanded_next_with_replay_completion(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            let status = if destination.is_some() {
+                DeliveryStatus::Command
+            } else if self.expansion_resume.is_some()
+                || self
+                    .scanner_resume
+                    .as_ref()
+                    .is_some_and(crate::ScannerFrameKey::is_expansion)
+            {
+                self.expanded_next(destination)?
+            } else {
+                self.raw_next(destination)?
+            };
+            match status {
+                DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) => return Ok(status),
+                DeliveryStatus::Command => {}
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                    continue;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("protected delivery has no character consumer")
+                }
+            }
+
+            let command = destination
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
+            if matches!(
+                command.meaning_ref(),
+                ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED)
+            ) || !is_expandable_command(command)
+            {
+                return Ok(DeliveryStatus::Command);
+            }
+            match self.expanded_next(destination)? {
+                status @ (DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)) => {
+                    return Ok(status);
+                }
+                DeliveryStatus::Command => return Ok(DeliveryStatus::Command),
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("protected delivery has no character consumer")
+                }
+            }
+        }
+    }
+
+    /// Diagnostic callers keep the undefined command instead of entering its
+    /// recovery branch. The exceptional wrapper is cold and owns that one
+    /// classifier choice.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn expanded_next_preserving_undefined(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            let status = if destination.is_some() {
+                DeliveryStatus::Command
+            } else if self.expansion_resume.is_some()
+                || self
+                    .scanner_resume
+                    .as_ref()
+                    .is_some_and(crate::ScannerFrameKey::is_expansion)
+            {
+                self.expanded_next(destination)?
+            } else {
+                self.raw_next(destination)?
+            };
+            match status {
+                DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) => return Ok(status),
+                DeliveryStatus::Command => {}
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                    continue;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("undefined-preserving delivery has no character consumer")
+                }
+            }
+            if destination.as_ref().is_some_and(|command| {
+                matches!(
+                    command.meaning_ref(),
+                    ResolvedMeaning::Static(Meaning::Undefined)
+                )
+            }) {
+                return Ok(DeliveryStatus::Command);
+            }
+            match self.expanded_next(destination)? {
+                status @ (DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)) => {
+                    return Ok(status);
+                }
+                DeliveryStatus::Command
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("undefined-preserving delivery has no character consumer")
+                }
+            }
+        }
+    }
+
+    /// `x_token` starts with a command already in hand. Ordinary uses have no
+    /// pending command and therefore enter the expanded loop directly.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn x_token_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        if destination.as_ref().is_some_and(|command| {
+            matches!(
+                command.meaning_ref(),
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::EndTemplate
+                ))
+            )
+        }) {
+            let alignment_delimiter = destination.as_ref().is_some_and(|command| {
+                matches!(
+                    command.alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                )
+            });
+            if alignment_delimiter {
+                return Ok(DeliveryStatus::AlignmentEndTemplate);
+            }
+            destination.take();
+            self.insert_frozen_endv()?;
+        }
+        self.expanded_next(destination)
+    }
+
+    /// Main-control lookahead first returns a raw character without expansion;
+    /// non-character commands continue through the x-token entry.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn main_loop_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let status = if destination.is_some() {
+            DeliveryStatus::Command
+        } else {
+            self.raw_next(destination)?
+        };
+        if status != DeliveryStatus::Command {
+            return Ok(status);
+        }
+        let command = destination
+            .as_ref()
+            .ok_or_else(CommandError::input_invariant)?;
+        let hot = HotCommand::from_current_ref(command);
+        if hot.command_word().is_main_loop_character() {
+            return Ok(DeliveryStatus::Command);
+        }
+        if !matches!(classify_hot_command(&hot), ExpandedCommandAction::Return) {
+            let pending = destination.take();
+            return self.x_token_from_into(pending, destination);
+        }
+        self.observe_expanded_delivery(command);
+        Ok(DeliveryStatus::Command)
+    }
+
+    /// Main-control preflight owns its first raw fetch and then continues from
+    /// that resident command through ordinary expansion.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn preflight_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            if destination.is_none() {
+                match self.raw_next(destination)? {
+                    DeliveryStatus::Command => {}
+                    status => return Ok(status),
+                }
+            }
+            let command = destination
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
+            if !is_expandable_command(command) {
+                let _ = classify_expanded_command(command);
+                self.observe_expanded_delivery(command);
+                return Ok(DeliveryStatus::Command);
+            }
+            let pending = destination.take();
+            match self.expanded_next_from_pending(pending, destination)? {
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                result => return Ok(result),
+            }
+        }
+    }
+
+    /// Resumed expansion restores its command once, then uses the x-token
+    /// semantics owned by the cold continuation wrapper.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn resumed_expanded_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            match self.x_token_next(destination)? {
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                result => return Ok(result),
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn resumed_main_loop_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            match self.main_loop_next(destination)? {
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                result => return Ok(result),
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn alignment_expanded_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        match self.expanded_next(destination)? {
+            DeliveryStatus::PendingExpanded => Ok(DeliveryStatus::Command),
+            result => Ok(result),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn alignment_main_loop_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        match self.main_loop_next(destination)? {
+            DeliveryStatus::PendingExpanded => Ok(DeliveryStatus::Command),
+            result => Ok(result),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn tex_alignment_lookahead_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            match self.expanded_next(destination)? {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
+                result => return Ok(result),
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn etex_alignment_lookahead_next(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            match self.protected_expanded_next_with_replay_completion(destination)? {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
+                result => return Ok(result),
+            }
+        }
+    }
+
+    fn expanded_next_from_pending(
+        &mut self,
+        pending: Option<CurrentCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        *destination = pending;
+        self.expanded_next(destination)
+    }
+
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
-    /// This thin canonical entry point selects the ordinary policy of the
-    /// shared raw/expanded delivery driver. Expansion mutates canonical
-    /// command state and restarts in that one driver; it never returns a
-    /// push-bearing dispatch result or enters a second interpreter.
+    /// This thin canonical entry point enters the ordinary expanded loop.
+    /// Expansion mutates canonical command state and restarts in that loop;
+    /// it never returns a push-bearing dispatch result or enters a second
+    /// interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let mut destination = None;
         match self.get_x_token_into(&mut destination)? {
@@ -311,12 +1846,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
-        let result = self.expanded_next(destination)?;
-        debug_assert!(matches!(
-            result,
-            DeliveryStatus::End | DeliveryStatus::Command
-        ));
-        Ok(result)
+        loop {
+            let result = self.expanded_next(destination)?;
+            match result {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::End | DeliveryStatus::Command => return Ok(result),
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("expanded delivery does not own a character consumer")
+                }
+            }
+        }
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.
@@ -368,7 +1916,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = self.x_token_next(destination)?;
         debug_assert!(matches!(
             result,
-            DeliveryStatus::End | DeliveryStatus::Command
+            DeliveryStatus::End
+                | DeliveryStatus::Command
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentEndTemplate
+                | DeliveryStatus::AlignmentClosingBrace
         ));
         Ok(result)
     }
@@ -602,12 +2154,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_next_with_replay_completion(destination)?;
-        debug_assert!(matches!(
-            result,
-            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
-        ));
-        Ok(result)
+        loop {
+            let result = self.expanded_next_with_replay_completion(destination)?;
+            match result {
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::End
+                | DeliveryStatus::Command
+                | DeliveryStatus::ReplayCompleted(_) => return Ok(result),
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("expanded delivery does not own a character consumer")
+                }
+            }
+        }
     }
 
     /// Delivers main-control preflight through one raw-fetch/classification
@@ -681,12 +2247,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.main_loop_next(destination)?;
-        debug_assert!(matches!(
-            result,
-            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
-        ));
-        Ok(result)
+        loop {
+            let result = self.main_loop_next(destination)?;
+            match result {
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::End
+                | DeliveryStatus::Command
+                | DeliveryStatus::ReplayCompleted(_) => {
+                    return Ok(result);
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("main-loop lookahead has no character consumer")
+                }
+            }
+        }
     }
 
     /// Lends the consecutive ordinary-character prefix of §1038's raw
@@ -773,12 +2355,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         resident_index: usize,
         command: &mut HotCommand<G>,
-        mut character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;
-        let fuel = &mut *self.fuel;
-        let diagnostic_effects = &mut *self.diagnostic_effects;
         let create_control_sequences = self.create_source_control_sequences;
         let profile = command_state.roots.profile;
         let force_eof_requested = command_state.roots.input.force_eof;
@@ -813,61 +2392,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         let position = top.slot.cursor.next_physical_offset;
         let active_source = top.source.frame.source_context();
 
-        if let Some(consume) = character_run.as_deref_mut()
-            && command_state.delivery_mode.allows_character_run()
-        {
-            let run = top
-                .advance_character_run(state, |state, ch, origin| {
-                    fuel.charge()?;
-                    Ok(consume(state, fuel, diagnostic_effects, ch, origin))
-                })
-                .map_err(|()| CommandError::input_invariant())?;
-            match run {
-                ResidentSourceCharacterRun::Unavailable => {}
-                ResidentSourceCharacterRun::Consumed { count } => {
-                    let line = top
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .expect("a consumed source run retains its line");
-                    command_state.last_diagnostic_location = Some(SourceLocation::new(
-                        line.physical.source,
-                        line.cursor.byte_cursor.saturating_sub(1),
-                    ));
-                    #[cfg(feature = "profiling")]
-                    fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-                    let _ = count;
-                    return Ok(ResidentColdOutcome::CharacterRun);
-                }
-                ResidentSourceCharacterRun::Failed { count, error } => {
-                    if count != 0 {
-                        let line = top
-                            .slot
-                            .cursor
-                            .line
-                            .as_ref()
-                            .expect("a consumed source prefix retains its line");
-                        command_state.last_diagnostic_location = Some(SourceLocation::new(
-                            line.physical.source,
-                            line.cursor.byte_cursor.saturating_sub(1),
-                        ));
-                        #[cfg(feature = "profiling")]
-                        fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-                    }
-                    return Err(error);
-                }
-            }
-        }
-
         match top
             .advance(profile, force_eof, state, create_control_sequences)
             .map_err(|()| CommandError::input_invariant())?
         {
             ResidentSourceAdvance::Delivered(word, origin, location) => {
-                if character_run.is_some() {
-                    fuel.charge()?;
-                }
                 let direct_source_line = top
                     .slot
                     .cursor
@@ -894,39 +2423,98 @@ impl<G> CommandProcessor<'_, '_, G> {
                     state,
                 );
                 #[cfg(feature = "profiling")]
-                fuel.record_raw_delivery(
+                self.fuel.record_raw_delivery(
                     command_state.delivery_mode.scanner_active(),
                     resolution.meaning_lookup(),
                     crate::fuel::RawDeliveryKind::Source,
                 );
-                Ok(ResidentColdOutcome::SyntheticCommand(
-                    resolution.literal_catcode(),
-                ))
+                Ok(ResidentColdOutcome::SyntheticCommand {
+                    literal_catcode: resolution.literal_catcode(),
+                })
             }
             ResidentSourceAdvance::InvalidCharacter => self.transition_input_frame(
                 InputFrameTransition::Boundary(ResidentBoundary::InvalidCharacter),
                 command,
-                None,
             ),
-            ResidentSourceAdvance::NeedLine(identity) => {
-                if character_run.is_some() {
-                    return Ok(ResidentColdOutcome::CharacterRun);
-                }
-                self.transition_input_frame(
-                    InputFrameTransition::Boundary(ResidentBoundary::NeedLine(identity)),
-                    command,
-                    None,
-                )
+            ResidentSourceAdvance::NeedLine(identity) => self.transition_input_frame(
+                InputFrameTransition::Boundary(ResidentBoundary::NeedLine(identity)),
+                command,
+            ),
+            ResidentSourceAdvance::Exhausted(identity) => self.transition_input_frame(
+                InputFrameTransition::Boundary(ResidentBoundary::SourceExhausted(identity)),
+                command,
+            ),
+        }
+    }
+
+    /// Consumes the ordinary-character prefix of a source line for
+    /// `main_character_run`. This is the only source transition that borrows
+    /// the character consumer; ordinary raw and expanded delivery never carry
+    /// that capability.
+    #[cold]
+    #[inline(never)]
+    fn advance_source_character_run(
+        &mut self,
+        resident_index: usize,
+        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+    ) -> Result<Option<u32>, CommandError> {
+        let command_state = &mut *self.command;
+        let state = &mut *self.state;
+        let fuel = &mut *self.fuel;
+        let diagnostic_effects = &mut *self.diagnostic_effects;
+        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let slot = command_state
+            .roots
+            .input
+            .levels
+            .source_slots
+            .resident_value_mut(source.slot.0.slot);
+        let mut top = ResidentSourceTop { source, slot };
+        if !command_state.delivery_mode.allows_character_run() {
+            return Ok(None);
+        }
+        let run = top
+            .advance_character_run(state, |state, ch, origin| {
+                fuel.charge()?;
+                Ok(consume(state, fuel, diagnostic_effects, ch, origin))
+            })
+            .map_err(|()| CommandError::input_invariant())?;
+        match run {
+            ResidentSourceCharacterRun::Unavailable => Ok(None),
+            ResidentSourceCharacterRun::Consumed { count } => {
+                let line = top
+                    .slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .expect("a consumed source run retains its line");
+                command_state.last_diagnostic_location = Some(SourceLocation::new(
+                    line.physical.source,
+                    line.cursor.byte_cursor.saturating_sub(1),
+                ));
+                #[cfg(feature = "profiling")]
+                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
+                Ok(Some(count))
             }
-            ResidentSourceAdvance::Exhausted(identity) => {
-                if character_run.is_some() {
-                    return Ok(ResidentColdOutcome::CharacterRun);
+            ResidentSourceCharacterRun::Failed { count, error } => {
+                if count != 0 {
+                    let line = top
+                        .slot
+                        .cursor
+                        .line
+                        .as_ref()
+                        .expect("a consumed source prefix retains its line");
+                    command_state.last_diagnostic_location = Some(SourceLocation::new(
+                        line.physical.source,
+                        line.cursor.byte_cursor.saturating_sub(1),
+                    ));
+                    #[cfg(feature = "profiling")]
+                    fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
                 }
-                self.transition_input_frame(
-                    InputFrameTransition::Boundary(ResidentBoundary::SourceExhausted(identity)),
-                    command,
-                    None,
-                )
+                Err(error)
             }
         }
     }
@@ -937,12 +2525,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         transition: InputFrameTransition<G>,
         command: &mut HotCommand<G>,
-        character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let cold = match transition {
             InputFrameTransition::Boundary(boundary) => boundary,
             InputFrameTransition::Source { resident_index } => {
-                return self.transition_source_input_frame(resident_index, command, character_run);
+                return self.transition_source_input_frame(resident_index, command);
             }
             InputFrameTransition::ResidentExhausted {
                 resident_index,
@@ -989,9 +2576,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         match cold {
-            ResidentBoundary::CharacterRunEnd => Ok(ResidentColdOutcome::CharacterRun),
-            ResidentBoundary::CharacterRunFailure(error) => Err(error),
-            ResidentBoundary::Failure => Err(CommandError::input_invariant()),
             ResidentBoundary::Empty => {
                 observe!(
                     self,
@@ -1133,9 +2717,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
                         self.readmit_delivery_stamp(command.delivery_stamp());
-                        Ok(ResidentColdOutcome::SyntheticCommand(
-                            _resolution.literal_catcode(),
-                        ))
+                        Ok(ResidentColdOutcome::SyntheticCommand {
+                            literal_catcode: _resolution.literal_catcode(),
+                        })
                     }
                 }
             }
@@ -1148,7 +2732,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
 impl<G> CommandProcessor<'_, '_, G> {
     /// Settles the semantic conditions represented by the authoritative
-    /// delivery-mode word without widening the generated ordinary loops.
+    /// delivery-mode word without widening the ordinary hot loops.
     #[cold]
     #[inline(never)]
     fn settle_exceptional_delivery(
@@ -1178,1130 +2762,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
-// Fuel ownership is selected while each concrete delivery loop is generated.
-// The ordinary raw/expanded entries charge before their own fetch; the
-// character-run entry charges only at the character or consumed-tail sites
-// below. Keeping these as macro expansions (rather than a runtime flag) makes
-// it impossible for the run to enter already charged and then pay again.
-macro_rules! charge_delivery_fetch {
-    ($processor:ident, $destination:ident, $depth:ident) => {{
-        if let Err(failure) = $processor.charge_command_action() {
-            return $processor.fail_expanded_delivery($destination, $depth, failure);
-        }
-    }};
-}
-
-macro_rules! skip_delivery_fetch_charge {
-    ($processor:ident, $destination:ident, $depth:ident) => {};
-}
-
-// Emit a concrete loop per semantic entry. Policy choices are syntax at the
-// generation boundary, never runtime arguments or a policy bundle carried by
-// the hot call path.
-macro_rules! define_delivery_loop {
-    (@body $processor:ident, $destination:ident, $character_run:ident, $expanded_fetch:ident, $protected_macros:ident, $undefined:ident, $observation:ident, $first_command:ident, $replay_completion:ident, $alignment_interception:ident, $charge_fetch:ident, $d:tt) => {{
-        let processor = $processor;
-        let destination = $destination;
-        let mut character_run = $character_run;
-        let expanded_fetch = $expanded_fetch;
-        let protected_macros = $protected_macros;
-        let undefined = $undefined;
-        let observation = $observation;
-        let first_command = $first_command;
-        let replay_completion = $replay_completion;
-        let alignment_interception = $alignment_interception;
-        processor.invalidate_delivery_freshness();
-        let depth = processor.command.transient.active_expansion_depth;
-        let expanding = first_command != FirstCommandPolicy::Raw;
-        let resuming = expanding
-            && (processor.expansion_resume.is_some()
-                || processor
-                    .scanner_resume
-                    .as_ref()
-                    .is_some_and(crate::ScannerFrameKey::is_expansion));
-        let mut delivery_expanded = false;
-        let (mut command, mut fetch) = if resuming {
-            match processor.resume_expanded_delivery(destination.take()) {
-                Ok((command, resumed_expanded)) => {
-                    delivery_expanded = resumed_expanded;
-                    (HotCommand::from_current(command), false)
-                }
-                Err(failure) => {
-                    return processor.fail_expanded_delivery(destination, depth, failure);
-                }
-            }
-        } else if let Some(command) = destination.take() {
-            (HotCommand::from_current(command), false)
-        } else {
-            (HotCommand::empty(), true)
-        };
-        let Some(active_depth) = depth.checked_add(u32::from(expanding)) else {
-            return processor.fail_expanded_delivery(
-                destination,
-                depth,
-                CommandError::input_invariant(),
-            );
-        };
-        processor.command.transient.active_expansion_depth = active_depth;
-        let mut first = true;
-        let mut suppress_first_expansion_trace = delivery_expanded;
-        let status = 'delivery: loop {
-            if fetch {
-                processor.invalidate_delivery_freshness();
-                $charge_fetch!(processor, destination, depth);
-                let literal_catcode = 'fetch: loop {
-                    macro_rules! resident_boundary {
-                        ($d label:lifetime, $d boundary:expr) => {{
-                            let settled = match processor.transition_input_frame(
-                                InputFrameTransition::Boundary($d boundary),
-                                &mut command,
-                                None,
-                            ) {
-                                Ok(settled) => settled,
-                                Err(failure) => {
-                                    return processor.fail_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match settled {
-                                ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
-                                ResidentColdOutcome::ReplayCompleted(episode) => {
-                                    if replay_completion == ReplayCompletionPolicy::Surface {
-                                        break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                    }
-                                    continue 'fetch;
-                                }
-                                ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                    break $d label literal_catcode;
-                                }
-                                ResidentColdOutcome::CharacterRun => {
-                                    break 'delivery DeliveryStatus::CharacterRun;
-                                }
-                            }
-                        }};
-                    }
-
-                    #[cfg(feature = "profiling")]
-                    let mut character_run_count = 0_u32;
-                    #[cfg(feature = "profiling")]
-                    let mut character_run_kind = None;
-                    macro_rules! finish_character_run_accounting {
-                        ($d fuel:expr) => {
-                            #[cfg(feature = "profiling")]
-                            if let Some(kind) = character_run_kind.take() {
-                                $d fuel.record_raw_run(false, kind, character_run_count);
-                            }
-                        };
-                    }
-                    {
-                        let delivery_mode = processor.command.delivery_mode;
-                        let command_state = &mut *processor.command;
-                        let state = &mut *processor.state;
-                        let _fuel = &mut *processor.fuel;
-                        let diagnostic_effects = &mut *processor.diagnostic_effects;
-                        let Some(resident_index) =
-                            command_state.roots.input.levels.top.checked_sub(1)
-                        else {
-                            resident_boundary!('fetch, ResidentBoundary::Empty);
-                        };
-                        #[cfg(test)]
-                        {
-                            command_state
-                                .roots
-                                .input
-                                .levels
-                                .cursor_mutations
-                                .typed_top_accesses = command_state
-                                .roots
-                                .input
-                                .levels
-                                .cursor_mutations
-                                .typed_top_accesses
-                                .saturating_add(1);
-                            command_state
-                                .raw_delivery_path_counters
-                                .resident_transitions = command_state
-                                .raw_delivery_path_counters
-                                .resident_transitions
-                                .saturating_add(1);
-                        }
-                        let suppress_expandable;
-                        #[cfg(feature = "profiling")]
-                        let mut raw_delivery_kind = crate::fuel::RawDeliveryKind::StoredToken;
-                        #[cfg(test)]
-                        let mut generic_stored_delivery = false;
-                        #[cfg(test)]
-                        let mut macro_body_delivery = false;
-                        #[cfg(test)]
-                        let mut macro_argument_delivery = false;
-                        let (word, origin, identity, position, active_source) = 'selected: {
-                            match &mut command_state.roots.input.levels.rows[resident_index] {
-                                InputLevel::Source(_source) => {
-                                    let settled = match processor.transition_input_frame(
-                                        InputFrameTransition::Source { resident_index },
-                                        &mut command,
-                                        character_run.as_deref_mut(),
-                                    ) {
-                                        Ok(settled) => settled,
-                                        Err(failure) => return processor.fail_expanded_delivery(
-                                            destination,
-                                            depth,
-                                            failure,
-                                        ),
-                                    };
-                                    match settled {
-                                        ResidentColdOutcome::Retry => continue 'fetch,
-                                        ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
-                                        ResidentColdOutcome::ReplayCompleted(episode) => {
-                                            if replay_completion == ReplayCompletionPolicy::Surface {
-                                                break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                            }
-                                            continue 'fetch;
-                                        }
-                                        ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                            break 'fetch literal_catcode;
-                                        }
-                                        ResidentColdOutcome::CharacterRun => {
-                                            break 'delivery DeliveryStatus::CharacterRun;
-                                        }
-                                    }
-                                }
-                                InputLevel::Resident(row) => {
-                                    // Select the storage lifetime once, then keep that concrete cursor
-                                    // through the common header transition. In particular, do not
-                                    // redispatch `row.storage` to recover rollback, parameter, or
-                                    // accounting facts after the word read.
-                                    let exhausted_identity = row.header.identity();
-                                    let identity = exhausted_identity.0;
-                                    let active_source = row.header.frame.source_context();
-                                    suppress_expandable = row.header.frame.flags().contains(
-                            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-                        );
-                                    macro_rules! drive_selected_cursor {
-                            (
-                                read: $d read:expr,
-                                arguments: $d arguments:expr,
-                                on_word: $d on_word:block,
-                                on_parameter: $d on_parameter:block $d(,)?
-                            ) => {{
-                                let Some(CurrentFrameWord { word, origin, position }) = $d read else {
-                                    if character_run.is_some() {
-                                        finish_character_run_accounting!(_fuel);
-                                        resident_boundary!('fetch, ResidentBoundary::CharacterRunEnd);
-                                    }
-                                    let settled = match processor.transition_input_frame(
-                                        InputFrameTransition::ResidentExhausted {
-                                            resident_index,
-                                            identity: exhausted_identity,
-                                        },
-                                        &mut command,
-                                        None,
-                                    ) {
-                                        Ok(settled) => settled,
-                                        Err(failure) => return processor.fail_expanded_delivery(
-                                            destination,
-                                            depth,
-                                            failure,
-                                        ),
-                                    };
-                                    match settled {
-                                        ResidentColdOutcome::Retry => continue 'fetch,
-                                        ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
-                                        ResidentColdOutcome::ReplayCompleted(episode) => {
-                                            if replay_completion == ReplayCompletionPolicy::Surface {
-                                                break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                            }
-                                            continue 'fetch;
-                                        }
-                                        ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                            break 'fetch literal_catcode;
-                                        }
-                                        ResidentColdOutcome::CharacterRun => {
-                                            break 'delivery DeliveryStatus::CharacterRun;
-                                        }
-                                    }
-                                };
-                                $d on_word
-                                if let Some(arguments) = $d arguments
-                                    && let Some(slot) = word.out_parameter_slot()
-                                {
-                                    $d on_parameter
-                                    match processor.transition_input_frame(
-                                        InputFrameTransition::Parameter {
-                                            slot,
-                                            arguments,
-                                            active_source,
-                                        },
-                                        &mut command,
-                                        None,
-                                    ) {
-                                        Ok(ResidentColdOutcome::Retry) => continue 'fetch,
-                                        Ok(_) => unreachable!("parameter substitution retries delivery"),
-                                        Err(failure) => return processor.fail_expanded_delivery(
-                                            destination,
-                                            depth,
-                                            failure,
-                                        ),
-                                    }
-                                }
-                                break 'selected (
-                                    word,
-                                    origin,
-                                    identity,
-                                    u64::from(position),
-                                    active_source,
-                                );
-                            }};
-                        }
-                                    match &mut row.storage {
-                                        ResidentTokenStorage::Replay { replay, cursor } => {
-                                            #[cfg(test)]
-                                            {
-                                                command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .replay_domain_dispatches = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .replay_domain_dispatches
-                                                    .saturating_add(1);
-                                                command_state
-                                                    .stored_token_advance_counters
-                                                    .span_selections = command_state
-                                                    .stored_token_advance_counters
-                                                    .span_selections
-                                                    .saturating_add(1);
-                                                command_state.roots.input.levels.cursor_mutations
-                                                    .stored_token_branch_entries = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .stored_token_branch_entries
-                                                    .saturating_add(1);
-                                            }
-                                            drive_selected_cursor! {
-                                                read: next_word_from_current_frame(
-                                                    &mut row.header.frame,
-                                                    |_position| command_state.roots.input.replay.advance_sequential(
-                                                        *replay,
-                                                        cursor,
-                                                        #[cfg(test)]
-                                                        &mut command_state
-                                                            .stored_token_advance_counters
-                                                            .replay_segment_inspections,
-                                                        #[cfg(test)]
-                                                        &mut command_state
-                                                            .stored_token_advance_counters
-                                                            .replay_run_transitions,
-                                                    )
-                                                    .map(|word| (word.token_word(), word.origin())),
-                                                ),
-                                                arguments: (!matches!(
-                                                    row.header.behavior(),
-                                                    TokenBehavior::Parameter
-                                                ))
-                                                .then_some(None),
-                                                on_word: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters.packed_loads = command_state
-                                                            .stored_token_advance_counters
-                                                            .packed_loads
-                                                            .saturating_add(1);
-                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
-                                                            .stored_token_advance_counters
-                                                            .cursor_advances
-                                                            .saturating_add(1);
-                                                        generic_stored_delivery = true;
-                                                    }
-                                                },
-                                                on_parameter: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters
-                                                            .parameter_interceptions = command_state
-                                                            .stored_token_advance_counters
-                                                            .parameter_interceptions
-                                                            .saturating_add(1);
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        ResidentTokenStorage::Attempt(list) => {
-                                            #[cfg(test)]
-                                            {
-                                                command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .attempt_domain_dispatches = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .attempt_domain_dispatches
-                                                    .saturating_add(1);
-                                                command_state.roots.input.levels.cursor_mutations
-                                                    .stored_token_branch_entries = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .stored_token_branch_entries
-                                                    .saturating_add(1);
-                                            }
-                                            drive_selected_cursor! {
-                                                read: next_word_from_current_frame(
-                                                    &mut row.header.frame,
-                                                    |position| command_state.attempt.arena().resident_token_word(
-                                                        list,
-                                                        position as usize,
-                                                    ).map(|word| (word.token_word(), word.origin())),
-                                                ),
-                                                arguments: (!matches!(
-                                                    row.header.behavior(),
-                                                    TokenBehavior::Parameter
-                                                ))
-                                                .then_some(None),
-                                                on_word: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters.packed_loads = command_state
-                                                            .stored_token_advance_counters.packed_loads
-                                                            .saturating_add(1);
-                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
-                                                            .stored_token_advance_counters.cursor_advances
-                                                            .saturating_add(1);
-                                                        generic_stored_delivery = true;
-                                                    }
-                                                },
-                                                on_parameter: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters
-                                                            .parameter_interceptions = command_state
-                                                            .stored_token_advance_counters
-                                                            .parameter_interceptions
-                                                            .saturating_add(1);
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        ResidentTokenStorage::Durable(list) => {
-                                            #[cfg(test)]
-                                            {
-                                                command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .durable_domain_dispatches = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .durable_domain_dispatches
-                                                    .saturating_add(1);
-                                                command_state.roots.input.levels.cursor_mutations
-                                                    .stored_token_branch_entries = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .stored_token_branch_entries
-                                                    .saturating_add(1);
-                                            }
-                                            drive_selected_cursor! {
-                                                read: next_word_from_current_frame(
-                                                    &mut row.header.frame,
-                                                    |position| list.word_at(position as usize).map(|word| (
-                                                        word,
-                                                        tex_state::token::OriginId::UNKNOWN,
-                                                    )),
-                                                ),
-                                                arguments: (!matches!(
-                                                    row.header.behavior(),
-                                                    TokenBehavior::Parameter
-                                                ))
-                                                .then_some(None),
-                                                on_word: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters.packed_loads = command_state
-                                                            .stored_token_advance_counters.packed_loads
-                                                            .saturating_add(1);
-                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
-                                                            .stored_token_advance_counters.cursor_advances
-                                                            .saturating_add(1);
-                                                        generic_stored_delivery = true;
-                                                    }
-                                                },
-                                                on_parameter: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.stored_token_advance_counters
-                                                            .parameter_interceptions = command_state
-                                                            .stored_token_advance_counters
-                                                            .parameter_interceptions
-                                                            .saturating_add(1);
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        ResidentTokenStorage::MacroBody(body) => {
-                                            #[cfg(test)]
-                                            {
-                                                command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .macro_body_domain_dispatches = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .macro_body_domain_dispatches
-                                                    .saturating_add(1);
-                                            }
-                                            drive_selected_cursor! {
-                                                read: next_macro_body_word_from_current_frame(
-                                                    &mut row.header.frame,
-                                                    body,
-                                                ),
-                                                arguments: Some(body.arguments),
-                                                on_word: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.macro_kernel_counters.body_words = command_state
-                                                            .macro_kernel_counters
-                                                            .body_words
-                                                            .saturating_add(1);
-                                                        command_state.macro_kernel_counters.body_cursor_advances = command_state
-                                                            .macro_kernel_counters
-                                                            .body_cursor_advances
-                                                            .saturating_add(1);
-                                                        macro_body_delivery = true;
-                                                    }
-                                                },
-                                                on_parameter: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.macro_kernel_counters.body_parameter_pushes = command_state
-                                                            .macro_kernel_counters
-                                                            .body_parameter_pushes
-                                                            .saturating_add(1);
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        ResidentTokenStorage::MacroArgument(argument) => {
-                                            #[cfg(test)]
-                                            {
-                                                command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .macro_argument_branch_entries = command_state
-                                                    .roots
-                                                    .input
-                                                    .levels
-                                                    .cursor_mutations
-                                                    .macro_argument_branch_entries
-                                                    .saturating_add(1);
-                                            }
-                                            #[cfg(feature = "profiling")]
-                                            {
-                                                raw_delivery_kind =
-                                                    crate::fuel::RawDeliveryKind::MacroArgument;
-                                            }
-                                            drive_selected_cursor! {
-                                                read: next_word_from_current_frame(
-                                                    &mut row.header.frame,
-                                                    |position| argument.advance_delivery(
-                                                        position,
-                                                        &command_state.scratch,
-                                                    ),
-                                                ),
-                                                arguments: None,
-                                                on_word: {
-                                                    #[cfg(test)]
-                                                    {
-                                                        command_state.macro_kernel_counters.argument_words = command_state
-                                                            .macro_kernel_counters
-                                                            .argument_words
-                                                            .saturating_add(1);
-                                                        command_state.macro_kernel_counters.argument_cursor_advances = command_state
-                                                            .macro_kernel_counters
-                                                            .argument_cursor_advances
-                                                            .saturating_add(1);
-                                                        macro_argument_delivery = true;
-                                                    }
-                                                },
-                                                on_parameter: {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        if let Some(consume) = character_run.as_deref_mut()
-                            && delivery_mode.allows_character_run()
-                            && let tex_state::token::Token::Char {
-                                ch,
-                                cat:
-                                    tex_state::token::Catcode::Letter | tex_state::token::Catcode::Other,
-                            } = word.semantic_token()
-                        {
-                            if let Err(error) = _fuel.charge() {
-                                finish_character_run_accounting!(_fuel);
-                                return processor.fail_expanded_delivery(destination, depth, error);
-                            }
-                            #[cfg(feature = "profiling")]
-                            {
-                                character_run_count = character_run_count.saturating_add(1);
-                                character_run_kind = Some(raw_delivery_kind);
-                            }
-                            if consume(state, _fuel, diagnostic_effects, ch, origin) {
-                                continue 'delivery;
-                            }
-                            finish_character_run_accounting!(_fuel);
-                            break 'delivery DeliveryStatus::CharacterRun;
-                        }
-                        if character_run.is_some() {
-                            if let Err(error) = _fuel.charge() {
-                                finish_character_run_accounting!(_fuel);
-                                return processor.fail_expanded_delivery(destination, depth, error);
-                            }
-                            finish_character_run_accounting!(_fuel);
-                        }
-                        #[cfg(test)]
-                        {
-                            if generic_stored_delivery {
-                                command_state.stored_token_advance_counters.command_writes =
-                                    command_state
-                                        .stored_token_advance_counters
-                                        .command_writes
-                                        .saturating_add(1);
-                                command_state.raw_delivery_path_counters.stored_direct =
-                                    command_state
-                                        .raw_delivery_path_counters
-                                        .stored_direct
-                                        .saturating_add(1);
-                            }
-                            if macro_body_delivery {
-                                command_state.macro_kernel_counters.body_command_writes =
-                                    command_state
-                                        .macro_kernel_counters
-                                        .body_command_writes
-                                        .saturating_add(1);
-                            }
-                            if macro_argument_delivery {
-                                command_state.macro_kernel_counters.argument_command_writes =
-                                    command_state
-                                        .macro_kernel_counters
-                                        .argument_command_writes
-                                        .saturating_add(1);
-                                command_state
-                                    .raw_delivery_path_counters
-                                    .macro_argument_direct = command_state
-                                    .raw_delivery_path_counters
-                                    .macro_argument_direct
-                                    .saturating_add(1);
-                            }
-                        }
-                        let resolution = command.write_resolved_delivery(
-                            word,
-                            origin,
-                            identity,
-                            position,
-                            active_source,
-                            false,
-                            None,
-                            suppress_expandable,
-                            state,
-                        );
-                        #[cfg(test)]
-                        if generic_stored_delivery {
-                            command_state.stored_token_advance_counters.meaning_lookups =
-                                command_state
-                                    .stored_token_advance_counters
-                                    .meaning_lookups
-                                    .saturating_add(u64::from(resolution.meaning_lookup()));
-                        }
-                        #[cfg(feature = "profiling")]
-                        _fuel.record_raw_delivery(
-                            delivery_mode.scanner_active(),
-                            resolution.meaning_lookup(),
-                            raw_delivery_kind,
-                        );
-                        break 'fetch resolution.literal_catcode();
-                    }
-                    };
-                processor.command.delivery_mode.begin_token(
-                    command.suppresses_expandable_control_sequence(),
-                    command.is_outer(),
-                );
-                processor.command.roots.alignment.account_literal_brace(
-                    &mut processor.command.timeline,
-                    &mut command,
-                    literal_catcode,
-                );
-                processor.next_delivery_sequence = processor.next_delivery_sequence.wrapping_add(1);
-                if command.is_direct_source_delivery() {
-                    processor.readmit_delivery_stamp(command.delivery_stamp());
-                } else {
-                    processor.publish_resident_delivery();
-                }
-                if processor.command.delivery_mode.requires_slow_settlement()
-                    && let Err(failure) = processor.settle_exceptional_delivery(&mut command)
-                {
-                    return processor.fail_expanded_delivery(destination, depth, failure);
-                }
-                if character_run.is_some() {
-                    break 'delivery DeliveryStatus::CharacterRunBoundary;
-                }
-            }
-
-            let first = std::mem::take(&mut first);
-            if first_command == FirstCommandPolicy::Raw {
-                if alignment_interception == AlignmentInterceptionPolicy::Scalar
-                    && matches!(
-                        command.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    )
-                {
-                    if let Err(failure) =
-                        processor.begin_scalar_alignment_v_template(&command.materialize())
-                    {
-                        return processor.fail_expanded_delivery(destination, depth, failure);
-                    }
-                    fetch = true;
-                    continue;
-                }
-                break 'delivery DeliveryStatus::Command;
-            }
-            let action = classify_hot_command(&command, protected_macros, undefined);
-            if first && first_command == FirstCommandPolicy::MainLoopCharacter {
-                if command.command_word().is_main_loop_character() {
-                    break 'delivery DeliveryStatus::Command;
-                }
-                if action == ExpandedCommandAction::Return {
-                    debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
-                    processor.observe_expanded_delivery(&command.materialize());
-                    break 'delivery DeliveryStatus::Command;
-                }
-            }
-            if first
-                && first_command == FirstCommandPolicy::PreflightRaw
-                && action == ExpandedCommandAction::Return
-            {
-                debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
-                processor.observe_expanded_delivery(&command.materialize());
-                break 'delivery DeliveryStatus::Command;
-            }
-            match action {
-                ExpandedCommandAction::EndTemplate => {
-                    if alignment_interception == AlignmentInterceptionPolicy::Surface
-                        && matches!(
-                            command.alignment_adjustment(),
-                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                        )
-                    {
-                        break 'delivery DeliveryStatus::AlignmentEndTemplate;
-                    }
-                    // This loop's raw fetch is `get_next_with_replay_completion`,
-                    // which is §341's body without §342's tail, so §342's
-                    // consequence runs here through the same single helper
-                    // `get_next` and `get_token` use. `Ok(None)` is §789's
-                    // `goto restart`: the ⟨v_j⟩ template is live and no reader
-                    // ever sees the delimiter. Only frozen end-template input
-                    // from v-template exhaustion falls through to §380 below.
-                    if matches!(
-                        command.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    ) {
-                        if let Err(failure) =
-                            processor.begin_scalar_alignment_v_template(&command.materialize())
-                        {
-                            return processor.fail_expanded_delivery(destination, depth, failure);
-                        }
-                        fetch = true;
-                        continue;
-                    }
-                    if expanded_fetch == ExpandedFetch::XToken {
-                        // §366 `expand` has no `end_template` shortcut: it routes
-                        // straight to §375, which backs up a `frozen_endv` token
-                        // for this loop's own `get_next` to reread.
-                        if let Err(failure) = processor.insert_frozen_endv() {
-                            return processor.fail_expanded_delivery(destination, depth, failure);
-                        }
-                        fetch = true;
-                        continue;
-                    }
-                    command.convert_end_template_to_endv(processor.state.frozen_endv_token());
-                    break 'delivery processor.finish_expanded_delivery(
-                        &command,
-                        observation,
-                        delivery_expanded,
-                        alignment_interception,
-                    );
-                }
-                ExpandedCommandAction::Return => {
-                    break 'delivery processor.finish_expanded_delivery(
-                        &command,
-                        observation,
-                        delivery_expanded,
-                        alignment_interception,
-                    );
-                }
-                ExpandedCommandAction::Expand(dispatch) => {
-                    delivery_expanded = true;
-                    // TeX82 §394 aborts a non-`\long` macro call after its
-                    // recovery bookkeeping, then resumes the enclosing
-                    // expanded-token loop. A user paragraph has been backed
-                    // up for that loop; an EOF recovery paragraph was consumed
-                    // by the failed match instead.
-                    let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                    let mut command_parked = false;
-                    let failure = match processor.expand_classified_occupied(
-                        &mut command,
-                        dispatch,
-                        report_trace,
-                        delivery_expanded,
-                        &mut command_parked,
-                    ) {
-                        Ok(()) => {
-                            fetch = true;
-                            continue;
-                        }
-                        Err(failure) => failure,
-                    };
-                    // TeX82 §394 resumes expanded delivery after both an
-                    // ordinary runaway paragraph and §23's outer-validity
-                    // recovery has aborted a macro match. The latter leaves
-                    // the recovered outer token in backup input for its
-                    // normal reread.
-                    match failure {
-                        CommandError::ParagraphInMacroArgument
-                        | CommandError::OuterInMacroArgument => {
-                            fetch = true;
-                        }
-                        failure => {
-                            return processor.fail_expanded_delivery(destination, depth, failure);
-                        }
-                    }
-                }
-            }
-        };
-        assert_eq!(
-            processor.command.transient.active_expansion_depth, active_depth,
-            "nested delivery must balance expansion depth"
-        );
-        processor.command.transient.active_expansion_depth = depth;
-        if matches!(
-            status,
-            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
-        ) {
-            destination.take();
-        } else {
-            *destination = Some(command.materialize());
-        }
-        Ok(status)
-    }};
-    (
-        $name:ident,
-        fetch = $expanded_fetch:expr,
-        protected = $protected_macros:expr,
-        undefined = $undefined:expr,
-        observation = $observation:expr,
-        first = $first_command:expr,
-        replay = $replay_completion:expr,
-        alignment = $alignment_interception:expr,
-        attributes = [$($attribute:meta),* $(,)?],
-        no_characters
-    ) => {
-        impl<G> CommandProcessor<'_, '_, G> {
-            $(#[$attribute])*
-            pub(super) fn $name(
-                &mut self,
-                destination: &mut Option<CurrentCommand<G>>,
-            ) -> Result<DeliveryStatus, CommandError> {
-                let expanded_fetch = $expanded_fetch;
-                let protected_macros = $protected_macros;
-                let undefined = $undefined;
-                let observation = $observation;
-                let first_command = $first_command;
-                let replay_completion = $replay_completion;
-                let alignment_interception = $alignment_interception;
-                let character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>> = None;
-                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, charge_delivery_fetch, $)
-            }
-        }
-    };
-    (
-        $name:ident,
-        fetch = $expanded_fetch:expr,
-        protected = $protected_macros:expr,
-        undefined = $undefined:expr,
-        observation = $observation:expr,
-        first = $first_command:expr,
-        replay = $replay_completion:expr,
-        alignment = $alignment_interception:expr,
-        characters
-    ) => {
-        impl<G> CommandProcessor<'_, '_, G> {
-            #[inline(always)]
-            pub(super) fn $name(
-                &mut self,
-                destination: &mut Option<CurrentCommand<G>>,
-                consume: &mut super::MainLoopCharacterConsumer<'_, G>,
-            ) -> Result<DeliveryStatus, CommandError> {
-                let expanded_fetch = $expanded_fetch;
-                let protected_macros = $protected_macros;
-                let undefined = $undefined;
-                let observation = $observation;
-                let first_command = $first_command;
-                let replay_completion = $replay_completion;
-                let alignment_interception = $alignment_interception;
-                let character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>> =
-                    Some(consume);
-                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, skip_delivery_fetch_charge, $)
-            }
-        }
-    };
-}
-
-define_delivery_loop!(
-    raw_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::RawOnly,
-    first = FirstCommandPolicy::Raw,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [inline(always)],
-    no_characters
-);
-define_delivery_loop!(
-    raw_next_with_replay_completion,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::RawOnly,
-    first = FirstCommandPolicy::Raw,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::None,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    expanded_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [inline(always)],
-    no_characters
-);
-define_delivery_loop!(
-    expanded_next_with_replay_completion,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    protected_expanded_next_with_replay_completion,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Preserve,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::RawOnly,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    expanded_next_preserving_undefined,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Preserve,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    x_token_next,
-    fetch = ExpandedFetch::XToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    tex_alignment_lookahead_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::DeferIfExpanded,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    etex_alignment_lookahead_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Preserve,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::RawOnly,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Consume,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    preflight_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::PreflightRaw,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    resumed_expanded_next,
-    fetch = ExpandedFetch::XToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    resumed_main_loop_next,
-    fetch = ExpandedFetch::XToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::MainLoopCharacter,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    main_loop_next,
-    fetch = ExpandedFetch::XToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::MainLoopCharacter,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    alignment_expanded_next,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::Ordinary,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Surface,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    alignment_main_loop_next,
-    fetch = ExpandedFetch::XToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::Commit,
-    first = FirstCommandPolicy::MainLoopCharacter,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Surface,
-    attributes = [cold, inline(never)],
-    no_characters
-);
-define_delivery_loop!(
-    main_character_run,
-    fetch = ExpandedFetch::GetXToken,
-    protected = ProtectedMacroHandling::Expand,
-    undefined = UndefinedHandling::Diagnose,
-    observation = ExpandedObservationPolicy::RawOnly,
-    first = FirstCommandPolicy::Raw,
-    replay = ReplayCompletionPolicy::Surface,
-    alignment = AlignmentInterceptionPolicy::Scalar,
-    characters
-);
-
 impl<G> CommandProcessor<'_, '_, G> {
-    fn finish_expanded_delivery(
+    #[inline(always)]
+    fn finish_expanded_command(
         &mut self,
         command: &HotCommand<G>,
-        observation: ExpandedObservationPolicy,
         delivery_expanded: bool,
-        alignment: AlignmentInterceptionPolicy,
     ) -> DeliveryStatus {
         #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
-        let pending =
-            observation == ExpandedObservationPolicy::DeferIfExpanded && delivery_expanded;
-        if (observation == ExpandedObservationPolicy::Commit
-            || (observation == ExpandedObservationPolicy::DeferIfExpanded && !pending))
-            && self.is_observed()
-        {
+        if self.is_observed() {
             self.observe_expanded_delivery(&command.materialize());
         }
-        if alignment == AlignmentInterceptionPolicy::Surface
-            && self
-                .command
-                .alignment
-                .needs_hot_closing_brace_recovery(command)
+        if self
+            .command
+            .alignment
+            .needs_hot_closing_brace_recovery(command)
         {
-            return DeliveryStatus::AlignmentClosingBrace;
-        }
-        if pending {
+            DeliveryStatus::AlignmentClosingBrace
+        } else if delivery_expanded {
             DeliveryStatus::PendingExpanded
         } else {
             DeliveryStatus::Command
@@ -2426,8 +2905,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             destination
                 .as_ref()
                 .ok_or_else(CommandError::input_invariant)?,
-            ProtectedMacroHandling::Expand,
-            UndefinedHandling::Diagnose,
         ) {
             ExpandedCommandAction::Expand(dispatch) => dispatch,
             // Direct callers implement TeX82 §366 `expand`, where the

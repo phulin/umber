@@ -168,7 +168,11 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
     assert!(!expansion.contains("fn command_delivery_entry("));
-    for entry in ["raw_next,", "expanded_next,", "main_character_run,"] {
+    for entry in [
+        "pub(super) fn raw_next(",
+        "pub(super) fn expanded_next(",
+        "pub(super) fn main_character_run(",
+    ] {
         assert!(
             expansion.contains(entry),
             "delivery must expose the concrete {entry} loop"
@@ -188,12 +192,12 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("(HotCommand::empty(), true)"));
+    assert!(expansion.contains("(HotCommand::empty(), true, false)"));
     let delivery_entry = expansion
-        .split("(@body $processor:ident")
+        .split("pub(super) fn expanded_next(")
         .nth(1)
-        .and_then(|tail| tail.split("$name:ident,").next())
-        .expect("locate generated delivery-loop body");
+        .and_then(|tail| tail.split("/// Completes a source or synthetic").next())
+        .expect("locate expanded delivery loop");
     for forbidden in [
         ".recording",
         ".interval",
@@ -256,27 +260,27 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "input delivery must resolve the canonical command directly, without {retired}"
         );
     }
-    let resident_front = delivery_entry;
-    assert_eq!(resident_front.matches("'delivery: loop").count(), 1);
-    assert_eq!(resident_front.matches("'frame: loop").count(), 0);
-    assert!(resident_front.contains("ExpandedCommandAction::Expand(dispatch)"));
+    let resident_front = expansion
+        .split("fn next_resident_word(&mut self)")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("/// Substitution changes the input stack")
+                .next()
+        })
+        .expect("locate resident-word reader");
+    let expanded_delivery = delivery_entry;
+    assert_eq!(expanded_delivery.matches("'delivery: loop").count(), 1);
+    assert_eq!(expanded_delivery.matches("'frame: loop").count(), 0);
+    assert!(expanded_delivery.contains("ExpandedCommandAction::Expand(dispatch)"));
     assert_eq!(
         resident_front
-            .matches("match &mut command_state.roots.input.levels.rows")
+            .matches("let InputLevel::Resident(row) =")
             .count(),
         1,
         "the owning input row must dispatch directly without a universal top carrier"
     );
-    for branch in [
-        "InputLevel::Source(_source) =>",
-        "InputLevel::Resident(row) =>",
-    ] {
-        assert_eq!(
-            resident_front.matches(branch).count(),
-            1,
-            "resident front must enter {branch} exactly once"
-        );
-    }
+    assert!(expansion.contains("InputLevel::Source(source)"));
+    assert!(expansion.contains("let InputLevel::Resident(row) ="));
     assert_eq!(resident_front.matches("match &mut row.storage").count(), 1);
     for storage in ["Replay", "Attempt", "Durable", "MacroBody", "MacroArgument"] {
         assert!(
@@ -303,14 +307,17 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert!(resident_front.contains("break 'fetch literal_catcode;"));
-    assert!(resident_front.contains("resolution.literal_catcode()"));
+    assert!(expanded_delivery.contains("break 'fetch literal_catcode;"));
+    assert!(expanded_delivery.contains("resolution.literal_catcode()"));
     assert!(resident_front.contains("argument.advance_delivery("));
     assert!(resident_front.contains("next_word_from_current_frame("));
     let frame_read = expansion
         .split("fn next_word_from_current_frame(")
         .nth(1)
-        .and_then(|tail| tail.split("/// Which of TeX82").next())
+        .and_then(|tail| {
+            tail.split("/// Reads one word from an admitted macro")
+                .next()
+        })
         .expect("locate tiny current-frame read");
     for cold_transition in [
         "advance_character_run",
@@ -357,7 +364,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(!admitted_argument_read.contains("TracedTokenWord"));
     assert!(!input_stack.contains("fn deliver_top_into("));
     assert!(!input_history.contains("let Some(level) = roots.input.levels.last()"));
-    let input_top_transition = delivery_entry;
+    let input_top_transition = expanded_delivery;
     for forbidden in [
         "register_source",
         "backing_registered",
@@ -635,7 +642,7 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
     let policies = fs::read_to_string(manifest_dir.join("src/processor/mod.rs"))
-        .expect("read delivery policy definitions");
+        .expect("read processor module definitions");
     let raw = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery entry points");
     let structural = fs::read_to_string(manifest_dir.join("src/processor/expand_structural.rs"))
@@ -662,27 +669,61 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     }
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
-    let delivery_entry = expansion
-        .split("(@body $processor:ident")
+    assert_eq!(expansion.matches("macro_rules!").count(), 0);
+    for loop_name in ["raw_next", "expanded_next", "main_character_run"] {
+        assert_eq!(
+            expansion
+                .matches(&format!("pub(super) fn {loop_name}("))
+                .count(),
+            1,
+            "delivery must expose one concrete {loop_name} loop"
+        );
+    }
+    let raw_loop = expansion
+        .split("pub(super) fn raw_next(")
         .nth(1)
-        .and_then(|tail| tail.split("$name:ident,").next())
-        .expect("locate generated command-delivery body");
-    assert!(!delivery_entry.contains("DeliveryErrorSlot"));
-    assert!(!delivery_entry.contains("DeliveryFailed"));
-    assert!(delivery_entry.contains("break 'delivery DeliveryStatus::Command"));
+        .and_then(|tail| tail.split("/// The concrete TeX82 §380").next())
+        .expect("locate raw command-delivery loop");
+    let expanded_loop = expansion
+        .split("pub(super) fn expanded_next(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Completes a source or synthetic").next())
+        .expect("locate expanded command-delivery loop");
+    let character_loop = expansion
+        .split("pub(super) fn main_character_run(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Replay-aware raw delivery").next())
+        .expect("locate character-run delivery loop");
+    for delivery_loop in [raw_loop, expanded_loop, character_loop] {
+        assert!(!delivery_loop.contains("DeliveryErrorSlot"));
+        assert!(!delivery_loop.contains("DeliveryFailed"));
+        assert!(!delivery_loop.contains("Result<DeliveryStatus, DeliveryFailed>"));
+        assert!(!delivery_loop.contains("destination.as_ref()"));
+        assert_eq!(delivery_loop.matches("destination.as_mut()").count(), 0);
+        assert!(delivery_loop.contains("roots.alignment.account_literal_brace("));
+        assert!(delivery_loop.contains("resolution.literal_catcode()"));
+        assert_eq!(
+            delivery_loop.matches("requires_slow_settlement()").count(),
+            1,
+            "each concrete loop has one exceptional-mode branch"
+        );
+        assert_eq!(
+            delivery_loop.matches("write_resolved_delivery(").count(),
+            1,
+            "each concrete loop has one final-slot resolution"
+        );
+    }
     assert!(!format!("{expansion}\n{policies}").contains("DeliveryErrorSlot"));
     assert!(!format!("{expansion}\n{policies}").contains("DeliveryFailed"));
-    assert!(delivery_entry.contains("Ok(status)"));
-    assert!(!delivery_entry.contains("Result<DeliveryStatus, DeliveryFailed>"));
     assert!(!input_history.contains("take_ready_replay_completion"));
     assert!(!command_state.contains("pending_replay_completions"));
     assert!(!command_state.contains("replay_completions.iter()"));
     for slow_entry in [
-        "raw_next_with_replay_completion,",
-        "protected_expanded_next_with_replay_completion,",
-        "tex_alignment_lookahead_next,",
-        "resumed_expanded_next,",
-        "alignment_expanded_next,",
+        "pub(super) fn raw_next_with_replay_completion(",
+        "pub(super) fn protected_expanded_next_with_replay_completion(",
+        "pub(super) fn tex_alignment_lookahead_next(",
+        "pub(super) fn resumed_expanded_next(",
+        "pub(super) fn alignment_expanded_next(",
     ] {
         assert!(
             expansion.contains(slow_entry),
@@ -690,41 +731,40 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         );
     }
     assert!(
-        expansion
-            .matches("attributes = [cold, inline(never)]")
-            .count()
-            >= 5,
+        expansion.matches("#[cold]").count() >= 5,
         "rare delivery entries must stay out of line"
     );
-    let generated_signature = expansion
-        .split("pub(super) fn $name(")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split(") -> Result<DeliveryStatus, CommandError>")
-                .next()
-        })
-        .expect("locate generated delivery signature");
-    for retired_policy_parameter in [
-        "expanded_fetch:",
-        "protected_macros:",
-        "undefined:",
-        "observation:",
-        "first_command:",
-        "replay_completion:",
-        "alignment_interception:",
-        "character_run: Option",
-    ] {
-        assert!(
-            !generated_signature.contains(retired_policy_parameter),
-            "hot entry must not receive runtime policy {retired_policy_parameter}"
-        );
+    for loop_name in ["raw_next", "expanded_next", "main_character_run"] {
+        let signature = expansion
+            .split(&format!("pub(super) fn {loop_name}("))
+            .nth(1)
+            .and_then(|tail| {
+                tail.split(") -> Result<DeliveryStatus, CommandError>")
+                    .next()
+            })
+            .expect("locate concrete delivery signature");
+        for retired_policy_parameter in [
+            "expanded_fetch:",
+            "protected_macros:",
+            "undefined:",
+            "observation:",
+            "first_command:",
+            "replay_completion:",
+            "alignment_interception:",
+            "character_run: Option",
+        ] {
+            assert!(
+                !signature.contains(retired_policy_parameter),
+                "hot entry must not receive runtime policy {retired_policy_parameter}"
+            );
+        }
     }
     assert!(
         !policies.contains("ControlSequenceCreation"),
         "name creation belongs to source tokenization, not delivery policy"
     );
-    assert!(expansion.contains("ProtectedMacroHandling"));
-    assert!(expansion.contains("UndefinedHandling"));
+    assert!(!expansion.contains("ProtectedMacroHandling"));
+    assert!(!expansion.contains("UndefinedHandling"));
     assert!(
         !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
         "pending observation ownership must be typed, never a boolean"
@@ -761,7 +801,7 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         expansion
             .contains("self.expand_classified_into(destination, dispatch, report_trace, false)")
     );
-    assert!(expansion.contains("match processor.expand_classified_occupied("));
+    assert!(expansion.contains("match self.expand_classified_occupied("));
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
         "an already-classified delivery must not wrap its dispatch for handoff"
@@ -778,7 +818,7 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("(HotCommand::empty(), true)"));
+    assert!(expansion.contains("(HotCommand::empty(), true, false)"));
     assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
@@ -1192,8 +1232,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         expansion
             .matches("roots.alignment.account_literal_brace(")
             .count(),
-        1,
-        "resident words and out-of-line source tokenization share the one alignment authority"
+        4,
+        "three hot loops and the cold synthetic tail share the one alignment authority"
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment

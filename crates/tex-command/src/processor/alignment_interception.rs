@@ -37,9 +37,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §1038 rule holds inside it: the first fetch is a bare `get_next`, and
     /// a `letter`/`other_char`/`char_given` never reaches `x_token`.
     ///
-    /// It also selects which of §380's two expanded fetches this is, and the
-    /// two disagree about the `end_template` that closes a cell's ⟨v_j⟩
-    /// template -- see [`ExpandedFetch`].
+    /// It also selects the alignment-specific expanded entry. The alignment
+    /// entry preserves the `end_template` boundary that closes a cell's
+    /// ⟨v_j⟩ template instead of folding it into ordinary command delivery.
     pub fn get_x_alignment_delivery(
         &mut self,
         main_loop_active: bool,

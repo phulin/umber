@@ -2,7 +2,8 @@
 //!
 //! TeX.web §341 (`get_next`) enters the fused destination-directed state
 //! machine owned by `expand.rs`. Later scanner and alignment milestones extend
-//! the explicit policy entries below; they do not add another lexical path.
+//! the explicit cold entry wrappers below; they do not add another lexical
+//! path.
 
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -33,12 +34,29 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.raw_next(destination)?;
-        debug_assert!(matches!(
-            delivery,
-            super::DeliveryStatus::End | super::DeliveryStatus::Command
-        ));
-        Ok(delivery)
+        loop {
+            match self.raw_next(destination)? {
+                super::DeliveryStatus::ReplayCompleted(_) => continue,
+                super::DeliveryStatus::Command => {
+                    let delimiter = destination.as_ref().is_some_and(|command| {
+                        matches!(
+                            command.alignment_adjustment(),
+                            super::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    });
+                    if delimiter {
+                        let command = destination
+                            .take()
+                            .ok_or_else(CommandError::input_invariant)?;
+                        self.begin_scalar_alignment_v_template(&command)?;
+                        continue;
+                    }
+                    return Ok(super::DeliveryStatus::Command);
+                }
+                super::DeliveryStatus::End => return Ok(super::DeliveryStatus::End),
+                _ => unreachable!("raw delivery has no character or expanded event"),
+            }
+        }
     }
     /// Delivers one raw command or an executor-owned stored-episode
     /// completion. This is the raw counterpart of
@@ -135,14 +153,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
-        let delivery = self.raw_next(destination);
+        let delivery = self.get_next_into(destination);
         self.create_source_control_sequences = false;
-        let delivery = delivery?;
-        debug_assert!(matches!(
-            delivery,
-            super::DeliveryStatus::End | super::DeliveryStatus::Command
-        ));
-        Ok(delivery)
+        delivery
     }
     /// Publishes one command after the authoritative resident transition has
     /// completed its ordinary semantic treatment.
