@@ -60,7 +60,7 @@ impl HyphenationScanNode {
 struct HyphenationWalk<'walk, 'projection> {
     out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &'walk mut Vec<tex_state::node_arena::PageListId>,
-    generated_word: &'walk mut Vec<Node>,
+    generated_word: &'walk mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
     fuel: &'walk mut tex_command::CommandFuel,
     projection: &'walk mut HyphenationProjection<'projection>,
     output_len: usize,
@@ -208,6 +208,7 @@ fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::node_arena::PageListId,
+    generated_word: &mut Vec<ReconstitutedNode>,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<(tex_state::node_arena::PageListId, HyphenationContext), ExecError> {
@@ -219,15 +220,15 @@ fn hyphenated_hlist_with_projections<G>(
         .expect("hyphenation source crosses one live page-region boundary");
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
+    generated_word.clear();
     let mut out_segments = Vec::new();
-    let mut generated_word = Vec::new();
     let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
     let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
     let (retained_start, language, left, right) = {
         let mut walk = HyphenationWalk {
             out: &mut out,
             out_segments: &mut out_segments,
-            generated_word: &mut generated_word,
+            generated_word,
             fuel,
             projection,
             output_len: 0,
@@ -290,6 +291,7 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
         stores,
         diagnostic_effects,
         source,
+        scratch.reconstituted_nodes_mut(),
         fuel,
         &mut projection,
     )?;
@@ -419,7 +421,7 @@ fn project_physical_chunk_prefix<G>(
                 fuel,
             )
             .map_err(ExecError::Command)?;
-            let pre = stores.publish_page_nodes(pre);
+            let pre = crate::box_runtime::hmode::publish_reconstituted_nodes(stores, pre);
             stores.open_page_active_list(physical);
             Some(pre)
         } else {
@@ -439,16 +441,9 @@ fn project_physical_chunk_prefix<G>(
             if let Some(projected) = pre_projection {
                 pre = projected;
             }
-            stores.push_page_active_list(
-                physical,
-                Node::Disc {
-                    kind,
-                    pre,
-                    post,
-                    replace,
-                    physical_replace_count,
-                },
-            );
+            stores.construct_page_active_list(physical, |destination| {
+                destination.discretionary(kind, pre, post, replace, physical_replace_count);
+            });
             *retained_start = index + 1;
         }
     }
@@ -576,7 +571,7 @@ fn hyphenate_candidate_after_glue<G>(
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &mut Vec<tex_state::node_arena::PageListId>,
-    generated_word: &mut Vec<Node>,
+    generated_word: &mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -650,9 +645,7 @@ fn hyphenate_candidate_after_glue<G>(
         projection,
     )?;
     stores.open_page_active_list(out);
-    for node in generated_word.drain(..) {
-        stores.push_page_active_list(out, node);
-    }
+    crate::box_runtime::hmode::append_reconstituted_nodes(stores, out, generated_word.drain(..));
     if trailing_font_kern && !matches!(right_boundary, HyphenationRightBoundary::Character(_)) {
         stores.append_page_active_span_range(out, source.span(), index - 1..index);
         *output_len += 1;
@@ -961,7 +954,7 @@ fn reconstitute_hyphenated_span<G>(
     no_left_boundary: bool,
     right_boundary: HyphenationRightBoundary,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<Vec<crate::box_runtime::hmode::ReconstitutedNode>, ExecError> {
     let result = match right_boundary {
         HyphenationRightBoundary::None => {
             crate::box_runtime::hmode::reconstitute_with_right_character(
@@ -1003,7 +996,7 @@ fn append_hyphenated_word<G>(
     positions: &[usize],
     no_left_boundary: bool,
     right_boundary: HyphenationRightBoundary,
-    out: &mut Vec<Node>,
+    out: &mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -1022,8 +1015,8 @@ fn append_hyphenated_word<G>(
 
     for (node_index, node) in nodes.iter().cloned().enumerate() {
         let boundary_kern = matches!(
-            node,
-            Node::Kern {
+            &node,
+            crate::box_runtime::hmode::ReconstitutedNode::Kern {
                 kind: KernKind::Font,
                 ..
             }
@@ -1048,7 +1041,7 @@ fn append_hyphenated_word<G>(
             continue;
         }
 
-        let char_end = char_start + node_original_len(&node);
+        let char_end = char_start + node.original_len();
         if let Some(&position) = positions
             .get(position_index)
             .filter(|&&position| char_start < position && position < char_end)
@@ -1110,12 +1103,18 @@ fn discretionary_through_node<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     word: &[WordChar],
     location: ((usize, usize, usize), usize),
-    replacement: Node,
-    following: &[Node],
+    replacement: crate::box_runtime::hmode::ReconstitutedNode,
+    following: &[crate::box_runtime::hmode::ReconstitutedNode],
     right_boundary: HyphenationRightBoundary,
     fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<(Node, tex_state::node_arena::PageListId), ExecError> {
+) -> Result<
+    (
+        crate::box_runtime::hmode::ReconstitutedNode,
+        tex_state::node_arena::PageListId,
+    ),
+    ExecError,
+> {
     let (span, node_index) = location;
     let (start, position, end) = span;
     let font = word[position - 1].font;
@@ -1181,8 +1180,8 @@ fn discretionary_through_node<G>(
 /// boundary here retains TeX's exact replacement count and post-break list
 /// without flattening the semantic ligature used by packing and shipout.
 struct PhysicalDiscretionarySource<'a> {
-    replacement: &'a Node,
-    following: &'a [Node],
+    replacement: &'a crate::box_runtime::hmode::ReconstitutedNode,
+    following: &'a [crate::box_runtime::hmode::ReconstitutedNode],
     right_boundary: HyphenationRightBoundary,
 }
 
@@ -1224,16 +1223,19 @@ fn physical_discretionary_projection<G>(
         .expect("a TeX word has at most 127 physical replacement nodes");
     Ok((
         physical_replace_count,
-        stores.publish_page_nodes(minor[..minor_len].to_vec()),
+        crate::box_runtime::hmode::publish_reconstituted_slice(stores, &minor[..minor_len]),
     ))
 }
 
-fn physical_character_boundaries(nodes: &[Node], start: usize) -> Vec<usize> {
+fn physical_character_boundaries(
+    nodes: &[crate::box_runtime::hmode::ReconstitutedNode],
+    start: usize,
+) -> Vec<usize> {
     let mut boundary = start;
     nodes
         .iter()
         .map(|node| {
-            boundary = boundary.saturating_add(node_original_len(node));
+            boundary = boundary.saturating_add(node.original_len());
             boundary
         })
         .collect()
@@ -1247,9 +1249,9 @@ fn nodes_through_character_boundary(boundaries: &[usize], synchronization: usize
 }
 
 fn synchronized_physical_branch_lengths(
-    major: &[Node],
+    major: &[crate::box_runtime::hmode::ReconstitutedNode],
     major_start: usize,
-    minor: &[Node],
+    minor: &[crate::box_runtime::hmode::ReconstitutedNode],
     minor_start: usize,
     initial_end: usize,
     word_len: usize,
@@ -1270,16 +1272,16 @@ fn synchronized_physical_branch_lengths(
 
 fn automatic_discretionary_with_count<G>(
     stores: &mut CommandContext<'_, G>,
-    pre: &[Node],
-    post: &[Node],
-    replace: &[Node],
+    pre: &[ReconstitutedNode],
+    post: &[ReconstitutedNode],
+    replace: &[ReconstitutedNode],
     physical_replace_count: u8,
-) -> Option<Node> {
+) -> Option<ReconstitutedNode> {
     (physical_replace_count <= 127).then(|| {
-        let pre = stores.publish_page_nodes(pre.to_vec());
-        let post = stores.publish_page_nodes(post.to_vec());
-        let replace = stores.publish_page_nodes(replace.to_vec());
-        Node::Disc {
+        let pre = crate::box_runtime::hmode::publish_reconstituted_slice(stores, pre);
+        let post = crate::box_runtime::hmode::publish_reconstituted_slice(stores, post);
+        let replace = crate::box_runtime::hmode::publish_reconstituted_slice(stores, replace);
+        ReconstitutedNode::Discretionary {
             kind: DiscKind::AutomaticHyphen,
             pre,
             post,
@@ -1293,27 +1295,18 @@ fn automatic_discretionary_with_count<G>(
 /// discretionary and the reconstitution synchronization point. Umber keeps
 /// a ligature and its boundary kern structured, so recover that pre-collapse
 /// physical span at the construction boundary where the distinction is known.
-fn automatic_physical_replace_count(replace: &[Node]) -> Option<u8> {
+fn automatic_physical_replace_count(replace: &[ReconstitutedNode]) -> Option<u8> {
     let count = match replace {
         [
-            Node::Kern {
+            ReconstitutedNode::Kern {
                 kind: KernKind::Font,
                 ..
             },
         ] => 2,
-        [Node::Lig { .. }] => 1,
+        [ReconstitutedNode::Glyph(glyph)] if glyph.ligature_present => 1,
         _ => replace.len(),
     };
     u8::try_from(count).ok().filter(|&count| count <= 127)
-}
-
-fn node_original_len(node: &Node) -> usize {
-    match node {
-        Node::Char { .. } => 1,
-        Node::Lig { orig, .. } => orig.len(),
-        Node::Kern { .. } => 0,
-        _ => 0,
-    }
 }
 
 #[allow(clippy::too_many_arguments)] // TeX's discretionary carries reconstruction and diagnostic state.
@@ -1321,12 +1314,12 @@ fn discretionary_hyphen<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     previous_word_char: &WordChar,
-    previous_node: Option<&Node>,
-    replacement: Option<Node>,
+    previous_node: Option<&ReconstitutedNode>,
+    replacement: Option<ReconstitutedNode>,
     node_index: usize,
     fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<Node, ExecError> {
+) -> Result<ReconstitutedNode, ExecError> {
     let font = previous_word_char.font;
     let empty = tex_state::node_arena::PageListId::empty();
     let pre = if let Some(ch) = automatic_hyphen_char(stores, font, node_index, missing_hyphens) {
@@ -1348,37 +1341,37 @@ fn discretionary_hyphen<G>(
         let keeps_previous_character = matches!(
             (previous_node, reconstructed.first()),
             (
-                Some(Node::Char {
-                    font: previous_font,
-                    ch: previous_ch,
-                    origin: previous_origin,
-                }),
-                Some(Node::Char {
-                    font: reconstructed_font,
-                    ch: reconstructed_ch,
-                    origin: reconstructed_origin,
-                }),
-            ) if previous_font == reconstructed_font
-                && previous_ch == reconstructed_ch
-                && previous_origin == reconstructed_origin
+                Some(ReconstitutedNode::Glyph(previous)),
+                Some(ReconstitutedNode::Glyph(reconstructed)),
+            ) if !previous.ligature_present
+                && !reconstructed.ligature_present
+                && previous.font == reconstructed.font
+                && previous.ch == reconstructed.ch
+                && previous.origins.first() == reconstructed.origins.first()
         );
         if keeps_previous_character {
-            stores.publish_page_nodes(reconstructed[1..].to_vec())
+            crate::box_runtime::hmode::publish_reconstituted_slice(stores, &reconstructed[1..])
         } else {
-            stores.publish_page_nodes(vec![Node::Char {
-                font,
-                ch,
-                origin: OriginId::UNKNOWN,
-            }])
+            let hyphen =
+                ReconstitutedNode::Glyph(PendingHRunChar::new(font, ch, OriginId::UNKNOWN));
+            crate::box_runtime::hmode::publish_reconstituted_slice(
+                stores,
+                std::slice::from_ref(&hyphen),
+            )
         }
     } else {
         empty
     };
     let replace = replacement.as_ref().map_or_else(
         || empty,
-        |node| stores.publish_page_nodes(vec![node.clone()]),
+        |node| {
+            crate::box_runtime::hmode::publish_reconstituted_slice(
+                stores,
+                std::slice::from_ref(node),
+            )
+        },
     );
-    Ok(Node::Disc {
+    Ok(ReconstitutedNode::Discretionary {
         kind: DiscKind::AutomaticHyphen,
         pre,
         post: empty,
@@ -1441,15 +1434,17 @@ impl WordChar {
 use tex_state::CommandContext;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
-use tex_state::node::{DiscKind, KernKind, Node};
+use tex_state::node::{DiscKind, KernKind};
 use tex_state::token::OriginId;
 
 use crate::ExecError;
-use crate::mode::PendingHChar;
+use crate::box_runtime::hmode::ReconstitutedNode;
+use crate::mode::{PendingHChar, PendingHRunChar};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tex_state::node::Node;
 
     fn character(font: tex_state::ids::FontId, ch: char) -> Node {
         Node::Char {
@@ -1990,10 +1985,12 @@ mod tests {
                 physical_post_overrides: &mut physical_post_overrides,
                 missing_hyphens: &mut missing_hyphens,
             };
+            let mut generated_word = Vec::new();
             let (_, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
                 &mut diagnostic_effects,
                 source,
+                &mut generated_word,
                 fuel.fuel_mut(),
                 &mut projection,
             )
@@ -2215,10 +2212,12 @@ mod tests {
                 };
                 let mut ledger =
                     tex_command::CommandFuelLedger::new(100_000).expect("bounded fuel");
+                let mut generated_word = Vec::new();
                 let (output, context) = hyphenated_hlist_with_projections(
                     &mut stores,
                     &mut effects,
                     source,
+                    &mut generated_word,
                     ledger.fuel_mut(),
                     &mut projection,
                 )

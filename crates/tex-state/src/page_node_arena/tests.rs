@@ -542,6 +542,94 @@ fn destination_construction_is_warmed_and_linear_across_chunks() {
 }
 
 #[test]
+fn owned_destination_push_inserts_once_without_payload_copy_and_keeps_children() {
+    page_arena!(arena, pool, state, 64);
+    arena.enable_semantic_identity();
+    let child = arena.publish_owned(penalties(&[7, 8])).expect("child list");
+    let node = boxed(child);
+    let before = arena.counters();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    arena
+        .push_active_list(&mut builder, node.clone())
+        .expect("owned node destination");
+    let list = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize destination list");
+    let after = arena.counters();
+
+    assert_eq!(resolved(&arena, list), vec![node.clone()]);
+    assert_eq!(list.semantic_identity(), Some(identity(&[node]).raw()));
+    assert_eq!(
+        after.destination_values_constructed - before.destination_values_constructed,
+        1
+    );
+    assert_eq!(after.whole_payload_moves - before.whole_payload_moves, 0);
+    assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 0);
+    assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 0);
+}
+
+#[test]
+fn failed_owned_destination_push_rolls_back_node_and_annex_suffix() {
+    page_arena!(arena, pool, state, 64);
+    page_arena!(foreign, foreign_pool, foreign_state, 64);
+    arena.enable_semantic_identity();
+    let foreign_child = foreign
+        .publish_owned(penalties(&[91]))
+        .expect("foreign child");
+    let before = arena.counters();
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    let result = arena.push_active_list(
+        &mut builder,
+        Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: foreign_child,
+            post: PageListId::empty(),
+            replace: PageListId::empty(),
+            physical_replace_count: 0,
+        },
+    );
+    assert_eq!(result, Err(ForkArenaError::InvalidRegion));
+    arena
+        .rollback_active_list(&mut builder)
+        .expect("rollback failed destination");
+    assert_eq!(
+        arena.counters().new_semantic_nodes,
+        before.new_semantic_nodes
+    );
+    assert_eq!(
+        arena.counters().source_nodes_copied,
+        before.source_nodes_copied
+    );
+    assert_eq!(
+        arena.counters().destination_values_constructed,
+        before.destination_values_constructed
+    );
+    assert_eq!(
+        arena.counters().identity_nodes_hashed,
+        before.identity_nodes_hashed
+    );
+    assert_eq!(
+        arena.counters().identity_summaries_combined,
+        before.identity_summaries_combined
+    );
+
+    let mut retry = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut retry)
+        .expect("reopen after rollback");
+    arena
+        .push_active_list(&mut retry, Node::Penalty(3))
+        .expect("valid destination after rollback");
+    let list = arena
+        .finalize_active_list(&mut retry)
+        .expect("finalize retry list");
+    assert_eq!(resolved(&arena, list), penalties(&[3]));
+    assert!(list.semantic_identity().is_some());
+}
+
+#[test]
 fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
     page_arena!(arena, pool, state, 32);
     let source = arena

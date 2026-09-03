@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::fork_arena::{
     ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, UniqueArenaList,
+    ForkArenaError, OperationMark, PageMaterialLane, RegionValue, UniqueArenaList,
 };
 use crate::node::Node;
 use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
@@ -19,7 +19,7 @@ use crate::node_region::{
     OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
     structural_copy_fallback, transfer_closure_into, transfer_sealed_closure_into,
 };
-use crate::node_sequence::{SemanticSequenceIdentity, semantic_node_identity};
+use crate::node_sequence::SemanticSequenceIdentity;
 
 type PageMaterialNode = NodeRecord<PageMaterialLane>;
 type OwnedPageMaterialNode = Node<PageListId>;
@@ -172,40 +172,7 @@ impl<'a> PageMaterialNodeRef<'a> {
 
     #[must_use]
     pub(crate) fn tex_memory_words(self, etex_node_sizes: bool) -> (usize, usize) {
-        use crate::node::NodeKind;
-
-        let synctex_extra = usize::from(etex_node_sizes) * 2;
-        let Some(kind) = self.kind() else {
-            return (0, 0);
-        };
-        let variable = match kind {
-            NodeKind::Char => return (0, 1),
-            NodeKind::Lig => {
-                let mut length = 0;
-                let _ = self.visit_ligature_source(|_, _| length += 1);
-                return (2, length);
-            }
-            NodeKind::HList | NodeKind::VList | NodeKind::Unset => 7 + synctex_extra,
-            NodeKind::Rule => 4 + synctex_extra,
-            NodeKind::Ins => 5,
-            NodeKind::MathNoad => self.record.math_noad_memory_words(self.annex).unwrap_or(4),
-            NodeKind::FractionNoad => 6,
-            NodeKind::MathStyle | NodeKind::MathChoice | NodeKind::MarginKern => 3,
-            NodeKind::Kern
-            | NodeKind::Glue
-            | NodeKind::Penalty
-            | NodeKind::MathOn
-            | NodeKind::MathOff
-            | NodeKind::Nonscript => 2 + synctex_extra,
-            NodeKind::Direction if etex_node_sizes => 2 + synctex_extra,
-            NodeKind::Disc
-            | NodeKind::Mark
-            | NodeKind::Whatsit
-            | NodeKind::Direction
-            | NodeKind::MathList
-            | NodeKind::Adjust => 2,
-        };
-        (variable, 0)
+        self.record.tex_memory_words(self.annex, etex_node_sizes)
     }
 
     #[must_use]
@@ -223,6 +190,52 @@ pub(crate) struct ConstructedNodeMetadata {
     pub(crate) tex82_words: (usize, usize),
     pub(crate) etex_words: (usize, usize),
     pub(crate) font: Option<crate::ids::FontId>,
+}
+
+/// Direct child coordinates decoded from one compact resident record.
+///
+/// Compact records keep list handles in their typed annex, so they cannot
+/// implement [`RegionValue`] by themselves without borrowing that annex.  A
+/// small fixed projection lets construction validate dependencies after the
+/// destination is initialized without expanding the record into an owned
+/// [`Node`].
+struct NodeRecordDependencies {
+    lists: [Option<ArenaListId<PageMaterialLane>>; 12],
+    len: usize,
+}
+
+impl NodeRecordDependencies {
+    fn from_record(
+        record: PageMaterialNode,
+        annex: NodeAnnexView<'_>,
+    ) -> Result<Self, ForkArenaError> {
+        let mut dependencies = Self {
+            lists: [None; 12],
+            len: 0,
+        };
+        let valid = record.visit_node_lists(annex, |child| {
+            if child.is_empty() {
+                return;
+            }
+            let slot = dependencies
+                .lists
+                .get_mut(dependencies.len)
+                .expect("a TeX node has at most twelve direct child lists");
+            *slot = Some(child.coordinate());
+            dependencies.len += 1;
+        });
+        valid.map_or(Err(ForkArenaError::InvalidRange), |_| Ok(dependencies))
+    }
+}
+
+impl RegionValue<PageMaterialLane> for NodeRecordDependencies {
+    fn visit_region_lists(&self, visit: &mut dyn FnMut(ArenaListId<PageMaterialLane>)) {
+        for list in self.lists[..self.len].iter().flatten().copied() {
+            visit(list);
+        }
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
 /// Persistent coordinate-only construction state for one active node list.
@@ -1438,50 +1451,8 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         node: OwnedPageMaterialNode,
     ) -> Result<(), ForkArenaError> {
-        if !owned_node_children_are_live(&self.region.pub_arena, &self.pool.chunks, &node) {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        let child_annex_dependency_floor = self
-            .region
-            .pub_arena
-            .paired_dependency_floor_for(&self.pool.chunks, &node)?;
-        let item_identity = builder
-            .identity
-            .as_ref()
-            .map(|_| semantic_node_identity(&node));
-        let (record, annex_dependency_floor) = {
-            let mut annex =
-                NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-            let record = NodeRecord::encode_owned(node.clone(), &mut annex);
-            (record, annex.dependency_floor())
-        };
-        let slot = self
-            .region
-            .pub_arena
-            .reserve_region_value_active_list_slot(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                &node,
-                item_identity,
-            )?;
-        assert!(slot.is_none(), "reserved page-node destination is vacant");
-        *slot = Some(record);
-        self.region.pub_arena.record_active_paired_dependency(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            [annex_dependency_floor, child_annex_dependency_floor]
-                .into_iter()
-                .flatten()
-                .min(),
-        )?;
-        if let Some(item_identity) = item_identity {
-            if let Some(identity) = &mut builder.identity {
-                identity.push_back(item_identity);
-            }
-            builder.identity_work.hashed_values =
-                builder.identity_work.hashed_values.saturating_add(1);
-        }
-        Ok(())
+        self.construct_active_list(builder, |destination| destination.owned(node))
+            .map(|_| ())
     }
 
     /// Constructs one generated node directly in its final checked arena slot.
@@ -1495,35 +1466,33 @@ impl<'a> PageMaterialArena<'a> {
             .region
             .annex_arena
             .operation_mark(&self.pool.annex_chunks);
-        let (constructed, annex_dependency_floor) = {
+        let constructed = {
             let mut annex =
                 NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-            let constructed = self.region.pub_arena.construct_region_value_active_list(
+            self.region.pub_arena.construct_region_value_active_list(
                 &mut self.pool.chunks,
                 &mut builder.inner,
                 identity_enabled,
                 &mut annex,
                 |slot, annex| initialize(crate::NodeDestination::new_record(slot, annex)),
                 |record, annex| {
-                    let node = record
-                        .decode_owned(annex.view())
-                        .ok_or(ForkArenaError::InvalidRange)?;
-                    let mut font = None;
-                    node.visit_fonts(|value| {
-                        assert!(
-                            font.replace(value).is_none(),
-                            "one node has at most one direct font"
-                        );
-                    });
+                    let annex_dependency_floor = annex.dependency_floor();
+                    let annex = annex.view();
+                    let font = record.direct_font(annex);
+                    let dependencies = NodeRecordDependencies::from_record(*record, annex)?;
                     let metadata = ConstructedNodeMetadata {
-                        tex82_words: node.tex_memory_words(false),
-                        etex_words: node.tex_memory_words(true),
+                        tex82_words: record.tex_memory_words(annex, false),
+                        etex_words: record.tex_memory_words(annex, true),
                         font,
                     };
-                    Ok((semantic_node_identity(&node), metadata, node))
+                    let identity = if identity_enabled {
+                        record.semantic_identity(annex)
+                    } else {
+                        0
+                    };
+                    Ok((identity, metadata, dependencies, annex_dependency_floor))
                 },
-            );
-            (constructed, annex.dependency_floor())
+            )
         };
         let (item_identity, metadata) = match constructed {
             Ok(constructed) => constructed,
@@ -1535,11 +1504,6 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
-        self.region.pub_arena.record_active_paired_dependency(
-            &mut self.pool.chunks,
-            &mut builder.inner,
-            annex_dependency_floor,
-        )?;
         if let Some(item_identity) = item_identity {
             if let Some(identity) = &mut builder.identity {
                 identity.push_back(item_identity);
@@ -2286,18 +2250,6 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<(), ForkArenaError> {
         self.region.accept_checkpoint_candidate(self.pool, boundary)
     }
-}
-
-fn owned_node_children_are_live(
-    arena: &crate::fork_arena::ForkArena<PageMaterialNode, PageMaterialLane>,
-    pool: &crate::fork_arena::ChunkPool<PageMaterialNode>,
-    node: &OwnedPageMaterialNode,
-) -> bool {
-    let mut valid = true;
-    node.visit_node_lists(|child| {
-        valid &= arena.admit_list(pool, child.coordinate()).is_ok();
-    });
-    valid
 }
 
 fn semantic_record_identity(record: &PageMaterialNode, annex: NodeAnnexView<'_>) -> u64 {

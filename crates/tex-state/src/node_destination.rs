@@ -59,6 +59,16 @@ impl<'a> NodeDestination<'a> {
         }
     }
 
+    /// Moves one already-owned node into the reserved slot.
+    ///
+    /// Ordinary producers should prefer the variant methods below so their
+    /// final shape is explicit at the destination boundary.  The move helper
+    /// is retained for callers that already have an owned node (for example,
+    /// compatibility append paths); it still consumes the value exactly once.
+    pub(crate) fn owned(self, node: Node) {
+        self.store(node);
+    }
+
     pub fn char(self, font: FontId, ch: char, origin: OriginId) {
         self.store(Node::Char { font, ch, origin });
     }

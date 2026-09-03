@@ -836,6 +836,51 @@ impl ModeListMutation<'_> {
         self.list.append(stores, nodes);
     }
 
+    /// Runs a producer while the current pending source and reusable shaping
+    /// and ligature-work scratch remain borrowed. The destination builder
+    /// stays open for the whole run; failed production truncates its exact
+    /// node/annex suffix.
+    pub(crate) fn append_pending_constructed<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        produce: impl FnOnce(
+            &mut CommandContext<'_, G>,
+            &[PendingHChar],
+            &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
+            &mut crate::box_runtime::hmode::LigatureWorkList,
+            &mut PageMaterialActiveListBuilder,
+        ) -> Result<(), ExecError>,
+    ) -> Result<(), ExecError> {
+        self.record_nodes();
+        let ModeListBorrow::Direct(list) = &mut self.list;
+        assert!(list.admit_page_region(stores));
+        let pending = list
+            .pending_hchars
+            .as_ref()
+            .expect("pending horizontal run remains live during direct production");
+        let source = &pending.source;
+        let scratch = self
+            .scratch
+            .as_deref_mut()
+            .expect("pending horizontal runs require the mode scratch owner");
+        let (shaping, tfm_work) = (&mut scratch.shaping, &mut scratch.tfm_work);
+        stores.open_page_active_list(&mut list.active);
+        let result = produce(stores, source, shaping, tfm_work, &mut list.active);
+        match result {
+            Ok(()) => {
+                let suffix = stores.finalize_unique_page_active_list(&mut list.active);
+                list.nodes = stores.append_unique_page_nodes(list.nodes, suffix);
+                assert!(list.admit_page_region(stores));
+                Ok(())
+            }
+            Err(error) => {
+                stores.rollback_page_active_list(&mut list.active);
+                assert!(list.admit_page_region(stores));
+                Err(error)
+            }
+        }
+    }
+
     pub(crate) fn take_nodes(&mut self) -> PageListId {
         self.record_nodes();
         self.list.take_nodes()
@@ -1457,12 +1502,17 @@ pub struct PendingHChar {
 /// The buffers are deliberately outside [`ModeList`] and the mode journal:
 /// only their capacity survives a handoff. A pending run owns its source
 /// values while it is semantic state; once that owner is no longer needed,
-/// its cleared source vector can return here for the next run.
+/// its cleared source vector can return here for the next run. Reconstitution
+/// events likewise live here only while hyphenation resolves source boundaries;
+/// the TFM cursor is cleared after each run. Final page nodes never pass
+/// through this scratch owner.
 #[derive(Default)]
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
     shaping_chars: Vec<PendingHChar>,
     shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
+    tfm_work: crate::box_runtime::hmode::LigatureWorkList,
+    reconstituted: Vec<crate::box_runtime::hmode::ReconstitutedNode>,
 }
 
 impl HorizontalModeScratch {
@@ -1484,6 +1534,14 @@ impl HorizontalModeScratch {
         self.pending_source.clear();
         self.shaping_chars.clear();
         self.shaping.clear();
+        self.tfm_work.clear();
+        self.reconstituted.clear();
+    }
+
+    pub(crate) fn reconstituted_nodes_mut(
+        &mut self,
+    ) -> &mut Vec<crate::box_runtime::hmode::ReconstitutedNode> {
+        &mut self.reconstituted
     }
 
     pub(crate) fn reshape_open_type_runs_list<G>(
@@ -2635,19 +2693,6 @@ impl ModeNest {
         self.storage
             .scratch
             .reshape_open_type_runs_list(stores, source)
-    }
-
-    pub(crate) fn with_current_pending_and_shaping<R>(
-        &mut self,
-        mutate: impl FnOnce(
-            &[PendingHChar],
-            &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
-        ) -> R,
-    ) -> Option<R> {
-        let storage = &mut self.storage;
-        let (levels, scratch) = (&mut storage.levels, &mut storage.scratch);
-        let pending = levels.last()?.list.pending_hchars.as_ref()?;
-        Some(mutate(&pending.source, &mut scratch.shaping))
     }
 
     /// Appends one owned node to the current mode list through its journaled

@@ -1,6 +1,53 @@
 use super::*;
 
 impl NodeRecord<PageMaterialLane> {
+    pub(crate) fn direct_font(self, annex: NodeAnnexView<'_>) -> Option<FontId> {
+        match self.kind()? {
+            NodeKind::Char => self.character().map(|(font, _, _)| font),
+            NodeKind::Lig => self.visit_ligature_source(annex, |_, _| {}),
+            NodeKind::MarginKern => FontId::from_words(self.words()[1..5].try_into().ok()?),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn tex_memory_words(
+        self,
+        annex: NodeAnnexView<'_>,
+        etex_node_sizes: bool,
+    ) -> (usize, usize) {
+        let synctex_extra = usize::from(etex_node_sizes) * 2;
+        let Some(kind) = self.kind() else {
+            return (0, 0);
+        };
+        match kind {
+            NodeKind::Char => (0, 1),
+            NodeKind::Lig => {
+                let mut length = 0;
+                let _ = self.visit_ligature_source(annex, |_, _| length += 1);
+                (2, length)
+            }
+            NodeKind::HList | NodeKind::VList | NodeKind::Unset => (7 + synctex_extra, 0),
+            NodeKind::Rule => (4 + synctex_extra, 0),
+            NodeKind::Ins => (5, 0),
+            NodeKind::MathNoad => (self.math_noad_memory_words(annex).unwrap_or(4), 0),
+            NodeKind::FractionNoad => (6, 0),
+            NodeKind::MathStyle | NodeKind::MathChoice | NodeKind::MarginKern => (3, 0),
+            NodeKind::Kern
+            | NodeKind::Glue
+            | NodeKind::Penalty
+            | NodeKind::MathOn
+            | NodeKind::MathOff
+            | NodeKind::Nonscript => (2 + synctex_extra, 0),
+            NodeKind::Direction if etex_node_sizes => (2 + synctex_extra, 0),
+            NodeKind::Disc
+            | NodeKind::Mark
+            | NodeKind::Whatsit
+            | NodeKind::Direction
+            | NodeKind::MathList
+            | NodeKind::Adjust => (2, 0),
+        }
+    }
+
     pub(crate) fn math_noad_memory_words(self, annex: NodeAnnexView<'_>) -> Option<usize> {
         if self.kind()? != NodeKind::MathNoad || self.subtype() != 0 || self.flags() != 0 {
             return None;
