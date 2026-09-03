@@ -289,7 +289,6 @@ impl<G> Clone for HotCommand<G> {
         *self
     }
 }
-}
 
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.

@@ -1742,7 +1742,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             depth,
                         );
                     }
-                    Err(error) => return self.fail_expanded_delivery(destination, depth, error),
+                    Err(error) => {
+                        return self.fail_hot_expanded_delivery(destination, depth, error);
+                    }
                 }
             }
 
@@ -1986,7 +1988,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 );
                             }
                             Err(error) => {
-                                return self.fail_expanded_delivery(destination, depth, error);
+                                return self.fail_hot_expanded_delivery(destination, depth, error);
                             }
                         }
                     }
@@ -3688,7 +3690,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         opener: OriginId,
         delivery_expanded: bool,
         error: CommandError,
-        destination: &mut Option<CurrentCommand<G>>,
+        destination: &mut Option<HotCommand<G>>,
         depth: u32,
     ) -> Result<DeliveryStatus, CommandError> {
         let child = crate::execution_scratch::ChildContinuation::capture(
@@ -3704,15 +3706,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.command.scratch.store_expansion_frame(pending) {
             Ok(key) => {
                 self.scanner_resume = Some(key);
-                self.fail_expanded_delivery(destination, depth, error)
+                self.fail_hot_expanded_delivery(destination, depth, error)
             }
             Err((store_error, mut pending)) => {
                 if let Some(child) = pending.take_child()
                     && let Err(failure) = self.abort_continuation(child)
                 {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
-                self.fail_expanded_delivery(
+                self.fail_hot_expanded_delivery(
                     destination,
                     depth,
                     crate::scan_toks::scratch_command_error(store_error),
