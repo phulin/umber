@@ -177,7 +177,10 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
         } else {
             Vec::new()
         };
-        shape_open_type_chars(stores, &pending.source, &breaks)
+        nest.with_current_pending_and_shaping(|source, shaping| {
+            shape_open_type_chars(stores, source, &breaks, shaping)
+        })
+        .expect("pending run remains live while OpenType shaping runs")
     } else {
         let no_boundary = nest.current_list().no_boundary();
         run_tfm_ligature_machine(
@@ -550,9 +553,9 @@ pub(crate) fn shape_open_type_chars<G>(
     stores: &CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
     break_positions: &[usize],
+    scratch: &mut OpenTypeShapingScratch,
 ) -> Vec<Node> {
-    let mut scratch = OpenTypeShapingScratch::default();
-    let adjustments = plan_open_type_adjustments(stores, chars, break_positions, &mut scratch);
+    let adjustments = plan_open_type_adjustments(stores, chars, break_positions, scratch);
     let mut nodes = Vec::with_capacity(chars.len() * 2);
     for (entry, adjustment) in chars.iter().zip(adjustments.iter().copied()) {
         nodes.push(Node::Char {
@@ -567,6 +570,7 @@ pub(crate) fn shape_open_type_chars<G>(
             });
         }
     }
+    scratch.clear();
     nodes
 }
 
@@ -577,6 +581,16 @@ pub(crate) struct OpenTypeShapingScratch {
     break_bytes: Vec<usize>,
     cluster_advances: Vec<(usize, i64)>,
     adjustments: Vec<Scaled>,
+}
+
+impl OpenTypeShapingScratch {
+    pub(crate) fn clear(&mut self) {
+        self.text.clear();
+        self.byte_starts.clear();
+        self.break_bytes.clear();
+        self.cluster_advances.clear();
+        self.adjustments.clear();
+    }
 }
 
 fn plan_open_type_adjustments<'scratch, G>(
@@ -766,17 +780,20 @@ impl OpenTypeSourceWalk<'_> {
     }
 
     fn flush_run<G>(&mut self, stores: &mut CommandContext<'_, G>, end: usize) {
-        let adjustments = plan_open_type_adjustments(stores, self.chars, &[], self.shaping);
-        for (entry, adjustment) in self.chars.iter().zip(adjustments.iter().copied()) {
-            stores.construct_page_active_list(self.output, |destination| {
-                destination.char(entry.font, entry.ch, entry.origin);
-            });
-            if adjustment.raw() != 0 {
+        {
+            let adjustments = plan_open_type_adjustments(stores, self.chars, &[], self.shaping);
+            for (entry, adjustment) in self.chars.iter().zip(adjustments.iter().copied()) {
                 stores.construct_page_active_list(self.output, |destination| {
-                    destination.kern(adjustment, KernKind::Font);
+                    destination.char(entry.font, entry.ch, entry.origin);
                 });
+                if adjustment.raw() != 0 {
+                    stores.construct_page_active_list(self.output, |destination| {
+                        destination.kern(adjustment, KernKind::Font);
+                    });
+                }
             }
         }
+        self.shaping.clear();
         self.run_font = None;
         self.retained_start = end;
     }
@@ -788,6 +805,8 @@ pub(crate) fn reshape_open_type_runs_list<G>(
     chars: &mut Vec<crate::mode::PendingHChar>,
     shaping: &mut OpenTypeShapingScratch,
 ) -> tex_state::node_arena::PageListId {
+    chars.clear();
+    shaping.clear();
     let source = stores
         .admit_page_node_span(source)
         .expect("OpenType source crosses one live page-region boundary");
@@ -817,6 +836,8 @@ pub(crate) fn reshape_open_type_runs_list<G>(
         );
     }
     let saw_run = walk.saw_run;
+    chars.clear();
+    shaping.clear();
     if saw_run {
         stores.finalize_page_active_list(&mut output)
     } else {
@@ -1557,3 +1578,6 @@ pub(crate) fn last_font_char(
 pub(crate) fn font_code(ch: char) -> Result<u8, ()> {
     u8::try_from(ch as u32).map_err(|_| ())
 }
+
+#[cfg(test)]
+mod tests;

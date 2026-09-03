@@ -680,6 +680,7 @@ pub(crate) fn break_current_paragraph<G>(
         )?;
     }
     let (mut decisions, trace, missing_hyphens) = break_hlist_with_trace(
+        nest,
         stores,
         diagnostic_effects,
         hlist,
@@ -723,15 +724,8 @@ pub(crate) fn break_current_paragraph<G>(
     let mut materializer =
         ArenaPostLineMaterializer::new(stores, decisions.tape, decisions.breaks, post_params);
     let mut packing_direction_scratch = Vec::new();
-    let mut shaping_chars = Vec::new();
-    let mut shaping_scratch = crate::box_runtime::hmode::OpenTypeShapingScratch::default();
     while let Some(mut broken) = materializer.materialize_next(stores) {
-        broken.nodes = crate::box_runtime::hmode::reshape_open_type_runs_list(
-            stores,
-            broken.nodes,
-            &mut shaping_chars,
-            &mut shaping_scratch,
-        );
+        broken.nodes = nest.reshape_open_type_runs_list(stores, broken.nodes);
         broken.nodes = materialize_pdf_line_list(
             stores,
             broken.nodes,
@@ -1497,6 +1491,7 @@ fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<D
 }
 
 fn break_hlist_with_trace<G>(
+    nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     hlist: tex_state::node_arena::PageListId,
@@ -1547,6 +1542,7 @@ fn break_hlist_with_trace<G>(
             stores,
             diagnostic_effects,
             hlist,
+            nest.horizontal_mode_scratch_mut(),
             fuel,
         )?;
         let tape = ParagraphTape::analyze_arena_projection_ids(

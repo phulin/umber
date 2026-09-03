@@ -233,6 +233,125 @@ fn warmed_long_pending_run_mutation_and_rollback_allocate_nothing() {
 }
 
 #[test]
+fn pending_source_capacity_recycles_only_after_commit_and_rollback() {
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+
+    {
+        let mut list = nest.current_list_mutation();
+        list.begin_pending_hchars(
+            FontId::testing_new(2),
+            'a',
+            tex_state::token::OriginId::UNKNOWN,
+        );
+        for ch in ['b', 'c', 'd', 'e', 'f', 'g'] {
+            list.append_pending_hchar(
+                FontId::testing_new(2),
+                ch,
+                tex_state::token::OriginId::UNKNOWN,
+                None,
+            );
+        }
+        let pending_capacity = list
+            .pending_hchars()
+            .expect("pending run")
+            .source
+            .capacity();
+        assert!(pending_capacity > 0);
+    }
+    let commit = nest.begin_journal();
+    {
+        let mut list = nest.current_list_mutation();
+        assert!(list.clear_pending_hchars());
+    }
+    assert_eq!(nest.storage.scratch.pending_source.capacity(), 0);
+    nest.commit_journal(commit).expect("commit pending flush");
+    let recycled_capacity = nest.storage.scratch.pending_source.capacity();
+    assert!(recycled_capacity > 0);
+    assert!(nest.storage.scratch.pending_source.is_empty());
+
+    let before = nest.summary();
+    let rollback = nest.begin_journal();
+    nest.current_list_mutation().begin_pending_hchars(
+        FontId::testing_new(3),
+        'x',
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    assert_eq!(
+        nest.current_list()
+            .pending_hchars()
+            .expect("recycled pending run")
+            .source
+            .capacity(),
+        recycled_capacity
+    );
+    nest.rollback_journal(rollback)
+        .expect("rollback pending run");
+    assert_eq!(nest.summary(), before);
+    assert!(nest.current_list().pending_hchars().is_none());
+    assert!(nest.storage.scratch.pending_source.capacity() >= recycled_capacity);
+    assert!(nest.storage.scratch.pending_source.is_empty());
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_pending_source_flushes_allocate_nothing() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+    for _ in 0..2 {
+        let cursor = nest.begin_journal();
+        let mut list = nest.current_list_mutation();
+        list.begin_pending_hchars(
+            FontId::testing_new(2),
+            'a',
+            tex_state::token::OriginId::UNKNOWN,
+        );
+        for ch in ['b', 'c', 'd', 'e'] {
+            list.append_pending_hchar(
+                FontId::testing_new(2),
+                ch,
+                tex_state::token::OriginId::UNKNOWN,
+                None,
+            );
+        }
+        assert!(list.clear_pending_hchars());
+        drop(list);
+        nest.commit_journal(cursor).expect("warm pending flush");
+    }
+
+    let before = semantic_apply_allocations();
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        for _ in 0..16_384 {
+            let cursor = nest.begin_journal();
+            let mut list = nest.current_list_mutation();
+            list.begin_pending_hchars(
+                FontId::testing_new(2),
+                'a',
+                tex_state::token::OriginId::UNKNOWN,
+            );
+            list.append_pending_hchar(
+                FontId::testing_new(2),
+                'b',
+                tex_state::token::OriginId::UNKNOWN,
+                None,
+            );
+            assert!(list.clear_pending_hchars());
+            drop(list);
+            nest.commit_journal(cursor).expect("pending flush");
+        }
+    }
+    let after = semantic_apply_allocations();
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+}
+
+#[test]
 fn nest_usage_records_tex82_pre_push_depth_and_survives_pop() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal).expect("horizontal push");

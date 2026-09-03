@@ -447,17 +447,17 @@ impl ListJournal<'_> {
         }
     }
 
-    pub(super) fn record_pending_owned(&mut self, old: Option<super::PendingHRun>) {
+    pub(super) fn record_pending_owned(&mut self, old: &mut Option<super::PendingHRun>) {
         let position = self.inverse_positions[PENDING_HCHARS];
         if position == UNRECORDED {
-            self.push_pending_value(old);
+            self.push_pending_value(old.take());
             return;
         }
         if self.inverses[position].kind == InverseKind::PendingProjection {
             // A projection assumes the run still exists. Record the destructive
             // transition separately so reverse replay first reinstates that run
             // and can then apply the earlier narrow projection.
-            self.push_pending_value(old);
+            self.push_pending_value(old.take());
         }
     }
 
@@ -486,6 +486,25 @@ impl ListJournal<'_> {
 }
 
 impl ModeNestStorage {
+    fn recycle_pending_sources(&mut self) {
+        let scratch = &mut self.scratch;
+        for value in self
+            .journal
+            .inverse_lanes
+            .pending_values
+            .drain(..)
+            .flatten()
+        {
+            scratch.recycle_pending_source(value.source);
+        }
+    }
+
+    fn recycle_live_pending_source(&mut self, value: Option<super::PendingHRun>) {
+        if let Some(value) = value {
+            self.scratch.recycle_pending_source(value.source);
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn reset_journal_for_test(&mut self) {
         assert!(self.journal.frames.is_empty());
@@ -559,6 +578,8 @@ impl ModeNestStorage {
         let frame = self.journal.frames.pop().expect("validated frame exists");
         self.journal.projections.truncate(frame.projection_start);
         if self.journal.frames.is_empty() {
+            self.recycle_pending_sources();
+            self.scratch.clear();
             self.journal.inverses.clear();
             self.journal.inverse_lanes.clear();
         }
@@ -581,6 +602,7 @@ impl ModeNestStorage {
             level.list.component_roots = projection.component_roots;
         }
         self.journal.projections.truncate(frame.projection_start);
+        self.scratch.clear();
         Ok(())
     }
 
@@ -634,7 +656,8 @@ impl ModeNestStorage {
                 self.level_by_id_mut(level_id).list.prev_graf = inverse.payload as i32;
             }
             InverseKind::PendingAbsent => {
-                self.level_by_id_mut(level_id).list.pending_hchars = None;
+                let value = self.level_by_id_mut(level_id).list.pending_hchars.take();
+                self.recycle_live_pending_source(value);
             }
             InverseKind::PendingProjection => {
                 let projection = pop_lane(
@@ -654,7 +677,10 @@ impl ModeNestStorage {
                     &mut self.journal.inverse_lanes.pending_values,
                     inverse.payload,
                 );
-                self.level_by_id_mut(level_id).list.pending_hchars = value;
+                let list = &mut self.level_by_id_mut(level_id).list;
+                let discarded = list.pending_hchars.take();
+                list.pending_hchars = value;
+                self.recycle_live_pending_source(discarded);
             }
             InverseKind::SpaceFactor => {
                 self.level_by_id_mut(level_id).list.space_factor = inverse.payload as i32;

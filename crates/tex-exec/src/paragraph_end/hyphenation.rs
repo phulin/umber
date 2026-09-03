@@ -277,6 +277,7 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::node_arena::PageListId,
+    scratch: &mut crate::mode::HorizontalModeScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<HyphenatedHlist, ExecError> {
     let mut physical_post_overrides = Vec::new();
@@ -299,14 +300,7 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
         &physical_post_overrides,
         fuel,
     )?;
-    let mut shaping_chars = Vec::new();
-    let mut shaping_scratch = crate::box_runtime::hmode::OpenTypeShapingScratch::default();
-    let semantic = crate::box_runtime::hmode::reshape_open_type_runs_list(
-        stores,
-        semantic,
-        &mut shaping_chars,
-        &mut shaping_scratch,
-    );
+    let semantic = scratch.reshape_open_type_runs_list(stores, semantic);
     let physical_boundaries = compacted_physical_boundaries(stores, semantic, physical.len());
     Ok(HyphenatedHlist {
         semantic,
@@ -1641,11 +1635,17 @@ mod tests {
                 .expect("right minimum");
             let source = hyphenation_source(&mut stores, font);
             let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
             let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
 
-            let hyphenated =
-                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
-                    .expect("automatic discretionary construction succeeds");
+            let hyphenated = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("automatic discretionary construction succeeds");
             let semantic = stores
                 .page_nodes(hyphenated.semantic)
                 .expect("semantic list");
@@ -1706,11 +1706,17 @@ mod tests {
                 .expect("right minimum");
             let source = hyphenation_source(&mut stores, font);
             let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
             let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
 
-            let hyphenated =
-                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
-                    .expect("automatic discretionary construction succeeds");
+            let hyphenated = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("automatic discretionary construction succeeds");
             let semantic = stores
                 .page_nodes(hyphenated.semantic)
                 .expect("semantic list");
@@ -1748,11 +1754,17 @@ mod tests {
             stores.set_font_hyphen_char(font, i32::from(b'-'));
             let source = hyphenation_source(&mut stores, font);
             let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
             let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
 
-            let unchanged =
-                hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
-                    .expect("word without an allowed position succeeds");
+            let unchanged = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("word without an allowed position succeeds");
             assert!(
                 stores
                     .page_nodes(unchanged.semantic)
@@ -1865,10 +1877,16 @@ mod tests {
                 nodes.push(Node::Penalty(0));
                 let source = stores.publish_page_nodes(nodes);
                 let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut scratch = crate::mode::HorizontalModeScratch::default();
                 let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
-                let hyphenated =
-                    hyphenated_hlist_with_fuel(&mut stores, &mut effects, source, fuel.fuel_mut())
-                        .expect("hyphenation succeeds");
+                let hyphenated = hyphenated_hlist_with_fuel(
+                    &mut stores,
+                    &mut effects,
+                    source,
+                    &mut scratch,
+                    fuel.fuel_mut(),
+                )
+                .expect("hyphenation succeeds");
                 result = stores
                     .page_nodes(hyphenated.semantic)
                     .expect("semantic list")
@@ -1941,10 +1959,12 @@ mod tests {
             let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
 
             let source = stores.publish_page_nodes(nodes.clone());
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
             let visited = hyphenated_hlist_with_fuel(
                 &mut stores,
                 &mut diagnostic_effects,
                 source,
+                &mut scratch,
                 fuel.fuel_mut(),
             )
             .expect("base-whatsit visit succeeds");

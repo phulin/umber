@@ -476,9 +476,17 @@ impl ModeList {
         });
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    fn begin_pending_hchars(
+        &mut self,
+        mut source: Vec<PendingHChar>,
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+    ) {
         debug_assert!(self.pending_hchars.is_none());
-        let mut pending = PendingHRun::new(font, ch, origin, self.nodes.len());
+        debug_assert!(source.is_empty());
+        source.push(PendingHChar { font, ch, origin });
+        let mut pending = PendingHRun::new(source, self.nodes.len());
         if self.identity_enabled {
             pending.enable_semantic_identity();
         }
@@ -778,6 +786,7 @@ enum ModeListJournalBorrow<'a> {
 pub(crate) struct ModeListMutation<'a> {
     list: ModeListBorrow<'a>,
     journal: ModeListJournalBorrow<'a>,
+    scratch: Option<&'a mut HorizontalModeScratch>,
 }
 
 impl Drop for ModeListMutation<'_> {
@@ -918,7 +927,12 @@ impl ModeListMutation<'_> {
                 journal.record_pending_projection(old);
             }
         }
-        self.list.begin_pending_hchars(font, ch, origin);
+        let scratch = self
+            .scratch
+            .as_deref_mut()
+            .expect("pending horizontal runs require the mode scratch owner");
+        let source = scratch.take_pending_source();
+        self.list.begin_pending_hchars(source, font, ch, origin);
     }
 
     /// Retires the pending word after its output has been built successfully.
@@ -927,12 +941,18 @@ impl ModeListMutation<'_> {
     /// successful edge moves its sole owner into the rollback journal, so the
     /// journal retains a move-only receipt rather than a cloned `Vec` owner.
     pub(crate) fn clear_pending_hchars(&mut self) -> bool {
-        let old = self.list.take_pending_hchars();
+        let mut old = self.list.take_pending_hchars();
         let present = old.is_some();
         if self.journal_is_active()
             && let Some(mut journal) = self.list_journal()
         {
-            journal.record_pending_owned(old);
+            journal.record_pending_owned(&mut old);
+        }
+        if let Some(old) = old {
+            self.scratch
+                .as_deref_mut()
+                .expect("pending horizontal runs require the mode scratch owner")
+                .recycle_pending_source(old.source);
         }
         present
     }
@@ -1432,6 +1452,54 @@ pub struct PendingHChar {
     pub origin: OriginId,
 }
 
+/// Reusable storage for horizontal text operations.
+///
+/// The buffers are deliberately outside [`ModeList`] and the mode journal:
+/// only their capacity survives a handoff. A pending run owns its source
+/// values while it is semantic state; once that owner is no longer needed,
+/// its cleared source vector can return here for the next run.
+#[derive(Default)]
+pub(crate) struct HorizontalModeScratch {
+    pending_source: Vec<PendingHChar>,
+    shaping_chars: Vec<PendingHChar>,
+    shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
+}
+
+impl HorizontalModeScratch {
+    fn take_pending_source(&mut self) -> Vec<PendingHChar> {
+        let mut source = std::mem::take(&mut self.pending_source);
+        debug_assert!(source.is_empty());
+        source.clear();
+        source
+    }
+
+    fn recycle_pending_source(&mut self, mut source: Vec<PendingHChar>) {
+        source.clear();
+        if source.capacity() > self.pending_source.capacity() {
+            std::mem::swap(&mut source, &mut self.pending_source);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.pending_source.clear();
+        self.shaping_chars.clear();
+        self.shaping.clear();
+    }
+
+    pub(crate) fn reshape_open_type_runs_list<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::node_arena::PageListId,
+    ) -> tex_state::node_arena::PageListId {
+        crate::box_runtime::hmode::reshape_open_type_runs_list(
+            stores,
+            source,
+            &mut self.shaping_chars,
+            &mut self.shaping,
+        )
+    }
+}
+
 /// Streaming state for the unresolved tail of one horizontal character run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingHRun {
@@ -1445,12 +1513,15 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, insertion_index: usize) -> Self {
-        let first = PendingHChar { font, ch, origin };
+    fn new(source: Vec<PendingHChar>, insertion_index: usize) -> Self {
+        let first = source
+            .first()
+            .expect("a pending run owns its first source character");
+        let script = tex_fonts::character_script(first.ch);
         Self {
             insertion_index,
-            source: vec![first],
-            script: tex_fonts::character_script(ch),
+            source,
+            script,
             identity_enabled: false,
             source_identity_root: 0,
             semantic_identity_root: 0,
@@ -1677,6 +1748,7 @@ impl ModeLevelSummary {
         ModeListMutation {
             list: ModeListBorrow::Direct(&mut self.list),
             journal: ModeListJournalBorrow::None,
+            scratch: None,
         }
     }
 }
@@ -2123,7 +2195,19 @@ fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
 struct ModeNestStorage {
     levels: Vec<ModeLevelSummary>,
     journal: journal::ModeJournal,
+    scratch: HorizontalModeScratch,
     identity_enabled: bool,
+}
+
+impl ModeNestStorage {
+    fn recycle_level_pending_sources(&mut self) {
+        let scratch = &mut self.scratch;
+        for level in &mut self.levels {
+            if let Some(value) = level.list.pending_hchars.take() {
+                scratch.recycle_pending_source(value.source);
+            }
+        }
+    }
 }
 
 static NEXT_MODE_CHECKPOINT_OWNER: AtomicUsize = AtomicUsize::new(1);
@@ -2282,6 +2366,7 @@ impl ModeNest {
             storage: ModeNestStorage {
                 levels,
                 journal: journal::ModeJournal::enabled(1),
+                scratch: HorizontalModeScratch::default(),
                 identity_enabled: false,
             },
             lifecycle: ModeNestLifecycle::Independent,
@@ -2304,6 +2389,7 @@ impl ModeNest {
             storage: ModeNestStorage {
                 journal: journal::ModeJournal::enabled(summary.levels.len()),
                 levels: summary.levels,
+                scratch: HorizontalModeScratch::default(),
                 identity_enabled: false,
             },
             lifecycle: ModeNestLifecycle::Independent,
@@ -2362,6 +2448,7 @@ impl ModeNest {
             self.restart_checkpoint_is_quiescent(),
             "restart checkpoint requires one quiescent empty outer vertical mode"
         );
+        self.storage.scratch.clear();
         let reachable_state_identity_root = self
             .storage
             .identity_enabled
@@ -2426,9 +2513,11 @@ impl ModeNest {
             ModeNestLifecycle::Independent,
             "candidate settlement precedes same-owner restoration"
         );
+        self.storage.recycle_level_pending_sources();
         self.storage.levels.clear();
         self.storage.levels.push(checkpoint.outer.clone_rootless());
         self.storage.journal = journal::ModeJournal::enabled(1);
+        self.storage.scratch.clear();
         self.storage.identity_enabled = checkpoint.reachable_state_identity_root.is_some();
         Ok(())
     }
@@ -2440,6 +2529,7 @@ impl ModeNest {
             storage: ModeNestStorage {
                 levels,
                 journal: journal::ModeJournal::enabled(1),
+                scratch: HorizontalModeScratch::default(),
                 identity_enabled: checkpoint.reachable_state_identity_root.is_some(),
             },
             lifecycle: ModeNestLifecycle::CheckpointCandidate,
@@ -2521,6 +2611,7 @@ impl ModeNest {
         storage
             .journal
             .record_level_pop(popped.clone_operation_projection());
+        storage.scratch.clear();
         Ok(popped)
     }
 
@@ -2532,6 +2623,33 @@ impl ModeNest {
             .list()
     }
 
+    pub(crate) fn horizontal_mode_scratch_mut(&mut self) -> &mut HorizontalModeScratch {
+        &mut self.storage.scratch
+    }
+
+    pub(crate) fn reshape_open_type_runs_list<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        source: tex_state::node_arena::PageListId,
+    ) -> tex_state::node_arena::PageListId {
+        self.storage
+            .scratch
+            .reshape_open_type_runs_list(stores, source)
+    }
+
+    pub(crate) fn with_current_pending_and_shaping<R>(
+        &mut self,
+        mutate: impl FnOnce(
+            &[PendingHChar],
+            &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
+        ) -> R,
+    ) -> Option<R> {
+        let storage = &mut self.storage;
+        let (levels, scratch) = (&mut storage.levels, &mut storage.scratch);
+        let pending = levels.last()?.list.pending_hchars.as_ref()?;
+        Some(mutate(&pending.source, &mut scratch.shaping))
+    }
+
     /// Appends one owned node to the current mode list through its journaled
     /// mutation boundary.
     pub fn push_current_node<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
@@ -2541,7 +2659,11 @@ impl ModeNest {
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
         let storage = &mut self.storage;
         let index = storage.levels.len() - 1;
-        let (levels, journal) = (&mut storage.levels, &mut storage.journal);
+        let (levels, journal, scratch) = (
+            &mut storage.levels,
+            &mut storage.journal,
+            &mut storage.scratch,
+        );
         let list = &mut levels
             .last_mut()
             .expect("ModeNest always has at least one level")
@@ -2549,17 +2671,23 @@ impl ModeNest {
         ModeListMutation {
             list: ModeListBorrow::Direct(list),
             journal: ModeListJournalBorrow::Journaled { journal, index },
+            scratch: Some(scratch),
         }
     }
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
         let storage = &mut self.storage;
         storage.levels.get(index)?;
-        let (levels, journal) = (&mut storage.levels, &mut storage.journal);
+        let (levels, journal, scratch) = (
+            &mut storage.levels,
+            &mut storage.journal,
+            &mut storage.scratch,
+        );
         let list = &mut levels[index].list;
         Some(ModeListMutation {
             list: ModeListBorrow::Direct(list),
             journal: ModeListJournalBorrow::Journaled { journal, index },
+            scratch: Some(scratch),
         })
     }
 
