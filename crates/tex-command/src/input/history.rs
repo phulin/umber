@@ -921,10 +921,11 @@ impl<G> crate::CommandState<G> {
     /// with only the word, origin, position, and source scalars needed by the
     /// one final command-admission and settlement tail. Cold source,
     /// exhaustion, and parameter statuses carry no command borrow.
+    #[inline(always)]
     pub(crate) fn advance_resident_command_into(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
-        fuel: &mut crate::fuel::CommandFuel,
+        _fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
         mut destination: crate::command::EmptyCommand<'_, G>,
         retirement_publication: (
@@ -1468,52 +1469,35 @@ impl<G> crate::CommandState<G> {
                     .meaning_lookups
                     .saturating_add(u64::from(resolution.meaning_lookup()));
             }
-            return self.settle_resident_delivery(
-                fuel,
-                destination.reborrow(),
-                resolution,
-                #[cfg(feature = "profiling")]
+            let scanner_active = !matches!(
+                self.roots.scanner.status(),
+                crate::processor::ScannerStatus::Normal
+            );
+            let command = destination.into_resident();
+            if command.suppresses_expandable_control_sequence() {
+                command.suppress_expandable();
+            }
+            #[cfg(feature = "profiling")]
+            _fuel.record_raw_delivery(
+                scanner_active,
+                resolution.meaning_lookup(),
                 raw_delivery_kind,
             );
+            let interception = if command.is_outer() && scanner_active {
+                super::ResidentCommandInterception::Outer
+            } else {
+                self.roots.alignment.classify_delivery(
+                    &mut self.timeline,
+                    command,
+                    resolution.literal_catcode(),
+                );
+                super::ResidentCommandInterception::Ready
+            };
+            return Ok(interception);
         }
     }
 
-    /// Completes the one destination-owned resident transition in the caller's
-    /// hot frame. Keeping this tail fused is load-bearing: an out-of-line
-    /// boundary repeats the per-token result handoff after the typed branch
-    /// has already written the final command.
     #[inline(always)]
-    fn settle_resident_delivery(
-        &mut self,
-        _fuel: &mut crate::fuel::CommandFuel,
-        destination: crate::command::EmptyCommand<'_, G>,
-        resolution: tex_state::token::PackedMeaningResolution,
-        #[cfg(feature = "profiling")] kind: crate::fuel::RawDeliveryKind,
-    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
-        let scanner_active = !matches!(
-            self.roots.scanner.status(),
-            crate::processor::ScannerStatus::Normal
-        );
-        let command = destination.into_resident();
-        if command.suppresses_expandable_control_sequence() {
-            command.suppress_expandable();
-        }
-        #[cfg(feature = "profiling")]
-        _fuel.record_raw_delivery(scanner_active, resolution.meaning_lookup(), kind);
-        let interception = if command.is_outer() && scanner_active {
-            super::ResidentCommandInterception::Outer
-        } else {
-            self.roots.alignment.classify_delivery(
-                &mut self.timeline,
-                command,
-                resolution.literal_catcode(),
-            );
-            super::ResidentCommandInterception::Ready
-        };
-        Ok(interception)
-    }
-
-    #[cold]
     fn push_resident_parameter_cursor(
         &mut self,
         slot: u8,
@@ -1575,7 +1559,7 @@ impl<G> crate::CommandState<G> {
         Ok(())
     }
 
-    #[cold]
+    #[inline(always)]
     fn finish_resident_exhaustion(
         &mut self,
         resident_index: usize,

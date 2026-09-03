@@ -353,7 +353,11 @@ collector (see `src/conditionals.rs`).
   are the only mutable access. That front reads the semantic top index once
   and matches the authoritative `InputLevel` row directly; it does not first
   encode the row as a universal resident-top carrier and redispatch it. Source
-  lexing remains its own state machine. Every non-source replay-token,
+  lexing remains its own state machine. The resident front is always inlined
+  into the canonical processor loop, including its final meaning resolution,
+  suppression, fuel, and alignment settlement; no per-word result or
+  settlement helper separates cursor advancement from expansion
+  classification. Every non-source replay-token,
   durable-token, attempt-token, macro-body, and macro-argument arm enters one
   compile-time-inlined resident-token transition for first touch, parameter
   handling, exhaustion, and final delivery. Each arm keeps only its concrete
@@ -410,7 +414,10 @@ collector (see `src/conditionals.rs`).
   raw/expanded destination loop,
   expansion, scanner-status, and alignment orchestration. The fused
   destination pipeline advances resident input and inspects the command
-  in place; resident success returns only a ready/outer scalar, while its sole
+  in place. The input owner's always-inlined resident kernel is part of this
+  loop's compiled frame, so parameter substitution and ordinary exhaustion
+  reselect the authoritative top only after changing the input stack, while
+  source line acquisition remains the cold suspension boundary. Its sole
   delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
   has ended. The loop owns canonical token-to-current-meaning delivery;

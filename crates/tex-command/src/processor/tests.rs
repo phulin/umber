@@ -1203,7 +1203,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         branches: (u64, u64, u64, u64),
         transitions: (u64, u64, u64),
         macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
-        delivery_loop: (u64, u64, u64),
         retirements: (u64, u64, u64, u64, u64, u64, u64),
         allocation_calls: u64,
         requested_bytes: u64,
@@ -1328,7 +1327,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let mut destination = None;
             command.profile_reset_raw_delivery_path_counters();
             command.profile_reset_macro_kernel_counters();
-            command.profile_reset_delivery_loop_counters();
             let timeline_before = command.profile_timeline_counters();
             let commands_before = crate::command::command_ownership_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
@@ -1396,7 +1394,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 branches: command.profile_resident_input_branch_counters(),
                 transitions: command.profile_resident_delivery_transition_counters(),
                 macro_kernel: command.profile_macro_kernel_counters(),
-                delivery_loop: command.profile_delivery_loop_counters(),
                 retirements: command.profile_resident_retirement_counters(),
                 allocation_calls: allocations_after.calls - allocations_before.calls,
                 requested_bytes: allocations_after.requested_bytes
@@ -1424,7 +1421,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             branches: (11, 3, 4, 2),
             transitions: (11, 0, 0),
             macro_kernel: (1, 1, 0, 1, 1, 1, 1),
-            delivery_loop: (6, 2, 0),
             retirements: (3, 0, 0, 0, 0, 1, 0),
             allocation_calls: 0,
             requested_bytes: 0,
@@ -1437,7 +1433,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(four_k.path, (4_097, 8_192, 4_096, 0));
     assert_eq!(four_k.branches, (20_486, 4_098, 8_194, 4_097));
     assert_eq!(four_k.transitions, (20_486, 0, 0));
-    assert_eq!(four_k.delivery_loop, (20_481, 2, 0));
     assert_eq!(
         four_k.macro_kernel,
         (4_096, 4_096, 0, 4_096, 4_096, 4_096, 4_096)
@@ -1450,7 +1445,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(four_k.resolved_writes, 20_481);
 
     let expanded_four_k = run(4_096, true);
-    assert_eq!(expanded_four_k.delivery_loop, (20_481, 2, 0));
     assert_eq!(expanded_four_k.macro_kernel, four_k.macro_kernel);
     assert_eq!(expanded_four_k.allocation_calls, 0);
     assert_eq!(expanded_four_k.requested_bytes, 0);

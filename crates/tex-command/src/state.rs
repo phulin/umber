@@ -167,8 +167,6 @@ pub struct CommandState<G> {
     pub(crate) macro_kernel_counters: MacroKernelCounters,
     /// Focused proof that resident success is a scalar return and status
     /// materialization is confined to cold transitions.
-    #[cfg(test)]
-    pub(crate) delivery_loop_counters: DeliveryLoopCounters,
     /// Exact operation census for the singular inline stored-token advance.
     /// Shipping builds contain neither the counters nor their updates.
     #[cfg(test)]
@@ -185,14 +183,6 @@ pub(crate) struct MacroKernelCounters {
     pub(crate) argument_words: u64,
     pub(crate) argument_cursor_advances: u64,
     pub(crate) argument_command_writes: u64,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct DeliveryLoopCounters {
-    pub(crate) warm_scalar_returns: u64,
-    pub(crate) cold_status_materializations: u64,
-    pub(crate) intermediate_status_relays: u64,
 }
 
 #[cfg(test)]
@@ -431,8 +421,6 @@ impl<G> Default for CommandState<G> {
             token_collector_path_counters: TokenCollectorPathCounters::default(),
             #[cfg(test)]
             macro_kernel_counters: MacroKernelCounters::default(),
-            #[cfg(test)]
-            delivery_loop_counters: DeliveryLoopCounters::default(),
             #[cfg(test)]
             stored_token_advance_counters: StoredTokenAdvanceCounters::default(),
         }
@@ -1330,27 +1318,6 @@ impl<G> CommandState<G> {
             counters.argument_words,
             counters.argument_cursor_advances,
             counters.argument_command_writes,
-        )
-    }
-
-    /// Resets the concrete delivery-loop status evidence.
-    #[doc(hidden)]
-    #[cfg(test)]
-    pub fn profile_reset_delivery_loop_counters(&mut self) {
-        self.delivery_loop_counters = DeliveryLoopCounters::default();
-    }
-
-    /// Returns `(warm scalar returns, cold status materializations,
-    /// intermediate status relays)` for the concrete raw/expanded loops.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_delivery_loop_counters(&self) -> (u64, u64, u64) {
-        let counters = self.delivery_loop_counters;
-        (
-            counters.warm_scalar_returns,
-            counters.cold_status_materializations,
-            counters.intermediate_status_relays,
         )
     }
 

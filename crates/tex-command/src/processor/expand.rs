@@ -942,30 +942,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return self.fail_expanded_delivery(destination, depth, failure);
                 }
                 'resident: loop {
-                    let transition = self.command.advance_resident_command_into(
+                    let interception = match self.command.advance_resident_command_into(
                         self.state,
                         self.fuel,
                         self.create_source_control_sequences,
                         command.empty_for_raw_delivery(),
                         (&mut self.observer, &mut self.immediate_write_retirement),
-                    );
-                    #[cfg(test)]
-                    if transition.is_ok() {
-                        self.command.delivery_loop_counters.warm_scalar_returns = self
-                            .command
-                            .delivery_loop_counters
-                            .warm_scalar_returns
-                            .saturating_add(1);
-                    } else {
-                        self.command
-                            .delivery_loop_counters
-                            .cold_status_materializations = self
-                            .command
-                            .delivery_loop_counters
-                            .cold_status_materializations
-                            .saturating_add(1);
-                    }
-                    let interception = match transition {
+                    ) {
                         Ok(interception) => interception,
                         Err(cold) => {
                             let settled = match self.settle_resident_cold_transition(cold, command)

@@ -956,17 +956,19 @@ every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
 The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
-resident transition reads the `InputStack` top index once and matches the
+resident kernel, always inlined into the canonical processor loop, reads the
+`InputStack` top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal resident-
 top enum, repeats no row discrimination, and returns no cursor carrier. Its
 source branch lends the row and resident slot together; its one resident branch
 makes one tagged storage choice among replay, durable, attempt, macro-body, and
 macro-argument coordinates. Each advances the common frame position before ending that
 top borrow, then enters the same branch-independent final-command write and
-settlement tail. The same transition settles fuel, suppression, alignment, or
-parameter replay and returns only its final status. No cursor/token carrier,
-intermediate delivery result, second top lookup, or diagnostic revision write
-crosses that boundary. The stored branches have no wrapper or status of their
+settlement tail in that compiled frame. The same kernel settles fuel,
+suppression, alignment, or parameter replay without a per-word result or
+settlement-helper handoff. No cursor/token carrier, intermediate delivery
+result, second top lookup, or diagnostic revision write crosses that boundary.
+The stored branches have no wrapper or status of their
 own: admission chooses the exact top-row tag once, and the warm branch performs one packed load
 and scalar advance, intercepts a parameter in place, or performs one final
 write with at most one dense meaning lookup. Replay words advance from the

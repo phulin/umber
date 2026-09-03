@@ -499,7 +499,6 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
         let snapshot = command.snapshot(universe).expect("input prefix snapshots");
         #[cfg(feature = "profiling")]
         {
-            command.profile_reset_delivery_loop_counters();
             command.profile_reset_stored_token_advance_counters();
         }
         let mut capabilities = CommandHostCapabilities::default();
@@ -644,12 +643,6 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
         );
         #[cfg(feature = "profiling")]
         {
-            let (warm, _cold, intermediate) = processor.command.profile_delivery_loop_counters();
-            assert!(
-                warm > 0,
-                "suspend/resume/rollback must retain scalar delivery"
-            );
-            assert_eq!(intermediate, 0);
             let (
                 _selections,
                 loads,

@@ -165,6 +165,10 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         1,
         "command state must own exactly one completed resident transition"
     );
+    assert!(
+        input_history
+            .contains("#[inline(always)]\n    pub(crate) fn advance_resident_command_into(")
+    );
     assert!(!input_stack.contains("fn deliver_top_into("));
     for retired in [
         "fn take_input_token(",
@@ -206,7 +210,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(!format!("{input_history}\n{levels}").contains("StoredTokenAdvance"));
     assert!(!input_history.contains("ResidentMacroBodyTop"));
     assert!(!input_history.contains("ResidentMacroArgumentTop"));
-    assert!(input_history.contains("#[inline(always)]\n    fn settle_resident_delivery("));
+    assert!(!input_history.contains("fn settle_resident_delivery("));
     assert_eq!(
         command.matches("fn write_resolved_delivery(").count(),
         1,
@@ -238,7 +242,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     let resident_front = input_history
         .split("fn advance_resident_command_into(")
         .nth(1)
-        .and_then(|tail| tail.split("fn settle_resident_delivery(").next())
+        .and_then(|tail| tail.split("fn push_resident_parameter_cursor(").next())
         .expect("locate typed resident-delivery front");
     assert_eq!(
         resident_front
@@ -284,12 +288,10 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         );
     }
     assert_eq!(
-        resident_front
-            .matches("return self.settle_resident_delivery(")
-            .count(),
-        1,
-        "all resident variants must share one settlement tail"
+        resident_front.matches("return Ok(interception);").count(),
+        1
     );
+    assert!(resident_front.contains("resolution.literal_catcode()"));
     assert!(resident_front.contains("argument.advance_delivery(position, &self.scratch)"));
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")

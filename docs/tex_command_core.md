@@ -197,7 +197,8 @@ arm enters one compile-time-inlined token-row transition; the arm itself owns
 only its lifetime-specific storage read and cursor update. The shared
 transition applies first-touch rollback capture, parameter interception,
 exhaustion, and yields the packed word, origin, position, and source scalars.
-It adds no runtime carrier or second storage dispatch. After that borrow ends, one branch-independent
+It is forced into the canonical command loop's compiled frame and adds no
+runtime call/result carrier or second storage dispatch. After that borrow ends, one branch-independent
 `EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
 and delivery facts into the caller's address and returns only the scalar packed-
 resolution fact. The authoritative `CommandState` resident transition then
@@ -225,6 +226,13 @@ barrier alone replaces the initialized value and moves its prior command into
 the typed expansion-suspension slot. There is no process-global
 slot, mailbox, destination inference, nested-request reuse, or second raw
 representation.
+
+The always-inlined resident kernel also owns final suppression, fuel, and
+alignment settlement rather than returning through a second hot helper.
+Parameter substitution and ordinary token exhaustion mutate the input stack
+and immediately reselect its authoritative top. Cold source-line acquisition,
+source EOF, retained templates, and replay-completion publication alone leave
+that compiled resident loop through an explicit transition.
 
 The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor, and rollback
