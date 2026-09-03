@@ -1032,7 +1032,6 @@ impl<'a, G> EngineSession<'a, G> {
                 format_dump: None,
             })));
         }
-        self.control.finalize_pdf_navigation(self.stores);
         let terminal_step = self.terminal_step.ok_or_else(|| {
             SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(
                 "terminal output capture has no completed canonical step".into(),
@@ -1042,6 +1041,11 @@ impl<'a, G> EngineSession<'a, G> {
             .output_ledger
             .terminal_receipt(&self.control, terminal_step)
             .map_err(SessionError::EngineCompletion)?;
+        // The terminal ledger is armed only after final page/output and named
+        // boundary work has settled. PDF navigation warnings are a later
+        // close-files publication and must therefore precede detachment while
+        // remaining outside the terminal checkpoint itself.
+        self.control.finalize_pdf_navigation(self.stores);
         let mut dvi_writer = self
             .loaded_job_framing
             .then(|| DviStreamWriter::new(Vec::new()));

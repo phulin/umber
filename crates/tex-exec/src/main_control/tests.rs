@@ -8027,6 +8027,139 @@ fn terminal_named_boundary_without_a_live_root_is_not_restartable() {
 }
 
 #[test]
+fn terminal_named_boundary_drain_finishes_pending_page_output_first() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\end");
+        admitted!(stores, |context| {
+            context.record_best_page_break(0, Scaled::from_raw(0), 0);
+            context.record_page_fire_up(0);
+        });
+        control
+            .pending_named_boundaries
+            .push_back(PendingNamedBoundary {
+                boundary: crate::EngineBoundary::ShipoutComplete,
+                source_role: Some(tex_command::SourceRole::RootDocument),
+            });
+
+        let mut ledger = crate::OutputLedger::new();
+        let mut checkpoints = Vec::new();
+        crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+            .publish_terminal_boundary_suffix(&mut checkpoints)
+            .expect("terminal page output settles before boundaries");
+
+        assert!(!control.boxes.output_routine_active);
+        assert!(!control.page_region_succession_pending);
+        assert_eq!(
+            stores.world().artifact_commits().len(),
+            1,
+            "the pending page fire-up was consumed before boundary publication"
+        );
+        admitted!(stores, |context| {
+            assert!(context.page_fire_up().is_none());
+            assert!(!context.page_builder_resume_after_output_pending());
+        });
+        assert!(control.pending_named_boundaries.is_empty());
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(
+            checkpoints[0].boundary(),
+            crate::EngineBoundary::ShipoutComplete
+        );
+        assert_eq!(
+            checkpoints[0].artifact_prefix_len(),
+            1,
+            "the terminal checkpoint sees the page artifact after output settles"
+        );
+    });
+}
+
+#[test]
+fn terminal_named_boundary_drain_filters_nonretained_source_roles() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        for (boundary, source_role) in [
+            (
+                crate::EngineBoundary::ShipoutComplete,
+                tex_command::SourceRole::ProjectPackageClass,
+            ),
+            (
+                crate::EngineBoundary::OuterParagraphEnd,
+                tex_command::SourceRole::RootDocument,
+            ),
+            (
+                crate::EngineBoundary::ShipoutComplete,
+                tex_command::SourceRole::GeneratedInput,
+            ),
+        ] {
+            control
+                .pending_named_boundaries
+                .push_back(PendingNamedBoundary {
+                    boundary,
+                    source_role: Some(source_role),
+                });
+        }
+
+        control
+            .publish_terminal_named_boundaries(stores)
+            .expect("terminal source-role filter drains every intent");
+
+        assert!(control.pending_named_boundaries.is_empty());
+        assert_eq!(
+            control.take_completed_boundaries(),
+            [crate::EngineBoundary::OuterParagraphEnd]
+        );
+        let eligibilities = control.take_checkpoint_eligibilities();
+        assert_eq!(eligibilities.len(), 1);
+        assert_eq!(
+            eligibilities[0].boundary(),
+            crate::EngineBoundary::OuterParagraphEnd
+        );
+        assert!(!eligibilities[0].is_restartable());
+    });
+}
+
+#[test]
+fn terminal_named_boundary_drain_keeps_uncheckpointable_end_state_as_evidence() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"{\end");
+        assert!(matches!(
+            control.advance_episode(stores),
+            Ok(StepResult::Progress(MainControlStep::End))
+        ));
+        assert!(!stores.checkpoint_eligible());
+
+        for boundary in [
+            crate::EngineBoundary::OuterParagraphEnd,
+            crate::EngineBoundary::ShipoutComplete,
+        ] {
+            control
+                .pending_named_boundaries
+                .push_back(PendingNamedBoundary {
+                    boundary,
+                    source_role: Some(tex_command::SourceRole::RootDocument),
+                });
+        }
+        control
+            .publish_terminal_named_boundaries(stores)
+            .expect("terminal evidence drains despite strict checkpoint state");
+
+        assert!(control.pending_named_boundaries.is_empty());
+        assert_eq!(
+            control.take_completed_boundaries(),
+            [
+                crate::EngineBoundary::OuterParagraphEnd,
+                crate::EngineBoundary::ShipoutComplete,
+            ]
+        );
+        assert!(
+            control.take_checkpoint_eligibilities().is_empty(),
+            "an uncheckpointable terminal state cannot fabricate restart evidence"
+        );
+    });
+}
+
+#[test]
 fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

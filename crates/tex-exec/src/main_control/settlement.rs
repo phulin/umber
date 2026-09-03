@@ -615,7 +615,16 @@ impl<G> MainControl<G> {
     /// Publishes at most one queued named boundary after every command-owned
     /// continuation has retired. This runs before another delivery, so a
     /// captured row cannot include effects from the following command.
+    #[inline]
     pub(super) fn publish_pending_named_boundary(
+        &mut self,
+        stores: &mut Universe<G>,
+    ) -> Result<Option<crate::EngineBoundary>, ExecError> {
+        self.publish_pending_named_boundary_with_terminal_policy::<false>(stores)
+    }
+
+    #[inline]
+    fn publish_pending_named_boundary_with_terminal_policy<const TERMINAL: bool>(
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<Option<crate::EngineBoundary>, ExecError> {
@@ -630,7 +639,15 @@ impl<G> MainControl<G> {
             // level-zero admission barrier. Keep the intent queued while a
             // TeX group or transactional suffix is still live; the next
             // settlement pass can publish it after that owner unwinds.
-            if !stores.checkpoint_eligible() {
+            let checkpoint_eligible = stores.checkpoint_eligible();
+            if !checkpoint_eligible
+                && (!TERMINAL
+                    || stores
+                        .command_context()
+                        .expect("terminal named-boundary admission")
+                        .execution_group_depth()
+                        == 0)
+            {
                 return Ok(None);
             }
             if pending.boundary == crate::EngineBoundary::OuterParagraphEnd
@@ -641,11 +658,12 @@ impl<G> MainControl<G> {
             if pending.boundary == crate::EngineBoundary::ShipoutComplete
                 && (self.boxes.output_routine_active
                     || self.modes.depth() != 1
-                    || stores
-                        .command_context()
-                        .expect("shipout-boundary admission")
-                        .execution_group_depth()
-                        != 0)
+                    || (!TERMINAL
+                        && stores
+                            .command_context()
+                            .expect("shipout-boundary admission")
+                            .execution_group_depth()
+                            != 0))
             {
                 return Ok(None);
             }
@@ -701,12 +719,18 @@ impl<G> MainControl<G> {
                         context: "rootless shipout page release",
                     })?;
             }
-            let eligibility = if self.restartable_root_source_identity().is_some() {
-                crate::checkpoint::CheckpointEligibility::named(published.boundary)
-            } else {
-                crate::checkpoint::CheckpointEligibility::evidence_only(published.boundary)
-            };
-            self.completed_checkpoint_eligibilities.push(eligibility);
+            // Terminal cleanup may leave a TeX group open after reporting it.
+            // That is a legal end-of-job state, but it is not a checkpoint
+            // state: retain the boundary event without manufacturing a
+            // capture that the strict state owner would reject.
+            if checkpoint_eligible {
+                let eligibility = if self.restartable_root_source_identity().is_some() {
+                    crate::checkpoint::CheckpointEligibility::named(published.boundary)
+                } else {
+                    crate::checkpoint::CheckpointEligibility::evidence_only(published.boundary)
+                };
+                self.completed_checkpoint_eligibilities.push(eligibility);
+            }
             self.completed_boundaries.push(published.boundary);
             return Ok(Some(published.boundary));
         }
@@ -720,10 +744,65 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<(), ExecError> {
+        self.finish_terminal_page_output(stores)?;
         while !self.pending_named_boundaries.is_empty()
-            && self.publish_pending_named_boundary(stores)?.is_some()
+            && self
+                .publish_pending_named_boundary_with_terminal_policy::<true>(stores)?
+                .is_some()
         {}
         Ok(())
+    }
+
+    /// Completes output work which was opened by the terminal command before
+    /// the driver may arm its terminal receipt. The ordinary page/output
+    /// owner remains authoritative: each continuation is resumed through the
+    /// same operation driver, and no page or boundary queue is reconstructed
+    /// here.
+    fn finish_terminal_page_output(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+        loop {
+            let pending = PendingPageOutputFacts::capture(
+                &stores
+                    .command_context()
+                    .expect("terminal page-output admission"),
+            );
+            if !self.boxes.output_routine_active
+                && !self.page_region_succession_pending
+                && !pending.is_pending()
+            {
+                return Ok(());
+            }
+            // Keep the already-committed FIFO out of the ordinary driver's
+            // admission hook while output continuations run. The terminal
+            // order is page/output first, boundaries second; any intent
+            // created by the continuation is appended behind the held FIFO.
+            let held_boundaries = std::mem::take(&mut self.pending_named_boundaries);
+            let stepped = self.advance(stores);
+            let generated_boundaries = std::mem::take(&mut self.pending_named_boundaries);
+            self.pending_named_boundaries = held_boundaries;
+            self.pending_named_boundaries.extend(generated_boundaries);
+            let step = stepped?;
+            if matches!(step, StepResult::Suspended(_)) {
+                return Err(ExecError::MissingToken {
+                    context: "terminal page-output resource",
+                });
+            }
+            let remaining = PendingPageOutputFacts::capture(
+                &stores
+                    .command_context()
+                    .expect("terminal page-output admission"),
+            );
+            if matches!(
+                step,
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
+            ) && (self.boxes.output_routine_active
+                || self.page_region_succession_pending
+                || remaining.is_pending())
+            {
+                return Err(ExecError::MissingToken {
+                    context: "terminal page-output continuation",
+                });
+            }
+        }
     }
 }
 
