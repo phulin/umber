@@ -1512,3 +1512,83 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
     assert!(controls.contains("size_of::<SynchronousExpandedControl>() <= 128"));
     assert!(controls.contains("size_of::<SynchronousFontNameControl>() <= 32"));
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architectural source guard
+fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let production = [
+        "src/conditionals.rs",
+        "src/scan_toks.rs",
+        "src/scanners/expression.rs",
+        "src/scanners/font.rs",
+        "src/scanners/hyphenation.rs",
+        "src/scanners/scalar.rs",
+        "src/scanners/structured.rs",
+        "src/scanners/token_list.rs",
+        "src/processor/alignment_interception.rs",
+        "src/processor/backup.rs",
+        "src/processor/expand_structural.rs",
+        "src/processor/expand_pdf.rs",
+        "src/processor/expand_pdf_file.rs",
+        "src/processor/expand_pdf_string.rs",
+    ];
+    let forbidden = [
+        "self.expanded_next(",
+        "self.get_x_token(",
+        "self.get_x_token_into(",
+        "self.x_token_next(",
+        "self.expand_into(",
+    ];
+    for relative in production {
+        let source = fs::read_to_string(manifest_dir.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        // Keep this guard focused on executable call edges. Documentation in
+        // these modules names the TeX routines being replaced, but cannot
+        // create a Rust re-entry edge.
+        let executable = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for call in forbidden {
+            assert!(
+                !executable.contains(call),
+                "{relative} must return a typed request instead of recursively entering delivery through {call}"
+            );
+        }
+    }
+
+    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
+        .expect("read typed request boundary");
+    let request_start = expansion
+        .find("pub(crate) fn request_expanded_token(")
+        .expect("locate typed expanded-token request");
+    let request_tail = &expansion[request_start..];
+    let request_body = request_tail
+        .split("    /// Requests one already-delivered command's expansion")
+        .next()
+        .expect("typed expanded-token request has a bounded body");
+    assert_eq!(
+        request_body
+            .matches("self.get_x_token_into(destination)")
+            .count(),
+        1,
+        "the typed expanded-token request must have one canonical driver bridge"
+    );
+    let expansion_start = expansion
+        .find("pub(crate) fn request_expansion_into(")
+        .expect("locate typed expansion request");
+    let expansion_tail = &expansion[expansion_start..];
+    let expansion_body = expansion_tail
+        .split("    /// Delivers protected replay-aware expansion")
+        .next()
+        .expect("typed expansion request has a bounded body");
+    assert_eq!(
+        expansion_body
+            .matches("self.expand_into(destination, report_trace)")
+            .count(),
+        1,
+        "the typed expansion request must have one canonical driver bridge"
+    );
+}
