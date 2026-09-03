@@ -50,6 +50,46 @@ fn synchronous_the_controls_are_lifo_and_do_not_retain_commands() {
 }
 
 #[test]
+fn synchronous_csname_controls_reuse_the_name_lane_in_lifo_order() {
+    let mut work = ExpansionWork::<()>::default();
+    work.push_csname_control(OriginId::UNKNOWN, false)
+        .expect("outer csname");
+    for byte in b"outer" {
+        work.push_name_byte(*byte).expect("outer name byte");
+    }
+    work.push_csname_control(OriginId::UNKNOWN, true)
+        .expect("inner csname");
+    for byte in b"inner" {
+        work.push_name_byte(*byte).expect("inner name byte");
+    }
+    let inner = work
+        .top_csname_control()
+        .expect("inner control")
+        .expect("top");
+    assert_eq!(
+        work.name_bytes(inner.name)
+            .expect("inner name")
+            .collect::<Vec<_>>(),
+        b"inner"
+    );
+    let inner = work.pop_csname_control().expect("inner pop");
+    assert!(inner.previous_in_csname);
+    let outer = work
+        .top_csname_control()
+        .expect("outer control")
+        .expect("top");
+    assert_eq!(
+        work.name_bytes(outer.name)
+            .expect("outer name")
+            .collect::<Vec<_>>(),
+        b"outer"
+    );
+    let outer = work.pop_csname_control().expect("outer pop");
+    assert!(!outer.previous_in_csname);
+    assert!(work.is_quiescent());
+}
+
+#[test]
 fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
     let mut work = ExpansionWork::<()>::default();
     work.push_the_control(OriginId::UNKNOWN)
