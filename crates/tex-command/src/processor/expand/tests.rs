@@ -132,6 +132,33 @@ fn deeply_nested_the_requests_use_the_control_lane() {
 }
 
 #[test]
+fn nested_number_conversions_return_through_the_shared_delivery_loop() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        let mut input = vec![number, number, number];
+        input.extend([
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            },
+        ]);
+        crate::test_harness::push(&mut command, input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "4X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn ifcsname_collects_in_the_shared_delivery_lane() {
     crate::test_harness::with_universe(|universe| {
         let ifcsname = install_static(

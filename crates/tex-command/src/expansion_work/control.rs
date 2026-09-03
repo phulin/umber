@@ -250,6 +250,31 @@ pub(crate) struct SynchronousIfNumberControl {
     pub(crate) phase: SynchronousIfNumberPhase,
 }
 
+/// Compact scanner state for `\number` and `\romannumeral`.  The rendered
+/// result is inserted only after the scalar boundary; while digits are being
+/// requested this record retains no rich command or token-list owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousNumberPhase {
+    Need,
+    Await {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    Accumulating {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousNumberControl {
+    pub(crate) opener: OriginId,
+    pub(crate) roman: bool,
+    pub(crate) phase: SynchronousNumberPhase,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -299,6 +324,7 @@ pub(crate) enum ExpansionControl<G> {
     ExpandAfterSync(SynchronousExpandAfterControl<G>),
     IfCompare(SynchronousIfCompareControl),
     IfNumber(SynchronousIfNumberControl),
+    Number(SynchronousNumberControl),
     Primitive(PrimitiveControl<G>),
 }
 
@@ -306,4 +332,5 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
+    assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
 };

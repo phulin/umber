@@ -1200,6 +1200,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            let number_control = self
+                .command
+                .scratch
+                .top_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = number_control {
+                if matches!(
+                    action,
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                ) && !matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
+                ) {
+                    let _complete = self.advance_number_continuation(command)?;
+                    fetch = true;
+                    continue;
+                }
+            }
+
             // The comparison controls are entered from the hot loop rather
             // than through the legacy scalar conditional evaluator. Keeping
             // this cutover here leaves that evaluator available to cold
@@ -1220,6 +1239,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     self.begin_if_number_continuation(kind, false)?;
                 }
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
+            )) = action
+            {
+                self.begin_number_continuation(
+                    command.origin(),
+                    primitive == ExpandablePrimitive::RomanNumeral,
+                )?;
                 fetch = true;
                 continue;
             }
@@ -1490,6 +1521,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     }
                             )
                         });
+                    let number_was_awaiting = self
+                        .command
+                        .scratch
+                        .top_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousNumberPhase::Await {
+                                    ..
+                                }
+                            )
+                        });
+                    let number_should_await = self
+                        .command
+                        .scratch
+                        .top_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousNumberPhase::Need
+                                    | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
+                                        ..
+                                    }
+                            )
+                        });
                     if if_compare_should_await {
                         self.command
                             .scratch
@@ -1500,6 +1558,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.command
                             .scratch
                             .await_if_number_operand()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                    }
+                    if number_should_await {
+                        self.command
+                            .scratch
+                            .await_number_operand()
                             .map_err(crate::scan_toks::scratch_command_error)?;
                     }
                     let mut command_parked = false;
@@ -1524,6 +1588,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 self.command
                                     .scratch
                                     .resume_if_number_operand()
+                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            }
+                            if number_should_await || number_was_awaiting {
+                                self.command
+                                    .scratch
+                                    .resume_number_operand()
                                     .map_err(crate::scan_toks::scratch_command_error)?;
                             }
                             // Some expandable commands consume themselves

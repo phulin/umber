@@ -6,6 +6,7 @@ use tex_state::token::{OriginId, Token};
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::{CommandError, CurrentCommand};
+use crate::command::HotCommand;
 
 use super::expand_render::{
     append_scaled_without_unit, format_scaled, meaning_text, page_mark, render_the_value,
@@ -14,6 +15,124 @@ use super::expand_render::{
 use super::{CommandProcessor, DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Starts the compact literal operand path for `\number` and
+    /// `\romannumeral`.  The opener survives only as provenance in the
+    /// generation-owned control lane.
+    pub(super) fn begin_number_continuation(
+        &mut self,
+        opener: OriginId,
+        roman: bool,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_number_control(opener, roman)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    /// Consumes one settled character of a hot number conversion.  A nested
+    /// expandable operand never enters another delivery function: it returns
+    /// as the next command to this compact accumulator.
+    pub(super) fn advance_number_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::SynchronousNumberPhase as Phase;
+        let control = self
+            .command
+            .scratch
+            .top_number_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let character = command.character_token();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|ch| ch.is_ascii_digit())
+            .map(|ch| i64::from(ch as u8 - b'0'));
+        let saturating_digit = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let finish = |this: &mut Self,
+                      control: crate::expansion_work::control::SynchronousNumberControl,
+                      value: i64,
+                      negative: bool|
+         -> Result<(), CommandError> {
+            let value = value.min(i64::from(i32::MAX));
+            let value = if negative { -value } else { value };
+            let value = i32::try_from(value).unwrap_or_else(|_| {
+                if value.is_negative() { i32::MIN } else { i32::MAX }
+            });
+            let _ = this
+                .command
+                .scratch
+                .pop_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            let text = if control.roman {
+                roman_numeral(value)
+            } else {
+                value.to_string()
+            };
+            this.push_rendered_text(&text, control.opener);
+            Ok(())
+        };
+        match control.phase {
+            Phase::Need => {
+                if is_space {
+                    return Ok(false);
+                }
+                if character == Some('+') || character == Some('-') {
+                    self.command.scratch.set_number_phase(Phase::Accumulating {
+                        negative: character == Some('-'),
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(false);
+                }
+                if let Some(digit) = digit {
+                    self.command.scratch.set_number_phase(Phase::Accumulating {
+                        negative: false,
+                        value: digit,
+                        seen_digit: true,
+                    })?;
+                    return Ok(false);
+                }
+                self.back_input(command.materialize())?;
+                self.missing_number_error()?;
+                finish(self, control, 0, false)?;
+                Ok(true)
+            }
+            Phase::Await { .. } => Err(CommandError::input_invariant()),
+            Phase::Accumulating {
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if let Some(digit) = digit {
+                    self.command.scratch.set_number_phase(Phase::Accumulating {
+                        negative,
+                        value: saturating_digit(value, digit),
+                        seen_digit: true,
+                    })?;
+                    return Ok(false);
+                }
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.missing_number_error()?;
+                    finish(self, control, 0, negative)?;
+                } else {
+                    if !is_space {
+                        self.back_input(command.materialize())?;
+                    }
+                    finish(self, control, value, negative)?;
+                }
+                Ok(true)
+            }
+        }
+    }
+
     /// Starts the iterative `\the` operand request.  The opener is reduced to
     /// its packed origin before the request enters the shared expansion-work
     /// control lane; no rich command is retained while the operand expands.

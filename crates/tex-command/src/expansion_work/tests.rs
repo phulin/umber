@@ -36,6 +36,7 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
+    assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
     assert!(core::mem::size_of::<ExpandedDeliveryDriver>() <= 16);
 }
 

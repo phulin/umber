@@ -4295,7 +4295,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// TeX82 §415's `back_error` before the scanner publishes zero.
-    fn missing_number_error(&mut self) -> Result<(), CommandError> {
+    pub(crate) fn missing_number_error(&mut self) -> Result<(), CommandError> {
         // TeX82 §82 completes every error with `show_context`, and §415
         // reaches it only after §325's `back_error` has installed the
         // offending token as a `backed_up` level. CommandState, rather than

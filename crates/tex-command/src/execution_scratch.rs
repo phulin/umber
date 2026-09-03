@@ -1526,6 +1526,44 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_number_control()
     }
 
+    pub(crate) fn push_number_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        roman: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_number_control(opener, roman)
+    }
+
+    pub(crate) fn top_number_control(
+        &self,
+    ) -> Result<
+        Option<crate::expansion_work::control::SynchronousNumberControl>,
+        ScratchError,
+    > {
+        self.expansion_work.top_number_control()
+    }
+
+    pub(crate) fn set_number_phase(
+        &mut self,
+        phase: crate::expansion_work::control::SynchronousNumberPhase,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.set_number_phase(phase)
+    }
+
+    pub(crate) fn await_number_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.await_number_operand()
+    }
+
+    pub(crate) fn resume_number_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.resume_number_operand()
+    }
+
+    pub(crate) fn pop_number_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousNumberControl, ScratchError> {
+        self.expansion_work.pop_number_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()

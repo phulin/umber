@@ -1076,6 +1076,125 @@ impl<G> ExpansionWork<G> {
         Ok(control)
     }
 
+    /// Starts a compact integer conversion (`\number` or `\romannumeral`).
+    pub(crate) fn push_number_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        roman: bool,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::Number(
+            SynchronousNumberControl {
+                opener,
+                roman,
+                phase: SynchronousNumberPhase::Need,
+            },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed number-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn top_number_control(
+        &self,
+    ) -> Result<Option<SynchronousNumberControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::Number(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn set_number_phase(
+        &mut self,
+        phase: SynchronousNumberPhase,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::Number(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = phase;
+        Ok(())
+    }
+
+    pub(crate) fn await_number_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::Number(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousNumberPhase::Need => SynchronousNumberPhase::Await {
+                negative: false,
+                value: 0,
+                seen_digit: false,
+            },
+            SynchronousNumberPhase::Accumulating {
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousNumberPhase::Await {
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousNumberPhase::Await { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    pub(crate) fn resume_number_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::Number(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousNumberPhase::Await {
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousNumberPhase::Accumulating {
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousNumberPhase::Need | SynchronousNumberPhase::Accumulating { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    pub(crate) fn pop_number_control(
+        &mut self,
+    ) -> Result<SynchronousNumberControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::Number(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if !matches!(
+            control.phase,
+            SynchronousNumberPhase::Need | SynchronousNumberPhase::Accumulating { .. }
+        ) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Opens a name mark even when a synchronous driver has no parked cold
     /// root. A zero root serial is reserved for that rootless hot episode;
     /// parked resumptions continue to use their real active-root serial.
