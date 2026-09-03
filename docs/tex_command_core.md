@@ -2269,6 +2269,13 @@ of transient or stored backing. An exhausted v-template instead transitions
 once to `AwaitingVTemplateRetirement`, remains the exact top level through
 end-template delivery, and is popped by the resident §357 restart only after
 successful §1131 `do_endv`.
+Ordinary resident exhaustion retains no retired-level carrier: the already
+selected row yields its copy-small lifecycle facts, the authoritative logical
+top truncates once, and its replay or argument owner is released once before
+observation, alignment settlement, and replay-completion publication. Cold
+source EOF and final cleanup inspect their still-live source owner only long
+enough to retain the required scalar finalization facts, then use the generic
+logical truncation which alone releases the source slot.
 Macro-body retirement releases its optional argument set and local-region
 lease with that exact row. Before a source pop, the processor borrows the still-live
 `SourceOpenDepths` and compares it with the current group and conditional

@@ -397,9 +397,12 @@ collector (see `src/conditionals.rs`).
   generation check. Cold history, rollback, and detached coordinates continue
   to validate the complete slot key.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
-  Ordinary exhausted token and macro-argument rows are projected and popped
-  from the already-selected resident coordinate, as is a v-template after
-  successful `do_endv`; terminal token input, pre-`do_endv` retained
+  Ordinary exhausted token, macro-body, and macro-argument rows truncate the
+  already-selected resident coordinate directly, release their one storage
+  owner, and settle observation/alignment/replay completion from copy-small
+  row facts without a retired-level projection or a second pop path. The same
+  transition retires a v-template after successful `do_endv`; terminal token
+  input, pre-`do_endv` retained
   v-templates, source EOF, recovery, and parameter results retain
   no command-slot borrow; an ordinary final result has already resolved
   meaning, applied one-delivery suppression, classified only required

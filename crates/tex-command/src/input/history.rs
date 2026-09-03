@@ -1702,29 +1702,16 @@ impl<G> crate::CommandState<G> {
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
     ) -> Result<Option<super::ResidentCommandColdTransition>, ()> {
-        let Some(retirement) = self
-            .retire_resident_ordinary_input(resident_index)
-            .map_err(|_| ())?
-        else {
+        let retirement = self
+            .retire_resident_ordinary_input(resident_index, observer, immediate_write_retirement)
+            .map_err(|_| ())?;
+        if self.input.levels.len() == resident_index + 1 {
             return Ok(Some(super::ResidentCommandColdTransition::TokenExhausted {
                 identity,
                 resident_index,
             }));
-        };
-        Ok(self
-            .settle_resident_ordinary_retirement(retirement, observer, immediate_write_retirement)
-            .map(super::ResidentCommandColdTransition::ReplayCompleted))
-    }
-
-    #[inline(always)]
-    fn settle_resident_ordinary_retirement(
-        &mut self,
-        retirement: super::InputRetirement,
-        observer: &mut Option<&mut dyn CommandObserver>,
-        immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> Option<crate::CommandReplayEpisode> {
-        debug_assert!(retirement.is_resident_restart());
-        self.settle_input_retirement(retirement, observer, immediate_write_retirement)
+        }
+        Ok(retirement.map(super::ResidentCommandColdTransition::ReplayCompleted))
     }
 
     pub(crate) fn settle_input_retirement(
@@ -1733,42 +1720,74 @@ impl<G> crate::CommandState<G> {
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
     ) -> Option<crate::CommandReplayEpisode> {
-        let identity = retirement.identity;
+        self.settle_retirement(
+            retirement.identity,
+            retirement.action,
+            retirement.reason,
+            retirement.name_class.zip(retirement.source),
+            observer,
+            immediate_write_retirement,
+        )
+    }
+
+    #[inline(always)]
+    pub(super) fn settle_resident_retirement(
+        &mut self,
+        identity: super::InputLevelId,
+        action: super::InputRetirementAction,
+        reason: super::InputRetirementReason,
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
+    ) -> Option<crate::CommandReplayEpisode> {
+        debug_assert!(matches!(
+            action,
+            super::InputRetirementAction::TokenListPopped
+                | super::InputRetirementAction::VTemplatePopped
+        ));
+        self.settle_retirement(
+            identity,
+            action,
+            reason,
+            None,
+            observer,
+            immediate_write_retirement,
+        )
+    }
+
+    #[inline(always)]
+    fn settle_retirement(
+        &mut self,
+        identity: super::InputLevelId,
+        action: super::InputRetirementAction,
+        retirement_reason: super::InputRetirementReason,
+        source_context: Option<(super::SourceNameClass, tex_state::SourceId)>,
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
+    ) -> Option<crate::CommandReplayEpisode> {
         let reason = if *immediate_write_retirement == Some(identity) {
             *immediate_write_retirement = None;
             InputReason::Write
         } else {
-            observed_retirement_reason(retirement.action, retirement.reason)
+            observed_retirement_reason(action, retirement_reason)
         };
-        if !matches!(
-            retirement.action,
-            super::InputRetirementAction::VTemplateRetained
-        ) && let Some(sink) = observer.as_deref_mut()
+        if !matches!(action, super::InputRetirementAction::VTemplateRetained)
+            && let Some(sink) = observer.as_deref_mut()
         {
             sink.committed(CommandObservation::Input(InputRecord {
-                transition: if matches!(
-                    retirement.action,
-                    super::InputRetirementAction::TerminalStop
-                ) {
+                transition: if matches!(action, super::InputRetirementAction::TerminalStop) {
                     InputTransition::Stop
                 } else {
                     InputTransition::Retire
                 },
                 reason,
-                source_name: retirement.name_class,
-                source: retirement.source,
+                source_name: source_context.map(|(name, _)| name),
+                source: source_context.map(|(_, source)| source),
                 level: identity.0,
                 position: 0,
             }));
         }
-        if let Some(transition) = match retirement.reason {
-            _ if matches!(
-                retirement.action,
-                super::InputRetirementAction::VTemplateRetained
-            ) =>
-            {
-                None
-            }
+        if let Some(transition) = match retirement_reason {
+            _ if matches!(action, super::InputRetirementAction::VTemplateRetained) => None,
             super::InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
             super::InputRetirementReason::AlignmentVTemplate => Some("v_template_retire"),
             super::InputRetirementReason::AlignmentOmitTemplate => Some("omit_template_retire"),
@@ -1789,7 +1808,7 @@ impl<G> crate::CommandState<G> {
             }));
         }
         let popped = matches!(
-            retirement.action,
+            action,
             super::InputRetirementAction::SourcePopped
                 | super::InputRetirementAction::TokenListPopped
                 | super::InputRetirementAction::VTemplatePopped
@@ -2021,19 +2040,13 @@ impl<G> InputStack<G> {
     /// The caller carries `index` from the one top selection which found
     /// exhaustion, so this performs neither another top lookup nor the
     /// identity validation required by cold detached coordinates.
-    pub(super) fn pop_resident_project<R>(
-        &mut self,
-        index: usize,
-        project: impl FnOnce(&InputLevel<G>) -> R,
-    ) -> R {
+    pub(super) fn pop_resident(&mut self, index: usize) {
         debug_assert_eq!(index.checked_add(1), Some(self.top));
         debug_assert!(!matches!(self.rows[index], InputLevel::Source(_)));
-        let result = project(&self.rows[index]);
         self.top = index;
         if !self.recording {
             self.rows.pop();
         }
-        result
     }
 
     pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {

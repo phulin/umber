@@ -527,7 +527,10 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(expansion.contains("self.retire_input_top(identity)"));
     assert!(stack.contains("fn retire_resident_ordinary_input("));
     assert!(history.contains("fn finish_resident_exhaustion("));
-    assert!(history.contains(".settle_resident_ordinary_retirement("));
+    assert!(history.contains("fn settle_resident_retirement("));
+    assert!(history.contains("fn pop_resident("));
+    assert!(!stack.contains("RetiredInputLevel"));
+    assert!(!history.contains("pop_resident_project"));
     assert!(history.contains("destination.reborrow()"));
     assert!(!history.contains("self.retire_input_top("));
     assert!(expansion.contains("self.check_outer_validity_entry(command)"));
