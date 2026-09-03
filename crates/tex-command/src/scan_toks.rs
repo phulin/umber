@@ -755,10 +755,53 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(collector)
     }
 
+    /// Admits the direct definition tail for this synchronous scanner call.
+    /// A parked scanner has already returned its writer, so resumption pays
+    /// this validation and tail lookup exactly once before ordinary delivery.
+    fn admit_scan_toks_definition_writer(
+        &mut self,
+        collector: &mut TokenCollector<G>,
+    ) -> Result<(), CommandError> {
+        let definition = match collector.destination() {
+            TokenCollectorDestination::Definition { definition } => *definition,
+            TokenCollectorDestination::TokenBuffers { .. }
+            | TokenCollectorDestination::AttemptDefinition { .. }
+            | TokenCollectorDestination::ReplayInput { .. } => return Ok(()),
+        };
+        let phase = match collector.phase() {
+            TokenCollectorPhase::Parameter => tex_state::DefinitionBuildPhase::OpenParameters,
+            TokenCollectorPhase::Replacement => tex_state::DefinitionBuildPhase::OpenReplacement,
+            TokenCollectorPhase::Complete => return Err(CommandError::input_invariant()),
+        };
+        let writer = self
+            .state
+            .admit_definition_build_writer(definition, phase)
+            .map_err(definition_build_command_error)?;
+        collector
+            .install_definition_writer(writer)
+            .map_err(|()| CommandError::input_invariant())
+    }
+
+    /// Returns an episode writer to the semantic owner before any suspension,
+    /// rollback, or error path can retain the collector.
+    fn release_scan_toks_definition_writer(
+        &mut self,
+        collector: &mut TokenCollector<G>,
+    ) -> Result<(), CommandError> {
+        let Some(writer) = collector.take_definition_writer() else {
+            return Ok(());
+        };
+        self.state
+            .release_definition_build_writer(writer)
+            .map(|_| ())
+            .map_err(definition_build_command_error)
+    }
+
     fn discard_scan_toks_collector(
         &mut self,
-        collector: &TokenCollector<G>,
+        collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
+        self.release_scan_toks_definition_writer(collector)?;
         if let TokenCollectorDestination::ReplayInput { builder, .. } = collector.destination() {
             self.command
                 .roots
@@ -789,14 +832,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .arena_mut()
                 .push_buffer_token(*writer, word)
                 .map_err(attempt_command_error),
-            TokenCollectorDestination::Definition { definition } => match phase {
-                TokenCollectorPhase::Parameter => self
-                    .state
-                    .push_definition_parameter(*definition, word.token_word())
+            TokenCollectorDestination::Definition { .. } => match phase {
+                TokenCollectorPhase::Parameter => collector
+                    .definition_writer_mut()
+                    .ok_or_else(CommandError::input_invariant)?
+                    .push_parameter(word.token_word())
                     .map_err(definition_build_command_error),
-                TokenCollectorPhase::Replacement => self
-                    .state
-                    .push_definition_replacement(*definition, word.token_word())
+                TokenCollectorPhase::Replacement => collector
+                    .definition_writer_mut()
+                    .ok_or_else(CommandError::input_invariant)?
+                    .push_replacement(word.token_word())
                     .map_err(definition_build_command_error),
                 TokenCollectorPhase::Complete => unreachable!(),
             },
@@ -895,11 +940,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
                 *writer = *replacement;
             }
-            TokenCollectorDestination::Definition { definition } => {
-                self.state
-                    .finish_definition_parameters(*definition)
-                    .map_err(definition_build_command_error)?;
-            }
+            TokenCollectorDestination::Definition { .. } => collector
+                .definition_writer_mut()
+                .ok_or_else(CommandError::input_invariant)?
+                .finish_parameters()
+                .map_err(definition_build_command_error)?,
             TokenCollectorDestination::AttemptDefinition { definition } => {
                 self.command
                     .attempt
@@ -927,6 +972,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         if collector.phase() != TokenCollectorPhase::Replacement {
             return Err(CommandError::input_invariant());
         }
+        let expected_definition = match collector.destination() {
+            TokenCollectorDestination::Definition { definition } => Some(*definition),
+            TokenCollectorDestination::TokenBuffers { .. }
+            | TokenCollectorDestination::AttemptDefinition { .. }
+            | TokenCollectorDestination::ReplayInput { .. } => None,
+        };
         let storage = match collector.destination() {
             TokenCollectorDestination::TokenBuffers {
                 writer,
@@ -941,13 +992,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .finish_token_buffer(*replacement)
                     .map_err(attempt_command_error)?,
             },
-            TokenCollectorDestination::Definition { definition } => {
-                self.state
-                    .set_definition_build_origin(*definition, origin)
+            TokenCollectorDestination::Definition { .. } => {
+                let writer = collector
+                    .take_definition_writer()
+                    .ok_or_else(CommandError::input_invariant)?;
+                let mut writer = writer;
+                writer.set_origin(origin);
+                let released = self
+                    .state
+                    .release_definition_build_writer(writer)
                     .map_err(definition_build_command_error)?;
+                if Some(released) != expected_definition {
+                    return Err(CommandError::input_invariant());
+                }
                 let definition = self
                     .state
-                    .seal_definition_build(*definition)
+                    .seal_definition_build(released)
                     .map_err(definition_build_command_error)?;
                 ScannedToksStorage::Definition(definition)
             }
@@ -1094,7 +1154,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // to a still-live macro can therefore truncate its suffix
                 // without copying or invalidating the completed result.
                 let attempt_opening = self.command.attempt.arena().mark();
-                let collector = match self.begin_scan_toks_collector(
+                let mut collector = match self.begin_scan_toks_collector(
                     config.grammar,
                     config.destination,
                     self.is_observed(),
@@ -1112,7 +1172,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let scope = match self.command.begin_attempt_scanner_scope() {
                     Ok(scope) => scope,
                     Err(error) => {
-                        self.discard_scan_toks_collector(&collector)?;
+                        self.discard_scan_toks_collector(&mut collector)?;
                         self.command
                             .attempt
                             .arena_mut()
@@ -1139,6 +1199,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         };
+        if let Err(error) = self.admit_scan_toks_definition_writer(&mut pending.collector) {
+            self.settle_failed_scan_toks(pending)?;
+            return Err(error);
+        }
         let result = self.scan_toks_inner(
             pending.config,
             &mut pending.collector,
@@ -1151,6 +1215,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if error.is_resource_suspension()
                     && pending.config.permits_resource_continuation() =>
             {
+                if let Err(error) = self.release_scan_toks_definition_writer(&mut pending.collector)
+                {
+                    self.settle_failed_scan_toks(pending)?;
+                    return Err(error);
+                }
                 if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
                     self.settle_failed_scan_toks(pending)?;
                     return Err(error);
@@ -1199,7 +1268,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.abort_continuation(child)?;
                 }
                 self.finish_scanner_episode(pending.episode);
-                self.discard_scan_toks_collector(&pending.collector)?;
+                self.discard_scan_toks_collector(&mut pending.collector)?;
                 self.command
                     .discard_attempt_scope_suffix(pending.scope)
                     .map_err(attempt_command_error)?;
@@ -1214,7 +1283,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(child) = self.scanner_resume.take() {
             self.abort_continuation(child)?;
             self.finish_scanner_episode(pending.episode);
-            self.discard_scan_toks_collector(&pending.collector)?;
+            self.discard_scan_toks_collector(&mut pending.collector)?;
             self.command
                 .discard_attempt_scope_suffix(pending.scope)
                 .map_err(attempt_command_error)?;
@@ -1316,7 +1385,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.abort_continuation(child)?;
         }
         self.finish_scanner_episode(pending.episode);
-        self.discard_scan_toks_collector(&pending.collector)?;
+        self.discard_scan_toks_collector(&mut pending.collector)?;
         self.command
             .discard_attempt_scope_suffix(pending.scope)
             .map_err(attempt_command_error)?;

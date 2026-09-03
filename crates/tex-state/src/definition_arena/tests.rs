@@ -127,6 +127,128 @@ fn direct_definition_seals_the_transactional_destination_without_a_body_copy() {
 }
 
 #[test]
+fn admitted_definition_writer_stores_through_one_warm_cursor() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        super::reset_definition_build_write_counters();
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(3))
+            .expect("definition transaction");
+        let mut writer = arena
+            .admit_build_writer(build, DefinitionBuildPhase::OpenParameters)
+            .expect("definition writer admission");
+        writer
+            .push_parameter(TokenWord::pack(Token::param(1)))
+            .expect("parameter marker");
+        writer.finish_parameters().expect("parameter boundary");
+        writer
+            .push_replacement(TokenWord::pack(Token::param(1)))
+            .expect("replacement marker");
+        let key = arena.release_build_writer(writer).expect("writer release");
+        let definition = arena.seal_build(key).expect("sealed definition");
+        assert_eq!(arena.get(definition).parameter_text().len(), 1);
+        assert_eq!(arena.get(definition).replacement_text().len(), 1);
+
+        let counters = super::definition_build_write_counters();
+        assert_eq!(counters.episode_admissions, 1);
+        assert_eq!(counters.episode_releases, 1);
+        assert_eq!(counters.direct_stores, 2);
+        assert_eq!(counters.replacement_validations, 1);
+        assert_eq!(counters.chunk_transitions, 0);
+    });
+}
+
+#[test]
+fn admitted_definition_writer_releases_and_readmits_without_copying() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        super::reset_definition_build_write_counters();
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(4))
+            .expect("definition transaction");
+        let mut writer = arena
+            .admit_build_writer(build, DefinitionBuildPhase::OpenParameters)
+            .expect("parameter writer admission");
+        writer
+            .push_parameter(TokenWord::pack(Token::param(1)))
+            .expect("parameter marker");
+        let key = arena
+            .release_build_writer(writer)
+            .expect("suspension release");
+
+        let mut writer = arena
+            .admit_build_writer(key, DefinitionBuildPhase::OpenParameters)
+            .expect("resumed parameter writer admission");
+        writer.finish_parameters().expect("parameter boundary");
+        writer
+            .push_replacement(TokenWord::pack(Token::param(1)))
+            .expect("replacement marker");
+        let key = arena
+            .release_build_writer(writer)
+            .expect("completion release");
+        let definition = arena.seal_build(key).expect("sealed definition");
+        assert_eq!(arena.get(definition).replacement_text().len(), 1);
+
+        let counters = super::definition_build_write_counters();
+        assert_eq!(counters.episode_admissions, 2);
+        assert_eq!(counters.episode_releases, 2);
+        assert_eq!(counters.direct_stores, 2);
+    });
+}
+
+#[test]
+fn admitted_definition_writer_crosses_chunks_only_at_cold_boundaries() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        super::reset_definition_build_write_counters();
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(5))
+            .expect("definition transaction");
+        let mut writer = arena
+            .admit_build_writer(build, DefinitionBuildPhase::OpenParameters)
+            .expect("definition writer admission");
+        writer.finish_parameters().expect("parameter boundary");
+        let words =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY + 1;
+        for index in 0..words {
+            writer
+                .push_replacement(TokenWord::from_raw(index as u32 + 1))
+                .expect("replacement word");
+        }
+        let key = arena.release_build_writer(writer).expect("writer release");
+        let definition = arena.seal_build(key).expect("sealed definition");
+        assert_eq!(arena.get(definition).replacement_text().len(), words);
+        let counters = super::definition_build_write_counters();
+        assert_eq!(counters.episode_admissions, 1);
+        assert_eq!(counters.direct_stores, words as u64);
+        assert_eq!(counters.chunk_transitions, 2);
+    });
+}
+
+#[test]
+fn aborted_admitted_definition_writer_restores_the_original_frontier() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let before = global_frontier(arena);
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(6))
+            .expect("definition transaction");
+        let mut writer = arena
+            .admit_build_writer(build, DefinitionBuildPhase::OpenParameters)
+            .expect("definition writer admission");
+        writer.finish_parameters().expect("parameter boundary");
+        writer
+            .push_replacement(TokenWord::from_raw(0xfeed))
+            .expect("replacement word");
+        let key = arena.release_build_writer(writer).expect("writer release");
+        arena.abort_build(key);
+        assert_eq!(global_frontier(arena), before);
+        assert!(arena.active_build.is_none());
+        assert!(arena.global.owner.is_none());
+    });
+}
+
+#[test]
 fn small_definition_stays_in_its_region_inline_prefix() {
     with_generation(|mut generation| {
         let word = TokenWord::pack(Token::frozen_relax());

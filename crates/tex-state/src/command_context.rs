@@ -1040,6 +1040,26 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.begin_definition_build(destination, origin)
     }
 
+    /// Admits one direct definition writer for the current synchronous scan
+    /// episode. The writer must be returned before the caller suspends or
+    /// crosses a rollback boundary.
+    pub fn admit_definition_build_writer(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        phase: crate::DefinitionBuildPhase,
+    ) -> Result<crate::DefinitionBuildWriter<G>, crate::DefinitionBuildError> {
+        self.admitted.admit_definition_build_writer(build, phase)
+    }
+
+    /// Returns an episode writer to the semantic definition owner, retaining
+    /// only its stable build frontier across a scanner continuation.
+    pub fn release_definition_build_writer(
+        &mut self,
+        writer: crate::DefinitionBuildWriter<G>,
+    ) -> Result<crate::DefinitionBuildKey<G>, crate::DefinitionBuildError> {
+        self.admitted.release_definition_build_writer(writer)
+    }
+
     pub fn push_definition_parameter(
         &mut self,
         build: crate::DefinitionBuildKey<G>,

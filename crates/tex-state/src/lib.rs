@@ -183,8 +183,13 @@ pub use command_context::{
 pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
     AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey,
-    DefinitionBuildPhase, DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView,
-    DefinitionWords, ResidentMacroBody,
+    DefinitionBuildPhase, DefinitionBuildWriter, DefinitionBuilder, DefinitionDestination,
+    DefinitionRef, DefinitionView, DefinitionWords, ResidentMacroBody,
+};
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+pub use definition_arena::{
+    DefinitionBuildWriteCounters, definition_build_write_counters,
+    reset_definition_build_write_counters,
 };
 #[cfg(any(test, feature = "testing"))]
 pub use definition_arena::{

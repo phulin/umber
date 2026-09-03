@@ -150,6 +150,10 @@ pub(crate) struct TokenCollector<G> {
     phase: TokenCollectorPhase,
     cursor: crate::scanner_kernel::ScannerCursor,
     pending_parameter: Option<PendingParameter>,
+    /// Episode-local direct writer for an ordinary definition. It is empty
+    /// whenever this collector is parked in a continuation; the semantic
+    /// build then remains in `tex-state` and is readmitted on resume.
+    definition_writer: Option<tex_state::DefinitionBuildWriter<G>>,
 }
 
 impl<G> TokenCollector<G> {
@@ -166,6 +170,7 @@ impl<G> TokenCollector<G> {
             phase: TokenCollectorPhase::Parameter,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
+            definition_writer: None,
         }
     }
 
@@ -175,6 +180,7 @@ impl<G> TokenCollector<G> {
             phase: TokenCollectorPhase::Parameter,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
+            definition_writer: None,
         }
     }
 
@@ -184,6 +190,7 @@ impl<G> TokenCollector<G> {
             phase: TokenCollectorPhase::Parameter,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
+            definition_writer: None,
         }
     }
 
@@ -202,6 +209,7 @@ impl<G> TokenCollector<G> {
             phase: TokenCollectorPhase::Parameter,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
+            definition_writer: None,
         }
     }
 
@@ -232,6 +240,30 @@ impl<G> TokenCollector<G> {
 
     pub(crate) const fn destination_mut(&mut self) -> &mut TokenCollectorDestination<G> {
         &mut self.destination
+    }
+
+    pub(crate) fn install_definition_writer(
+        &mut self,
+        writer: tex_state::DefinitionBuildWriter<G>,
+    ) -> Result<(), ()> {
+        if !matches!(
+            &self.destination,
+            TokenCollectorDestination::Definition { .. }
+        ) || self.definition_writer.replace(writer).is_some()
+        {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn definition_writer_mut(
+        &mut self,
+    ) -> Option<&mut tex_state::DefinitionBuildWriter<G>> {
+        self.definition_writer.as_mut()
+    }
+
+    pub(crate) fn take_definition_writer(&mut self) -> Option<tex_state::DefinitionBuildWriter<G>> {
+        self.definition_writer.take()
     }
 
     pub(crate) fn take_observed_source(

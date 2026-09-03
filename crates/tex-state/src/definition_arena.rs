@@ -1233,6 +1233,63 @@ thread_local! {
         }) };
 }
 
+/// Exact structural work performed by one admitted definition scan episode.
+///
+/// Admission and chunk transitions are cold operations. Once an episode has
+/// been admitted, each accepted word only validates its phase/pattern, writes
+/// one direct chunk slot, and advances the resident tail cursor.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DefinitionBuildWriteCounters {
+    pub episode_admissions: u64,
+    pub serial_validations: u64,
+    pub phase_validations: u64,
+    pub region_validations: u64,
+    pub replacement_validations: u64,
+    pub direct_stores: u64,
+    pub chunk_transitions: u64,
+    pub episode_releases: u64,
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+thread_local! {
+    static DEFINITION_BUILD_WRITE_COUNTERS: Cell<DefinitionBuildWriteCounters> =
+        const { Cell::new(DefinitionBuildWriteCounters {
+            episode_admissions: 0,
+            serial_validations: 0,
+            phase_validations: 0,
+            region_validations: 0,
+            replacement_validations: 0,
+            direct_stores: 0,
+            chunk_transitions: 0,
+            episode_releases: 0,
+        }) };
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[doc(hidden)]
+pub fn reset_definition_build_write_counters() {
+    DEFINITION_BUILD_WRITE_COUNTERS.set(DefinitionBuildWriteCounters::default());
+}
+
+#[cfg(any(test, feature = "profiling", feature = "testing"))]
+#[doc(hidden)]
+#[must_use]
+pub fn definition_build_write_counters() -> DefinitionBuildWriteCounters {
+    DEFINITION_BUILD_WRITE_COUNTERS.get()
+}
+
+#[inline(always)]
+fn record_definition_build_write(update: impl FnOnce(&mut DefinitionBuildWriteCounters)) {
+    #[cfg(any(test, feature = "profiling", feature = "testing"))]
+    DEFINITION_BUILD_WRITE_COUNTERS.set({
+        let mut counters = DEFINITION_BUILD_WRITE_COUNTERS.get();
+        update(&mut counters);
+        counters
+    });
+    #[cfg(not(any(test, feature = "profiling", feature = "testing")))]
+    let _ = update;
+}
+
 #[cfg(any(test, feature = "testing"))]
 #[doc(hidden)]
 pub fn reset_resident_macro_body_read_counters() {
@@ -1636,6 +1693,7 @@ impl<G> core::hash::Hash for LocalRegionPin<G> {
 /// fields identify the exact physical suffix which may be reclaimed.  The
 /// mark is intentionally not `Copy`: a successful seal or an abort consumes
 /// the only restoration capability before a definition reference can escape.
+#[derive(Debug, Eq, PartialEq)]
 struct DefinitionBuildMark {
     region: u32,
     serial: NonZeroU32,
@@ -1669,6 +1727,7 @@ impl<G> PartialEq for DefinitionBuildKey<G> {
 
 impl<G> Eq for DefinitionBuildKey<G> {}
 
+#[derive(Debug, Eq, PartialEq)]
 struct ActiveDefinitionBuild {
     serial: NonZeroU32,
     region: u32,
@@ -1678,6 +1737,171 @@ struct ActiveDefinitionBuild {
     pattern: MacroParameterPatternBuilder,
     origin: crate::token::OriginId,
     phase: DefinitionBuildPhase,
+}
+
+/// Temporary direct writer for one synchronous definition-scan episode.
+///
+/// The semantic build is moved here for the duration of the episode, so this
+/// is an admitted view of the one authoritative [`ActiveDefinitionBuild`],
+/// not a second definition representation. Its physical owner/chunk handles
+/// are intentionally ephemeral: the writer is returned to the arena before a
+/// scanner can suspend, roll back, or report an error.
+#[doc(hidden)]
+pub struct DefinitionBuildWriter<G> {
+    build: ActiveDefinitionBuild,
+    owner: Rc<DefinitionRegionOwner>,
+    current_chunk: Rc<DefinitionWordChunk>,
+    next_word: u32,
+    chunk_index: u32,
+    chunk_slot: usize,
+    remaining_in_chunk: u32,
+    owner_was_present: bool,
+    _brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> core::fmt::Debug for DefinitionBuildWriter<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("DefinitionBuildWriter")
+            .field("serial", &self.build.serial)
+            .field("region", &self.build.region)
+            .field("phase", &self.build.phase)
+            .field("next_word", &self.next_word)
+            .field("chunk_index", &self.chunk_index)
+            .field("chunk_slot", &self.chunk_slot)
+            .field("remaining_in_chunk", &self.remaining_in_chunk)
+            .finish()
+    }
+}
+
+impl<G> PartialEq for DefinitionBuildWriter<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.build == other.build
+            && Rc::ptr_eq(&self.owner, &other.owner)
+            && Rc::ptr_eq(&self.current_chunk, &other.current_chunk)
+            && self.next_word == other.next_word
+            && self.chunk_index == other.chunk_index
+            && self.chunk_slot == other.chunk_slot
+            && self.remaining_in_chunk == other.remaining_in_chunk
+            && self.owner_was_present == other.owner_was_present
+    }
+}
+
+impl<G> Eq for DefinitionBuildWriter<G> {}
+
+impl<G> DefinitionBuildWriter<G> {
+    #[must_use]
+    pub const fn phase(&self) -> DefinitionBuildPhase {
+        self.build.phase
+    }
+
+    /// Validates and writes one parameter-text token through the admitted
+    /// physical tail. The only warm-path storage operation is the direct
+    /// current-chunk slot write below.
+    #[inline(always)]
+    pub fn push_parameter(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
+        if self.build.phase != DefinitionBuildPhase::OpenParameters {
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        record_definition_build_write(|counters| {
+            counters.phase_validations = counters.phase_validations.saturating_add(1);
+        });
+        let mut pattern = self.build.pattern;
+        pattern.push_parameter(word)?;
+        let parameter_len = self
+            .build
+            .parameter_len
+            .checked_add(1)
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        self.write_word(word)?;
+        self.build.parameter_len = parameter_len;
+        self.build.pattern = pattern;
+        Ok(())
+    }
+
+    /// Moves the one admitted build from parameter text to replacement text.
+    #[inline(always)]
+    pub fn finish_parameters(&mut self) -> Result<(), DefinitionBuildError> {
+        if self.build.phase != DefinitionBuildPhase::OpenParameters {
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        self.build.phase = DefinitionBuildPhase::OpenReplacement;
+        Ok(())
+    }
+
+    /// Validates and writes one replacement token through the admitted
+    /// physical tail. Replacement-parameter policy is checked against the
+    /// already-resident pattern without reacquiring the active build.
+    #[inline(always)]
+    pub fn push_replacement(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
+        if self.build.phase != DefinitionBuildPhase::OpenReplacement {
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        record_definition_build_write(|counters| {
+            counters.phase_validations = counters.phase_validations.saturating_add(1);
+            counters.replacement_validations = counters.replacement_validations.saturating_add(1);
+        });
+        self.build.pattern.validate_replacement(word)?;
+        let replacement_len = self
+            .build
+            .replacement_len
+            .checked_add(1)
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        self.write_word(word)?;
+        self.build.replacement_len = replacement_len;
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn set_origin(&mut self, origin: crate::token::OriginId) {
+        self.build.origin = origin;
+    }
+
+    #[inline(always)]
+    fn write_word(&mut self, word: TokenWord) -> Result<(), DefinitionBuildError> {
+        let next_word = self
+            .next_word
+            .checked_add(1)
+            .ok_or(DefinitionBuildError::CapacityOverflow)?;
+        if self.remaining_in_chunk == 0 {
+            self.advance_chunk_cold()?;
+        }
+        self.current_chunk
+            .set(self.chunk_slot, word)
+            .expect("admitted definition tail slot exists");
+        self.next_word = next_word;
+        self.chunk_slot += 1;
+        self.remaining_in_chunk -= 1;
+        record_definition_build_write(|counters| {
+            counters.direct_stores = counters.direct_stores.saturating_add(1);
+        });
+        Ok(())
+    }
+
+    /// Selects the next physical chunk only at a boundary. This is the cold
+    /// owner operation; ordinary in-chunk writes never touch the directory.
+    #[cold]
+    #[inline(never)]
+    fn advance_chunk_cold(&mut self) -> Result<(), DefinitionBuildError> {
+        let (chunk_index, slot) = definition_word_chunk_coordinate(self.next_word);
+        assert_eq!(slot, 0, "definition tail boundary starts a fresh chunk");
+        assert_eq!(chunk_index, self.chunk_index + 1);
+        self.owner.ensure_chunk(
+            usize::try_from(chunk_index - 1).map_err(|_| DefinitionBuildError::CapacityOverflow)?,
+        )?;
+        self.current_chunk = self
+            .owner
+            .chunk_handle(chunk_index)
+            .expect("definition tail chunk was ensured");
+        self.chunk_index = chunk_index;
+        self.chunk_slot = 0;
+        self.remaining_in_chunk =
+            u32::try_from(self.current_chunk.capacity()).expect("definition chunk fits u32");
+        record_definition_build_write(|counters| {
+            counters.chunk_transitions = counters.chunk_transitions.saturating_add(1);
+        });
+        Ok(())
+    }
 }
 
 struct DefinitionRegionSuffix {
@@ -1734,6 +1958,7 @@ pub(crate) struct DefinitionArena<G> {
     mutations: Vec<DefinitionRegionMutation>,
     next_build_serial: u32,
     active_build: Option<ActiveDefinitionBuild>,
+    active_writer: Option<NonZeroU32>,
     accounting: MemoryAccounting,
     #[cfg(any(test, feature = "profiling", feature = "testing"))]
     retirement_counters: Rc<DefinitionRetirementCounterCells>,
@@ -2147,6 +2372,7 @@ impl<G> DefinitionArena<G> {
     ) -> AcceptedDefinitionTail<G> {
         assert!(self.validates_cursor(cursor));
         assert!(self.active_build.is_none());
+        assert!(self.active_writer.is_none());
         let head = self.cursor();
         let head_lease = self.pin_active_region(head.active_local);
         let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
@@ -2197,6 +2423,7 @@ impl<G> DefinitionArena<G> {
     }
 
     pub(crate) fn cursor(&self) -> DefinitionArenaCursor {
+        assert!(self.active_writer.is_none());
         self.advance_mutation_epoch();
         let active_local = self.active_local;
         let active_local_rows = self
@@ -2228,6 +2455,7 @@ impl<G> DefinitionArena<G> {
 
     pub(crate) fn restore_cursor(&mut self, cursor: DefinitionArenaCursor) {
         assert!(self.validates_cursor(cursor));
+        assert!(self.active_writer.is_none());
         self.abort_active_build();
         let current_lease = self.pin_active_region(self.active_local);
         let mutations = self.mutations.split_off(cursor.mutation_mark as usize);
@@ -2269,6 +2497,7 @@ impl<G> DefinitionArena<G> {
             mutations: Vec::new(),
             next_build_serial: 1,
             active_build: None,
+            active_writer: None,
             accounting,
             #[cfg(any(test, feature = "profiling", feature = "testing"))]
             retirement_counters,
@@ -2281,7 +2510,7 @@ impl<G> DefinitionArena<G> {
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         self.allocate_from_iter(
@@ -2299,7 +2528,7 @@ impl<G> DefinitionArena<G> {
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
     {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         let mut builder = DefinitionBuilder::new();
@@ -2318,7 +2547,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         builder: &mut DefinitionBuilder,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         self.validate_builder(builder)?;
@@ -2339,7 +2568,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         row: &crate::format::schema::FormatDefinition,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         let parameter_len = u32::try_from(row.parameter_text.len())
@@ -2477,7 +2706,7 @@ impl<G> DefinitionArena<G> {
     }
 
     pub(crate) fn begin_group(&mut self) -> Result<(), DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         let parent = self.active_local;
@@ -2496,7 +2725,7 @@ impl<G> DefinitionArena<G> {
 
     pub(crate) fn end_group(&mut self) {
         assert!(
-            self.active_build.is_none(),
+            self.active_build.is_none() && self.active_writer.is_none(),
             "definition scan crosses group exit"
         );
         let child = self.active_local;
@@ -2560,7 +2789,7 @@ impl<G> DefinitionArena<G> {
         destination: DefinitionDestination,
         origin: crate::token::OriginId,
     ) -> Result<DefinitionBuildKey<G>, DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         let region = match destination {
@@ -2593,6 +2822,154 @@ impl<G> DefinitionArena<G> {
             pattern: MacroParameterPatternBuilder::new(),
             origin,
             phase: DefinitionBuildPhase::OpenParameters,
+        });
+        Ok(DefinitionBuildKey {
+            serial,
+            _brand: PhantomData,
+        })
+    }
+
+    /// Admits one synchronous definition scan against its current physical
+    /// tail. Validation is paid once per scan episode; the returned writer
+    /// owns the active semantic build until it is released before suspension,
+    /// rollback, or publication.
+    pub(crate) fn admit_build_writer(
+        &mut self,
+        key: DefinitionBuildKey<G>,
+        phase: DefinitionBuildPhase,
+    ) -> Result<DefinitionBuildWriter<G>, DefinitionBuildError> {
+        if self.active_writer.is_some() {
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        let Some(build) = self.active_build.take() else {
+            return Err(DefinitionBuildError::InvalidPhase);
+        };
+        if build.serial != key.serial {
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        record_definition_build_write(|counters| {
+            counters.serial_validations = counters.serial_validations.saturating_add(1);
+        });
+        if build.phase != phase {
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        record_definition_build_write(|counters| {
+            counters.phase_validations = counters.phase_validations.saturating_add(1);
+        });
+        if build.region >= 3 && self.active_local != build.region {
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        let region_id = build.region;
+        let region = self.region_mut(region_id);
+        if region.is_none() {
+            drop(region);
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        let mut region = region.expect("definition build region was validated");
+        record_definition_build_write(|counters| {
+            counters.region_validations = counters.region_validations.saturating_add(1);
+        });
+        let next_word = region.word_head;
+        let owner_was_present = region.owner.is_some();
+        let owner = Rc::clone(
+            region
+                .owner
+                .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new())),
+        );
+        drop(region);
+        let (chunk_index, chunk_slot) = definition_word_chunk_coordinate(next_word);
+        let cursor = (|| {
+            if chunk_index != 0 {
+                owner.ensure_chunk(
+                    usize::try_from(chunk_index - 1)
+                        .map_err(|_| DefinitionBuildError::CapacityOverflow)?,
+                )?;
+            }
+            let current_chunk = owner
+                .chunk_handle(chunk_index)
+                .ok_or(DefinitionBuildError::InvalidPhase)?;
+            let remaining_in_chunk = u32::try_from(
+                current_chunk
+                    .capacity()
+                    .checked_sub(chunk_slot)
+                    .ok_or(DefinitionBuildError::InvalidPhase)?,
+            )
+            .map_err(|_| DefinitionBuildError::CapacityOverflow)?;
+            Ok::<_, DefinitionBuildError>((current_chunk, remaining_in_chunk))
+        })();
+        let (current_chunk, remaining_in_chunk) = match cursor {
+            Ok(cursor) => cursor,
+            Err(error) => {
+                self.active_build = Some(build);
+                return Err(error);
+            }
+        };
+        self.active_writer = Some(build.serial);
+        record_definition_build_write(|counters| {
+            counters.episode_admissions = counters.episode_admissions.saturating_add(1);
+        });
+        Ok(DefinitionBuildWriter {
+            build,
+            owner,
+            current_chunk,
+            next_word,
+            chunk_index,
+            chunk_slot,
+            remaining_in_chunk,
+            owner_was_present,
+            _brand: PhantomData,
+        })
+    }
+
+    /// Returns an admitted writer's semantic build and persists only its
+    /// stable logical/physical frontier in the arena. The owner and current
+    /// chunk handles are dropped with the episode.
+    pub(crate) fn release_build_writer(
+        &mut self,
+        writer: DefinitionBuildWriter<G>,
+    ) -> Result<DefinitionBuildKey<G>, DefinitionBuildError> {
+        let DefinitionBuildWriter {
+            build,
+            next_word,
+            owner: _,
+            current_chunk: _,
+            chunk_index: _,
+            chunk_slot: _,
+            remaining_in_chunk: _,
+            owner_was_present,
+            _brand: _,
+        } = writer;
+        if self.active_writer != Some(build.serial) || self.active_build.is_some() {
+            self.active_writer = None;
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        let region_id = build.region;
+        let Some(mut region) = self.region_mut(region_id) else {
+            self.active_writer = None;
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        };
+        if region.word_head > next_word {
+            drop(region);
+            self.active_writer = None;
+            self.active_build = Some(build);
+            return Err(DefinitionBuildError::InvalidPhase);
+        }
+        if !owner_was_present && region.word_head == next_word {
+            region.owner = None;
+        }
+        region.word_head = next_word;
+        drop(region);
+        self.active_writer = None;
+        let serial = build.serial;
+        self.active_build = Some(build);
+        record_definition_build_write(|counters| {
+            counters.episode_releases = counters.episode_releases.saturating_add(1);
         });
         Ok(DefinitionBuildKey {
             serial,
@@ -2740,6 +3117,10 @@ impl<G> DefinitionArena<G> {
     }
 
     fn abort_active_build(&mut self) {
+        assert!(
+            self.active_writer.is_none(),
+            "definition writer is still admitted"
+        );
         let Some(build) = self.active_build.take() else {
             return;
         };
@@ -2763,7 +3144,7 @@ impl<G> DefinitionArena<G> {
         &mut self,
         id: DefinitionRef<G>,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
-        if self.active_build.is_some() {
+        if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
         if id.region() == GLOBAL_REGION || id.region() == FORMAT_REGION {

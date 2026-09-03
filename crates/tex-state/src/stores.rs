@@ -495,6 +495,25 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .begin_build(destination, origin)
     }
 
+    pub(crate) fn admit_definition_build_writer(
+        &mut self,
+        build: crate::DefinitionBuildKey<G>,
+        phase: crate::DefinitionBuildPhase,
+    ) -> Result<crate::DefinitionBuildWriter<G>, crate::DefinitionBuildError> {
+        self.generation
+            .definitions_mut()
+            .admit_build_writer(build, phase)
+    }
+
+    pub(crate) fn release_definition_build_writer(
+        &mut self,
+        writer: crate::DefinitionBuildWriter<G>,
+    ) -> Result<crate::DefinitionBuildKey<G>, crate::DefinitionBuildError> {
+        self.generation
+            .definitions_mut()
+            .release_build_writer(writer)
+    }
+
     pub(crate) fn push_definition_parameter(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
