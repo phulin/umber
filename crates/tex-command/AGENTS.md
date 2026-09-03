@@ -141,12 +141,13 @@ collector (see `src/conditionals.rs`).
   one/4,096-round gate counts row accesses, row decodes, final macro-owner
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
-- `src/processor/expand.rs`: canonical destination-directed raw/expanded
-  delivery state machine and static primitive dispatch. Its raw and expanded
-  entries initialize the caller's final slot once, keep one direct mutable
+- `src/processor/expand.rs`: canonical destination-directed command-delivery
+  state machine and static primitive dispatch. Its singular entry initializes
+  the caller's final slot once, keeps one direct mutable
   command borrow across ordinary fetch, settlement, classification, expansion,
-  and return, and overwrite that same value for retries. The raw and expanded
-  entries are their respective single delivery loops; only their cold
+  and return, and overwrites that same value for retries. Raw consumers return
+  after settlement; expanded consumers classify and dispatch in that same
+  loop. Only cold
   end/replay/failure exits clear the slot, and only genuine suspension replaces
   and parks its command owner. There is no ordinary vacancy probe, placeholder
   reinstall, repeated `Option` recovery, or success-path move. Only their cold
@@ -405,17 +406,17 @@ collector (see `src/conditionals.rs`).
   `\errorcontextlines`-budgeted, and bottom levels before pseudoprinting; it
   retains only one deferred bottom coordinate and never materializes omitted
   level strings.
-- `src/processor/`: public borrow-only processor facade with separate concrete
-  raw and expanded destination loops,
+- `src/processor/`: public borrow-only processor facade with one concrete
+  raw/expanded destination loop,
   expansion, scanner-status, and alignment orchestration. The fused
   destination pipeline advances resident input and inspects the command
   in place; resident success returns only a ready/outer scalar, while its sole
   delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
-  has ended. The two loops share canonical
-  token-to-current-meaning delivery;
+  has ended. The loop owns canonical token-to-current-meaning delivery;
   creation permission exists only at source tokenization and is absent from
-  delivery controls. The loops do not test a raw-versus-expanded mode on every
+  delivery controls. The loop tests raw versus expanded only after one command
+  has settled; resident input advancement itself has no mode branch.
   token. Only cold resident transitions return a status or zero-sized failure marker.
   The expanded request retains its request-local cold error slot; raw delivery
   creates that slot only after entering the cold resident-transition helper.

@@ -132,7 +132,7 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
+fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
@@ -153,11 +153,11 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         !next.contains("fn next_command_into("),
         "raw entry points must not own a second next-command pipeline"
     );
-    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 1);
+    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn raw_destination_loop("));
-    assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 1);
+    assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
-    assert!(!expansion.contains("fn delivery_state_machine<"));
+    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
     assert_eq!(
         input_history
             .matches("fn advance_resident_command_into(")
@@ -178,23 +178,15 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("let command = destination.insert(CurrentCommand::empty());"));
-    assert!(expansion.contains("expanded entry owns one initialized command destination"));
-    let raw_entry = expansion
-        .split("fn raw_delivery_entry(")
-        .nth(1)
-        .and_then(|tail| tail.split("fn fail_raw_delivery(").next())
-        .expect("locate raw delivery entry");
-    let expanded_entry = expansion
-        .split("fn expanded_delivery_entry(")
+    assert!(expansion.contains("*destination = Some(CurrentCommand::empty());"));
+    assert!(expansion.contains("delivery entry owns one initialized command destination"));
+    let delivery_entry = expansion
+        .split("fn command_delivery_entry(")
         .nth(1)
         .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
-        .expect("locate expanded delivery entry");
-    for entry in [raw_entry, expanded_entry] {
-        assert!(!entry.contains("if destination.is_none()"));
-        assert!(!entry.contains("destination.as_ref()"));
-    }
-    assert_eq!(expanded_entry.matches(".as_mut()").count(), 1);
+        .expect("locate singular delivery entry");
+    assert!(!delivery_entry.contains("destination.as_ref()"));
+    assert_eq!(delivery_entry.matches(".as_mut()").count(), 1);
     assert!(expansion.contains(".advance_resident_command_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
     assert!(input_history.contains("roots.alignment.classify_delivery("));
@@ -479,8 +471,8 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
         expansion
             .matches("self.check_outer_validity_entry(")
             .count(),
-        2,
-        "the two concrete destination loops must share one cold recovery owner"
+        1,
+        "the singular destination loop must own cold recovery"
     );
 }
 
@@ -611,10 +603,11 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     let command_state = fs::read_to_string(manifest_dir.join("src/state.rs"))
         .expect("read command-state ownership");
 
-    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 1);
+    assert_eq!(expansion.matches("fn raw_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn raw_destination_loop("));
-    assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 1);
+    assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
+    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
     for deleted in ["DeliveryMode", "DeliveryPolicy", "ExpandedDeliveryPolicy"] {
         assert!(
             !format!("{expansion}\n{policies}").contains(deleted),
@@ -623,23 +616,18 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     }
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
-    let raw_entry = expansion
-        .split("pub(super) fn raw_delivery_entry(")
-        .nth(1)
-        .and_then(|tail| tail.split("#[cold]").next())
-        .expect("locate ordinary raw-delivery entry");
-    assert!(!raw_entry.contains("DeliveryErrorSlot"));
-    assert!(!raw_entry.contains("DeliveryFailed"));
-    assert!(raw_entry.contains("return Ok(DeliveryStatus::Command)"));
-    assert!(!format!("{expansion}\n{policies}").contains("DeliveryErrorSlot"));
-    assert!(!format!("{expansion}\n{policies}").contains("DeliveryFailed"));
-    let expanded_entry = expansion
-        .split("pub(super) fn expanded_delivery_entry(")
+    let delivery_entry = expansion
+        .split("pub(super) fn command_delivery_entry(")
         .nth(1)
         .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
-        .expect("locate ordinary expanded-delivery entry");
-    assert!(expanded_entry.contains("Ok(status)"));
-    assert!(!expanded_entry.contains("Result<DeliveryStatus, DeliveryFailed>"));
+        .expect("locate singular command-delivery entry");
+    assert!(!delivery_entry.contains("DeliveryErrorSlot"));
+    assert!(!delivery_entry.contains("DeliveryFailed"));
+    assert!(delivery_entry.contains("break 'delivery DeliveryStatus::Command"));
+    assert!(!format!("{expansion}\n{policies}").contains("DeliveryErrorSlot"));
+    assert!(!format!("{expansion}\n{policies}").contains("DeliveryFailed"));
+    assert!(delivery_entry.contains("Ok(status)"));
+    assert!(!delivery_entry.contains("Result<DeliveryStatus, DeliveryFailed>"));
     assert!(!input_history.contains("take_ready_replay_completion"));
     assert!(!command_state.contains("pending_replay_completions"));
     assert!(!command_state.contains("replay_completions.iter()"));
@@ -649,7 +637,10 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
             "ExpandedObservationPolicy",
             &["Commit", "RawOnly", "DeferIfExpanded"][..],
         ),
-        ("FirstCommandPolicy", &["Ordinary", "MainLoopCharacter"][..]),
+        (
+            "FirstCommandPolicy",
+            &["Raw", "Ordinary", "MainLoopCharacter"][..],
+        ),
         (
             "AlignmentInterceptionPolicy",
             &["Scalar", "Surface", "None"][..],
@@ -1048,7 +1039,6 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
         .expect("locate singular resident command episode");
     assert!(command_episode.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(command_episode.contains("hot: Option<hot_apply::HotOperation<G>>"));
     assert!(command_episode.contains("phase: Option<PreflightCommandPhase>"));
     assert!(command_episode.contains("scanner: Option<tex_command::ScannerFrameKey<G>>"));
     assert!(command_episode.contains("operation_scan: Option<PendingOperationScanPhase>"));

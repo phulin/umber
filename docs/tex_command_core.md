@@ -175,18 +175,18 @@ belong in Beads epic `umber2-johp`; this file is not a task checklist.
 
 ### 1.1 Typed command delivery
 
-Raw `get_next`/`get_token` and expanded `get_x_token`/`x_token` enter separate
-concrete destination loops. Replay-aware, main-loop, protected,
+Raw `get_next`/`get_token` and expanded `get_x_token`/`x_token` enter one
+concrete destination loop. Replay-aware, main-loop, protected,
 undefined-preserving, and alignment entries select their semantic branches
-before entering the expanded loop; there is no raw-versus-expanded policy
-object, const-generic mode, or generic delivery driver in the resident path.
+before entering it; resident advancement is shared, and the raw-versus-expanded
+decision occurs only after the resolved command already occupies its final slot.
 Control-sequence creation remains a source-tokenization fact: every token
 reaching either loop is already a character or a packed stable
 control-sequence identity.
 
-Each loop is destination-directed. Its caller provides the one final
+The loop is destination-directed. Its caller provides the one final
 `Option<CurrentCommand<G>>` slot for that active request. The raw entry
-initializes it once; the expanded entry either initializes it once or readmits
+and expanded entries initialize it once or readmit
 the exact command supplied by `x_token` or genuine suspension. Each entry then
 keeps one direct mutable borrow of that initialized value through its complete
 ordinary loop. It neither probes vacancy, reinstalls a placeholder, recovers
@@ -212,7 +212,7 @@ the reusable destination through at most one dense meaning lookup and returns
 only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
-The raw and expanded entries are their respective single delivery loops. Their
+Raw and expanded entries select branches of the same delivery loop. Their
 ordinary command branches leave the already-resident result directly in the
 caller's return slot, without an eager `CommandError`, error slot, zero-sized failure
 relay, or general internal status carrier. Only cold failure and resident-
@@ -4291,8 +4291,7 @@ optimization rules below.
 The first promoted implementation is the simplest canonical scalar machine.
 Its performance foundations are:
 
-- one raw command loop;
-- one ordinary expanded loop;
+- one raw/expanded command loop;
 - dense input levels;
 - compact token and meaning words;
 - direct source origins;
@@ -4306,10 +4305,10 @@ Its performance foundations are:
 - the measured bounded process-local traced-token scratch pool described in
   section 9.
 
-The raw and expanded loops are separately compiled specializations beneath
-one typed delivery-policy entry point. Their input mutation and restart rules
-remain canonical, but the expanded hot loop does not branch on a raw-mode
-option for every token and the raw loop does not carry expanded-only policy.
+Raw and expanded consumers share one typed delivery entry point. Their input
+mutation and restart rules are identical; the mode branch occurs once after
+resident meaning resolution, so raw delivery does not carry expansion work and
+expanded delivery does not cross a second handoff.
 
 ### 32.1 Optimization promotion
 

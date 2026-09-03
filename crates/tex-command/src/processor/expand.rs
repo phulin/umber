@@ -207,7 +207,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         let preserve = self.command.profile().capabilities().supports_etex();
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             ExpandedFetch::GetXToken,
             if preserve {
                 ProtectedMacroHandling::Preserve
@@ -238,7 +238,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
     ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let mut destination = None;
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             ExpandedFetch::GetXToken,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Preserve,
@@ -270,7 +270,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         *destination = pending;
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             fetch,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,
@@ -430,7 +430,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
             let mut destination = None;
-            let result = self.expanded_delivery_entry(
+            let result = self.command_delivery_entry(
                 ExpandedFetch::GetXToken,
                 if etex_protected_fetch {
                     ProtectedMacroHandling::Preserve
@@ -530,7 +530,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             ExpandedFetch::GetXToken,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,
@@ -556,7 +556,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             ExpandedFetch::GetXToken,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,
@@ -585,7 +585,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         self.install_expansion_resume(key);
-        self.expanded_delivery_entry(
+        self.command_delivery_entry(
             ExpandedFetch::XToken,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,
@@ -636,7 +636,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_delivery_entry(
+        let result = self.command_delivery_entry(
             ExpandedFetch::XToken,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,
@@ -651,116 +651,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
         ));
         Ok(result)
-    }
-
-    /// TeX82 §341's one raw destination loop.
-    #[inline(never)]
-    pub(super) fn raw_delivery_entry(
-        &mut self,
-        replay_completion: ReplayCompletionPolicy,
-        alignment_interception: AlignmentInterceptionPolicy,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        self.invalidate_delivery_freshness();
-        debug_assert!(destination.is_none());
-        let command = destination.insert(CurrentCommand::empty());
-        'delivery: loop {
-            self.invalidate_delivery_freshness();
-            if let Err(failure) = self.charge_command_action() {
-                return self.fail_raw_delivery(destination, failure);
-            }
-            let interception = loop {
-                let transition = self.command.advance_resident_command_into(
-                    self.state,
-                    self.fuel,
-                    self.create_source_control_sequences,
-                    command.empty_for_raw_delivery(),
-                    (&mut self.observer, &mut self.immediate_write_retirement),
-                );
-                #[cfg(test)]
-                if transition.is_ok() {
-                    self.command.delivery_loop_counters.warm_scalar_returns = self
-                        .command
-                        .delivery_loop_counters
-                        .warm_scalar_returns
-                        .saturating_add(1);
-                } else {
-                    self.command
-                        .delivery_loop_counters
-                        .cold_status_materializations = self
-                        .command
-                        .delivery_loop_counters
-                        .cold_status_materializations
-                        .saturating_add(1);
-                }
-                match transition {
-                    Ok(interception) => break interception,
-                    Err(cold) => {
-                        let settled = match self.settle_resident_cold_transition(cold, command) {
-                            Ok(settled) => settled,
-                            Err(failure) => {
-                                return self.fail_raw_delivery(destination, failure);
-                            }
-                        };
-                        match settled {
-                            ResidentColdOutcome::Retry => continue,
-                            ResidentColdOutcome::End => {
-                                destination.take();
-                                return Ok(DeliveryStatus::End);
-                            }
-                            ResidentColdOutcome::ReplayCompleted(episode) => {
-                                if replay_completion == ReplayCompletionPolicy::Surface {
-                                    destination.take();
-                                    return Ok(DeliveryStatus::ReplayCompleted(episode));
-                                }
-                                continue 'delivery;
-                            }
-                            ResidentColdOutcome::SyntheticCommand(interception) => {
-                                break interception;
-                            }
-                        }
-                    }
-                }
-            };
-            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            if command.is_direct_source_delivery() {
-                self.readmit_delivery_stamp(command.delivery_stamp());
-            } else {
-                self.publish_resident_delivery();
-            }
-            if matches!(interception, ResidentCommandInterception::Outer)
-                && let Err(failure) = self.check_outer_validity_entry(command)
-            {
-                return self.fail_raw_delivery(destination, failure);
-            }
-            if self.is_observed() {
-                self.observe_resident_command(command);
-            }
-            if alignment_interception == AlignmentInterceptionPolicy::Scalar
-                && matches!(
-                    command.alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                )
-            {
-                if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
-                    return self.fail_raw_delivery(destination, failure);
-                }
-                continue;
-            }
-            return Ok(DeliveryStatus::Command);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn fail_raw_delivery(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        failure: CommandError,
-    ) -> Result<DeliveryStatus, CommandError> {
-        destination.take();
-        self.invalidate_delivery_freshness();
-        Err(failure)
     }
 
     #[cold]
@@ -986,14 +876,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Advances resident input and inspects its resolved command in one
-    /// destination-directed state machine. Cold transitions re-enter only
-    /// after the command typestate borrow has ended.
+    /// Advances resident input, inspects its resolved meaning, and optionally
+    /// expands it in one destination-directed state machine. Raw readers and
+    /// expanded scanners differ only at the post-resolution decision; both
+    /// reuse this loop and its one cold-transition owner.
     #[allow(
         clippy::too_many_arguments,
         reason = "scalar semantic axes replace the deleted delivery-policy aggregate"
     )]
-    pub(super) fn expanded_delivery_entry(
+    pub(super) fn command_delivery_entry(
         &mut self,
         expanded_fetch: ExpandedFetch,
         protected_macros: ProtectedMacroHandling,
@@ -1006,11 +897,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
-        let resuming = self.expansion_resume.is_some()
-            || self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion);
+        let expanding = first_command != FirstCommandPolicy::Raw;
+        let resuming = expanding
+            && (self.expansion_resume.is_some()
+                || self
+                    .scanner_resume
+                    .as_ref()
+                    .is_some_and(crate::ScannerFrameKey::is_expansion));
         let mut delivery_expanded = false;
         let mut fetch = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
@@ -1031,8 +924,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let command = destination
             .as_mut()
-            .expect("expanded entry owns one initialized command destination");
-        let Some(active_depth) = depth.checked_add(1) else {
+            .expect("delivery entry owns one initialized command destination");
+        let Some(active_depth) = depth.checked_add(u32::from(expanding)) else {
             return self.fail_expanded_delivery(
                 destination,
                 depth,
@@ -1118,6 +1011,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             let first = std::mem::take(&mut first);
+            if first_command == FirstCommandPolicy::Raw {
+                if alignment_interception == AlignmentInterceptionPolicy::Scalar
+                    && matches!(
+                        command.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    )
+                {
+                    if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
+                        return self.fail_expanded_delivery(destination, depth, failure);
+                    }
+                    fetch = true;
+                    continue;
+                }
+                break 'delivery DeliveryStatus::Command;
+            }
             let action = classify_expanded_command(command, protected_macros, undefined);
             if first && first_command == FirstCommandPolicy::MainLoopCharacter {
                 if is_main_loop_character(command.meaning_ref()) {

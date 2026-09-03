@@ -426,7 +426,7 @@ TeX82 alignment lookahead preserves its deferred-observation decision. Each
 concrete loop returns only its final compact status. Cold end, replay, and
 failure clear the provisional destination; only a genuine typed resource
 suspension replaces the initialized command and parks its prior owner. The
-raw and expanded entries both write ordinary command/end results directly into
+raw and expanded branches both write ordinary command/end results directly into
 their caller's return slot. Neither owns a stack-local error slot or returns an
 internal failure marker. A real failure reaches a cold helper that clears the
 destination and freshness, restores expansion depth when applicable, and
@@ -1053,8 +1053,8 @@ output-list draining supply their local final or discard slots directly and
 create no returned command envelope.
 
 The physical processor split follows those same transitions without splitting
-ownership: `processor/expand.rs` owns one const-specialized raw/expanded
-fetch-and-inspect state machine, while `processor/next.rs` owns the public raw
+ownership: `processor/expand.rs` owns one raw/expanded fetch, resolve, classify,
+and dispatch state machine, while `processor/next.rs` owns the public raw
 policy entries and resident-command observation; the `CommandState` resident
 transition owns ordinary token/macro retirement and immediate retry;
 `end_input.rs` owns cold source acquisition/EOF, terminal/v-template

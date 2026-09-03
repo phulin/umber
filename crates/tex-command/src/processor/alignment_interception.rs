@@ -84,7 +84,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             ExpandedFetch::GetXToken
         };
-        let delivery = self.expanded_delivery_entry(
+        let delivery = self.command_delivery_entry(
             fetch,
             ProtectedMacroHandling::Expand,
             UndefinedHandling::Diagnose,

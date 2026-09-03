@@ -34,7 +34,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.raw_delivery_entry(
+        let delivery = self.command_delivery_entry(
+            super::expand::ExpandedFetch::GetXToken,
+            super::expand::ProtectedMacroHandling::Expand,
+            super::expand::UndefinedHandling::Diagnose,
+            super::ExpandedObservationPolicy::RawOnly,
+            super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
             destination,
@@ -69,7 +74,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.raw_delivery_entry(
+        let delivery = self.command_delivery_entry(
+            super::expand::ExpandedFetch::GetXToken,
+            super::expand::ProtectedMacroHandling::Expand,
+            super::expand::UndefinedHandling::Diagnose,
+            super::ExpandedObservationPolicy::RawOnly,
+            super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::None,
             destination,
@@ -144,7 +154,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
-        let delivery = self.raw_delivery_entry(
+        let delivery = self.command_delivery_entry(
+            super::expand::ExpandedFetch::GetXToken,
+            super::expand::ProtectedMacroHandling::Expand,
+            super::expand::UndefinedHandling::Diagnose,
+            super::ExpandedObservationPolicy::RawOnly,
+            super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
             destination,
