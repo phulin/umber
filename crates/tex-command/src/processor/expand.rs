@@ -1178,6 +1178,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .top_if_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
             if let Some(control) = if_number_control {
+                let nested_delimiter = matches!(
+                    action,
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::Else
+                            | ExpandablePrimitive::Or
+                            | ExpandablePrimitive::Fi,
+                    ))
+                ) && self
+                    .command
+                    .conditions
+                    .current()
+                    .is_some_and(|frame| frame.identity != control.condition);
                 if matches!(
                     action,
                     ExpandedCommandAction::Return
@@ -1187,7 +1199,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 | ExpandablePrimitive::Or
                                 | ExpandablePrimitive::Fi,
                         ))
-                ) && !matches!(
+                ) && !nested_delimiter && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft { .. }
                         | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation { .. }
@@ -1209,6 +1221,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .top_if_dimension_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
             if let Some(control) = if_dimension_control {
+                let nested_delimiter = matches!(
+                    action,
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::Else
+                            | ExpandablePrimitive::Or
+                            | ExpandablePrimitive::Fi,
+                    ))
+                ) && self
+                    .command
+                    .conditions
+                    .current()
+                    .is_some_and(|frame| frame.identity != control.condition);
                 if matches!(
                     action,
                     ExpandedCommandAction::Return
@@ -1218,7 +1242,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 | ExpandablePrimitive::Or
                                 | ExpandablePrimitive::Fi,
                         ))
-                ) && !matches!(
+                ) && !nested_delimiter && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
                         ..
