@@ -1496,6 +1496,7 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
         "SynchronousIfDimensionControl",
         "SynchronousNumberControl",
         "SynchronousFontNameControl",
+        "SynchronousExpandedControl",
     ] {
         assert!(
             controls.contains(control) || work.contains(control),
@@ -1508,5 +1509,6 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
     assert!(controls.contains("size_of::<SynchronousIfNumberControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfDimensionControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousNumberControl>() <= 48"));
+    assert!(controls.contains("size_of::<SynchronousExpandedControl>() <= 128"));
     assert!(controls.contains("size_of::<SynchronousFontNameControl>() <= 32"));
 }
