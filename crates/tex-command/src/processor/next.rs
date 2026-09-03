@@ -9,7 +9,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CommandReplayDelivery;
-use crate::command::CurrentCommand;
+use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 
 use super::CommandProcessor;
@@ -157,9 +157,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.create_source_control_sequences = false;
         delivery
     }
-    /// Publishes one command after the authoritative resident transition has
-    /// completed its ordinary semantic treatment.
-    pub(super) fn observe_resident_command(&mut self, command: &CurrentCommand<G>) {
+    /// Compact resident-command observation.  Delivery
+    /// settlement may already own a hot command; observing it in place keeps
+    /// the scanner/expansion path free of a rich command projection.
+    pub(super) fn observe_resident_hot_command(&mut self, command: &HotCommand<G>) {
         let adjustment = command.alignment_adjustment();
         let previous_align_state = match adjustment {
             crate::processor::AlignmentDeliveryAdjustment::BeginGroup => {
@@ -215,7 +216,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             adjustment,
             crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
         ) {
-            self.observe_raw_delivery(command);
+            self.observe_raw_hot_delivery(command);
         }
     }
     pub(crate) fn observed_token(
@@ -274,19 +275,52 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.observed_token(command.spelling())
         }
     }
-    fn observe_raw_delivery(&mut self, command: &CurrentCommand<G>) {
+
+    /// Compact counterpart of [`Self::observed_command_spelling`]. The
+    /// scanner-owned delivery path must retain the same canonical spelling
+    /// rules without first materializing `CurrentCommand`.
+    pub(crate) fn observed_hot_command_spelling(
+        &self,
+        command: &crate::command::HotCommand<G>,
+    ) -> crate::observation::ObservedToken {
+        if let Some(symbol) = command.control_sequence() {
+            crate::observation::ObservedToken::ControlSequence(
+                self.state.resolve(symbol).to_owned(),
+            )
+        } else if command.spelling().semantic_token().is_frozen_end_template()
+            || command.spelling().semantic_token().is_frozen_endv()
+        {
+            crate::observation::ObservedToken::ControlSequence("endtemplate".into())
+        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
+            && matches!(
+                command.resolved_meaning(),
+                tex_state::ResolvedMeaning::Static(Meaning::Relax)
+            )
+        {
+            crate::observation::ObservedToken::ControlSequence("relax".into())
+        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
+            && let tex_state::ResolvedMeaning::Static(meaning) = command.resolved_meaning()
+            && let Some(name) = self.state.primitive_name(meaning)
+        {
+            crate::observation::ObservedToken::ControlSequence(name.into())
+        } else {
+            self.observed_token(command.spelling())
+        }
+    }
+    fn observe_raw_hot_delivery(&mut self, command: &HotCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {}
             let (command_name, command_operand) =
-                crate::observation::canonical_current_command_identity_for_profile(
+                crate::observation::canonical_delivery_identity_for_profile(
                     self.command.profile(),
-                    command,
+                    command.identity(),
+                    command.resolved_meaning(),
                 );
-            let spelling = self.observed_command_spelling(command);
+            let spelling = self.observed_hot_command_spelling(command);
             let semantic_operand = crate::observation::canonical_sparse_register_operand(
                 self.command.profile(),
-                command.meaning(),
+                command.resolved_meaning(),
             );
             CommandObservation::Command(CommandDeliveryRecord {
                 boundary: CommandDeliveryBoundary::Raw,
@@ -298,7 +332,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command.delivery_stamp(),
                     self.current_delivery_sequence(),
                     command.origin(),
-                    self.direct_source_provenance(command),
+                    self.direct_source_provenance_hot(command),
                 ),
             })
         });

@@ -412,6 +412,23 @@ impl<G> CommandProcessor<'_, '_, G> {
             .flatten()
     }
 
+    /// Compact counterpart of [`Self::direct_source_provenance`].  A hot
+    /// delivery keeps only its origin until an observation or diagnostic
+    /// boundary needs the source range, so resolve that range directly from
+    /// the origin without materializing `CurrentCommand`.
+    pub(crate) fn direct_source_provenance_hot(
+        &self,
+        command: &crate::command::HotCommand<G>,
+    ) -> Option<crate::SourceProvenance> {
+        if !command.is_direct_source_delivery() {
+            return None;
+        }
+        let range = self.state.origin_source_range(command.origin())?;
+        Some(crate::SourceProvenance::from_range(
+            crate::SourceRange::new(range.source(), range.start(), range.end()),
+        ))
+    }
+
     /// Returns the immutable command dialect and character mode for this job.
     #[must_use]
     pub fn profile(&self) -> crate::CommandProfile {

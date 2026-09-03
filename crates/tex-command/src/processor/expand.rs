@@ -816,18 +816,50 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(DeliveryStatus::Command)
     }
 
-    /// The concrete TeX82 §380 `get_x_token` loop. Expansion remains in the
-    /// continuously occupied hot command; only scanner/diagnostic/resource
-    /// boundaries materialize or park it.
-    #[inline(always)]
+    /// Delivers one expanded command through the compact loop and materializes
+    /// only at the caller's rich-command boundary. The scanner-owned callers
+    /// use the hot entry directly, so a terminal delimiter operand never
+    /// crosses this boundary merely to be classified.
     pub(super) fn expanded_next(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        let mut hot_destination = destination.take().map(HotCommand::from_current);
+        let result = self.expanded_next_hot(&mut hot_destination);
+        match result {
+            Ok(status) => {
+                if matches!(
+                    status,
+                    DeliveryStatus::End
+                        | DeliveryStatus::ReplayCompleted(_)
+                        | DeliveryStatus::CharacterRun
+                ) {
+                    hot_destination.take();
+                } else {
+                    *destination = hot_destination.take().map(|command| command.materialize());
+                }
+                Ok(status)
+            }
+            Err(error) => {
+                hot_destination.take();
+                destination.take();
+                Err(error)
+            }
+        }
+    }
+
+    /// The concrete TeX82 §380 `get_x_token` loop. Expansion remains in the
+    /// continuously occupied hot command; only scanner/diagnostic/resource
+    /// boundaries materialize or park it.
+    #[inline(always)]
+    fn expanded_next_hot(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
         let Some(active_depth) = depth.checked_add(1) else {
-            return self.fail_expanded_delivery(
+            return self.fail_hot_expanded_delivery(
                 destination,
                 depth,
                 CommandError::input_invariant(),
@@ -841,13 +873,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .is_some_and(crate::ScannerFrameKey::is_expansion);
         let (mut command, mut fetch, mut delivery_expanded) = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
-                Ok((command, resumed_expanded)) => {
-                    (HotCommand::from_current(command), false, resumed_expanded)
+                Ok((command, resumed_expanded)) => (command, false, resumed_expanded),
+                Err(failure) => {
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
-                Err(failure) => return self.fail_expanded_delivery(destination, depth, failure),
             }
         } else if let Some(command) = destination.take() {
-            (HotCommand::from_current(command), false, false)
+            (command, false, false)
         } else {
             (HotCommand::empty(), true, false)
         };
@@ -856,13 +888,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if fetch {
                 self.invalidate_delivery_freshness();
                 if let Err(failure) = self.charge_command_action() {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
                 let literal_catcode = 'fetch: loop {
                     let selected = match self.next_resident_word() {
                         Ok(selected) => selected,
                         Err(failure) => {
-                            return self.fail_expanded_delivery(destination, depth, failure);
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     };
                     match selected {
@@ -873,7 +905,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
-                                    return self.fail_expanded_delivery(
+                                    return self.fail_hot_expanded_delivery(
                                         destination,
                                         depth,
                                         failure,
@@ -898,7 +930,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
-                                    return self.fail_expanded_delivery(
+                                    return self.fail_hot_expanded_delivery(
                                         destination,
                                         depth,
                                         failure,
@@ -942,7 +974,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
-                                    return self.fail_expanded_delivery(
+                                    return self.fail_hot_expanded_delivery(
                                         destination,
                                         depth,
                                         failure,
@@ -1055,7 +1087,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if self.command.delivery_mode.requires_slow_settlement()
                     && let Err(failure) = self.settle_exceptional_delivery(&mut command)
                 {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
 
@@ -1097,7 +1129,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             fetch = true;
                         }
                         failure => {
-                            return self.fail_expanded_delivery(destination, depth, failure);
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     }
                 }
@@ -1114,7 +1146,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         ) {
             destination.take();
         } else {
-            *destination = Some(command.materialize());
+            *destination = Some(command);
         }
         Ok(status)
     }
@@ -2016,6 +2048,50 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    /// TeX82 §404's expanded nonblank/non-relax fetch for scanners that can
+    /// classify the terminal command directly from the compact delivery.
+    ///
+    /// The hot command is the sole result owner: it is overwritten on each
+    /// fetch, and exactly the command that stops the loop remains in the
+    /// caller's slot. In particular, no rich command is made merely to hand
+    /// one delimiter operand from expansion to `scan_delimiter`.
+    pub(crate) fn next_non_blank_non_relax_x_token_hot(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
+        loop {
+            match self.expanded_next_hot(destination)? {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                DeliveryStatus::Command
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentClosingBrace => {}
+                DeliveryStatus::AlignmentEndTemplate => {
+                    return Ok(DeliveryStatus::AlignmentEndTemplate);
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+            let command = destination
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
+            if !matches!(
+                command.command_word().static_meaning(),
+                Some(
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    } | Meaning::Relax
+                )
+            ) {
+                return Ok(DeliveryStatus::Command);
+            }
+            destination.take();
+        }
+    }
+
     /// TeX82 §406's `<Get the next non-blank non-call token>`:
     /// `repeat get_x_token until cur_cmd<>spacer`.
     ///
@@ -2294,8 +2370,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn resume_expanded_delivery(
         &mut self,
-        destination: Option<CurrentCommand<G>>,
-    ) -> Result<(CurrentCommand<G>, bool), CommandError> {
+        destination: Option<HotCommand<G>>,
+    ) -> Result<(HotCommand<G>, bool), CommandError> {
         let key = self.expansion_resume.take().or_else(|| {
             self.scanner_resume
                 .as_ref()
@@ -2316,7 +2392,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             .scratch
             .resume_expansion(key.expect("genuine suspension owns expansion work"))
             .map_err(crate::scan_toks::scratch_command_error)?;
-        if destination.is_some_and(|command| command != retained.command) {
+        if destination
+            .is_some_and(|command| command != HotCommand::from_current_ref(&retained.command))
+        {
             if let Some(child) = retained.take_child() {
                 self.abort_continuation(child)?;
             }
@@ -2332,7 +2410,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.resumed_expansion = Some(retained.resume);
         let delivery_expanded = retained.delivery_expanded;
         self.resume_current_command(&retained.command);
-        Ok((retained.command, delivery_expanded))
+        Ok((
+            HotCommand::from_current(retained.command),
+            delivery_expanded,
+        ))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_hot_expanded_delivery(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        depth: u32,
+        failure: CommandError,
+    ) -> Result<DeliveryStatus, CommandError> {
+        destination.take();
+        self.command.transient.active_expansion_depth = depth;
+        self.invalidate_delivery_freshness();
+        Err(failure)
     }
 
     #[cold]
@@ -2756,7 +2851,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.command.roots.alignment.classify_delimiter(command);
         }
         if mode.observing() {
-            self.observe_resident_command(&command.materialize());
+            self.observe_resident_hot_command(command);
         }
         Ok(())
     }
@@ -2772,7 +2867,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
         if self.is_observed() {
-            self.observe_expanded_delivery(&command.materialize());
+            self.observe_expanded_hot_delivery(command);
         }
         if self
             .command
@@ -2813,6 +2908,42 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance(command),
+                ),
+            })
+        });
+    }
+
+    /// Compact observation counterpart for the scanner-owned expanded
+    /// delivery.  The terminal command remains in the hot slot while its
+    /// canonical identity, spelling, and provenance are projected into the
+    /// observer record.
+    fn observe_expanded_hot_delivery(&mut self, command: &HotCommand<G>) {
+        observe!(self, {
+            #[cfg(test)]
+            {}
+            let meaning = command.resolved_meaning();
+            let (command_name, command_operand) =
+                crate::observation::canonical_delivery_identity_for_profile(
+                    self.command.profile(),
+                    command.identity(),
+                    meaning,
+                );
+            let spelling = self.observed_hot_command_spelling(command);
+            let semantic_operand = crate::observation::canonical_sparse_register_operand(
+                self.command.profile(),
+                meaning,
+            );
+            CommandObservation::Command(CommandDeliveryRecord {
+                boundary: CommandDeliveryBoundary::Expanded,
+                spelling,
+                command: command_name,
+                command_operand,
+                semantic_operand,
+                provenance: CommandProvenance::from_stamp(
+                    command.delivery_stamp(),
+                    self.current_delivery_sequence(),
+                    command.origin(),
+                    self.direct_source_provenance_hot(command),
                 ),
             })
         });

@@ -287,6 +287,13 @@ pub(super) enum PendingOperationScanPhase {
         global: bool,
         phase: MathFamilyScanPhase,
     },
+    /// TeX82 §1160's `scan_delimiter` can suspend while its one compact
+    /// operand is scanning a `\delimiter` number.  Retain only the boundary
+    /// kind here; the processor's typed scanner frame owns the pending scalar
+    /// and the command episode continues from that exact delivery.
+    MathDelimiter {
+        kind: tex_command::MathDelimiterBoundaryKind,
+    },
     Arithmetic {
         primitive: UnexpandablePrimitive,
         global: bool,

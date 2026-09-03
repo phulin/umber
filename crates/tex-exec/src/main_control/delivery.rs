@@ -2968,6 +2968,20 @@ pub(super) fn resume_pending_operation_scan<G>(
             global,
             phase,
         } => scan_math_family_assignment(cold, processor, scalar, size, global, phase, suspended),
+        PendingOperationScanPhase::MathDelimiter { kind } => {
+            let boundary = match processor.scan_math_delimiter_boundary(kind) {
+                Ok(boundary) => boundary,
+                Err(error) => {
+                    let error = command_error(error);
+                    if execution_error_needs_command_retry(&error) {
+                        *suspended = Some(PendingOperationScanPhase::MathDelimiter { kind });
+                    }
+                    return Err(error);
+                }
+            };
+            write_cold_scan!(cold, ColdOperation::<G>::MathDelimiter(boundary));
+            Ok(())
+        }
         PendingOperationScanPhase::Arithmetic {
             primitive,
             global,
@@ -4005,14 +4019,21 @@ pub(super) fn scan_command<G>(
             UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
             _ => unreachable!(),
         };
+        let boundary = match processor.scan_math_delimiter_boundary(kind) {
+            Ok(boundary) => boundary,
+            Err(error) => {
+                let error = command_error(error);
+                if execution_error_needs_command_retry(&error) {
+                    *suspended_operation_scan =
+                        Some(PendingOperationScanPhase::MathDelimiter { kind });
+                }
+                return Err(error);
+            }
+        };
         return Ok(retain_cold_operation(
             command,
             cold,
-            ColdOperation::<G>::MathDelimiter(
-                processor
-                    .scan_math_delimiter_boundary(kind)
-                    .map_err(command_error)?,
-            ),
+            ColdOperation::<G>::MathDelimiter(boundary),
         ));
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)

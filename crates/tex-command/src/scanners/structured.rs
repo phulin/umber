@@ -4719,9 +4719,75 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         kind: MathDelimiterBoundaryKind,
     ) -> Result<MathDelimiterBoundary, CommandError> {
+        let mut destination = None;
+        match self.next_non_blank_non_relax_x_token_hot(&mut destination)? {
+            DeliveryStatus::End => {
+                return Ok(MathDelimiterBoundary {
+                    kind,
+                    delimiter: ScannedMathDelimiter {
+                        code: 0,
+                        recovered: true,
+                        missing_delimiter: true,
+                        provenance: StructuredProvenance {
+                            primary: OriginId::UNKNOWN,
+                        },
+                    },
+                });
+            }
+            DeliveryStatus::Command
+            | DeliveryStatus::PendingExpanded
+            | DeliveryStatus::AlignmentClosingBrace => {}
+            DeliveryStatus::AlignmentEndTemplate
+            | DeliveryStatus::CharacterRun
+            | DeliveryStatus::CharacterRunBoundary => {
+                return Err(CommandError::input_invariant());
+            }
+            DeliveryStatus::ReplayCompleted(_) => unreachable!(),
+        }
+        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let primary = command.origin();
+        let code = match command.command_word().static_meaning() {
+            Some(Meaning::CharToken {
+                ch,
+                cat: Catcode::Letter | Catcode::Other,
+            }) => self.state.delcode(ch),
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
+                return Ok(MathDelimiterBoundary {
+                    kind,
+                    delimiter: self.scan_delimiter_number()?,
+                });
+            }
+            // `char_given` and `math_given` are distinct TeX command codes;
+            // neither is one of §1160's accepted delimiter cases. Keep them
+            // explicit here so a compact terminal command cannot fall
+            // through to a second expanded fetch.
+            Some(Meaning::CharGiven(_) | Meaning::MathCharGiven(_)) => -1,
+            _ => -1,
+        };
+        if code < 0 {
+            // TeX82 §1161: back up exactly the one rejected delivery before
+            // reporting the recovery. The following source token has not
+            // entered the scanner and remains untouched.
+            self.back_input_hot(command)?;
+            self.missing_delimiter_error()?;
+            return Ok(MathDelimiterBoundary {
+                kind,
+                delimiter: ScannedMathDelimiter {
+                    code: 0,
+                    recovered: true,
+                    missing_delimiter: true,
+                    provenance: StructuredProvenance { primary },
+                },
+            });
+        }
         Ok(MathDelimiterBoundary {
             kind,
-            delimiter: self.scan_delimiter(false)?,
+            delimiter: ScannedMathDelimiter {
+                code: code as u32,
+                recovered: false,
+                missing_delimiter: false,
+                provenance: StructuredProvenance { primary },
+            },
         })
     }
 

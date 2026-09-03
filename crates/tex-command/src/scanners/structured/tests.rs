@@ -1,3 +1,4 @@
+use tex_state::meaning::{MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, Token};
 
 use super::{FileNameComponents, WriteStreamSelector};
@@ -8,6 +9,54 @@ fn other(ch: char) -> Token {
         ch,
         cat: Catcode::Other,
     }
+}
+
+fn space() -> Token {
+    Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    }
+}
+
+fn scan_math_delimiter(tokens: impl IntoIterator<Item = Token>) -> (u32, u32, Option<Token>) {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, tokens);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let expected_code = processor.state.delcode('.') as u32;
+        let code = processor
+            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
+            .expect("delimiter boundary")
+            .delimiter
+            .code;
+        let mut destination = None;
+        let next = match processor
+            .get_token_into(&mut destination)
+            .expect("following raw token")
+        {
+            crate::DeliveryStatus::End => None,
+            crate::DeliveryStatus::Command => Some(
+                destination
+                    .take()
+                    .expect("raw token destination")
+                    .spelling()
+                    .semantic_token(),
+            ),
+            other => panic!("unexpected delivery status: {other:?}"),
+        };
+        (expected_code, code, next)
+    })
 }
 
 fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSelector {
@@ -64,6 +113,127 @@ fn normalized_write_stream_numbers_match_texs_reserved_slots() {
     assert_eq!(WriteStreamSelector::Negative.normalized_number(), 17);
     assert_eq!(WriteStreamSelector::AboveRange.normalized_number(), 16);
     assert_eq!(WriteStreamSelector::Stream(4).normalized_number(), 4);
+}
+
+#[test]
+fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
+    let (expected_code, direct_code, direct_next) = scan_math_delimiter([other('.'), other('.')]);
+    assert_eq!(direct_code, expected_code);
+    assert_eq!(direct_next, Some(other('.')));
+    let (expected_code, spaced_code, spaced_next) =
+        scan_math_delimiter([space(), other('.'), space(), other('.')]);
+    assert_eq!(spaced_code, expected_code);
+    assert_eq!(spaced_next, Some(space()));
+
+    crate::test_harness::with_universe(|universe| {
+        let replacement = [tex_state::token::TokenWord::pack(other('.'))];
+        let definition = universe
+            .allocate_definition(&[], &replacement)
+            .expect("delimiter macro definition");
+        let symbol = universe.intern("delimarg").expect("delimiter macro");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                tex_state::env::AssignmentScope::Global,
+            )
+            .expect("delimiter macro meaning");
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol()), other('.')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let expected_code = processor.state.delcode('.') as u32;
+        let ownership_before = crate::command::command_ownership_counters();
+        let scanned = processor
+            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
+            .expect("macro delimiter boundary");
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(scanned.delimiter.code, expected_code);
+        assert_eq!(
+            ownership_after.rich_materializations, ownership_before.rich_materializations,
+            "compact delimiter delivery must not materialize its operand"
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_token_into(&mut destination)
+                .expect("adjacent source token"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .expect("adjacent token destination")
+                .spelling()
+                .semantic_token(),
+            other('.')
+        );
+    });
+}
+
+#[test]
+fn math_delimiter_recovery_backs_up_only_the_rejected_operand() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [other('x'), other('.')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let scanned = processor
+            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
+            .expect("delimiter recovery");
+        assert!(scanned.delimiter.recovered);
+        assert!(scanned.delimiter.missing_delimiter);
+
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_token_into(&mut destination)
+                .expect("rejected delimiter replay"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("rejected token destination")
+                .spelling()
+                .semantic_token(),
+            other('x')
+        );
+        assert_eq!(
+            processor
+                .get_token_into(&mut destination)
+                .expect("following source token"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("following token destination")
+                .spelling()
+                .semantic_token(),
+            other('.')
+        );
+    });
 }
 
 #[test]

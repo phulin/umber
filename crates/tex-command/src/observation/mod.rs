@@ -357,9 +357,17 @@ pub(crate) fn canonical_current_command_identity_for_profile<G>(
     profile: CommandProfile,
     command: &CurrentCommand<G>,
 ) -> (String, Option<i64>) {
-    match command.identity() {
+    canonical_delivery_identity_for_profile(profile, command.identity(), command.meaning())
+}
+
+pub(crate) fn canonical_delivery_identity_for_profile<G>(
+    profile: CommandProfile,
+    identity: CommandIdentity,
+    meaning: ResolvedMeaning<G>,
+) -> (String, Option<i64>) {
+    match identity {
         CommandIdentity::Ordinary => {
-            let (name, operand) = match command.meaning() {
+            let (name, operand) = match meaning {
                 ResolvedMeaning::Static(meaning) => {
                     canonical_command_identity_for_profile(profile, meaning)
                 }
@@ -396,7 +404,7 @@ pub(crate) fn canonical_current_command_identity_for_profile<G>(
         // though the executor later dispatches each typed diagnostic action.
         CommandIdentity::XRay(selector) => ("xray".into(), Some(selector.operand())),
         CommandIdentity::NoExpandFrozenRelax => {
-            debug_assert_eq!(command.meaning(), ResolvedMeaning::Static(Meaning::Relax));
+            debug_assert_eq!(meaning, ResolvedMeaning::Static(Meaning::Relax));
             ("relax".into(), Some(257))
         }
     }

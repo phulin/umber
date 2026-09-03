@@ -209,6 +209,19 @@ impl<G> CommandWord<G> {
             _ => ResolvedMeaning::Static(Meaning::from_runtime_word(self.operand.scalar_value())),
         }
     }
+
+    /// Decodes a static command word without constructing a rich delivery.
+    ///
+    /// Macro definitions and font identities are the only command meanings
+    /// whose operands are opaque capabilities rather than packed static
+    /// words. Scanners that only classify a terminal command therefore use
+    /// this projection instead of materializing `CurrentCommand`.
+    pub(crate) fn static_meaning(self) -> Option<Meaning> {
+        match self.code {
+            CommandClass::Macro | CommandClass::Font => None,
+            _ => Some(Meaning::from_runtime_word(self.operand.scalar_value())),
+        }
+    }
 }
 
 const _: () = assert!(core::mem::size_of::<CommandWord<()>>() == 16);
@@ -233,7 +246,7 @@ pub(crate) struct HotToken {
 }
 
 /// Sole compact command owner inside raw and expanded delivery loops.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct HotCommand<G> {
     token: HotToken,
     command: CommandWord<G>,
@@ -241,6 +254,28 @@ pub(crate) struct HotCommand<G> {
     /// be reconstructed from their dense slot. Keep that opaque capability
     /// beside the fixed-width command word only for the font command class.
     font: Option<FontId>,
+}
+
+impl<G> PartialEq for HotCommand<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.token == other.token
+            && self.command.class() == other.command.class()
+            && self.command.flags() == other.command.flags()
+            && self.command.operand.scalar_value() == other.command.operand.scalar_value()
+            && self.font == other.font
+    }
+}
+
+impl<G> Eq for HotCommand<G> {}
+
+impl<G> core::hash::Hash for HotCommand<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.token.hash(state);
+        self.command.class().hash(state);
+        self.command.flags().hash(state);
+        self.command.operand.scalar_value().hash(state);
+        self.font.hash(state);
+    }
 }
 
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
@@ -588,6 +623,23 @@ impl<G> HotCommand<G> {
         self.command
     }
 
+    /// The command identity selected by the compact delivery loop.
+    pub(crate) fn identity(&self) -> CommandIdentity {
+        if self
+            .token
+            .site
+            .delivery_flags
+            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
+        {
+            CommandIdentity::NoExpandFrozenRelax
+        } else {
+            match self.command.static_meaning() {
+                Some(meaning) => CommandIdentity::from_static_meaning(meaning),
+                None => CommandIdentity::Ordinary,
+            }
+        }
+    }
+
     #[allow(dead_code)] // profiling-only direct-delivery harness
     pub(crate) fn resolved_meaning(&self) -> ResolvedMeaning<G> {
         self.command.resolved_meaning(self.font)
@@ -595,6 +647,10 @@ impl<G> HotCommand<G> {
 
     pub(crate) const fn spelling_word(&self) -> TokenWord {
         self.token.word
+    }
+
+    pub(crate) const fn spelling(&self) -> TracedTokenWord {
+        TracedTokenWord::from_parts(self.token.word, self.token.origin)
     }
 
     pub(crate) const fn origin(&self) -> OriginId {
