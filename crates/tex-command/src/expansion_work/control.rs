@@ -127,6 +127,17 @@ pub(crate) enum ThePhase {
         value: i64,
         seen_digit: bool,
     },
+    Expression {
+        target: Meaning,
+        expression: i64,
+        expression_sign: i8,
+        term: i64,
+        term_operator: u8,
+        term_active: bool,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

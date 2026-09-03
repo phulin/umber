@@ -1,6 +1,6 @@
 //! TeX and e-TeX conversion and mark primitives.
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{OriginId, Token};
 
 use crate::command::{CommandClass, HotCommand};
@@ -15,6 +15,180 @@ use super::expand_render::{
 use super::{CommandProcessor, DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Advances the compact integer-expression form used by `\the`.  The
+    /// ordinary expression scanner already has an explicit parenthesis stack,
+    /// but its scalar factors still request expanded tokens synchronously.
+    /// This small no-parenthesis lane covers the common nested conversion
+    /// path and keeps each factor in the generation-owned control record.
+    pub(super) fn advance_the_expression_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
+        let control = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let ThePhase::Expression {
+            target,
+            expression,
+            expression_sign,
+            term,
+            term_operator,
+            term_active,
+            negative,
+            value,
+            seen_digit,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        if target != Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) {
+            return Err(CommandError::input_invariant());
+        }
+        let character = command.character_token();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|character| character.is_ascii_digit())
+            .map(|character| i64::from(character as u8 - b'0'));
+        let is_relax = matches!(
+            command.resolved_meaning(),
+            ResolvedMeaning::Static(Meaning::Relax)
+        );
+        let accumulate = |value: i64, digit: i64| {
+            value
+                .saturating_mul(10)
+                .saturating_add(digit)
+                .min(i64::from(i32::MAX))
+        };
+        let apply_term = |term: i64, operator: u8, factor: i64| match operator {
+            1 => term.saturating_mul(factor),
+            2 if factor != 0 => term / factor,
+            2 => 0,
+            _ => factor,
+        };
+        let finish = |this: &mut Self, expression: i64, term: i64| {
+            let result = expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
+            let result = result.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+            let result = i32::try_from(result).expect("clamped expression fits i32");
+            let opener = this
+                .command
+                .scratch
+                .pop_the_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            this.expand_the_value(opener, crate::InternalValue::Integer(result))
+        };
+        let reset_factor = |this: &mut Self,
+                            expression,
+                            expression_sign,
+                            term,
+                            term_operator,
+                            term_active|
+         -> Result<(), CommandError> {
+            this.command
+                .scratch
+                .set_the_phase(ThePhase::Expression {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative: false,
+                    value: 0,
+                    seen_digit: false,
+                })
+                .map_err(crate::scan_toks::scratch_command_error)
+        };
+
+        if is_space && !seen_digit {
+            return Ok(false);
+        }
+        if (character == Some('+') || character == Some('-')) && !seen_digit {
+            self.command.scratch.set_the_phase(ThePhase::Expression {
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+                negative: character == Some('-'),
+                value,
+                seen_digit,
+            })?;
+            return Ok(false);
+        }
+        if let Some(digit) = digit {
+            self.command.scratch.set_the_phase(ThePhase::Expression {
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+                negative,
+                value: accumulate(value, digit),
+                seen_digit: true,
+            })?;
+            return Ok(false);
+        }
+
+        if !seen_digit {
+            if !is_relax {
+                self.back_input(command.materialize())?;
+            }
+            self.missing_number_error()?;
+            finish(self, expression, if term_active { term } else { 0 })?;
+            return Ok(true);
+        }
+        let factor = if negative {
+            value.saturating_neg()
+        } else {
+            value
+        };
+        let term = if term_active {
+            apply_term(term, term_operator, factor)
+        } else {
+            factor
+        };
+        if character == Some('*') || character == Some('/') {
+            reset_factor(
+                self,
+                expression,
+                expression_sign,
+                term,
+                if character == Some('*') { 1 } else { 2 },
+                true,
+            )?;
+            return Ok(false);
+        }
+        if character == Some('+') || character == Some('-') {
+            let expression =
+                expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
+            reset_factor(
+                self,
+                expression,
+                if character == Some('+') { 1 } else { -1 },
+                0,
+                0,
+                false,
+            )?;
+            return Ok(false);
+        }
+        if !is_relax && seen_digit {
+            self.back_input(command.materialize())?;
+        }
+        finish(self, expression, term)?;
+        Ok(true)
+    }
+
+    pub(super) fn compact_the_expression_target(meaning: Meaning) -> bool {
+        meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
+    }
+
     /// Advances the compact register-index phase of `\the`.  Register
     /// selectors are the common internal-value form that used to re-enter
     /// `get_x_token` from `scan_something_internal`; keeping their decimal

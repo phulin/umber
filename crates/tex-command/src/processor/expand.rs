@@ -1476,10 +1476,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ExpandedCommandAction::Expand(_),
                     ) => {}
                     (
+                        crate::expansion_work::control::ThePhase::Expression { .. },
+                        ExpandedCommandAction::Expand(_),
+                    ) => {}
+                    (
                         crate::expansion_work::control::ThePhase::Index { .. },
                         ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                     ) => {
                         if self.advance_the_index_continuation(command)? {
+                            fetch = true;
+                            continue;
+                        }
+                        fetch = true;
+                        continue;
+                    }
+                    (
+                        crate::expansion_work::control::ThePhase::Expression { .. },
+                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                    ) => {
+                        if self.advance_the_expression_continuation(command)? {
                             fetch = true;
                             continue;
                         }
@@ -1494,6 +1509,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ResolvedMeaning::Static(meaning) => meaning,
                             ResolvedMeaning::Macro { .. } => Meaning::Undefined,
                         };
+                        if Self::compact_the_expression_target(meaning) {
+                            self.command.scratch.set_the_phase(
+                                crate::expansion_work::control::ThePhase::Expression {
+                                    target: meaning,
+                                    expression: 0,
+                                    expression_sign: 1,
+                                    term: 0,
+                                    term_operator: 0,
+                                    term_active: false,
+                                    negative: false,
+                                    value: 0,
+                                    seen_digit: false,
+                                },
+                            )?;
+                            fetch = true;
+                            continue;
+                        }
                         if Self::compact_the_register_target(meaning) {
                             self.command.scratch.set_the_phase(
                                 crate::expansion_work::control::ThePhase::Index {

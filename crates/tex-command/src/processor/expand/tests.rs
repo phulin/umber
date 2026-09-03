@@ -208,6 +208,98 @@ fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
 }
 
 #[test]
+fn nested_the_integer_expressions_use_the_shared_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let numexpr = install_static(
+            universe,
+            "numexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        for depth in [1_024, 10_240, 100_000] {
+            let mut input = Vec::with_capacity(depth * 3 + 2);
+            for _ in 0..depth {
+                input.extend([the, numexpr]);
+            }
+            input.push(Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            });
+            input.extend(std::iter::repeat_n(relax, depth));
+            input.push(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            });
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            let output = collect_expanded_characters(universe, &mut command);
+            assert_eq!(output, "0X");
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
+        }
+    });
+}
+
+#[test]
+fn the_integer_expression_lane_preserves_operator_precedence() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let numexpr = install_static(
+            universe,
+            "numexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                the,
+                numexpr,
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '+',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '*',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '3',
+                    cat: Catcode::Other,
+                },
+                relax,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn nested_fontname_operands_use_the_shared_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let fontname = install_static(
