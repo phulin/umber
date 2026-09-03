@@ -1951,9 +1951,11 @@ boundaries; source EOF remains the cold file-warning/framing boundary. The
 source branch lends its row and checked slot together, tokenizes one word, and
 advances the row's compact position before ending that borrow. The replay,
 attempt, and durable variants embed the same resident token-row header. Each
-variant performs only its admitted storage-specific packed-word read before
-one shared first-touch, logical advance, `OutParameter` interception, and
-exhaustion transition. A safe successful read is the proof for the header's
+variant is selected once and keeps its admitted storage-specific cursor while
+driving one shared first-touch, packed-word read, logical advance,
+`OutParameter` interception, and exhaustion transition. Rollback state,
+parameter policy, and delivery accounting therefore do not redispatch the
+storage tag after selection. A safe successful read is the proof for the header's
 single branch-free resident advance; there is no second limit decision.
 Attempt storage authenticates its owner, row, and exact extent at admission,
 then ordinary delivery directly indexes that resident storage rather than

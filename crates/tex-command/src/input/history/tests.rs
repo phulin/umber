@@ -271,6 +271,16 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
 #[test]
 fn stored_token_position_transitions_are_present_in_every_build() {
     let source = include_str!("../history.rs");
+    let hot_transition = source
+        .split("pub(crate) fn advance_resident_command_into")
+        .nth(1)
+        .expect("resident transition exists")
+        .split("fn finish_resident_exhaustion")
+        .next()
+        .expect("resident transition has a cold exhaustion boundary");
+    assert_eq!(hot_transition.matches("match &mut row.storage").count(), 1);
+    assert_eq!(hot_transition.matches("match &row.storage").count(), 0);
+    assert_eq!(hot_transition.matches("matches!(row.storage").count(), 0);
     assert_eq!(source.matches(".frame.advance_resident();").count(), 1);
     assert_eq!(
         source

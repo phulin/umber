@@ -356,8 +356,11 @@ collector (see `src/conditionals.rs`).
   durable-token, attempt-token, macro-body, and macro-argument arm enters one
   compile-time-inlined resident-token transition for first touch, parameter
   handling, exhaustion, and final delivery. Each arm keeps only its concrete
-  lifetime-specific word read and cursor update; no runtime storage-handle
-  match, stored-top wrapper, advance result, or redispatch survives selection.
+  lifetime-specific word read and cursor update. The storage tag is selected
+  exactly once before that arm drives rollback admission, authoritative
+  shared-header advance, parameter interception, and accounting; none of
+  those tails rematches the row. No runtime storage-handle match, stored-top
+  wrapper, advance result, or redispatch survives selection.
   The three stored variants embed the same resident header. Their first warm
   checkpoint touch journals the header's logical position; replay includes its
   separate physical run/segment cursor. A

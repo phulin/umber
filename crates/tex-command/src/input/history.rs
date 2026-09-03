@@ -1073,40 +1073,82 @@ impl<G> crate::CommandState<G> {
                         }
                     }
                     InputLevel::Resident(row) => {
-                        let position = row.header.frame.position();
-                        let cursor_state = match &row.storage {
-                            super::ResidentTokenStorage::Replay { cursor, .. } => {
-                                InputLevelInlineState::replay_cursor(position, *cursor)
-                            }
-                            super::ResidentTokenStorage::MacroArgument(argument) => {
-                                InputLevelInlineState::macro_argument(position, argument.origin_run)
-                            }
-                            super::ResidentTokenStorage::Durable(_)
-                            | super::ResidentTokenStorage::Attempt(_)
-                            | super::ResidentTokenStorage::MacroBody(_) => {
-                                InputLevelInlineState::token_position(position)
-                            }
-                        };
-                        record_resident_first_touch!(
-                            resident_index,
-                            &mut row.header.rollback,
-                            cursor_state
-                        );
+                        // Select the storage lifetime once, then keep that concrete cursor
+                        // through the common header transition. In particular, do not
+                        // redispatch `row.storage` to recover rollback, parameter, or
+                        // accounting facts after the word read.
                         let exhausted_identity = row.header.identity();
                         let identity = exhausted_identity.0;
                         let active_source = row.header.frame.source_context();
                         suppress_expandable = row.header.frame.flags().contains(
                             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
                         );
-                        let parameter_arguments = match &row.storage {
-                            super::ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
-                            super::ResidentTokenStorage::MacroArgument(_) => None,
-                            _ => {
-                                (!matches!(row.header.behavior(), super::TokenBehavior::Parameter))
-                                    .then_some(None)
-                            }
-                        };
-                        let spelling = match &mut row.storage {
+                        let position = row.header.frame.position();
+                        macro_rules! drive_selected_cursor {
+                            (
+                                inline: $inline:expr,
+                                read: $read:expr,
+                                arguments: $arguments:expr,
+                                on_word: $on_word:block,
+                                on_parameter: $on_parameter:block $(,)?
+                            ) => {{
+                                record_resident_first_touch!(
+                                    resident_index,
+                                    &mut row.header.rollback,
+                                    $inline
+                                );
+                                let Some((word, origin)) = $read else {
+                                    if let Some(transition) = self
+                                        .finish_resident_exhaustion(
+                                            resident_index,
+                                            exhausted_identity,
+                                            observer,
+                                            immediate_write_retirement,
+                                        )
+                                        .map_err(|()| {
+                                            super::ResidentCommandColdTransition::Failure
+                                        })?
+                                    {
+                                        return Err(transition);
+                                    }
+                                    continue 'resident;
+                                };
+                                let consumed = row.header.frame.advance_resident();
+                                debug_assert_eq!(consumed, position);
+                                $on_word
+                                if let Some(arguments) = $arguments
+                                    && let Some(slot) = word.out_parameter_slot()
+                                {
+                                    #[cfg(test)]
+                                    {
+                                        self.raw_delivery_path_counters
+                                            .out_parameter_interceptions = self
+                                            .raw_delivery_path_counters
+                                            .out_parameter_interceptions
+                                            .saturating_add(1);
+                                    }
+                                    $on_parameter
+                                    self.push_resident_parameter_cursor(
+                                        slot,
+                                        arguments,
+                                        active_source,
+                                        observer,
+                                    )
+                                    .map_err(|()| {
+                                        super::ResidentCommandColdTransition::Failure
+                                    })?;
+                                    continue 'resident;
+                                }
+                                break 'delivery (
+                                    word,
+                                    origin,
+                                    identity,
+                                    u64::from(position),
+                                    active_source,
+                                );
+                            }};
+                        }
+                        match &mut row.storage {
                             super::ResidentTokenStorage::Replay { replay, cursor } => {
                                 #[cfg(test)]
                                 {
@@ -1126,10 +1168,9 @@ impl<G> crate::CommandState<G> {
                                         .span_selections
                                         .saturating_add(1);
                                 }
-                                self.roots
-                                    .input
-                                    .replay
-                                    .advance_sequential(
+                                drive_selected_cursor! {
+                                    inline: InputLevelInlineState::replay_cursor(position, *cursor),
+                                    read: self.roots.input.replay.advance_sequential(
                                         *replay,
                                         cursor,
                                         #[cfg(test)]
@@ -1141,7 +1182,48 @@ impl<G> crate::CommandState<G> {
                                             .stored_token_advance_counters
                                             .replay_run_transitions,
                                     )
-                                    .map(|word| (word.token_word(), word.origin()))
+                                    .map(|word| (word.token_word(), word.origin())),
+                                    arguments: (!matches!(
+                                        row.header.behavior(),
+                                        super::TokenBehavior::Parameter
+                                    ))
+                                    .then_some(None),
+                                    on_word: {
+                                        #[cfg(test)]
+                                        {
+                                            self.roots
+                                                .input
+                                                .levels
+                                                .cursor_mutations
+                                                .stored_token_branch_entries = self
+                                                .roots
+                                                .input
+                                                .levels
+                                                .cursor_mutations
+                                                .stored_token_branch_entries
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.packed_loads = self
+                                                .stored_token_advance_counters
+                                                .packed_loads
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.cursor_advances = self
+                                                .stored_token_advance_counters
+                                                .cursor_advances
+                                                .saturating_add(1);
+                                            generic_stored_delivery = true;
+                                        }
+                                    },
+                                    on_parameter: {
+                                        #[cfg(test)]
+                                        {
+                                            self.stored_token_advance_counters
+                                                .parameter_interceptions = self
+                                                .stored_token_advance_counters
+                                                .parameter_interceptions
+                                                .saturating_add(1);
+                                        }
+                                    },
+                                }
                             }
                             super::ResidentTokenStorage::Attempt(list) => {
                                 #[cfg(test)]
@@ -1158,10 +1240,44 @@ impl<G> crate::CommandState<G> {
                                         .attempt_domain_dispatches
                                         .saturating_add(1);
                                 }
-                                self.attempt
-                                    .arena()
-                                    .resident_token_word(list, position as usize)
-                                    .map(|word| (word.token_word(), word.origin()))
+                                drive_selected_cursor! {
+                                    inline: InputLevelInlineState::token_position(position),
+                                    read: self.attempt.arena().resident_token_word(
+                                        list,
+                                        position as usize,
+                                    ).map(|word| (word.token_word(), word.origin())),
+                                    arguments: (!matches!(
+                                        row.header.behavior(),
+                                        super::TokenBehavior::Parameter
+                                    ))
+                                    .then_some(None),
+                                    on_word: {
+                                        #[cfg(test)]
+                                        {
+                                            self.roots.input.levels.cursor_mutations
+                                                .stored_token_branch_entries = self.roots.input
+                                                .levels.cursor_mutations.stored_token_branch_entries
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.packed_loads = self
+                                                .stored_token_advance_counters.packed_loads
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.cursor_advances = self
+                                                .stored_token_advance_counters.cursor_advances
+                                                .saturating_add(1);
+                                            generic_stored_delivery = true;
+                                        }
+                                    },
+                                    on_parameter: {
+                                        #[cfg(test)]
+                                        {
+                                            self.stored_token_advance_counters
+                                                .parameter_interceptions = self
+                                                .stored_token_advance_counters
+                                                .parameter_interceptions
+                                                .saturating_add(1);
+                                        }
+                                    },
+                                }
                             }
                             super::ResidentTokenStorage::Durable(list) => {
                                 #[cfg(test)]
@@ -1178,8 +1294,44 @@ impl<G> crate::CommandState<G> {
                                         .durable_domain_dispatches
                                         .saturating_add(1);
                                 }
-                                list.word_at(position as usize)
-                                    .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
+                                drive_selected_cursor! {
+                                    inline: InputLevelInlineState::token_position(position),
+                                    read: list.word_at(position as usize).map(|word| (
+                                        word,
+                                        tex_state::token::OriginId::UNKNOWN,
+                                    )),
+                                    arguments: (!matches!(
+                                        row.header.behavior(),
+                                        super::TokenBehavior::Parameter
+                                    ))
+                                    .then_some(None),
+                                    on_word: {
+                                        #[cfg(test)]
+                                        {
+                                            self.roots.input.levels.cursor_mutations
+                                                .stored_token_branch_entries = self.roots.input
+                                                .levels.cursor_mutations.stored_token_branch_entries
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.packed_loads = self
+                                                .stored_token_advance_counters.packed_loads
+                                                .saturating_add(1);
+                                            self.stored_token_advance_counters.cursor_advances = self
+                                                .stored_token_advance_counters.cursor_advances
+                                                .saturating_add(1);
+                                            generic_stored_delivery = true;
+                                        }
+                                    },
+                                    on_parameter: {
+                                        #[cfg(test)]
+                                        {
+                                            self.stored_token_advance_counters
+                                                .parameter_interceptions = self
+                                                .stored_token_advance_counters
+                                                .parameter_interceptions
+                                                .saturating_add(1);
+                                        }
+                                    },
+                                }
                             }
                             super::ResidentTokenStorage::MacroBody(body) => {
                                 #[cfg(test)]
@@ -1203,9 +1355,24 @@ impl<G> crate::CommandState<G> {
                                         .saturating_add(1);
                                     macro_body_delivery = true;
                                 }
-                                body.body
-                                    .word(position as usize)
-                                    .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
+                                drive_selected_cursor! {
+                                    inline: InputLevelInlineState::token_position(position),
+                                    read: body.body.word(position as usize).map(|word| (
+                                        word,
+                                        tex_state::token::OriginId::UNKNOWN,
+                                    )),
+                                    arguments: Some(body.arguments),
+                                    on_word: {},
+                                    on_parameter: {
+                                        #[cfg(test)]
+                                        {
+                                            self.macro_kernel_counters.body_parameter_pushes = self
+                                                .macro_kernel_counters
+                                                .body_parameter_pushes
+                                                .saturating_add(1);
+                                        }
+                                    },
+                                }
                             }
                             super::ResidentTokenStorage::MacroArgument(argument) => {
                                 #[cfg(test)]
@@ -1233,90 +1400,18 @@ impl<G> crate::CommandState<G> {
                                 {
                                     raw_delivery_kind = crate::fuel::RawDeliveryKind::MacroArgument;
                                 }
-                                argument.advance_delivery(position, &self.scratch)
-                            }
-                        };
-                        let Some((word, origin)) = spelling else {
-                            if let Some(transition) = self
-                                .finish_resident_exhaustion(
-                                    resident_index,
-                                    exhausted_identity,
-                                    observer,
-                                    immediate_write_retirement,
-                                )
-                                .map_err(|()| super::ResidentCommandColdTransition::Failure)?
-                            {
-                                return Err(transition);
-                            }
-                            continue 'resident;
-                        };
-                        let consumed = row.header.frame.advance_resident();
-                        debug_assert_eq!(consumed, position);
-                        #[cfg(test)]
-                        if !matches!(
-                            row.storage,
-                            super::ResidentTokenStorage::MacroBody(_)
-                                | super::ResidentTokenStorage::MacroArgument(_)
-                        ) {
-                            self.roots
-                                .input
-                                .levels
-                                .cursor_mutations
-                                .stored_token_branch_entries = self
-                                .roots
-                                .input
-                                .levels
-                                .cursor_mutations
-                                .stored_token_branch_entries
-                                .saturating_add(1);
-                            self.stored_token_advance_counters.packed_loads = self
-                                .stored_token_advance_counters
-                                .packed_loads
-                                .saturating_add(1);
-                            self.stored_token_advance_counters.cursor_advances = self
-                                .stored_token_advance_counters
-                                .cursor_advances
-                                .saturating_add(1);
-                            generic_stored_delivery = true;
-                        }
-                        if let Some(arguments) = parameter_arguments
-                            && let Some(slot) = word.out_parameter_slot()
-                        {
-                            #[cfg(test)]
-                            {
-                                self.raw_delivery_path_counters.out_parameter_interceptions = self
-                                    .raw_delivery_path_counters
-                                    .out_parameter_interceptions
-                                    .saturating_add(1);
-                                if matches!(row.storage, super::ResidentTokenStorage::MacroBody(_))
-                                {
-                                    self.macro_kernel_counters.body_parameter_pushes = self
-                                        .macro_kernel_counters
-                                        .body_parameter_pushes
-                                        .saturating_add(1);
-                                } else {
-                                    self.stored_token_advance_counters.parameter_interceptions =
-                                        self.stored_token_advance_counters
-                                            .parameter_interceptions
-                                            .saturating_add(1);
+                                drive_selected_cursor! {
+                                    inline: InputLevelInlineState::macro_argument(
+                                        position,
+                                        argument.origin_run,
+                                    ),
+                                    read: argument.advance_delivery(position, &self.scratch),
+                                    arguments: None,
+                                    on_word: {},
+                                    on_parameter: {},
                                 }
                             }
-                            self.push_resident_parameter_cursor(
-                                slot,
-                                arguments,
-                                active_source,
-                                observer,
-                            )
-                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
-                            continue 'resident;
                         }
-                        break 'delivery (
-                            word,
-                            origin,
-                            identity,
-                            u64::from(position),
-                            active_source,
-                        );
                     }
                 }
             };
