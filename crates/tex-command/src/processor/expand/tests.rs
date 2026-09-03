@@ -1,6 +1,6 @@
 use tex_state::env::AssignmentScope;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
-use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::{CommandHostCapabilities, CommandProfile, CommandState};
 
@@ -341,7 +341,7 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
+        let mut fuel = crate::CommandFuelLedger::new(2).expect("expanded delivery fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
@@ -370,6 +370,7 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
                 cat: Catcode::Letter
             }
         );
+        assert_eq!(processor.fuel.burned(), 2);
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(ownership_after.clones - ownership_before.clones, 0);
     });
@@ -385,7 +386,7 @@ fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [token]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
+        let mut fuel = crate::CommandFuelLedger::new(1).expect("raw delivery fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
@@ -412,6 +413,7 @@ fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
                 .semantic_token(),
             token
         );
+        assert_eq!(processor.fuel.burned(), 1);
         drop(processor);
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
@@ -494,7 +496,7 @@ fn main_loop_character_run_resolves_only_its_non_character_tail() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
+        let mut fuel = crate::CommandFuelLedger::new(3).expect("character-run fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let ownership_before = crate::command::command_ownership_counters();
@@ -525,6 +527,11 @@ fn main_loop_character_run_resolves_only_its_non_character_tail() {
             })
         ));
         drop(processor);
+        assert_eq!(
+            fuel.burned(),
+            3,
+            "two run characters and the consumed tail each cost one charge"
+        );
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             ownership_after.resolved_writes - ownership_before.resolved_writes,
@@ -548,7 +555,7 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
             .open_registered_source(source)
             .expect("source opening");
         let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
+        let mut fuel = crate::CommandFuelLedger::new(4).expect("source character-run fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let mut processor = crate::test_harness::processor(
@@ -602,6 +609,11 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
             processor.command.profile_input_source_context_counters(),
             (0, 0, 0, 1)
         );
+        assert_eq!(
+            processor.fuel.burned(),
+            3,
+            "the deferred space tail remains uncharged until its owner fetches it"
+        );
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             ownership_after.resolved_writes - ownership_before.resolved_writes,
@@ -621,6 +633,222 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
                 ..
             })
         ));
+        drop(processor);
+        assert_eq!(
+            fuel.burned(),
+            4,
+            "the initial source character plus the run and tail each cost one charge"
+        );
+    });
+}
+
+#[test]
+fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
+    crate::test_harness::with_universe(|universe| {
+        let body_tokens = [
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'c',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+        ];
+        let words: Vec<_> = body_tokens.iter().copied().map(TokenWord::pack).collect();
+        let definition = universe
+            .allocate_definition(&[], &words)
+            .expect("macro body definition");
+        let macro_name = universe.intern("runbody").expect("macro name").symbol();
+        let body = universe
+            .command_context()
+            .expect("macro body context")
+            .admit_macro_body(definition)
+            .expect("resident macro body")
+            .2;
+        let mut command = CommandState::default();
+        command.push_macro_activation(macro_name, body, None, OriginId::UNKNOWN);
+
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(4).expect("macro body character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let mut characters = String::new();
+        assert_eq!(
+            processor
+                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
+                    characters.push(ch);
+                    true
+                })
+                .expect("macro body character run"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert_eq!(characters, "Abc");
+        assert!(matches!(
+            destination.as_ref().expect("macro body tail").meaning(),
+            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            })
+        ));
+        drop(processor);
+        assert_eq!(fuel.burned(), 4);
+    });
+}
+
+#[test]
+fn main_loop_character_run_charges_macro_argument_chars_once() {
+    crate::test_harness::with_universe(|universe| {
+        let argument_tokens = [
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'c',
+                cat: Catcode::Letter,
+            },
+        ];
+        let traced = argument_tokens.map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN));
+        let mut command = CommandState::default();
+        let matching = command.scratch.begin_macro_match().expect("macro match");
+        let mut writer = command
+            .scratch
+            .begin_argument_writer(&matching)
+            .expect("macro argument writer");
+        for word in traced {
+            command
+                .scratch
+                .append_argument_token(
+                    &mut writer,
+                    crate::token_collector::ClassifiedToken::from_word(word, None),
+                    true,
+                )
+                .expect("macro argument word");
+        }
+        command
+            .scratch
+            .publish_argument(writer)
+            .expect("macro argument range");
+        let argument_set = command
+            .scratch
+            .commit_macro_match(matching)
+            .expect("macro argument set");
+        let macro_name = universe.intern("runargument").expect("macro name").symbol();
+        let body_definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(Token::Param(1))],
+                &[TokenWord::pack(Token::Param(1))],
+            )
+            .expect("macro body definition");
+        let body = universe
+            .command_context()
+            .expect("macro body context")
+            .admit_macro_body(body_definition)
+            .expect("resident macro body")
+            .2;
+        command.push_macro_activation(macro_name, body, Some(argument_set), OriginId::UNKNOWN);
+
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(3).expect("macro argument fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let mut characters = String::new();
+        assert_eq!(
+            processor
+                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
+                    characters.push(ch);
+                    true
+                })
+                .expect("macro argument character run"),
+            crate::DeliveryStatus::CharacterRun
+        );
+        assert_eq!(characters, "Abc");
+        assert!(destination.is_none());
+        drop(processor);
+        assert_eq!(fuel.burned(), 3);
+    });
+}
+
+#[test]
+fn main_loop_character_run_rollback_keeps_fuel_monotonic() {
+    crate::test_harness::with_universe(|universe| {
+        let tokens = [
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Other,
+            },
+        ];
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, tokens);
+        let snapshot = command.snapshot(universe).expect("character-run snapshot");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(4).expect("rollback character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+
+        for expected_burned in [2, 4] {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let mut destination = None;
+            let mut characters = String::new();
+            assert_eq!(
+                processor
+                    .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
+                        characters.push(ch);
+                        true
+                    })
+                    .expect("character run retry"),
+                crate::DeliveryStatus::CharacterRun
+            );
+            assert_eq!(characters, "Ab");
+            drop(processor);
+            assert_eq!(fuel.burned(), expected_burned);
+
+            if expected_burned == 2 {
+                drop(context);
+                command
+                    .rollback(&snapshot, universe)
+                    .expect("rollback restores the character row");
+            }
+        }
     });
 }
 
@@ -736,6 +964,11 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
             assert!(processor.scanner_resume.is_none());
             (resume, delivery_cursor)
         };
+        assert_eq!(
+            fuel.burned(),
+            8,
+            "the first suspended prefix charges each newly fetched token once"
+        );
         let ownership_after_first = crate::command::command_ownership_counters();
         assert_eq!(ownership_after_first.clones - ownership_before.clones, 0);
         assert_eq!(
@@ -770,6 +1003,11 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
                 .take_pending_expansion_work()
                 .expect("second suspension parks the same sole owner")
         };
+        assert_eq!(
+            fuel.burned(),
+            8,
+            "retrying the owned suspended prefix does not charge it again"
+        );
         let ownership_after_second = crate::command::command_ownership_counters();
         assert_eq!(ownership_after_second.clones - ownership_before.clones, 0);
         assert_eq!(
@@ -814,6 +1052,11 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
             );
             assert!(processor.scanner_resume.is_none());
         }
+        assert_eq!(
+            fuel.burned(),
+            9,
+            "resource-backed delivery adds only the resumed semantic token"
+        );
         let ownership_after_resume = crate::command::command_ownership_counters();
         assert_eq!(ownership_after_resume.clones - ownership_before.clones, 0);
         assert_eq!(
@@ -847,6 +1090,11 @@ fn input_suspension_retains_delivery_expansion_and_rollback_replays_the_same_pre
                 ch: 'Q',
                 cat: Catcode::Letter,
             }
+        );
+        assert_eq!(
+            processor.fuel.burned(),
+            18,
+            "rollback re-delivers the prefix and leaves prior fuel consumed"
         );
         #[cfg(feature = "profiling")]
         {

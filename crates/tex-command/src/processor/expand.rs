@@ -1178,11 +1178,28 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
+// Fuel ownership is selected while each concrete delivery loop is generated.
+// The ordinary raw/expanded entries charge before their own fetch; the
+// character-run entry charges only at the character or consumed-tail sites
+// below. Keeping these as macro expansions (rather than a runtime flag) makes
+// it impossible for the run to enter already charged and then pay again.
+macro_rules! charge_delivery_fetch {
+    ($processor:ident, $destination:ident, $depth:ident) => {{
+        if let Err(failure) = $processor.charge_command_action() {
+            return $processor.fail_expanded_delivery($destination, $depth, failure);
+        }
+    }};
+}
+
+macro_rules! skip_delivery_fetch_charge {
+    ($processor:ident, $destination:ident, $depth:ident) => {};
+}
+
 // Emit a concrete loop per semantic entry. Policy choices are syntax at the
 // generation boundary, never runtime arguments or a policy bundle carried by
 // the hot call path.
 macro_rules! define_delivery_loop {
-    (@body $processor:ident, $destination:ident, $character_run:ident, $expanded_fetch:ident, $protected_macros:ident, $undefined:ident, $observation:ident, $first_command:ident, $replay_completion:ident, $alignment_interception:ident, $d:tt) => {{
+    (@body $processor:ident, $destination:ident, $character_run:ident, $expanded_fetch:ident, $protected_macros:ident, $undefined:ident, $observation:ident, $first_command:ident, $replay_completion:ident, $alignment_interception:ident, $charge_fetch:ident, $d:tt) => {{
         let processor = $processor;
         let destination = $destination;
         let mut character_run = $character_run;
@@ -1228,19 +1245,13 @@ macro_rules! define_delivery_loop {
         processor.command.transient.active_expansion_depth = active_depth;
         let mut first = true;
         let mut suppress_first_expansion_trace = delivery_expanded;
-        let mut charge_raw = fetch;
         let status = 'delivery: loop {
             if fetch {
                 processor.invalidate_delivery_freshness();
-                if charge_raw {
-                    if let Err(failure) = processor.charge_command_action() {
-                        return processor.fail_expanded_delivery(destination, depth, failure);
-                    }
-                    charge_raw = false;
-                }
-                let literal_catcode = {
+                $charge_fetch!(processor, destination, depth);
+                let literal_catcode = 'fetch: loop {
                     macro_rules! resident_boundary {
-                        ($d frame:lifetime, $d boundary:expr) => {{
+                        ($d label:lifetime, $d boundary:expr) => {{
                             let settled = match processor.transition_input_frame(
                                 InputFrameTransition::Boundary($d boundary),
                                 &mut command,
@@ -1256,16 +1267,16 @@ macro_rules! define_delivery_loop {
                                 }
                             };
                             match settled {
-                                ResidentColdOutcome::Retry => continue 'delivery,
+                                ResidentColdOutcome::Retry => continue 'fetch,
                                 ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     if replay_completion == ReplayCompletionPolicy::Surface {
                                         break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                     }
-                                    continue 'delivery;
+                                    continue 'fetch;
                                 }
                                 ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                    break $d frame literal_catcode;
+                                    break $d label literal_catcode;
                                 }
                                 ResidentColdOutcome::CharacterRun => {
                                     break 'delivery DeliveryStatus::CharacterRun;
@@ -1286,7 +1297,7 @@ macro_rules! define_delivery_loop {
                             }
                         };
                     }
-                    'frame: {
+                    {
                         let delivery_mode = processor.command.delivery_mode;
                         let command_state = &mut *processor.command;
                         let state = &mut *processor.state;
@@ -1295,7 +1306,7 @@ macro_rules! define_delivery_loop {
                         let Some(resident_index) =
                             command_state.roots.input.levels.top.checked_sub(1)
                         else {
-                            resident_boundary!('frame, ResidentBoundary::Empty);
+                            resident_boundary!('fetch, ResidentBoundary::Empty);
                         };
                         #[cfg(test)]
                         {
@@ -1343,16 +1354,16 @@ macro_rules! define_delivery_loop {
                                         ),
                                     };
                                     match settled {
-                                        ResidentColdOutcome::Retry => continue 'delivery,
+                                        ResidentColdOutcome::Retry => continue 'fetch,
                                         ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
                                         ResidentColdOutcome::ReplayCompleted(episode) => {
                                             if replay_completion == ReplayCompletionPolicy::Surface {
                                                 break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                             }
-                                            continue 'delivery;
+                                            continue 'fetch;
                                         }
                                         ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                            break 'frame literal_catcode;
+                                            break 'fetch literal_catcode;
                                         }
                                         ResidentColdOutcome::CharacterRun => {
                                             break 'delivery DeliveryStatus::CharacterRun;
@@ -1380,7 +1391,7 @@ macro_rules! define_delivery_loop {
                                 let Some(CurrentFrameWord { word, origin, position }) = $d read else {
                                     if character_run.is_some() {
                                         finish_character_run_accounting!(_fuel);
-                                        resident_boundary!('frame, ResidentBoundary::CharacterRunEnd);
+                                        resident_boundary!('fetch, ResidentBoundary::CharacterRunEnd);
                                     }
                                     let settled = match processor.transition_input_frame(
                                         InputFrameTransition::ResidentExhausted {
@@ -1398,16 +1409,16 @@ macro_rules! define_delivery_loop {
                                         ),
                                     };
                                     match settled {
-                                        ResidentColdOutcome::Retry => continue 'delivery,
+                                        ResidentColdOutcome::Retry => continue 'fetch,
                                         ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
                                         ResidentColdOutcome::ReplayCompleted(episode) => {
                                             if replay_completion == ReplayCompletionPolicy::Surface {
                                                 break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                             }
-                                            continue 'delivery;
+                                            continue 'fetch;
                                         }
                                         ResidentColdOutcome::SyntheticCommand(literal_catcode) => {
-                                            break 'frame literal_catcode;
+                                            break 'fetch literal_catcode;
                                         }
                                         ResidentColdOutcome::CharacterRun => {
                                             break 'delivery DeliveryStatus::CharacterRun;
@@ -1428,7 +1439,7 @@ macro_rules! define_delivery_loop {
                                         &mut command,
                                         None,
                                     ) {
-                                        Ok(ResidentColdOutcome::Retry) => continue 'delivery,
+                                        Ok(ResidentColdOutcome::Retry) => continue 'fetch,
                                         Ok(_) => unreachable!("parameter substitution retries delivery"),
                                         Err(failure) => return processor.fail_expanded_delivery(
                                             destination,
@@ -1835,9 +1846,9 @@ macro_rules! define_delivery_loop {
                             resolution.meaning_lookup(),
                             raw_delivery_kind,
                         );
-                        break 'frame resolution.literal_catcode();
+                        break 'fetch resolution.literal_catcode();
                     }
-                };
+                    };
                 processor.command.delivery_mode.begin_token(
                     command.suppresses_expandable_control_sequence(),
                     command.is_outer(),
@@ -1877,7 +1888,6 @@ macro_rules! define_delivery_loop {
                         return processor.fail_expanded_delivery(destination, depth, failure);
                     }
                     fetch = true;
-                    charge_raw = true;
                     continue;
                 }
                 break 'delivery DeliveryStatus::Command;
@@ -1928,7 +1938,6 @@ macro_rules! define_delivery_loop {
                             return processor.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
-                        charge_raw = true;
                         continue;
                     }
                     if expanded_fetch == ExpandedFetch::XToken {
@@ -1939,7 +1948,6 @@ macro_rules! define_delivery_loop {
                             return processor.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
-                        charge_raw = true;
                         continue;
                     }
                     command.convert_end_template_to_endv(processor.state.frozen_endv_token());
@@ -1976,7 +1984,6 @@ macro_rules! define_delivery_loop {
                     ) {
                         Ok(()) => {
                             fetch = true;
-                            charge_raw = true;
                             continue;
                         }
                         Err(failure) => failure,
@@ -1990,7 +1997,6 @@ macro_rules! define_delivery_loop {
                         CommandError::ParagraphInMacroArgument
                         | CommandError::OuterInMacroArgument => {
                             fetch = true;
-                            charge_raw = true;
                         }
                         failure => {
                             return processor.fail_expanded_delivery(destination, depth, failure);
@@ -2040,7 +2046,7 @@ macro_rules! define_delivery_loop {
                 let replay_completion = $replay_completion;
                 let alignment_interception = $alignment_interception;
                 let character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>> = None;
-                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, $)
+                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, charge_delivery_fetch, $)
             }
         }
     };
@@ -2071,7 +2077,7 @@ macro_rules! define_delivery_loop {
                 let alignment_interception = $alignment_interception;
                 let character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>> =
                     Some(consume);
-                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, $)
+                define_delivery_loop!(@body self, destination, character_run, expanded_fetch, protected_macros, undefined, observation, first_command, replay_completion, alignment_interception, skip_delivery_fetch_charge, $)
             }
         }
     };

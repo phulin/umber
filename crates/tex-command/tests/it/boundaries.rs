@@ -303,7 +303,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert!(resident_front.contains("break 'frame literal_catcode;"));
+    assert!(resident_front.contains("break 'fetch literal_catcode;"));
     assert!(resident_front.contains("resolution.literal_catcode()"));
     assert!(resident_front.contains("argument.advance_delivery("));
     assert!(resident_front.contains("next_word_from_current_frame("));
