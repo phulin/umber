@@ -387,10 +387,14 @@ fn parse_pdf_image(
     )?;
     let coordinates = inspected.page_box;
     let page_box = PdfPageBox {
-        left: pdf_points_to_scaled(coordinates[0]),
-        bottom: pdf_points_to_scaled(coordinates[1]),
-        right: pdf_points_to_scaled(coordinates[2]),
-        top: pdf_points_to_scaled(coordinates[3]),
+        left: crate::pdf_import::pdf_number_to_scaled(coordinates[0])
+            .map_err(|error| format!("invalid PDF page box: {error}"))?,
+        bottom: crate::pdf_import::pdf_number_to_scaled(coordinates[1])
+            .map_err(|error| format!("invalid PDF page box: {error}"))?,
+        right: crate::pdf_import::pdf_number_to_scaled(coordinates[2])
+            .map_err(|error| format!("invalid PDF page box: {error}"))?,
+        top: crate::pdf_import::pdf_number_to_scaled(coordinates[3])
+            .map_err(|error| format!("invalid PDF page box: {error}"))?,
     };
     let rotation = inspected.rotation;
     let box_width = page_box.right - page_box.left;
@@ -522,10 +526,10 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
 
 fn pixels_to_scaled(pixels: u32, resolution: u32) -> Scaled {
     let resolution = if resolution == 0 { 72 } else { resolution };
-    pdf_points_to_scaled(f64::from(pixels) * 72.0 / f64::from(resolution))
+    raster_points_to_scaled(f64::from(pixels) * 72.0 / f64::from(resolution))
 }
 
-fn pdf_points_to_scaled(points: f64) -> Scaled {
+fn raster_points_to_scaled(points: f64) -> Scaled {
     Scaled::from_raw((points * 72.27 / 72.0 * 65_536.0).round() as i32)
 }
 

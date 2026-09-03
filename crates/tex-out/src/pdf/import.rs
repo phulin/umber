@@ -6,8 +6,9 @@ use super::{
     PdfDictionary, PdfIndirectObject, PdfName, PdfNumber, PdfObject, PdfObjectId, PdfValue,
 };
 use hayro_syntax::Pdf;
-use hayro_syntax::object::{Dict, MaybeRef, Object, ObjectIdentifier, Stream};
+use hayro_syntax::object::{Array, Dict, FromBytes, MaybeRef, Object, ObjectIdentifier, Stream};
 use hayro_syntax::page::{Page, Resources};
+use hayro_syntax::reader::{Reader, ReaderExt};
 
 pub(crate) struct ImportedPdfPage {
     pub(crate) data: Vec<u8>,
@@ -22,7 +23,7 @@ pub(crate) fn import_pdf_page(
     next_object: &mut u32,
     limits: super::PdfFinalizationLimits,
 ) -> Result<ImportedPdfPage, String> {
-    let pdf = load_pdf(bytes)?;
+    let pdf = load_pdf(bytes.clone())?;
     let page = selected_page(&pdf, page_number)?;
     let data = match page.page_stream() {
         Some(data) => {
@@ -37,6 +38,7 @@ pub(crate) fn import_pdf_page(
     };
     let mut importer = Importer {
         xref: page.xref(),
+        source_bytes: bytes.as_ref(),
         next_object,
         imported: BTreeMap::new(),
         objects: Vec::new(),
@@ -45,9 +47,7 @@ pub(crate) fn import_pdf_page(
         limits,
     };
     let resources = importer.import_resources(page)?;
-    let group = page
-        .raw()
-        .get_raw::<Object<'_>>(b"Group")
+    let group = raw_dictionary_value(page.raw().data(), b"Group")?
         .map(|value| importer.import_group(value))
         .transpose()?;
     Ok(ImportedPdfPage {
@@ -74,12 +74,18 @@ fn selected_page(pdf: &Pdf, page_number: u32) -> Result<&Page<'_>, String> {
 
 struct Importer<'a, 'next> {
     xref: &'a hayro_syntax::xref::XRef,
+    source_bytes: &'a [u8],
     next_object: &'next mut u32,
     imported: BTreeMap<ObjectIdentifier, PdfObjectId>,
     objects: Vec<PdfIndirectObject>,
     values: usize,
     stream_bytes: usize,
     limits: super::PdfFinalizationLimits,
+}
+
+struct RawDictionaryEntry<'a> {
+    name: Vec<u8>,
+    value: &'a [u8],
 }
 
 impl<'a> Importer<'a, '_> {
@@ -102,10 +108,10 @@ impl<'a> Importer<'a, '_> {
             &value.properties
         })?;
         if let Some(resources) = nearest_resource_dictionary(page)
-            && let Some(proc_set) = resources.get_raw::<Object<'_>>(b"ProcSet")
+            && let Some(proc_set) = raw_dictionary_value(resources.data(), b"ProcSet")?
         {
             output
-                .insert("ProcSet", self.convert_maybe_ref(proc_set)?)
+                .insert("ProcSet", self.convert_raw_maybe_ref(proc_set)?)
                 .map_err(|error| error.to_string())?;
         }
         Ok(output)
@@ -125,10 +131,18 @@ impl<'a> Importer<'a, '_> {
         let mut seen = BTreeSet::<Vec<u8>>::new();
         let mut level = Some(resources);
         while let Some(current) = level {
-            for (name, value) in select(current).entries() {
-                if seen.insert(name.as_ref().to_vec()) {
+            let selected = select(current);
+            if selected.is_empty() {
+                level = current.parent();
+                continue;
+            }
+            for entry in raw_dictionary_entries(selected.data())? {
+                if seen.insert(entry.name.clone()) {
                     entries
-                        .insert(PdfName::new(name.as_ref()), self.convert_maybe_ref(value)?)
+                        .insert(
+                            PdfName::new(entry.name),
+                            self.convert_raw_maybe_ref(entry.value)?,
+                        )
                         .map_err(|error| error.to_string())?;
                 }
             }
@@ -142,8 +156,8 @@ impl<'a> Importer<'a, '_> {
         Ok(())
     }
 
-    fn import_group(&mut self, source: MaybeRef<Object<'a>>) -> Result<PdfObjectId, String> {
-        match self.convert_maybe_ref(source)? {
+    fn import_group(&mut self, source: &'a [u8]) -> Result<PdfObjectId, String> {
+        match self.convert_raw_maybe_ref(source)? {
             PdfValue::Reference(id) => Ok(id),
             PdfValue::Dictionary(dictionary) => {
                 let id = self.allocate_object()?;
@@ -157,15 +171,62 @@ impl<'a> Importer<'a, '_> {
         }
     }
 
-    fn convert_maybe_ref(&mut self, source: MaybeRef<Object<'a>>) -> Result<PdfValue, String> {
-        self.convert_maybe_ref_at(source, 0)
+    fn convert_raw_maybe_ref(&mut self, source: &'a [u8]) -> Result<PdfValue, String> {
+        self.convert_raw_maybe_ref_at(source, 0)
     }
 
-    fn convert_maybe_ref_at(
+    fn convert_raw_maybe_ref_at(
         &mut self,
-        source: MaybeRef<Object<'a>>,
+        source: &'a [u8],
         depth: usize,
     ) -> Result<PdfValue, String> {
+        self.check_value(depth)?;
+        match MaybeRef::<Object<'_>>::from_bytes(source) {
+            None => Err("invalid PDF resource value".to_owned()),
+            Some(MaybeRef::Ref(reference)) => {
+                Ok(PdfValue::Reference(self.import_indirect(reference.into())?))
+            }
+            Some(MaybeRef::NotRef(Object::Number(_))) => number_value(source),
+            Some(MaybeRef::NotRef(value)) => self.convert_parsed_value(value, depth),
+        }
+    }
+
+    fn convert_value(&mut self, source: Object<'a>) -> Result<PdfValue, String> {
+        self.check_value(0)?;
+        self.convert_parsed_value(source, 0)
+    }
+
+    fn convert_parsed_value(
+        &mut self,
+        source: Object<'a>,
+        depth: usize,
+    ) -> Result<PdfValue, String> {
+        Ok(match source {
+            Object::Null(_) => PdfValue::Null,
+            Object::Boolean(value) => PdfValue::Bool(value),
+            Object::Number(_) => {
+                return Err("PDF resource number source bytes are unavailable".to_owned());
+            }
+            Object::String(value) => PdfValue::String(value.as_bytes().to_vec()),
+            Object::Name(value) => PdfValue::Name(PdfName::new(value.as_ref())),
+            Object::Array(values) => PdfValue::Array(self.convert_array(&values, depth + 1)?),
+            Object::Dict(dictionary) => {
+                PdfValue::Dictionary(self.convert_dictionary_at(&dictionary, depth + 1)?)
+            }
+            Object::Stream(_) => {
+                return Err("direct resource streams are unsupported".to_owned());
+            }
+        })
+    }
+
+    fn convert_array(&mut self, source: &Array<'a>, depth: usize) -> Result<Vec<PdfValue>, String> {
+        raw_array_values(source.data())?
+            .into_iter()
+            .map(|value| self.convert_raw_maybe_ref_at(value, depth))
+            .collect()
+    }
+
+    fn check_value(&mut self, depth: usize) -> Result<(), String> {
         if depth > self.limits.max_imported_resource_depth {
             return Err(format!(
                 "PDF resource nesting exceeds limit {}",
@@ -182,38 +243,7 @@ impl<'a> Importer<'a, '_> {
                 self.limits.max_imported_resource_values
             ));
         }
-        match source {
-            MaybeRef::Ref(reference) => {
-                Ok(PdfValue::Reference(self.import_indirect(reference.into())?))
-            }
-            MaybeRef::NotRef(value) => self.convert_value_at(value, depth),
-        }
-    }
-
-    fn convert_value(&mut self, source: Object<'a>) -> Result<PdfValue, String> {
-        self.convert_value_at(source, 0)
-    }
-
-    fn convert_value_at(&mut self, source: Object<'a>, depth: usize) -> Result<PdfValue, String> {
-        Ok(match source {
-            Object::Null(_) => PdfValue::Null,
-            Object::Boolean(value) => PdfValue::Bool(value),
-            Object::Number(value) => number_value(value.as_f64())?,
-            Object::String(value) => PdfValue::String(value.as_bytes().to_vec()),
-            Object::Name(value) => PdfValue::Name(PdfName::new(value.as_ref())),
-            Object::Array(values) => PdfValue::Array(
-                values
-                    .raw_iter()
-                    .map(|value| self.convert_maybe_ref_at(value, depth + 1))
-                    .collect::<Result<_, _>>()?,
-            ),
-            Object::Dict(dictionary) => {
-                PdfValue::Dictionary(self.convert_dictionary_at(&dictionary, depth + 1)?)
-            }
-            Object::Stream(_) => {
-                return Err("direct resource streams are unsupported".to_owned());
-            }
-        })
+        Ok(())
     }
 
     fn convert_dictionary_at(
@@ -239,14 +269,14 @@ impl<'a> Importer<'a, '_> {
         depth: usize,
     ) -> Result<PdfDictionary, String> {
         let mut dictionary = PdfDictionary::new();
-        for (name, value) in source.entries() {
-            if skipped.contains(&name.as_ref()) {
+        for entry in raw_dictionary_entries(source.data())? {
+            if skipped.contains(&entry.name.as_slice()) {
                 continue;
             }
             dictionary
                 .insert(
-                    PdfName::new(name.as_ref()),
-                    self.convert_maybe_ref_at(value, depth)?,
+                    PdfName::new(entry.name),
+                    self.convert_raw_maybe_ref_at(entry.value, depth)?,
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -271,7 +301,12 @@ impl<'a> Importer<'a, '_> {
             .ok_or_else(|| format!("referenced PDF object {source_id:?} is missing"))?;
         let object = match source {
             Object::Stream(stream) => self.import_stream(stream)?,
-            value => PdfObject::Value(self.convert_value(value)?),
+            value => PdfObject::Value(
+                match find_raw_indirect_object(self.source_bytes, source_id) {
+                    Some(raw) => self.convert_raw_maybe_ref(raw)?,
+                    None => self.convert_value(value)?,
+                },
+            ),
         };
         self.objects.push(PdfIndirectObject { id, object });
         Ok(id)
@@ -319,18 +354,257 @@ fn nearest_resource_dictionary<'a>(page: &Page<'a>) -> Option<Dict<'a>> {
     }
 }
 
-fn number_value(value: f64) -> Result<PdfValue, String> {
-    if !value.is_finite() {
-        return Err("page resource contains a non-finite number".to_owned());
+fn find_raw_indirect_object<'a>(data: &'a [u8], target: ObjectIdentifier) -> Option<&'a [u8]> {
+    let mut reader = Reader::new(data);
+    while !reader.at_end() {
+        let start = reader.offset();
+        if let Some(identifier) = reader.read_without_context::<ObjectIdentifier>() {
+            if identifier == target {
+                reader.skip_white_spaces_and_comments();
+                if let Some(value) = reader.skip::<MaybeRef<Object<'a>>>(false) {
+                    reader.skip_white_spaces_and_comments();
+                    // Object identifiers can occur in strings or stream
+                    // payloads when scanning without xref offsets. Accept a
+                    // candidate only when the parsed value is followed by its
+                    // object terminator; this keeps those bytes from becoming
+                    // a resource dictionary.
+                    if reader.forward_tag(b"endobj").is_some() {
+                        return Some(value);
+                    }
+                }
+            }
+            reader.jump(start.saturating_add(1));
+        } else {
+            reader.forward();
+        }
     }
-    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
-        return Ok(PdfValue::Integer(value as i64));
+    None
+}
+
+fn raw_dictionary_entries<'a>(data: &'a [u8]) -> Result<Vec<RawDictionaryEntry<'a>>, String> {
+    let mut reader = Reader::new(data);
+    reader.skip_white_spaces_and_comments();
+    reader
+        .forward_tag(b"<<")
+        .ok_or_else(|| "invalid PDF resource dictionary".to_owned())?;
+    let mut entries = Vec::<RawDictionaryEntry<'a>>::new();
+    loop {
+        reader.skip_white_spaces_and_comments();
+        if reader.forward_tag(b">>").is_some() {
+            break;
+        }
+        let raw_name = reader
+            .skip::<hayro_syntax::object::Name<'a>>(false)
+            .ok_or_else(|| "invalid PDF resource dictionary name".to_owned())?;
+        let name = hayro_syntax::object::Name::from_bytes(raw_name)
+            .ok_or_else(|| "invalid PDF resource dictionary name".to_owned())?;
+        reader.skip_white_spaces_and_comments();
+        let value = reader
+            .skip::<MaybeRef<Object<'a>>>(false)
+            .ok_or_else(|| "invalid PDF resource dictionary value".to_owned())?;
+        let name = name.as_ref().to_vec();
+        if let Some(previous) = entries.iter_mut().find(|entry| entry.name == name) {
+            // hayro's dictionary index follows the last occurrence of a key;
+            // retain that behavior while keeping this parser's value slice
+            // tied to the original source bytes.
+            previous.value = value;
+        } else {
+            entries.push(RawDictionaryEntry { name, value });
+        }
     }
-    let coefficient = (value * 1_000_000_000.0).round();
-    if coefficient < i64::MIN as f64 || coefficient > i64::MAX as f64 {
-        return Err("page resource number is out of range".to_owned());
+    Ok(entries)
+}
+
+fn raw_dictionary_value<'a>(data: &'a [u8], key: &[u8]) -> Result<Option<&'a [u8]>, String> {
+    Ok(raw_dictionary_entries(data)?
+        .into_iter()
+        .find(|entry| entry.name == key)
+        .map(|entry| entry.value))
+}
+
+fn raw_array_values<'a>(data: &'a [u8]) -> Result<Vec<&'a [u8]>, String> {
+    let mut reader = Reader::new(data);
+    let mut values = Vec::new();
+    loop {
+        reader.skip_white_spaces_and_comments();
+        if reader.at_end() {
+            break;
+        }
+        values.push(
+            reader
+                .skip::<MaybeRef<Object<'a>>>(false)
+                .ok_or_else(|| "invalid PDF resource array value".to_owned())?,
+        );
     }
-    PdfNumber::new(coefficient as i64, 9)
+    Ok(values)
+}
+
+fn number_value(source: &[u8]) -> Result<PdfValue, String> {
+    let source = trim_pdf_whitespace(source);
+    let mut index = 0;
+    let negative = match source.first().copied() {
+        Some(b'-') => {
+            index = 1;
+            true
+        }
+        Some(b'+') => {
+            index = 1;
+            false
+        }
+        _ => false,
+    };
+    let integer_start = index;
+    while source.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    let integer_end = index;
+    let mut fraction_start = index;
+    let mut fraction_end = index;
+    if source.get(index) == Some(&b'.') {
+        index += 1;
+        fraction_start = index;
+        while source.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        fraction_end = index;
+    }
+    if index != source.len() || (integer_start == integer_end && fraction_start == fraction_end) {
+        return Err("page resource contains an invalid number".to_owned());
+    }
+    let decimal_places = fraction_end - fraction_start;
+    if decimal_places > 9 {
+        return Err(format!(
+            "page resource number precision exceeds limit 9: {decimal_places}"
+        ));
+    }
+    let mut magnitude = 0_i128;
+    for digit in source[integer_start..integer_end]
+        .iter()
+        .chain(source[fraction_start..fraction_end].iter())
+    {
+        magnitude = magnitude
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(i128::from(*digit - b'0')))
+            .ok_or_else(|| "page resource number is out of range".to_owned())?;
+    }
+    let coefficient = if negative {
+        magnitude
+            .checked_neg()
+            .ok_or_else(|| "page resource number is out of range".to_owned())?
+    } else {
+        magnitude
+    };
+    let coefficient = i64::try_from(coefficient)
+        .map_err(|_| "page resource number is out of range".to_owned())?;
+    PdfNumber::new(coefficient, decimal_places as u8)
         .map(PdfValue::Number)
         .map_err(|error| error.to_string())
+}
+
+fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
+    let start = source
+        .iter()
+        .position(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+        .unwrap_or(source.len());
+    let end = source
+        .iter()
+        .rposition(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+        .map_or(start, |index| index + 1);
+    &source[start..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn number(coefficient: i64, decimal_places: u8) -> PdfNumber {
+        PdfNumber::new(coefficient, decimal_places).expect("valid fixed number")
+    }
+
+    #[test]
+    fn imported_numbers_keep_decimal_digits_without_binary_rounding() {
+        assert_eq!(
+            number_value(b"-891.018"),
+            Ok(PdfValue::Number(number(-891018, 3)))
+        );
+        assert_eq!(number_value(b".125"), Ok(PdfValue::Number(number(125, 3))));
+        assert_eq!(
+            number_value(b"9223372036854775807"),
+            Ok(PdfValue::Number(number(i64::MAX, 0)))
+        );
+        assert_eq!(
+            number_value(b"-9223372036854775808"),
+            Ok(PdfValue::Number(number(i64::MIN, 0)))
+        );
+    }
+
+    #[test]
+    fn imported_number_range_and_precision_are_rejected() {
+        assert!(number_value(b"9223372036854775808").is_err());
+        assert!(number_value(b"-9223372036854775809").is_err());
+        assert!(number_value(b"0.1234567890").is_err());
+        assert!(number_value(b"1e-3").is_err());
+    }
+
+    #[test]
+    fn imported_dictionary_and_array_parsing_preserves_nested_numbers() {
+        let entries = raw_dictionary_entries(
+            b"<< /Matrix [0.123456789 -0.25] /Name /Example /Nested << /Scale 1.5 >> >>",
+        )
+        .expect("valid dictionary");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, b"Matrix");
+        let array = Array::from_bytes(entries[0].value).expect("valid array");
+        let values = raw_array_values(array.data()).expect("valid array values");
+        assert_eq!(
+            values
+                .into_iter()
+                .map(number_value)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("valid numbers"),
+            vec![
+                PdfValue::Number(number(123456789, 9)),
+                PdfValue::Number(number(-25, 2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn fixed_formatter_handles_signs_and_i64_minimum() {
+        let mut buffer = [0_u8; 32];
+        assert_eq!(
+            super::super::fixed_number_bytes(number(-891018, 3), &mut buffer),
+            b"-891.018"
+        );
+        assert_eq!(
+            super::super::fixed_number_bytes(number(-5, 2), &mut buffer),
+            b"-0.05"
+        );
+        assert_eq!(
+            super::super::fixed_number_bytes(number(1200, 3), &mut buffer),
+            b"1.2"
+        );
+        assert_eq!(
+            super::super::fixed_number_bytes(number(i64::MIN, 0), &mut buffer),
+            b"-9223372036854775808"
+        );
+    }
+
+    #[test]
+    fn imported_page_with_empty_resource_categories_remains_valid() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/corpus/pdf/external_pdf_page/minimal_rule.expected.ref.pdf"
+        ));
+        let mut next_object = 100;
+        let imported = import_pdf_page(
+            bytes.into(),
+            1,
+            &mut next_object,
+            super::super::PdfFinalizationLimits::default(),
+        )
+        .expect("minimal imported page");
+        assert_eq!(imported.resources.len(), 1);
+        assert!(imported.resources.get(b"ProcSet").is_some());
+    }
 }

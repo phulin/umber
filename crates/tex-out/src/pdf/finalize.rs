@@ -573,19 +573,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
             }
             PdfImageMetadataInput::PdfPage {
                 page_box,
-                rotation,
+                rotation: _,
                 page,
                 ..
             } => {
                 pdf_image_count += 1;
-                let imported = import_pdf_page(
-                    image,
-                    page,
-                    page_box,
-                    rotation,
-                    &mut next_object,
-                    input.limits,
-                )?;
+                let imported =
+                    import_pdf_page(image, page, page_box, &mut next_object, input.limits)?;
                 let image_object = imported.form.id;
                 pdf_image_groups.insert(image.object, imported.group);
                 pdf_image_objects.insert(image.object, image_object);
@@ -888,43 +882,45 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                         .checked_sub(graphics.y)
                         .and_then(|value| value.checked_sub(record.v_origin()))
                         .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                    let x = scaled_to_bp_f32(raw_x, parameters.decimal_digits);
-                    let y = scaled_to_bp_f32(raw_y, parameters.decimal_digits);
+                    // Keep placement conversion lazy: imported PDF pages use the
+                    // checked fixed-point path below and must not cross through f32.
+                    let x = || scaled_to_bp_f32(raw_x, parameters.decimal_digits);
+                    let y = || scaled_to_bp_f32(raw_y, parameters.decimal_digits);
                     let exact_position =
                         exact_text_position(raw_x, raw_y, parameters.decimal_digits);
                     let operation = match graphics.effect {
                         crate::PageEffect::PdfLiteral { mode, payload } => {
                             PdfContentOperation::Literal {
                                 mode,
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 bytes: payload,
                             }
                         }
                         crate::PageEffect::PdfSetMatrix { payload } => {
                             PdfContentOperation::SetMatrix {
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 matrix: parse_pdf_matrix(&payload)?,
                             }
                         }
                         crate::PageEffect::PdfSave => PdfContentOperation::Save {
-                            x,
-                            y,
+                            x: x(),
+                            y: y(),
                             exact_position,
                         },
                         crate::PageEffect::PdfRestore => PdfContentOperation::Restore {
-                            x,
-                            y,
+                            x: x(),
+                            y: y(),
                             exact_position,
                         },
                         crate::PageEffect::PdfColorStack { mode, payload, .. } => {
                             PdfContentOperation::ColorStack {
                                 mode,
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 bytes: payload,
                             }
@@ -934,7 +930,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 .forms
                                 .get(&object)
                                 .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
-                            let y = page_height
+                            let form_y = page_height
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(record.v_origin()))
                                 .and_then(|value| value.checked_sub(form.depth()))
@@ -943,8 +939,8 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             referenced_forms.insert(form.object());
                             page_forms.insert(form.resource(), form_id);
                             PdfContentOperation::FormXObject {
-                                x,
-                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
+                                x: x(),
+                                y: scaled_to_bp_f32(form_y, parameters.decimal_digits),
                                 name: format!("Fm{}", form.resource()).into_bytes(),
                             }
                         }
@@ -987,53 +983,38 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             let total_height = height
                                 .checked_add(depth)
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                            let y = page_height
+                            let image_y = page_height
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(record.v_origin()))
                                 .and_then(|value| value.checked_sub(depth))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                            let (placed_width, placed_height) = match image.metadata {
+                            match image.metadata {
                                 PdfImageMetadataInput::PdfPage {
                                     page_box, rotation, ..
-                                } => {
-                                    let box_width = page_box
-                                        .right
-                                        .checked_sub(page_box.left)
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    let box_height = page_box
-                                        .top
-                                        .checked_sub(page_box.bottom)
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    let (natural_width, natural_height) =
-                                        if rotation_swaps_axes(rotation) {
-                                            (box_height, box_width)
-                                        } else {
-                                            (box_width, box_height)
-                                        };
-                                    (
-                                        scaled_to_bp_f32(width, parameters.decimal_digits)
-                                            / scaled_to_bp_f32(
-                                                natural_width,
-                                                parameters.decimal_digits,
-                                            ),
-                                        scaled_to_bp_f32(total_height, parameters.decimal_digits)
-                                            / scaled_to_bp_f32(
-                                                natural_height,
-                                                parameters.decimal_digits,
-                                            ),
-                                    )
+                                } => PdfContentOperation::ImportedPdfPage {
+                                    matrix: imported_pdf_page_matrix(
+                                        raw_x,
+                                        image_y,
+                                        width,
+                                        total_height,
+                                        page_box,
+                                        rotation,
+                                        parameters.decimal_digits,
+                                    )?,
+                                    name,
+                                },
+                                PdfImageMetadataInput::Raster { .. } => {
+                                    PdfContentOperation::ImageXObject {
+                                        x: x(),
+                                        y: scaled_to_bp_f32(image_y, parameters.decimal_digits),
+                                        width: scaled_to_bp_f32(width, parameters.decimal_digits),
+                                        height: scaled_to_bp_f32(
+                                            total_height,
+                                            parameters.decimal_digits,
+                                        ),
+                                        name,
+                                    }
                                 }
-                                PdfImageMetadataInput::Raster { .. } => (
-                                    scaled_to_bp_f32(width, parameters.decimal_digits),
-                                    scaled_to_bp_f32(total_height, parameters.decimal_digits),
-                                ),
-                            };
-                            PdfContentOperation::ImageXObject {
-                                x,
-                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
-                                width: placed_width,
-                                height: placed_height,
-                                name,
                             }
                         }
                         _ => unreachable!("positioned PDF graphics event contains PDF effect"),
@@ -1201,43 +1182,45 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     let raw_y = total_height
                         .checked_sub(graphics.y)
                         .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                    let x = scaled_to_bp_f32(raw_x, parameters.decimal_digits);
-                    let y = scaled_to_bp_f32(raw_y, parameters.decimal_digits);
+                    // Keep placement conversion lazy: imported PDF pages use the
+                    // checked fixed-point path below and must not cross through f32.
+                    let x = || scaled_to_bp_f32(raw_x, parameters.decimal_digits);
+                    let y = || scaled_to_bp_f32(raw_y, parameters.decimal_digits);
                     let exact_position =
                         exact_text_position(raw_x, raw_y, parameters.decimal_digits);
                     let operation = match graphics.effect {
                         crate::PageEffect::PdfLiteral { mode, payload } => {
                             PdfContentOperation::Literal {
                                 mode,
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 bytes: payload,
                             }
                         }
                         crate::PageEffect::PdfSetMatrix { payload } => {
                             PdfContentOperation::SetMatrix {
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 matrix: parse_pdf_matrix(&payload)?,
                             }
                         }
                         crate::PageEffect::PdfSave => PdfContentOperation::Save {
-                            x,
-                            y,
+                            x: x(),
+                            y: y(),
                             exact_position,
                         },
                         crate::PageEffect::PdfRestore => PdfContentOperation::Restore {
-                            x,
-                            y,
+                            x: x(),
+                            y: y(),
                             exact_position,
                         },
                         crate::PageEffect::PdfColorStack { mode, payload, .. } => {
                             PdfContentOperation::ColorStack {
                                 mode,
-                                x,
-                                y,
+                                x: x(),
+                                y: y(),
                                 exact_position,
                                 bytes: payload,
                             }
@@ -1252,13 +1235,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                             }
                             nested_forms.insert(nested.resource(), object_id(object)?);
                             pending_forms.push_back(object);
-                            let y = total_height
+                            let form_y = total_height
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(nested.depth()))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             PdfContentOperation::FormXObject {
-                                x,
-                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
+                                x: x(),
+                                y: scaled_to_bp_f32(form_y, parameters.decimal_digits),
                                 name: format!("Fm{}", nested.resource()).into_bytes(),
                             }
                         }
@@ -1286,50 +1269,33 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(depth))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                            let (placed_width, placed_height) = match image.metadata {
+                            match image.metadata {
                                 PdfImageMetadataInput::PdfPage {
                                     page_box, rotation, ..
-                                } => {
-                                    let box_width = page_box
-                                        .right
-                                        .checked_sub(page_box.left)
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    let box_height = page_box
-                                        .top
-                                        .checked_sub(page_box.bottom)
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    let (natural_width, natural_height) =
-                                        if rotation_swaps_axes(rotation) {
-                                            (box_height, box_width)
-                                        } else {
-                                            (box_width, box_height)
-                                        };
-                                    (
-                                        scaled_to_bp_f32(width, parameters.decimal_digits)
-                                            / scaled_to_bp_f32(
-                                                natural_width,
-                                                parameters.decimal_digits,
-                                            ),
-                                        scaled_to_bp_f32(
+                                } => PdfContentOperation::ImportedPdfPage {
+                                    matrix: imported_pdf_page_matrix(
+                                        raw_x,
+                                        image_y,
+                                        width,
+                                        total_image_height,
+                                        page_box,
+                                        rotation,
+                                        parameters.decimal_digits,
+                                    )?,
+                                    name,
+                                },
+                                PdfImageMetadataInput::Raster { .. } => {
+                                    PdfContentOperation::ImageXObject {
+                                        x: x(),
+                                        y: scaled_to_bp_f32(image_y, parameters.decimal_digits),
+                                        width: scaled_to_bp_f32(width, parameters.decimal_digits),
+                                        height: scaled_to_bp_f32(
                                             total_image_height,
                                             parameters.decimal_digits,
-                                        ) / scaled_to_bp_f32(
-                                            natural_height,
-                                            parameters.decimal_digits,
                                         ),
-                                    )
+                                        name,
+                                    }
                                 }
-                                PdfImageMetadataInput::Raster { .. } => (
-                                    scaled_to_bp_f32(width, parameters.decimal_digits),
-                                    scaled_to_bp_f32(total_image_height, parameters.decimal_digits),
-                                ),
-                            };
-                            PdfContentOperation::ImageXObject {
-                                x,
-                                y: scaled_to_bp_f32(image_y, parameters.decimal_digits),
-                                width: placed_width,
-                                height: placed_height,
-                                name,
                             }
                         }
                         _ => continue,
@@ -4993,7 +4959,6 @@ fn import_pdf_page(
     image: &super::PdfExternalImageInput,
     page: u32,
     page_box: super::PdfPageBoxInput,
-    rotation: PdfPageRotationInput,
     next_object: &mut u32,
     limits: super::PdfFinalizationLimits,
 ) -> Result<ImportedPdfPage, PdfBuildError> {
@@ -5008,8 +4973,6 @@ fn import_pdf_page(
     if let Some(group) = imported.group {
         dictionary.insert("Group", PdfValue::Reference(group))?;
     }
-    let zero = PdfNumber::new(0, 0)?;
-    let one = PdfNumber::new(1, 0)?;
     let width = page_box
         .right
         .checked_sub(page_box.left)
@@ -5018,37 +4981,11 @@ fn import_pdf_page(
         .top
         .checked_sub(page_box.bottom)
         .ok_or(PdfBuildError::PageGeometryOverflow)?;
-    let width_bp = scaled_to_bp_f32(width, 4);
-    let height_bp = scaled_to_bp_f32(height, 4);
-    if width_bp <= 0.0 || height_bp <= 0.0 {
+    if width.raw() <= 0 || height.raw() <= 0 {
         return Err(PdfBuildError::InvalidPdfPage(
             "selected page box is empty".to_owned(),
         ));
     }
-    let left_bp = scaled_to_bp_f32(page_box.left, 4);
-    let bottom_bp = scaled_to_bp_f32(page_box.bottom, 4);
-    let matrix = match rotation {
-        PdfPageRotationInput::None => [1.0, 0.0, 0.0, 1.0, -left_bp, -bottom_bp],
-        PdfPageRotationInput::Clockwise90 => [0.0, 1.0, -1.0, 0.0, height_bp + bottom_bp, -left_bp],
-        PdfPageRotationInput::UpsideDown => [
-            -1.0,
-            0.0,
-            0.0,
-            -1.0,
-            width_bp + left_bp,
-            height_bp + bottom_bp,
-        ],
-        PdfPageRotationInput::Clockwise270 => [0.0, -1.0, 1.0, 0.0, -bottom_bp, width_bp + left_bp],
-    };
-    let [a, b, c, d, e, f] = matrix;
-    let matrix = [
-        pdf_number_from_f32(a)?,
-        pdf_number_from_f32(b)?,
-        pdf_number_from_f32(c)?,
-        pdf_number_from_f32(d)?,
-        pdf_number_from_f32(e)?,
-        pdf_number_from_f32(f)?,
-    ];
     Ok(ImportedPdfPage {
         form: PdfIndirectObject {
             id: object_id(image.object)?,
@@ -5057,11 +4994,11 @@ fn import_pdf_page(
                 data: imported.data,
                 // A Form's BBox is expressed in form space and is clipped
                 // before its Matrix is applied. Preserve the selected page's
-                // coordinates here; the matrix below maps that box to an
-                // origin-based placement. Zero-basing both made every page
-                // with a nonzero lower-left corner clip its own contents.
+                // coordinates here. Imported placement transforms are emitted
+                // at the page-content inclusion site because pdf_writer's
+                // FormXObject matrix API narrows operands through f32.
                 bbox: imported_pdf_form_bbox(page_box)?,
-                matrix: Some(matrix).filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
+                matrix: None,
             },
         },
         dependencies: imported.dependencies,
@@ -5073,10 +5010,10 @@ fn imported_pdf_form_bbox(
     page_box: super::PdfPageBoxInput,
 ) -> Result<[PdfNumber; 4], PdfBuildError> {
     Ok([
-        scaled_to_bp_number(page_box.left, 4)?,
-        scaled_to_bp_number(page_box.bottom, 4)?,
-        scaled_to_bp_number(page_box.right, 4)?,
-        scaled_to_bp_number(page_box.top, 4)?,
+        scaled_to_bp_number_checked(page_box.left, 4)?,
+        scaled_to_bp_number_checked(page_box.bottom, 4)?,
+        scaled_to_bp_number_checked(page_box.right, 4)?,
+        scaled_to_bp_number_checked(page_box.top, 4)?,
     ])
 }
 
@@ -5087,13 +5024,177 @@ fn rotation_swaps_axes(rotation: PdfPageRotationInput) -> bool {
     )
 }
 
-fn pdf_number_from_f32(value: f32) -> Result<PdfNumber, PdfBuildError> {
-    if !value.is_finite() {
+fn imported_pdf_page_matrix(
+    base_x: Scaled,
+    base_y: Scaled,
+    width: Scaled,
+    total_height: Scaled,
+    page_box: super::PdfPageBoxInput,
+    rotation: PdfPageRotationInput,
+    decimal_digits: i32,
+) -> Result<[PdfNumber; 6], PdfBuildError> {
+    let box_width = page_box
+        .right
+        .checked_sub(page_box.left)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let box_height = page_box
+        .top
+        .checked_sub(page_box.bottom)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    if box_width.raw() <= 0 || box_height.raw() <= 0 {
         return Err(PdfBuildError::InvalidPdfPage(
-            "page resource contains a non-finite number".to_owned(),
+            "selected page box is empty".to_owned(),
         ));
     }
-    PdfNumber::new((f64::from(value) * 1_000_000_000.0).round() as i64, 9).map_err(Into::into)
+    let (natural_width, natural_height) = if rotation_swaps_axes(rotation) {
+        (box_height, box_width)
+    } else {
+        (box_width, box_height)
+    };
+    let width_scale = scaled_ratio_number(width, natural_width)?;
+    let height_scale = scaled_ratio_number(total_height, natural_height)?;
+    let (x_offset, y_offset) = match rotation {
+        PdfPageRotationInput::None => (
+            scaled_product_divide(width, page_box.left, natural_width)?
+                .checked_neg()
+                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+            scaled_product_divide(total_height, page_box.bottom, natural_height)?
+                .checked_neg()
+                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        ),
+        PdfPageRotationInput::Clockwise90 => (
+            scaled_product_divide(width, page_box.top, natural_width)?,
+            scaled_product_divide(total_height, page_box.left, natural_height)?
+                .checked_neg()
+                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        ),
+        PdfPageRotationInput::UpsideDown => (
+            scaled_product_divide(width, page_box.right, natural_width)?,
+            scaled_product_divide(total_height, page_box.top, natural_height)?,
+        ),
+        PdfPageRotationInput::Clockwise270 => (
+            scaled_product_divide(width, page_box.bottom, natural_width)?
+                .checked_neg()
+                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+            scaled_product_divide(total_height, page_box.right, natural_height)?,
+        ),
+    };
+    let x = base_x
+        .checked_add(x_offset)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let y = base_y
+        .checked_add(y_offset)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let zero = PdfNumber::new(0, 0)?;
+    let (a, b, c, d) = match rotation {
+        PdfPageRotationInput::None => (width_scale, zero, zero, height_scale),
+        PdfPageRotationInput::Clockwise90 => {
+            (zero, height_scale, negate_pdf_number(width_scale)?, zero)
+        }
+        PdfPageRotationInput::UpsideDown => (
+            negate_pdf_number(width_scale)?,
+            zero,
+            zero,
+            negate_pdf_number(height_scale)?,
+        ),
+        PdfPageRotationInput::Clockwise270 => {
+            (zero, negate_pdf_number(height_scale)?, width_scale, zero)
+        }
+    };
+    Ok([
+        a,
+        b,
+        c,
+        d,
+        scaled_to_bp_number_checked(x, decimal_digits)?,
+        scaled_to_bp_number_checked(y, decimal_digits)?,
+    ])
+}
+
+fn negate_pdf_number(value: PdfNumber) -> Result<PdfNumber, PdfBuildError> {
+    PdfNumber::new(
+        value
+            .coefficient()
+            .checked_neg()
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        value.decimal_places(),
+    )
+    .map_err(Into::into)
+}
+
+fn scaled_ratio_number(value: Scaled, divisor: Scaled) -> Result<PdfNumber, PdfBuildError> {
+    let denominator = i128::from(divisor.raw());
+    if denominator <= 0 {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let numerator = i128::from(value.raw())
+        .checked_mul(1_000_000)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let coefficient = round_divide_away_from_zero(numerator, denominator)?;
+    let coefficient =
+        i64::try_from(coefficient).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    PdfNumber::new(coefficient, 6).map_err(Into::into)
+}
+
+fn scaled_product_divide(
+    value: Scaled,
+    factor: Scaled,
+    divisor: Scaled,
+) -> Result<Scaled, PdfBuildError> {
+    let denominator = i128::from(divisor.raw());
+    if denominator <= 0 {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let numerator = i128::from(value.raw())
+        .checked_mul(i128::from(factor.raw()))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let result = round_divide_away_from_zero(numerator, denominator)?;
+    let result = i64::try_from(result).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    let result = i32::try_from(result).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    Ok(Scaled::from_raw(result))
+}
+
+fn round_divide_away_from_zero(numerator: i128, denominator: i128) -> Result<i128, PdfBuildError> {
+    if denominator <= 0 {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let half = denominator / 2;
+    let adjusted = if numerator >= 0 {
+        numerator
+            .checked_add(half)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?
+    } else {
+        numerator
+            .checked_sub(half)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?
+    };
+    Ok(adjusted / denominator)
+}
+
+fn scaled_to_bp_number_checked(
+    value: Scaled,
+    decimal_digits: i32,
+) -> Result<PdfNumber, PdfBuildError> {
+    let decimal_digits =
+        u32::try_from(decimal_digits).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    if decimal_digits > 9 {
+        return Err(PdfBuildError::Model(
+            PdfModelError::NumberPrecisionTooLarge(u8::try_from(decimal_digits).unwrap_or(u8::MAX)),
+        ));
+    }
+    let scale = 10_i128
+        .checked_pow(decimal_digits)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    const NUMERATOR: i128 = 7_200;
+    const DENOMINATOR: i128 = 7_227 * 65_536;
+    let numerator = i128::from(value.raw())
+        .checked_mul(NUMERATOR)
+        .and_then(|value| value.checked_mul(scale))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let coefficient = round_divide_away_from_zero(numerator, DENOMINATOR)?;
+    let coefficient =
+        i64::try_from(coefficient).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    PdfNumber::new(coefficient, decimal_digits as u8).map_err(Into::into)
 }
 
 fn object_id(raw: u32) -> Result<PdfObjectId, PdfBuildError> {

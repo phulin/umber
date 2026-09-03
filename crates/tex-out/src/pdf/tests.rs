@@ -1175,3 +1175,60 @@ fn limits_and_writer_owned_stream_length_are_enforced() {
         Err(PdfModelError::ReservedStreamLength(id(4)))
     );
 }
+
+#[test]
+fn imported_pdf_content_operation_emits_fixed_cm_operands() {
+    let number = |coefficient, decimal_places| {
+        PdfNumber::new(coefficient, decimal_places).expect("valid fixed number")
+    };
+    let bytes = ordered_page_content(&[PdfContentOperation::ImportedPdfPage {
+        matrix: [
+            number(0, 0),
+            number(1, 0),
+            number(-1, 0),
+            number(0, 0),
+            number(-891018, 3),
+            number(-1332506, 3),
+        ],
+        name: b"Fm1".to_vec(),
+    }]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        "q\n0 1 -1 0 -891.018 -1332.506 cm\n/Fm1 Do\nQ"
+    );
+}
+
+#[test]
+fn imported_pdf_content_operation_subtracts_the_retained_fixed_origin() {
+    let number = |coefficient, decimal_places| {
+        PdfNumber::new(coefficient, decimal_places).expect("valid fixed number")
+    };
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 10.0,
+            y: 20.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 657_820,
+                v: 1_315_635,
+                decimal_digits: 4,
+            }),
+            bytes: b"ORIGIN".to_vec(),
+        },
+        PdfContentOperation::ImportedPdfPage {
+            matrix: [
+                number(1, 0),
+                number(0, 0),
+                number(0, 0),
+                number(1, 0),
+                number(30, 0),
+                number(40, 0),
+            ],
+            name: b"Im1".to_vec(),
+        },
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        "1 0 0 1 10 20 cm\nORIGIN\nq\n1 0 0 1 20 20 cm\n/Im1 Do\nQ"
+    );
+}

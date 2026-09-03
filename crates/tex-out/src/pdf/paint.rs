@@ -1,8 +1,10 @@
 use pdf_writer::types::LineCapStyle;
-use pdf_writer::{Name, Str};
+use pdf_writer::{Name, Raw, Str};
 use tex_arith::Scaled;
 
-use super::{PdfContentOperation, PdfContentRectangle, PdfContentRule};
+use super::{
+    PdfContentOperation, PdfContentRectangle, PdfContentRule, PdfNumber, fixed_number_bytes,
+};
 
 pub(super) enum PdfPaintProgram<'a> {
     Rectangles(&'a [PdfContentRectangle]),
@@ -36,13 +38,20 @@ struct PdfPainter {
     content: pdf_writer::Content,
     origin: (f32, f32),
     exact_origin: Option<PdfExactTextPosition>,
-    saved_origins: Vec<((f32, f32), Option<PdfExactTextPosition>)>,
+    fixed_origin: Option<(PdfNumber, PdfNumber)>,
+    saved_origins: Vec<PdfSavedOrigin>,
     in_text: bool,
     current_font: Option<PdfTextFont>,
     text_matrix: Option<PdfTextMatrix>,
     text_cursor: Option<PdfTextCursor>,
     pending_text: Vec<PdfTextItem>,
 }
+
+type PdfSavedOrigin = (
+    (f32, f32),
+    Option<PdfExactTextPosition>,
+    Option<(PdfNumber, PdfNumber)>,
+);
 
 struct PdfTextFont {
     name: Vec<u8>,
@@ -88,6 +97,10 @@ impl PdfPainter {
             content: pdf_writer::Content::new(),
             origin: (0.0, 0.0),
             exact_origin: Some(PdfExactTextPosition { h: 0, v: 0 }),
+            fixed_origin: Some((
+                PdfNumber::new(0, 0).expect("zero has valid PDF precision"),
+                PdfNumber::new(0, 0).expect("zero has valid PDF precision"),
+            )),
             saved_origins: Vec::new(),
             in_text: false,
             current_font: None,
@@ -177,6 +190,9 @@ impl PdfPainter {
                 height,
                 name,
             } => self.xobject([*width, 0.0, 0.0, *height, *x, *y], name),
+            PdfContentOperation::ImportedPdfPage { matrix, name } => {
+                self.fixed_xobject(matrix, name);
+            }
         }
     }
 
@@ -487,6 +503,28 @@ impl PdfPainter {
         self.restore();
     }
 
+    fn fixed_xobject(&mut self, matrix: &[super::PdfNumber; 6], name: &[u8]) {
+        self.end_text();
+        self.save();
+        let mut matrix = *matrix;
+        if let Some((origin_x, origin_y)) = self.fixed_origin {
+            if let Some(relative_x) = subtract_fixed_numbers(matrix[4], origin_x) {
+                matrix[4] = relative_x;
+            }
+            if let Some(relative_y) = subtract_fixed_numbers(matrix[5], origin_y) {
+                matrix[5] = relative_y;
+            }
+        }
+        let mut operation = self.content.op("cm");
+        let mut buffer = [0_u8; 32];
+        for number in &matrix {
+            operation.operand(Raw(fixed_number_bytes(*number, &mut buffer)));
+        }
+        drop(operation);
+        self.content.x_object(Name(name));
+        self.restore();
+    }
+
     fn relative_position(&self, x: f32, y: f32) -> (f32, f32) {
         // pdfTeX §690 retains its translated PDF origin, so every later
         // absolute page position is emitted as a delta from that origin.
@@ -517,18 +555,29 @@ impl PdfPainter {
             }
             _ => None,
         };
+        self.fixed_origin = exact_position.and_then(|position| {
+            let exact_origin = self.exact_origin;
+            let h = exact_origin.map(|origin| origin.h).unwrap_or(position.h);
+            let v = exact_origin.map(|origin| origin.v).unwrap_or(position.v);
+            Some((
+                fixed_scaled_number(h, position.decimal_digits)?,
+                fixed_scaled_number(v, position.decimal_digits)?,
+            ))
+        });
     }
 
     fn save(&mut self) {
-        self.saved_origins.push((self.origin, self.exact_origin));
+        self.saved_origins
+            .push((self.origin, self.exact_origin, self.fixed_origin));
         self.content.save_state();
     }
 
     fn restore(&mut self) {
         self.content.restore_state();
-        if let Some((origin, exact_origin)) = self.saved_origins.pop() {
+        if let Some((origin, exact_origin, fixed_origin)) = self.saved_origins.pop() {
             self.origin = origin;
             self.exact_origin = exact_origin;
+            self.fixed_origin = fixed_origin;
         }
     }
 
@@ -661,6 +710,33 @@ impl PdfPainter {
         self.end_text();
         self.content.finish().to_vec()
     }
+}
+
+fn fixed_scaled_number(value: i64, decimal_digits: u8) -> Option<PdfNumber> {
+    if decimal_digits > 9 {
+        return None;
+    }
+    let scale = 10_i128.checked_pow(u32::from(decimal_digits))?;
+    let numerator = i128::from(value).checked_mul(7_200)?.checked_mul(scale)?;
+    let denominator = 7_227_i128.checked_mul(65_536)?;
+    let half = denominator / 2;
+    let adjusted = if numerator >= 0 {
+        numerator.checked_add(half)?
+    } else {
+        numerator.checked_sub(half)?
+    };
+    let coefficient = i64::try_from(adjusted / denominator).ok()?;
+    PdfNumber::new(coefficient, decimal_digits).ok()
+}
+
+fn subtract_fixed_numbers(left: PdfNumber, right: PdfNumber) -> Option<PdfNumber> {
+    let decimal_places = left.decimal_places().max(right.decimal_places());
+    let left_scale = 10_i128.checked_pow(u32::from(decimal_places - left.decimal_places()))?;
+    let right_scale = 10_i128.checked_pow(u32::from(decimal_places - right.decimal_places()))?;
+    let coefficient = i128::from(left.coefficient())
+        .checked_mul(left_scale)?
+        .checked_sub(i128::from(right.coefficient()).checked_mul(right_scale)?)?;
+    PdfNumber::new(i64::try_from(coefficient).ok()?, decimal_places).ok()
 }
 
 #[cfg(test)]

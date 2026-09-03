@@ -121,6 +121,207 @@ fn imported_pdf_form_bbox_preserves_nonzero_page_coordinates() {
 }
 
 #[test]
+fn imported_pdf_matrix_selects_scaled_page_box_boundaries_for_each_rotation() {
+    let page_box = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(2 * Scaled::UNITY),
+        bottom: Scaled::from_raw(-3 * Scaled::UNITY),
+        right: Scaled::from_raw(12 * Scaled::UNITY),
+        top: Scaled::from_raw(23 * Scaled::UNITY),
+    };
+    let width = page_box.right.checked_sub(page_box.left).expect("width");
+    let height = page_box.top.checked_sub(page_box.bottom).expect("height");
+    let cases = [
+        (
+            PdfPageRotationInput::None,
+            [
+                scaled_to_bp_number_checked(page_box.left.checked_neg().expect("negative left"), 4)
+                    .expect("left"),
+                scaled_to_bp_number_checked(
+                    page_box.bottom.checked_neg().expect("negative bottom"),
+                    4,
+                )
+                .expect("bottom"),
+            ],
+        ),
+        (
+            PdfPageRotationInput::Clockwise90,
+            [
+                scaled_to_bp_number_checked(page_box.top, 4).expect("top"),
+                scaled_to_bp_number_checked(page_box.left.checked_neg().expect("negative left"), 4)
+                    .expect("left"),
+            ],
+        ),
+        (
+            PdfPageRotationInput::UpsideDown,
+            [
+                scaled_to_bp_number_checked(page_box.right, 4).expect("right"),
+                scaled_to_bp_number_checked(page_box.top, 4).expect("top"),
+            ],
+        ),
+        (
+            PdfPageRotationInput::Clockwise270,
+            [
+                scaled_to_bp_number_checked(
+                    page_box.bottom.checked_neg().expect("negative bottom"),
+                    4,
+                )
+                .expect("bottom"),
+                scaled_to_bp_number_checked(page_box.right, 4).expect("right"),
+            ],
+        ),
+    ];
+    for (rotation, translation) in cases {
+        let matrix = imported_pdf_page_matrix(
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            if rotation_swaps_axes(rotation) {
+                height
+            } else {
+                width
+            },
+            if rotation_swaps_axes(rotation) {
+                width
+            } else {
+                height
+            },
+            page_box,
+            rotation,
+            4,
+        )
+        .expect("valid imported page matrix");
+        assert_eq!([matrix[4], matrix[5]], translation);
+    }
+}
+
+#[test]
+fn imported_pdf_matrix_scales_rotated_axes_in_the_destination_order() {
+    let page_box = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(2 * Scaled::UNITY),
+        bottom: Scaled::from_raw(-3 * Scaled::UNITY),
+        right: Scaled::from_raw(12 * Scaled::UNITY),
+        top: Scaled::from_raw(23 * Scaled::UNITY),
+    };
+    let width = page_box.right.checked_sub(page_box.left).expect("width");
+    let height = page_box.top.checked_sub(page_box.bottom).expect("height");
+    let twice = |value: Scaled| Scaled::from_raw(value.raw().checked_mul(2).expect("twice"));
+    let three_times =
+        |value: Scaled| Scaled::from_raw(value.raw().checked_mul(3).expect("three times"));
+
+    let clockwise90 = imported_pdf_page_matrix(
+        Scaled::from_raw(0),
+        Scaled::from_raw(0),
+        twice(height),
+        three_times(width),
+        page_box,
+        PdfPageRotationInput::Clockwise90,
+        4,
+    )
+    .expect("valid clockwise-90 matrix");
+    assert_eq!(
+        clockwise90[..4],
+        [
+            PdfNumber::new(0, 0).expect("zero"),
+            PdfNumber::new(3, 0).expect("height scale"),
+            PdfNumber::new(-2, 0).expect("width scale"),
+            PdfNumber::new(0, 0).expect("zero"),
+        ]
+    );
+
+    let clockwise270 = imported_pdf_page_matrix(
+        Scaled::from_raw(0),
+        Scaled::from_raw(0),
+        twice(height),
+        three_times(width),
+        page_box,
+        PdfPageRotationInput::Clockwise270,
+        4,
+    )
+    .expect("valid clockwise-270 matrix");
+    assert_eq!(
+        clockwise270[..4],
+        [
+            PdfNumber::new(0, 0).expect("zero"),
+            PdfNumber::new(-3, 0).expect("height scale"),
+            PdfNumber::new(2, 0).expect("width scale"),
+            PdfNumber::new(0, 0).expect("zero"),
+        ]
+    );
+}
+
+#[test]
+fn imported_pdf_matrix_rounds_ratio_ties_away_from_zero() {
+    assert_eq!(round_divide_away_from_zero(5, 2).expect("positive tie"), 3);
+    assert_eq!(
+        round_divide_away_from_zero(-5, 2).expect("negative tie"),
+        -3
+    );
+    assert_eq!(
+        scaled_ratio_number(Scaled::from_raw(5), Scaled::from_raw(2))
+            .expect("ratio")
+            .coefficient(),
+        25,
+    );
+    assert_eq!(
+        scaled_ratio_number(Scaled::from_raw(1), Scaled::from_raw(128))
+            .expect("ratio tie")
+            .coefficient(),
+        7_813,
+    );
+    assert_eq!(
+        scaled_product_divide(
+            Scaled::from_raw(5),
+            Scaled::from_raw(1),
+            Scaled::from_raw(2),
+        )
+        .expect("scaled tie")
+        .raw(),
+        3,
+    );
+}
+
+#[test]
+fn imported_pdf_matrix_rejects_empty_boxes_and_excess_precision() {
+    let empty = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(2),
+        bottom: Scaled::from_raw(0),
+        right: Scaled::from_raw(2),
+        top: Scaled::from_raw(1),
+    };
+    assert!(matches!(
+        imported_pdf_page_matrix(
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(1),
+            Scaled::from_raw(1),
+            empty,
+            PdfPageRotationInput::None,
+            4,
+        ),
+        Err(PdfBuildError::InvalidPdfPage(_))
+    ));
+    let valid = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(0),
+        bottom: Scaled::from_raw(0),
+        right: Scaled::from_raw(1),
+        top: Scaled::from_raw(1),
+    };
+    assert!(matches!(
+        imported_pdf_page_matrix(
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(1),
+            Scaled::from_raw(1),
+            valid,
+            PdfPageRotationInput::None,
+            10,
+        ),
+        Err(PdfBuildError::Model(
+            PdfModelError::NumberPrecisionTooLarge(10)
+        ))
+    ));
+}
+
+#[test]
 fn tounicode_cmap_matches_pdftex_generic_resource_shape() {
     // pdftex.web section 32e delegates to tounicode.c::write_tounicode.
     let mappings = [

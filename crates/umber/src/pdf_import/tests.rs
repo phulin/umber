@@ -1,4 +1,5 @@
 use test_support::pdf_fixture::{Dictionary, ValidPdfFixture, array, name, reference};
+use tex_out::pdf::PdfNumber;
 
 use super::*;
 
@@ -58,6 +59,9 @@ fn named_destination_pdf(name_tree: bool) -> Vec<u8> {
 
 #[test]
 fn named_destination_selects_page_from_legacy_dictionary_and_name_tree() {
+    let number = |coefficient, decimal_places| {
+        PdfNumber::new(coefficient, decimal_places).expect("valid PDF number")
+    };
     for name_tree in [false, true] {
         let inspected = inspect_pdf_page(
             named_destination_pdf(name_tree).into(),
@@ -66,8 +70,60 @@ fn named_destination_selects_page_from_legacy_dictionary_and_name_tree() {
         )
         .expect("resolve named destination");
         assert_eq!(inspected.page_number, 2);
-        assert_eq!(inspected.page_box, [0.0, 0.0, 30.0, 40.0]);
+        assert_eq!(
+            inspected.page_box,
+            [number(0, 0), number(0, 0), number(30, 0), number(40, 0)]
+        );
     }
+}
+
+#[test]
+fn page_box_inspection_preserves_decimal_source_numbers() {
+    let mut document = ValidPdfFixture::new("1.7").expect("create PDF");
+    document
+        .add_dictionary(
+            1,
+            Dictionary::new()
+                .entry("Type", name("Catalog"))
+                .entry("Pages", reference(2)),
+        )
+        .expect("catalog");
+    document
+        .add_dictionary(
+            2,
+            Dictionary::new()
+                .entry("Type", name("Pages"))
+                .entry("Count", b"1")
+                .entry("Kids", array([reference(3)])),
+        )
+        .expect("pages");
+    document
+        .add_dictionary(
+            3,
+            Dictionary::new()
+                .entry("Type", name("Page"))
+                .entry("Parent", reference(2))
+                .entry("MediaBox", b"[12.345678901 -4.5 42.125 88.75]"),
+        )
+        .expect("page");
+    document
+        .set_trailer_entry("Root", reference(1))
+        .expect("trailer");
+    let inspected = inspect_pdf_page(
+        document.finish().expect("serialize PDF").into(),
+        &tex_exec::PdfImagePageSelection::Number(1),
+        PdfImagePageBox::Media,
+    )
+    .expect("inspect decimal page box");
+    assert_eq!(
+        inspected.page_box,
+        [
+            PdfNumber::new(12_345_678_901, 9).expect("left"),
+            PdfNumber::new(-45, 1).expect("bottom"),
+            PdfNumber::new(42_125, 3).expect("right"),
+            PdfNumber::new(8875, 2).expect("top"),
+        ]
+    );
 }
 
 #[test]

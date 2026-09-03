@@ -171,6 +171,15 @@ pub enum PdfContentOperation {
         height: f32,
         name: Vec<u8>,
     },
+    /// An imported PDF page included with a fixed-point content transform.
+    ///
+    /// Imported page geometry stays in [`PdfNumber`] form until the borrowed
+    /// `cm` operands are written by the painter. This keeps the source Form's
+    /// identity and resource graph detached from binary floating-point state.
+    ImportedPdfPage {
+        matrix: [PdfNumber; 6],
+        name: Vec<u8>,
+    },
 }
 
 /// One PK-derived monochrome Type-3 glyph procedure.
@@ -292,6 +301,57 @@ impl PdfVersion {
 pub struct PdfNumber {
     coefficient: i64,
     decimal_places: u8,
+}
+
+/// Formats a validated fixed-point PDF number into the canonical spelling used
+/// by both object dictionaries and imported page-content transforms.
+///
+/// The returned slice borrows only `buffer`; callers must consume it before the
+/// next operation and must not retain it as part of the detached PDF graph.
+pub(super) fn fixed_number_bytes(number: PdfNumber, buffer: &mut [u8; 32]) -> &[u8] {
+    let coefficient = number.coefficient();
+    let decimal_places = number.decimal_places();
+    let magnitude = coefficient.unsigned_abs();
+    let divisor = 10_u64.pow(u32::from(decimal_places));
+
+    let mut length = 0;
+    if coefficient < 0 {
+        buffer[length] = b'-';
+        length += 1;
+    }
+
+    let integer = magnitude / divisor;
+    let mut digits = [0_u8; 20];
+    let mut digit_count = 0;
+    let mut integer_value = integer;
+    loop {
+        digits[digit_count] = b'0' + (integer_value % 10) as u8;
+        digit_count += 1;
+        integer_value /= 10;
+        if integer_value == 0 {
+            break;
+        }
+    }
+    for digit in digits[..digit_count].iter().rev() {
+        buffer[length] = *digit;
+        length += 1;
+    }
+
+    if decimal_places != 0 {
+        buffer[length] = b'.';
+        length += 1;
+        let mut fraction_digits = [b'0'; 9];
+        let mut fractional_value = magnitude % divisor;
+        for index in (0..usize::from(decimal_places)).rev() {
+            fraction_digits[index] = b'0' + (fractional_value % 10) as u8;
+            fractional_value /= 10;
+        }
+        let end = usize::from(decimal_places);
+        buffer[length..length + end].copy_from_slice(&fraction_digits[..end]);
+        length += end;
+    }
+
+    &buffer[..length]
 }
 
 impl PdfNumber {

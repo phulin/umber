@@ -422,22 +422,22 @@ fn write_destination(
     let destination = destination.page(writer_ref(value.page)?);
     match &value.view {
         PdfDestinationView::Xyz { left, top, zoom } => destination.xyz(
-            number_as_f32(*left),
-            number_as_f32(*top),
-            zoom.map(number_as_f32),
+            number_to_f32(*left),
+            number_to_f32(*top),
+            zoom.map(number_to_f32),
         ),
         PdfDestinationView::FitBoundingBoxHorizontal { top } => {
-            destination.fit_bounding_box_horizontal(number_as_f32(*top));
+            destination.fit_bounding_box_horizontal(number_to_f32(*top));
         }
         PdfDestinationView::FitBoundingBoxVertical { left } => {
-            destination.fit_bounding_box_vertical(number_as_f32(*left));
+            destination.fit_bounding_box_vertical(number_to_f32(*left));
         }
         PdfDestinationView::FitBoundingBox => destination.fit_bounding_box(),
         PdfDestinationView::FitHorizontal { top } => {
-            destination.fit_horizontal(number_as_f32(*top));
+            destination.fit_horizontal(number_to_f32(*top));
         }
         PdfDestinationView::FitVertical { left } => {
-            destination.fit_vertical(number_as_f32(*left));
+            destination.fit_vertical(number_to_f32(*left));
         }
         PdfDestinationView::FitRectangle {
             left,
@@ -445,10 +445,10 @@ fn write_destination(
             right,
             top,
         } => destination.fit_rect(Rect::new(
-            number_as_f32(*left),
-            number_as_f32(*bottom),
-            number_as_f32(*right),
-            number_as_f32(*top),
+            number_to_f32(*left),
+            number_to_f32(*bottom),
+            number_to_f32(*right),
+            number_to_f32(*top),
         )),
         PdfDestinationView::Fit => destination.fit(),
     }
@@ -563,18 +563,12 @@ fn write_form_xobject(
     matrix: Option<[PdfNumber; 6]>,
     compression: PdfStreamCompression,
 ) -> Result<(), PdfSerializeError> {
-    let bbox = Rect::new(
-        number_as_f32(bbox[0]),
-        number_as_f32(bbox[1]),
-        number_as_f32(bbox[2]),
-        number_as_f32(bbox[3]),
-    );
-    let matrix = matrix.map(|matrix| matrix.map(number_as_f32));
+    let matrix = matrix.map(|matrix| matrix.map(number_to_f32));
     match compression {
         PdfStreamCompression::None => {
             let mut form = pdf.form_xobject(reference, data);
             form.raw_entries(dictionary.raw_entries());
-            form.bbox(bbox);
+            write_fixed_number_array(form.insert(Name(b"BBox")), &bbox);
             if let Some(matrix) = matrix {
                 form.matrix(matrix);
             }
@@ -585,7 +579,8 @@ fn write_form_xobject(
             let compressed = deflate(data, level)?;
             let mut form = pdf.form_xobject(reference, &compressed);
             form.raw_entries(dictionary.raw_entries());
-            form.bbox(bbox).filter(Filter::FlateDecode);
+            write_fixed_number_array(form.insert(Name(b"BBox")), &bbox);
+            form.filter(Filter::FlateDecode);
             if let Some(matrix) = matrix {
                 form.matrix(matrix);
             }
@@ -671,10 +666,10 @@ fn write_annotation(
 ) -> Result<(), PdfSerializeError> {
     let mut writer = pdf.annotation(reference);
     writer.rect(Rect::new(
-        number_as_f32(annotation.rect[0]),
-        number_as_f32(annotation.rect[1]),
-        number_as_f32(annotation.rect[2]),
-        number_as_f32(annotation.rect[3]),
+        number_to_f32(annotation.rect[0]),
+        number_to_f32(annotation.rect[1]),
+        number_to_f32(annotation.rect[2]),
+        number_to_f32(annotation.rect[3]),
     ));
     if let Some(kind) = annotation.subtype {
         writer.subtype(match kind {
@@ -790,7 +785,10 @@ fn write_value(object: Obj<'_>, value: &PdfValue) -> Result<(), PdfSerializeErro
         PdfValue::Integer(value) => object.primitive(
             i32::try_from(*value).map_err(|_| PdfSerializeError::IntegerOutOfRange(*value))?,
         ),
-        PdfValue::Number(value) => object.primitive(number_as_f32(*value)),
+        PdfValue::Number(value) => {
+            let mut buffer = [0_u8; 32];
+            object.primitive(Raw(super::fixed_number_bytes(*value, &mut buffer)));
+        }
         PdfValue::Name(name) => object.primitive(Name(name.as_bytes())),
         PdfValue::String(value) => object.primitive(Str(value)),
         PdfValue::Reference(id) => object.primitive(writer_ref(*id)?),
@@ -849,9 +847,20 @@ fn write_typed_dictionary_entries_skipping(
     Ok(())
 }
 
-fn number_as_f32(number: PdfNumber) -> f32 {
+fn number_to_f32(number: PdfNumber) -> f32 {
     let divisor = 10_f32.powi(i32::from(number.decimal_places()));
     number.coefficient() as f32 / divisor
+}
+
+fn write_fixed_number_array(object: Obj<'_>, values: &[PdfNumber]) {
+    let mut array = object.array();
+    let mut buffer = [0_u8; 32];
+    for value in values {
+        array
+            .push()
+            .primitive(Raw(super::fixed_number_bytes(*value, &mut buffer)));
+    }
+    array.finish();
 }
 
 #[cfg(test)]
