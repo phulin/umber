@@ -1703,7 +1703,7 @@ macro_rules! define_delivery_loop {
             }
             let action = classify_hot_command(&command, protected_macros, undefined);
             if first && first_command == FirstCommandPolicy::MainLoopCharacter {
-                if matches!(command.command_word().class(), CommandClass::Character) {
+                if command.command_word().is_main_loop_character() {
                     break 'delivery DeliveryStatus::Command;
                 }
                 if action == ExpandedCommandAction::Return {

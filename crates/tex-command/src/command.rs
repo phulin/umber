@@ -173,6 +173,21 @@ impl<G> CommandWord<G> {
         }
     }
 
+    /// Whether TeX82 section 1038 can continue its main-loop character run.
+    pub(crate) fn is_main_loop_character(self) -> bool {
+        if !matches!(self.code, CommandClass::Character) {
+            return false;
+        }
+        matches!(
+            Meaning::from_runtime_word(self.operand.scalar_value()),
+            Meaning::CharGiven(_)
+                | Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                }
+        )
+    }
+
     pub(crate) const fn unexpandable_primitive(self) -> Option<UnexpandablePrimitive> {
         if !matches!(self.code, CommandClass::Unexpandable) {
             return None;

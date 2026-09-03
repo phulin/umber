@@ -41,6 +41,15 @@ pub(crate) struct InputLevelId(pub(crate) u64);
 pub(crate) use tex_state::packed_input::InputFrame as PackedInputFrame;
 
 fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFrameKind {
+    // TeX82 §789 gives both an ordinary v-part and `omit_template` the
+    // `v_template` token behavior. The trace is the sole distinction that
+    // must survive packing so retirement can report which list actually ran.
+    if matches!(
+        (behavior, trace),
+        (TokenBehavior::VTemplate, ReplayTrace::OmitTemplate)
+    ) {
+        return InputFrameKind::OmitTemplate;
+    }
     match behavior {
         TokenBehavior::Parameter => InputFrameKind::Parameter,
         TokenBehavior::UTemplate => InputFrameKind::AlignmentUTemplate,

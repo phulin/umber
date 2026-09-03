@@ -56,6 +56,41 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
     });
 }
 
+#[test]
+fn packed_main_loop_character_class_excludes_structural_catcodes() {
+    let word = |meaning| CommandWord::<()>::from_meaning(ResolvedMeaning::Static(meaning)).0;
+
+    assert!(word(Meaning::CharGiven('x')).is_main_loop_character());
+    assert!(
+        word(Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter,
+        })
+        .is_main_loop_character()
+    );
+    assert!(
+        word(Meaning::CharToken {
+            ch: '7',
+            cat: Catcode::Other,
+        })
+        .is_main_loop_character()
+    );
+    assert!(
+        !word(Meaning::CharToken {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        })
+        .is_main_loop_character()
+    );
+    assert!(
+        !word(Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space,
+        })
+        .is_main_loop_character()
+    );
+}
+
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, OriginId::UNKNOWN),

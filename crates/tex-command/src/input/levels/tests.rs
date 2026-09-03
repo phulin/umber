@@ -173,6 +173,33 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
 }
 
 #[test]
+fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
+    let behavior = TokenBehavior::VTemplate;
+    let retirement = RetirementBehavior::RetainExhaustedVTemplate;
+    let trace = ReplayTrace::OmitTemplate;
+    let frame = packed_token_frame(InputLevelId(5), 1, &behavior, retirement, &trace);
+    let mut lane = ReplayLane::default();
+    let payload = PackedTokenSpanHandle::transient([traced('x')])
+        .admit(&mut lane)
+        .expect("omit-template replay admission");
+    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
+        unreachable!("transient input is replay-owned")
+    };
+    let row: ResidentTokenRow<()> = ResidentTokenRow {
+        header: TokenRowHeader::new(behavior, retirement, trace, frame),
+        storage: ResidentTokenStorage::Replay {
+            replay,
+            cursor: lane
+                .resident_cursor(replay)
+                .expect("resident replay cursor"),
+        },
+    };
+
+    assert_eq!(row.header.behavior(), TokenBehavior::VTemplate);
+    assert_eq!(row.trace(), ReplayTrace::OmitTemplate);
+}
+
+#[test]
 fn stored_and_transient_payloads_have_the_same_semantic_words() {
     let token = Token::Char {
         ch: 'q',
