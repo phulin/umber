@@ -1,6 +1,6 @@
 use super::{
     ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerBudgetError,
-    InternerError, InternerResource, SYMBOL_CAPACITY,
+    InternerError, InternerResource, NameRecord, SYMBOL_CAPACITY,
 };
 
 fn budget(names: u32, slots: u32, bytes: u32) -> InternerBudget {
@@ -26,6 +26,25 @@ fn budget_configuration_is_explicit_and_structurally_validated() {
         Err(InternerBudgetError::SlotCapacity {
             requested: SYMBOL_CAPACITY + 1,
             maximum: SYMBOL_CAPACITY,
+        })
+    );
+}
+
+#[test]
+fn name_record_is_one_copyable_packed_u64_row() {
+    assert_eq!(
+        core::mem::size_of::<NameRecord>(),
+        core::mem::size_of::<u64>()
+    );
+    assert_eq!(
+        core::mem::align_of::<NameRecord>(),
+        core::mem::align_of::<u32>()
+    );
+    assert_eq!(
+        NameRecord::new(0x1020_3040, 0x5060_7080),
+        Some(NameRecord {
+            offset: 0x1020_3040,
+            len: 0x5060_7080,
         })
     );
 }
@@ -330,4 +349,78 @@ fn semantic_projection_is_cached_once_per_control_sequence_slot() {
         );
     }
     assert_eq!(interner.semantic_atom(symbol.symbol()), Some(cached.0));
+}
+
+#[test]
+fn profile_capacity_admits_the_old_boundary_without_growing_storage() {
+    let profile = crate::EngineCapacityProfile::Texlive2026;
+    let capacities = profile.configuration();
+    let mut interner = Interner::new_for_profile(profile);
+    let arena_ptr = interner.arena.bytes.as_ptr();
+    let entries_ptr = interner.entries.as_ptr();
+    let index_ptr = interner.index.buckets.as_ptr();
+    let arena_capacity = interner.arena.bytes.capacity();
+    let entries_capacity = interner.entries.capacity();
+    let index_capacity = interner.index.buckets.capacity();
+
+    for index in 0..66_921 {
+        interner
+            .intern_hash(&format!("boundary-name-{index}"))
+            .expect("TL2026 admits the former fixed-budget boundary");
+    }
+
+    assert_eq!(interner.multiletter_len(), 66_921);
+    assert_eq!(interner.arena.bytes.capacity(), arena_capacity);
+    assert_eq!(interner.entries.capacity(), entries_capacity);
+    assert_eq!(interner.index.buckets.capacity(), index_capacity);
+    assert_eq!(interner.arena.bytes.as_ptr(), arena_ptr);
+    assert_eq!(interner.entries.as_ptr(), entries_ptr);
+    assert_eq!(interner.index.buckets.as_ptr(), index_ptr);
+    assert_eq!(arena_capacity, capacities.interner_byte_capacity());
+    assert_eq!(entries_capacity, capacities.interner_slot_capacity());
+}
+
+#[test]
+fn profile_hash_limits_remain_distinct_between_tex82_and_texlive() {
+    let mut tex82 = Interner::new_for_profile(crate::EngineCapacityProfile::Tex82Etex);
+    for index in 0..15_000 {
+        tex82
+            .intern_hash(&format!("n{index}"))
+            .expect("TeX82 configured hash capacity");
+    }
+    assert_eq!(tex82.multiletter_len(), 15_000);
+    assert!(matches!(
+        tex82.intern_hash("tex82-overflow"),
+        Err(InternerError::BudgetExceeded {
+            resource: InternerResource::HashEntries,
+            limit: 15_000,
+            attempted: 15_001,
+        })
+    ));
+
+    let texlive = Interner::new_for_profile(crate::EngineCapacityProfile::Texlive2026);
+    assert_eq!(texlive.budget().hash_entries(), 615_000);
+    assert!(texlive.budget().slots() > 66_921);
+}
+
+#[test]
+fn format_preflight_does_not_recharge_names_already_owned_by_the_epoch() {
+    let mut interner = Interner::new(budget(1, 1, 4));
+    let existing = interner.intern("same").expect("existing name");
+    let rows = [crate::format::schema::FormatName {
+        kind: 2,
+        hash_entry: true,
+        text: "same".to_owned(),
+    }];
+
+    interner
+        .preflight_format_names(&rows)
+        .expect("existing row needs no new slot or bytes");
+    assert_eq!(interner.usage().slots(), 1);
+    assert_eq!(interner.usage().bytes(), 4);
+    let restored = interner
+        .install_format_name(existing.symbol().raw(), &rows[0])
+        .expect("existing row installs");
+    assert_eq!(restored, Some(existing.symbol()));
+    assert_eq!(interner.multiletter_len(), 1);
 }

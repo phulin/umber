@@ -253,7 +253,7 @@ pub use universe::{
     PromotionReceipt, ResidentPromotionBatch, RuntimeCheckpoint, RuntimeCheckpointFontScanCounters,
     RuntimeCheckpointIdentityRoots, RuntimeCheckpointRetention, ShipoutTransaction,
     StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe, UniverseError,
-    UniverseRetirement, with_universe, with_universe_in_epoch,
+    UniverseRetirement, with_universe, with_universe_for_profile, with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
 pub use universe::{SourceFontCheckpointHarness, SourceFontCheckpointMark};

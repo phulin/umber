@@ -98,6 +98,20 @@ impl ReachabilityStore {
         }
     }
 
+    /// Creates one reachability domain with interner storage reserved from the
+    /// executable profile selected for the session.
+    #[must_use]
+    pub fn new_for_profile(profile: crate::EngineCapacityProfile) -> Self {
+        Self {
+            epoch: SessionInternerEpoch::new_for_profile(profile),
+            storage: Rc::new(RefCell::new(ReachabilityStorage {
+                next_serial: 1,
+                slots: std::array::from_fn(|_| ReachabilitySlot::default()),
+                candidate_transaction: None,
+            })),
+        }
+    }
+
     #[must_use]
     pub(crate) const fn epoch(&self) -> &SessionInternerEpoch {
         &self.epoch

@@ -161,6 +161,12 @@ pub(crate) struct StringPoolFormatState {
     memory: MainMemoryFormatState,
 }
 
+impl StringPoolFormatState {
+    pub(crate) fn capacity_profile(&self) -> Option<crate::EngineCapacityProfile> {
+        crate::EngineCapacityProfile::from_string_pool_coordinates(self.max_strings, self.pool_size)
+    }
+}
+
 /// Aggregate TeX82 main-memory state retained by a dumped format.
 ///
 /// TeX's observable statistics need the live low/high word totals and the

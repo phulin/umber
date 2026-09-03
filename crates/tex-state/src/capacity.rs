@@ -39,6 +39,43 @@ impl EngineCapacityConfiguration {
     pub const fn hash_entries(self) -> usize {
         self.hash_size + self.hash_extra
     }
+
+    /// Number of compact Symbol rows needed by the fixed TeX control
+    /// sequence namespaces which do not occupy `hash`.
+    ///
+    /// The null control sequence, all 8-bit single-character control
+    /// sequences, active-character cells, and one inaccessible engine cell
+    /// have stable slots outside the multiletter hash. Font identifiers are
+    /// also retained as non-hash symbols by the runtime. Keeping this
+    /// derivation beside the executable profile makes the allowance visible
+    /// and prevents a workload-specific interner constant from becoming an
+    /// accidental capacity policy.
+    #[must_use]
+    pub const fn reserved_non_hash_symbols(self) -> usize {
+        1 + 256 + 256 + 1 + self.fonts
+    }
+
+    /// Total control-sequence Symbol capacity for this executable profile.
+    #[must_use]
+    pub const fn interner_control_sequence_capacity(self) -> usize {
+        self.hash_entries() + self.reserved_non_hash_symbols()
+    }
+
+    /// Total Symbol-row capacity, including retained non-control spellings.
+    ///
+    /// `max_strings` is the process-owned upper bound for those additional
+    /// pool spellings. It is deliberately accounted separately from hash
+    /// occupancy, since retained spellings do not create a TeX `hash` row.
+    #[must_use]
+    pub const fn interner_slot_capacity(self) -> usize {
+        self.interner_control_sequence_capacity() + self.max_strings
+    }
+
+    /// UTF-8 byte budget for the canonical interner byte pool.
+    #[must_use]
+    pub const fn interner_byte_capacity(self) -> usize {
+        self.pool_size
+    }
 }
 
 /// Pinned executable profile that produced or executes a format image.
@@ -108,6 +145,17 @@ impl EngineCapacityProfile {
                 let capacities = profile.configuration();
                 (capacities.max_strings, capacities.pool_size) == (max_strings, pool_size)
             })
+    }
+
+    /// Returns the interner limits derived from this executable profile.
+    ///
+    /// The profile is the sole production owner of Symbol-row and canonical
+    /// UTF-8 capacity. The fallible conversion remains internal so a future
+    /// profile cannot silently widen the packed token representation.
+    #[must_use]
+    pub fn interner_budget(self) -> crate::interner::InternerBudget {
+        crate::interner::InternerBudget::from_profile(self)
+            .expect("pinned engine profile fits the compact interner domain")
     }
 }
 

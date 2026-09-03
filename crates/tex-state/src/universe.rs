@@ -3410,6 +3410,10 @@ impl<G> Universe<G> {
     /// retained string-pool coordinates. Executable framing may retain that
     /// profile or expand it to the pdfTeX process before the first command.
     pub fn set_engine_capacity_profile(&mut self, profile: crate::EngineCapacityProfile) {
+        self.command_session
+            .interner_mut()
+            .select_capacity_profile(profile)
+            .expect("executable interner profile cannot shrink live session usage");
         self.command_retained
             .engine_usage
             .select_capacity_profile(profile);
@@ -3758,6 +3762,27 @@ pub fn with_universe<R>(
     drop(epoch);
     with_generation(|generation| {
         let core = StateCore::new(generation)?;
+        let mut universe = Universe::new(interner, core);
+        Ok(use_universe(&mut universe))
+    })
+}
+
+/// Introduces one fresh generation with storage reserved from an executable
+/// capacity profile.
+pub fn with_universe_for_profile<R>(
+    profile: crate::EngineCapacityProfile,
+    use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> Result<R, StateError> {
+    let epoch = SessionInternerEpoch::new_for_profile(profile);
+    let interner = epoch.lease().map_err(|_| StateError::ForeignSession)?;
+    drop(epoch);
+    with_generation(|generation| {
+        let core = StateCore::new(generation)?;
+        // The profile selects the physical interner reservation. The command
+        // runtime remains at its conservative TeX82 defaults until startup
+        // identifies the executable binary; selecting a TeX82 binary must be
+        // able to narrow the active limit without first shrinking its string
+        // pool from a TL2026 default.
         let mut universe = Universe::new(interner, core);
         Ok(use_universe(&mut universe))
     })

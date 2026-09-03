@@ -46,6 +46,18 @@ impl SessionInternerEpoch {
         }
     }
 
+    /// Creates an epoch whose interner storage and limits are reserved from an
+    /// executable capacity profile exactly once.
+    #[must_use]
+    pub fn new_for_profile(profile: crate::EngineCapacityProfile) -> Self {
+        Self {
+            storage: Arc::new(Mutex::new(SessionEpochStorage {
+                interner: Some(Interner::new_for_profile(profile)),
+                retired: false,
+            })),
+        }
+    }
+
     /// Whether two owners name the same physical session epoch.
     #[must_use]
     pub fn same_epoch(&self, other: &Self) -> bool {
