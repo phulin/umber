@@ -1092,6 +1092,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    /// Starts the raw balanced child of an active `\expanded` collector for
+    /// `\detokenize`. Rendered characters are written directly to the
+    /// parent's token buffer as the child settles each source word.
+    pub(super) fn begin_detokenize_continuation(
+        &mut self,
+        opener: OriginId,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), CommandError> {
+        let attempt_opening = self.command.attempt.arena().mark();
+        self.command
+            .scratch
+            .push_detokenize_control(opener, attempt_opening, writer)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
     /// Appends one settled unexpandable token to the active `\expanded`
     /// body.  Balance is updated from the literal spelling, as required by
     /// `scan_toks`; the closing delimiter is consumed rather than stored.
@@ -1101,6 +1116,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: &HotCommand<G>,
     ) -> Result<bool, CommandError> {
+        let control = self
+            .command
+            .scratch
+            .top_expanded_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let kind = control.kind;
+        let writer = control.writer;
         let closes = self
             .command
             .scratch
@@ -1117,17 +1140,42 @@ impl<G> CommandProcessor<'_, '_, G> {
             None
         };
         if !closes {
+            if kind == crate::expansion_work::control::SynchronousExpandedKind::Detokenize {
+                let token = command.spelling_word().semantic_token();
+                let mut failure = None;
+                {
+                    let state = &*self.state;
+                    let arena = self.command.attempt.arena_mut();
+                    tex_state::token_show::for_each_token_string_char(state, token, |ch| {
+                        if failure.is_none()
+                            && let Err(error) = arena.push_buffer_token(
+                                writer,
+                                tex_state::token::TracedTokenWord::pack(
+                                    tex_state::token::Token::Char {
+                                        ch,
+                                        cat: if ch == ' ' {
+                                            tex_state::token::Catcode::Space
+                                        } else {
+                                            tex_state::token::Catcode::Other
+                                        },
+                                    },
+                                    OriginId::UNKNOWN,
+                                ),
+                            )
+                        {
+                            failure = Some(error);
+                        }
+                    });
+                }
+                if let Some(error) = failure {
+                    return Err(crate::scan_toks::attempt_command_error(error));
+                }
+                return Ok(false);
+            }
             let word = tex_state::token::TracedTokenWord::pack(
                 command.spelling_word().semantic_token(),
                 command.origin(),
             );
-            let writer = self
-                .command
-                .scratch
-                .top_expanded_control()
-                .map_err(crate::scan_toks::scratch_command_error)?
-                .ok_or_else(CommandError::input_invariant)?
-                .writer;
             self.command
                 .attempt
                 .arena_mut()
@@ -1136,7 +1184,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         }
         let control = control.expect("closing expanded word retires its control");
-        if control.kind == crate::expansion_work::control::SynchronousExpandedKind::Unexpanded {
+        if matches!(
+            control.kind,
+            crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
+                | crate::expansion_work::control::SynchronousExpandedKind::Detokenize
+        ) {
             return Ok(true);
         }
         let list = self

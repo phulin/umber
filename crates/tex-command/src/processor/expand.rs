@@ -1139,9 +1139,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         );
                     }
                     crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
-                        if control.kind
-                            == crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
-                        {
+                        if matches!(
+                            control.kind,
+                            crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
+                                | crate::expansion_work::control::SynchronousExpandedKind::Detokenize
+                        ) {
                             let _ = self.append_expanded_word(&command)?;
                             fetch = true;
                             continue;
@@ -1198,6 +1200,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
             {
                 self.begin_unexpanded_continuation(command.origin(), control.writer)?;
+                fetch = true;
+                continue;
+            }
+
+            // `\detokenize` consumes its balanced child without expansion,
+            // but writes the canonical token spelling as character tokens
+            // directly into the enclosing expanded collector.
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::Detokenize,
+            )) = action
+                && let Some(control) = expanded_control
+                && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
+            {
+                self.begin_detokenize_continuation(command.origin(), control.writer)?;
                 fetch = true;
                 continue;
             }

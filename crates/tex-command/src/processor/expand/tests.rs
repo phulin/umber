@@ -257,6 +257,65 @@ fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
 }
 
 #[test]
+fn expanded_body_detokenizes_children_into_the_parent_buffer() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let detokenize = install_static(
+            universe,
+            "detokenize",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                detokenize,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Char {
+                    ch: 'B',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "A BX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn deeply_nested_the_requests_use_the_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

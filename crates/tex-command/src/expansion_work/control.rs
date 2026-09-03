@@ -180,6 +180,7 @@ pub(crate) enum SynchronousExpandedPhase {
 pub(crate) enum SynchronousExpandedKind {
     Expanded,
     Unexpanded,
+    Detokenize,
 }
 
 /// Copy-small state for one synchronous `\expanded` token collector.

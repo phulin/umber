@@ -717,6 +717,35 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
+    /// Starts the raw balanced child used by `\detokenize` while an expanded
+    /// collector is active. The child converts each settled spelling directly
+    /// into the parent's token buffer and retires without an intermediate
+    /// token-list source.
+    pub(crate) fn push_detokenize_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+                opener,
+                attempt_opening,
+                writer,
+                cursor: crate::scanner_kernel::ScannerCursor::default(),
+                phase: SynchronousExpandedPhase::NeedOpening,
+                kind: SynchronousExpandedKind::Detokenize,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed detokenize-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Returns the active top `\expanded` collector, if any.
     pub(crate) fn top_expanded_control(
         &self,

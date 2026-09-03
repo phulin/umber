@@ -373,6 +373,22 @@ impl TokenTextSink for String {
     }
 }
 
+struct CallbackTextSink<'a, F> {
+    visit: &'a mut F,
+}
+
+impl<F: FnMut(char)> TokenTextSink for CallbackTextSink<'_, F> {
+    fn push(&mut self, ch: char) {
+        (self.visit)(ch);
+    }
+
+    fn push_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.push(ch);
+        }
+    }
+}
+
 struct SelectorTextSink<'a> {
     text: &'a mut String,
     newlinechar: Option<char>,
@@ -487,6 +503,47 @@ pub fn append_token_string_text<S: TokenDisplayState + ?Sized>(
         match (chars.next(), chars.next()) {
             (Some(ch), None) if stores.display_catcode(ch) != Catcode::Letter => {}
             _ => text.push(' '),
+        }
+    }
+}
+
+/// Visits the characters TeX82's `token_show` emits for one token selected by
+/// `new_string`, without allocating an intermediate `String`. Conversion
+/// collectors use this form when their destination is a fixed-chunk token
+/// sink and can therefore keep the per-token hot path allocation-free.
+pub fn for_each_token_string_char<S: TokenDisplayState + ?Sized, F: FnMut(char)>(
+    stores: &S,
+    token: Token,
+    mut visit: F,
+) {
+    let mut sink = CallbackTextSink { visit: &mut visit };
+    if let Token::Char { ch, cat } = token {
+        sink.push(ch);
+        if cat == Catcode::Parameter {
+            sink.push(ch);
+        }
+    } else {
+        append_non_character_token_text(stores, token, &mut sink);
+        let name = match token {
+            Token::Cs(symbol) => {
+                if stores.display_control_sequence_kind(symbol)
+                    == Some(ControlSequenceKind::ActiveCharacter)
+                {
+                    return;
+                }
+                stores.display_resolve(symbol).unwrap_or("")
+            }
+            Token::Frozen(_) => stores
+                .display_frozen_primitive_name(token)
+                .unwrap_or("endtemplate"),
+            Token::Char { .. } | Token::Param(_) => return,
+        };
+        let mut chars = name.chars();
+        if !matches!(
+            (chars.next(), chars.next()),
+            (Some(ch), None) if stores.display_catcode(ch) != Catcode::Letter
+        ) {
+            sink.push(' ');
         }
     }
 }

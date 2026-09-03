@@ -1649,6 +1649,16 @@ impl<G> ExecutionScratch<G> {
             .push_unexpanded_control(opener, attempt_opening, writer)
     }
 
+    pub(crate) fn push_detokenize_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_detokenize_control(opener, attempt_opening, writer)
+    }
+
     pub(crate) fn top_expanded_control(
         &self,
     ) -> Result<Option<crate::expansion_work::control::SynchronousExpandedControl>, ScratchError>
