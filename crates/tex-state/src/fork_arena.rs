@@ -355,15 +355,53 @@ struct AdmittedDenseBlock {
     base: u32,
 }
 
-/// Mutable scalar continuation for an already-admitted append block.
+/// Exclusive admitted payload and metadata borrows for one contiguous append
+/// run inside a physical block.
 ///
-/// Allocation or a logical chunk transition rebuilds this coordinate. Values
-/// within the chunk advance its typed block index directly.
+/// Allocation or a logical chunk transition rebuilds this capability. Values
+/// within the run initialize the held typed block and advance its held chunk
+/// metadata directly; neither vector is indexed again until the capability is
+/// dropped at the block boundary.
+struct AdmittedAppendRun<'a, T> {
+    key: LogicalChunkId,
+    payload: &'a mut DenseBlockPayload<T>,
+    meta: &'a mut ChunkMeta,
+    index: usize,
+    offset: u32,
+    end: u32,
+}
+
+/// Coordinate-only continuation retained by builders across individual
+/// `push` calls. Bulk publication uses [`AdmittedAppendRun`] instead.
 struct AdmittedAppendBlock {
     key: LogicalChunkId,
     page: usize,
     index: usize,
     offset: u32,
+}
+
+impl<T> AdmittedAppendRun<'_, T> {
+    fn push(&mut self, value: T) {
+        assert!(self.offset < self.end, "admitted append run has capacity");
+        debug_assert!(self.meta.live && self.meta.generation == self.key.incarnation);
+        debug_assert_eq!(self.meta.used, self.offset);
+        debug_assert!(!self.meta.sealed && self.meta.sequence_summary.is_none());
+
+        self.payload.initialize_admitted(self.index, value);
+        self.index += 1;
+        self.offset += 1;
+        self.meta.used = self.offset;
+        self.meta.sealed = self.offset == self.end;
+        self.meta.dependency_metadata_complete = false;
+    }
+
+    fn has_capacity(&self) -> bool {
+        self.offset < self.end
+    }
+
+    fn is_full(&self) -> bool {
+        self.offset == self.end
+    }
 }
 
 struct CloneReservation {
@@ -1130,13 +1168,13 @@ impl<T> ChunkStorage<T> {
         })
     }
 
-    /// Checks one untracked append chunk once before a sequential run.
-    fn admit_untracked_append_block(
-        &self,
+    /// Checks and exclusively admits one untracked contiguous append run.
+    fn admit_untracked_append_run(
+        &mut self,
         key: LogicalChunkId,
         arena: u32,
         lineage: u32,
-    ) -> Result<AdmittedAppendBlock, ForkArenaError> {
+    ) -> Result<AdmittedAppendRun<'_, T>, ForkArenaError> {
         let meta = self.validate_lineage(key, arena, lineage)?;
         if meta.sealed || meta.used as usize == self.slots_per_chunk {
             return Err(ForkArenaError::ChunkSealed);
@@ -1163,6 +1201,45 @@ impl<T> ChunkStorage<T> {
             }
             _ => {}
         }
+        let page = block.page as usize;
+        let offset = meta.used;
+        let end =
+            u32::try_from(self.slots_per_chunk).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let meta = &mut self.chunks[key.ordinal as usize];
+        let payload = self.blocks[page].payload_mut();
+        Ok(AdmittedAppendRun {
+            key,
+            payload,
+            meta,
+            index: index as usize,
+            offset,
+            end,
+        })
+    }
+
+    fn admit_untracked_append_block(
+        &self,
+        key: LogicalChunkId,
+        arena: u32,
+        lineage: u32,
+    ) -> Result<AdmittedAppendBlock, ForkArenaError> {
+        let meta = self.validate_lineage(key, arena, lineage)?;
+        if meta.sealed || meta.used as usize == self.slots_per_chunk {
+            return Err(ForkArenaError::ChunkSealed);
+        }
+        if meta.used != 0 && meta.sequence_summary.is_some() {
+            return Err(ForkArenaError::IdentityModeMismatch);
+        }
+        if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
+            return Err(ForkArenaError::ChunkShared);
+        }
+        let block = self
+            .admit_dense_block(key)
+            .ok_or(ForkArenaError::InvalidChunk)?;
+        let index = block
+            .base
+            .checked_add(meta.used)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
         Ok(AdmittedAppendBlock {
             key,
             page: block.page as usize,
@@ -1171,9 +1248,6 @@ impl<T> ChunkStorage<T> {
         })
     }
 
-    /// Appends one value through a block coordinate admitted at the current
-    /// chunk boundary. No logical mapping, owner, lineage, or incarnation is
-    /// reconstructed for values within the same sequential run.
     fn append_admitted_untracked(
         &mut self,
         cursor: &mut AdmittedAppendBlock,
@@ -1588,6 +1662,27 @@ impl<T> ChunkStorage<T> {
             .payload()
             .value(index)
             .expect("admitted cursor remains inside the initialized prefix")
+    }
+
+    /// Borrows one range from a physical block admitted at a list boundary.
+    fn admitted_dense_slice(
+        &self,
+        block: AdmittedDenseBlock,
+        range: Range<u32>,
+    ) -> Option<DenseBlockSlice<'_, T>> {
+        if range.start > range.end {
+            return None;
+        }
+        let start = block.base.checked_add(range.start)? as usize;
+        let end = block.base.checked_add(range.end)? as usize;
+        match self.blocks.get(block.page as usize)?.payload() {
+            DenseBlockPayload::Optional(payload) => Some(DenseBlockSlice::Optional(
+                payload.initialized().get(start..end)?,
+            )),
+            DenseBlockPayload::Packed(payload) => Some(DenseBlockSlice::Packed(
+                payload.initialized().get(start..end)?,
+            )),
+        }
     }
 
     fn admitted_slice(
@@ -3056,6 +3151,36 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.counters.new_semantic_nodes += 1;
     }
 
+    /// Publishes the scalar root and counters for one already-initialized
+    /// contiguous physical-block run.
+    fn complete_admitted_payload_run(
+        &mut self,
+        root: &mut ArenaListId<Lane>,
+        key: LogicalChunkId,
+        start: u32,
+        count: u32,
+        became_full: bool,
+        logical_space: u32,
+    ) {
+        debug_assert!(count != 0);
+        let end = start + count;
+        if root.is_empty() {
+            *root = ArenaListId::from_root(
+                logical_space,
+                ChunkCursor::new(key, start),
+                ChunkCursor::new(key, end),
+                count,
+            );
+        } else {
+            root.tail = ChunkCursor::new(key, end);
+            root.len += count;
+        }
+        if became_full {
+            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        }
+        self.counters.new_semantic_nodes += u64::from(count);
+    }
+
     /// Clones one same-arena source cell directly into its final packed slot.
     fn append_payload_clone_from_coordinate(
         &mut self,
@@ -3409,34 +3534,48 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::ActiveBatch);
         }
         let operation = self.operation_mark(pool);
+        self.append_unsealed_list_from_mark(pool, values, operation)
+    }
+
+    fn append_unsealed_list_from_mark(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        values: impl IntoIterator<Item = T>,
+        operation: OperationMark<Lane>,
+    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
         let mut root = ArenaListId::empty();
         let logical_space = pool.payload.logical_space();
-        let mut append_block = None;
-        for value in values {
+        let mut values = values.into_iter();
+        while let Some(first) = values.next() {
             let appended = (|| {
-                if append_block.is_none() {
-                    let key = self.payload_reservation_target(pool, &root)?;
-                    append_block = Some(pool.payload.admit_untracked_append_block(
-                        key,
-                        self.owner,
-                        self.lineage,
-                    )?);
+                if root.len == u32::MAX {
+                    return Err(ForkArenaError::CapacityOverflow);
                 }
-                let append = append_block
-                    .as_mut()
-                    .expect("append block is admitted before direct publication");
-                let key = append.key;
-                let (offset, became_full) = pool.payload.append_admitted_untracked(append, value);
-                self.complete_payload_reservation(
+                let key = self.payload_reservation_target(pool, &root)?;
+                let (start, count, became_full) = {
+                    let mut run =
+                        pool.payload
+                            .admit_untracked_append_run(key, self.owner, self.lineage)?;
+                    let start = run.offset;
+                    run.push(first);
+                    let mut count = 1_u32;
+                    while run.has_capacity() && root.len < u32::MAX - count {
+                        let Some(value) = values.next() else {
+                            break;
+                        };
+                        run.push(value);
+                        count += 1;
+                    }
+                    (start, count, run.is_full())
+                };
+                self.complete_admitted_payload_run(
                     &mut root,
                     key,
-                    offset,
+                    start,
+                    count,
                     became_full,
                     logical_space,
-                )?;
-                if became_full {
-                    append_block = None;
-                }
+                );
                 Ok::<(), ForkArenaError>(())
             })();
             if let Err(error) = appended {
@@ -3445,10 +3584,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(error);
             }
         }
-        if root.is_empty() {
-            return Ok(root);
-        }
-        self.validate_list(pool, root)?;
         Ok(root)
     }
 
@@ -3471,6 +3606,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         values: impl IntoIterator<Item = T>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
         let values = values.into_iter();
         let (needed, upper) = values.size_hint();
         if upper != Some(needed) {
@@ -3493,14 +3635,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
             }
         }
-        match self.append_unsealed_list(pool, values) {
-            Ok(list) => Ok(list),
-            Err(error) => {
-                self.restore_operation(pool, operation)
-                    .expect("failed fixed-list append restores its exact tail");
-                Err(error)
-            }
-        }
+        self.append_unsealed_list_from_mark(pool, values, operation)
     }
 
     /// Opens a persistent coordinate-only builder. The builder may outlive
@@ -6713,18 +6848,38 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         } else {
             None
         };
-        let (front_cursor, front_block_end) =
-            front_span.map_or((None, 0), |(cursor, end)| (Some(cursor), end));
+        let front_chunk =
+            front_span.and_then(|(cursor, end)| self.chunk_iter(cursor, cursor.offset..end));
+        let back_chunk = (front < self.len()).then(|| {
+            let tail = self.root.tail;
+            let start = if tail.position == self.root.head.position {
+                self.root.head.offset
+            } else {
+                0
+            };
+            self.chunk_iter(tail, start..tail.offset)
+                .expect("admitted tail range remains initialized")
+        });
         ArenaListIter {
             view: *self,
             front,
             back: self.len(),
-            front_cursor,
-            front_block_end,
-            back_cursor: (front < self.len()).then_some(self.root.tail),
+            front_chunk,
+            back_chunk,
             forward_chunk_crossings: 0,
             reverse_chunk_crossings: 0,
         }
+    }
+
+    fn chunk_iter(
+        &self,
+        cursor: AdmittedChunkCursor<Lane>,
+        range: Range<u32>,
+    ) -> Option<DenseBlockIter<'a, T>> {
+        self.payload
+            .storage()
+            .admitted_dense_slice(cursor.block, range)
+            .map(DenseBlockSlice::iter)
     }
 
     fn get_cursor(&self, cursor: AdmittedChunkCursor<Lane>) -> Option<&'a T> {
@@ -7146,9 +7301,8 @@ pub struct ArenaListIter<'arena, T, Lane> {
     view: ArenaListView<'arena, T, Lane>,
     front: usize,
     back: usize,
-    front_cursor: Option<AdmittedChunkCursor<Lane>>,
-    front_block_end: u32,
-    back_cursor: Option<AdmittedChunkCursor<Lane>>,
+    front_chunk: Option<DenseBlockIter<'arena, T>>,
+    back_chunk: Option<DenseBlockIter<'arena, T>>,
     forward_chunk_crossings: usize,
     reverse_chunk_crossings: usize,
 }
@@ -7174,25 +7328,14 @@ impl<'arena, T, Lane> Iterator for ArenaListIter<'arena, T, Lane> {
         if self.front == self.back {
             return None;
         }
-        let cursor = self.front_cursor?;
-        let value = self.view.get_cursor(cursor)?;
+        let value = self.front_chunk.as_mut()?.next()?;
         self.front += 1;
         if self.front == self.back {
-            self.front_cursor = None;
-        } else {
-            let next_offset = cursor.offset.checked_add(1)?;
-            if next_offset < self.front_block_end {
-                self.front_cursor = Some(AdmittedChunkCursor::new(
-                    cursor.position,
-                    cursor.block,
-                    next_offset,
-                ));
-            } else {
-                let (cursor, end) = self.view.cursor_span_at_node(self.front)?;
-                self.front_cursor = Some(cursor);
-                self.front_block_end = end;
-                self.forward_chunk_crossings = self.forward_chunk_crossings.saturating_add(1);
-            }
+            self.front_chunk = None;
+        } else if self.front_chunk.as_ref()?.len() == 0 {
+            let (cursor, end) = self.view.cursor_span_at_node(self.front)?;
+            self.front_chunk = self.view.chunk_iter(cursor, cursor.offset..end);
+            self.forward_chunk_crossings = self.forward_chunk_crossings.saturating_add(1);
         }
         Some(value)
     }
@@ -7208,20 +7351,19 @@ impl<'arena, T, Lane> DoubleEndedIterator for ArenaListIter<'arena, T, Lane> {
         if self.front == self.back {
             return None;
         }
-        self.back -= 1;
-        let mut cursor = self.back_cursor?;
-        let block_start = if cursor.position == self.view.root.head.position {
-            self.view.root.head.offset
-        } else {
-            0
-        };
-        if cursor.offset == block_start {
-            cursor = self.view.previous_cursor(cursor)?;
+        if self.back_chunk.as_ref()?.len() == 0 {
+            let (cursor, end) = self.view.cursor_span_at_node(self.back - 1)?;
+            let start = if cursor.position == self.view.root.head.position {
+                self.view.root.head.offset
+            } else {
+                0
+            };
+            self.back_chunk = self.view.chunk_iter(cursor, start..end);
             self.reverse_chunk_crossings = self.reverse_chunk_crossings.saturating_add(1);
         }
-        cursor.offset = cursor.offset.checked_sub(1)?;
-        self.back_cursor = Some(cursor);
-        self.view.get_cursor(cursor)
+        let value = self.back_chunk.as_mut()?.next_back()?;
+        self.back -= 1;
+        Some(value)
     }
 }
 

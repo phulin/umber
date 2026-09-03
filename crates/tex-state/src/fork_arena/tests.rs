@@ -677,7 +677,11 @@ fn unsealed_sequential_append_admits_only_at_packed_block_boundaries() {
     let validations = pool.payload.validation_reads() - validations_before;
 
     assert_eq!(root.len(), VALUES as usize);
-    assert_eq!(validations, (blocks * 3) as u64);
+    assert_eq!(
+        validations,
+        (blocks * 3).saturating_sub(2) as u64,
+        "each contiguous physical-block run is admitted once; the freshly allocated first run needs no prior-tail revalidation"
+    );
     assert_eq!(allocation, AllocationMeasurement::default());
     assert_eq!(
         arena

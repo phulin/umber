@@ -710,19 +710,22 @@ Stored `ArenaListId` integers remain untrusted until admission. Admission
 checks coordinate space, logical and physical incarnations, semantic owner,
 initialized endpoint prefixes, and endpoint ranges once, and resolves the
 head/tail typed-block coordinates. An admitted chunk cursor carries only that
-direct proof and scalar position. Each ordinary value read then performs the
-typed block-table lookup, payload index, and caller cursor increment. It does
-not compare the source root, owner, arena position, logical incarnation, or
-physical incarnation again. A predecessor crossing admits the next logical
-block once. Rollback, transfer, or reuse invalidates the integer root, which is
-rejected the next time a new cursor is admitted; an admitted cursor is not a
-detached durable handle.
+direct proof and scalar position. Iteration borrows the cursor's initialized
+typed-block slice once, advances its slice iterator locally for every value,
+and reacquires a slice only at a real block boundary. It does not compare the
+source root, owner, arena position, logical incarnation, or physical incarnation
+again. A predecessor crossing admits the next logical block once. Rollback,
+transfer, or reuse invalidates the integer root, which is rejected the next
+time a new cursor is admitted; an admitted cursor is not a detached durable
+handle.
 
 The packed annex append path follows the same split. A logical/physical block
 is admitted once at the start of a run or after a genuine block transition.
-Values inside it perform only destination lookup, one final write, initialized-
-prefix publication, metadata/cursor increment, and the list-length increment.
-Logical list boundaries within a block update scalar root bookkeeping only.
+One borrow-scoped append capability holds that physical payload and its logical
+chunk metadata for the complete contiguous run. Values inside it perform only
+one final write plus initialized-prefix and local-cursor advancement; aggregate
+root length and counters publish once when the run ends. Logical list
+boundaries within a block update scalar root bookkeeping only.
 Allocation, warm-block reuse, owner/lineage/incarnation checks, vacancy proof,
 and predecessor installation remain at genuine block admission. Integer
 overflow, allocation failure, foreign/stale ingress, semantic child or annex
