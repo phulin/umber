@@ -3,8 +3,8 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 #[cfg(feature = "profiling")]
 use crate::input::{
-    InputLevel, InputLevelId, MacroArgumentCursor, ResidentTokenRow, ResidentTokenStorage,
-    TokenRowHeader, packed_token_frame,
+    InputLevel, MacroArgumentCursor, ResidentTokenRow, ResidentTokenStorage, TokenRowHeader,
+    packed_token_frame,
 };
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,

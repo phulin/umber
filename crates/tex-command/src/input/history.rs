@@ -1149,49 +1149,27 @@ impl<G> crate::CommandState<G> {
         Ok(consumed)
     }
 
-    /// Delivers and advances the exact resident input cursor at the semantic top.
+    /// Advances the exact resident row inside the canonical delivery machine.
     ///
-    /// Source, token-list, and direct macro-argument rows enter this one typed
-    /// path. It indexes and discriminates the top once, performs the matching
-    /// ordered first-touch transition directly, and ends each resident borrow
-    /// with only the word, origin, position, and source scalars needed by the
-    /// one final command-admission and settlement tail. Cold source,
-    /// exhaustion, and parameter statuses carry no command borrow.
+    /// This is deliberately always inlined: the expanded-delivery loop owns
+    /// the admitted row through resolution and its expansion decision. The
+    /// function boundary exists only so the character-run entry and focused
+    /// input tests can drive the same transition; it is not a runtime handoff.
     #[inline(always)]
-    pub(crate) fn advance_resident_command_into(
-        &mut self,
-        state: &mut tex_state::CommandContext<'_, G>,
-        fuel: &mut crate::fuel::CommandFuel,
-        create_control_sequences: bool,
-        destination: crate::command::EmptyCommand<'_, G>,
-        retirement_publication: (
-            &mut Option<&mut dyn CommandObserver>,
-            &mut Option<super::InputLevelId>,
-        ),
-    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
-        self.advance_resident_command_or_run_into(
-            state,
-            fuel,
-            create_control_sequences,
-            destination,
-            retirement_publication,
-            None,
-        )
-    }
-
-    pub(crate) fn advance_resident_command_or_run_into(
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "separate borrowed owners avoid a tuple handoff in the inlined row machine"
+    )]
+    pub(crate) fn advance_resident_row_into(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
         _fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
         mut destination: crate::command::EmptyCommand<'_, G>,
-        retirement_publication: (
-            &mut Option<&mut dyn CommandObserver>,
-            &mut Option<super::InputLevelId>,
-        ),
+        observer: &mut Option<&mut dyn CommandObserver>,
+        immediate_write_retirement: &mut Option<super::InputLevelId>,
         mut character_run: Option<&mut ResidentCharacterConsumer<'_, G>>,
-    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
-        let (observer, immediate_write_retirement) = retirement_publication;
+    ) -> Result<bool, super::ResidentBoundary> {
         #[cfg(feature = "profiling")]
         let mut character_run_count = 0_u32;
         #[cfg(feature = "profiling")]
@@ -1229,7 +1207,7 @@ impl<G> crate::CommandState<G> {
         }
         'resident: loop {
             let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
-                return Err(super::ResidentCommandColdTransition::Empty);
+                return Err(super::ResidentBoundary::Empty);
             };
             #[cfg(test)]
             {
@@ -1374,7 +1352,7 @@ impl<G> crate::CommandState<G> {
                                 state,
                                 create_control_sequences,
                             )
-                            .map_err(|()| super::ResidentCommandColdTransition::Failure)?
+                            .map_err(|()| super::ResidentBoundary::Failure)?
                         {
                             ResidentSourceAdvance::Delivered(word, origin, location) => {
                                 direct_source = true;
@@ -1400,29 +1378,21 @@ impl<G> crate::CommandState<G> {
                             }
                             ResidentSourceAdvance::InvalidCharacter => {
                                 finish_character_run_accounting!();
-                                return Err(super::ResidentCommandColdTransition::InvalidCharacter);
+                                return Err(super::ResidentBoundary::InvalidCharacter);
                             }
                             ResidentSourceAdvance::NeedLine(identity) => {
                                 if character_run.is_some() {
                                     finish_character_run_accounting!();
-                                    return Err(
-                                        super::ResidentCommandColdTransition::CharacterRunEnd,
-                                    );
+                                    return Err(super::ResidentBoundary::CharacterRunEnd);
                                 }
-                                return Err(super::ResidentCommandColdTransition::NeedLine(
-                                    identity,
-                                ));
+                                return Err(super::ResidentBoundary::NeedLine(identity));
                             }
                             ResidentSourceAdvance::Exhausted(identity) => {
                                 if character_run.is_some() {
                                     finish_character_run_accounting!();
-                                    return Err(
-                                        super::ResidentCommandColdTransition::CharacterRunEnd,
-                                    );
+                                    return Err(super::ResidentBoundary::CharacterRunEnd);
                                 }
-                                return Err(super::ResidentCommandColdTransition::SourceExhausted(
-                                    identity,
-                                ));
+                                return Err(super::ResidentBoundary::SourceExhausted(identity));
                             }
                         }
                     }
@@ -1455,7 +1425,7 @@ impl<G> crate::CommandState<G> {
                                     if character_run.is_some() {
                                         finish_character_run_accounting!();
                                         return Err(
-                                            super::ResidentCommandColdTransition::CharacterRunEnd,
+                                            super::ResidentBoundary::CharacterRunEnd,
                                         );
                                     }
                                     if let Some(transition) = self
@@ -1466,7 +1436,7 @@ impl<G> crate::CommandState<G> {
                                             immediate_write_retirement,
                                         )
                                         .map_err(|()| {
-                                            super::ResidentCommandColdTransition::Failure
+                                            super::ResidentBoundary::Failure
                                         })?
                                     {
                                         return Err(transition);
@@ -1495,7 +1465,7 @@ impl<G> crate::CommandState<G> {
                                         observer,
                                     )
                                     .map_err(|()| {
-                                        super::ResidentCommandColdTransition::Failure
+                                        super::ResidentBoundary::Failure
                                     })?;
                                     continue 'resident;
                                 }
@@ -1787,9 +1757,7 @@ impl<G> crate::CommandState<G> {
             {
                 if let Err(error) = _fuel.charge() {
                     finish_character_run_accounting!();
-                    return Err(super::ResidentCommandColdTransition::CharacterRunFailure(
-                        error,
-                    ));
+                    return Err(super::ResidentBoundary::CharacterRunFailure(error));
                 }
                 #[cfg(feature = "profiling")]
                 {
@@ -1800,14 +1768,12 @@ impl<G> crate::CommandState<G> {
                     continue 'resident;
                 }
                 finish_character_run_accounting!();
-                return Err(super::ResidentCommandColdTransition::CharacterRunEnd);
+                return Err(super::ResidentBoundary::CharacterRunEnd);
             }
             if character_run.is_some() {
                 if let Err(error) = _fuel.charge() {
                     finish_character_run_accounting!();
-                    return Err(super::ResidentCommandColdTransition::CharacterRunFailure(
-                        error,
-                    ));
+                    return Err(super::ResidentBoundary::CharacterRunFailure(error));
                 }
                 finish_character_run_accounting!();
             }
@@ -1878,17 +1844,17 @@ impl<G> crate::CommandState<G> {
                 resolution.meaning_lookup(),
                 raw_delivery_kind,
             );
-            let interception = if command.is_outer() && scanner_active {
-                super::ResidentCommandInterception::Outer
+            let outer = if command.is_outer() && scanner_active {
+                true
             } else {
                 self.roots.alignment.classify_delivery(
                     &mut self.timeline,
                     command,
                     resolution.literal_catcode(),
                 );
-                super::ResidentCommandInterception::Ready
+                false
             };
-            return Ok(interception);
+            return Ok(outer);
         }
     }
 
@@ -1961,17 +1927,17 @@ impl<G> crate::CommandState<G> {
         identity: super::InputLevelId,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> Result<Option<super::ResidentCommandColdTransition>, ()> {
+    ) -> Result<Option<super::ResidentBoundary>, ()> {
         let retirement = self
             .retire_resident_ordinary_input(resident_index, observer, immediate_write_retirement)
             .map_err(|_| ())?;
         if self.input.levels.len() == resident_index + 1 {
-            return Ok(Some(super::ResidentCommandColdTransition::TokenExhausted {
+            return Ok(Some(super::ResidentBoundary::TokenExhausted {
                 identity,
                 resident_index,
             }));
         }
-        Ok(retirement.map(super::ResidentCommandColdTransition::ReplayCompleted))
+        Ok(retirement.map(super::ResidentBoundary::ReplayCompleted))
     }
 
     pub(crate) fn settle_input_retirement(

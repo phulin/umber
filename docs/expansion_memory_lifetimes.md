@@ -398,10 +398,10 @@ coarse region lease until that row drains. A global `\let` of a local source is
 the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
-Raw and expanded command delivery uses separate concrete destination loops.
-Each active request owns one caller-provided `Option<CurrentCommand<G>>`.
-The raw entry initializes that option once; expanded delivery initializes it or
-readmits the exact `x_token`/suspension owner once. Each then holds one direct
+Raw and expanded command delivery uses one concrete destination loop. Each
+active request owns one caller-provided `Option<CurrentCommand<G>>`. The raw
+entry initializes that option once; expanded delivery initializes it or
+readmits the exact `x_token`/suspension owner once. The loop then holds one direct
 mutable borrow across ordinary resident retries, classification, and return.
 Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
@@ -409,11 +409,12 @@ scalars. One branch-independent `EmptyCommand::write_resolved_delivery` call
 then writes only that caller-owned slot, so no command reference crosses the
 input-top transition. `CommandState` reclaims its original destination,
 consumes the resolver's already-decoded literal catcode for
-required brace handling, applies one-delivery suppression, and returns only a
-copy-small ready/outer result. The input row passes its
+required brace handling and applies one-delivery suppression. Its always-inlined
+row transition exposes only the scalar outer-validity fact to the surrounding
+delivery loop. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; warm resident
-delivery returns only its final ready/outer scalar. Attempt-list storage is
+delivery has no command/interception result enum. Attempt-list storage is
 authenticated with its exact extent when the row is admitted, so a resident
 word read does not repeat the attempt key/row validation or recreate a list
 view. A successful safe storage read advances the common frame once without a

@@ -19,7 +19,7 @@ use super::{
 /// forbidden outer command crosses back to the processor, whose cold recovery
 /// path owns diagnostics and input insertion.
 #[derive(Debug)]
-pub(crate) enum ResidentCommandColdTransition {
+pub(crate) enum ResidentBoundary {
     /// A borrowed main-loop character run ended at an input boundary before
     /// another token was consumed.
     CharacterRunEnd,
@@ -34,12 +34,6 @@ pub(crate) enum ResidentCommandColdTransition {
     ReplayCompleted(crate::CommandReplayEpisode),
     Empty,
     Failure,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResidentCommandInterception {
-    Ready,
-    Outer,
 }
 
 #[cfg(test)]

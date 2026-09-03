@@ -1974,8 +1974,10 @@ reached. Macro-body
 and macro-argument branches
 likewise advance only their resident cursors. Every ordinary arm then reaches
 the same final-slot resolution and settlement tail; no arm owns a separate
-command admission. `advance_resident_command_into` neither looks the top up
-again nor receives a token/cursor carrier. Every row's
+command admission. The always-inlined `advance_resident_row_into` transition
+neither looks the top up again nor receives a token/cursor carrier; it is part
+of the compiled delivery state machine rather than a runtime driver boundary.
+Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the
 current top's value. Reading the context is consequently one top-row read and

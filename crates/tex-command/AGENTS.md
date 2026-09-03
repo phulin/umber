@@ -139,9 +139,10 @@ collector (see `src/conditionals.rs`).
   canonical dense eqtb row once, and writes the final static payload or sole
   macro owner without a projection carrier. Input returns only the scalar
   packed-resolution fact; the `CommandState` resident transition reclaims its
-  original destination for suppression and required alignment treatment, and
-  the processor receives only a copy-small
-  ready/outer result. Exact source geometry remains behind the spelling's
+  original destination for suppression and required alignment treatment. The
+  always-inlined resident row transition exposes only the scalar outer-validity
+  fact to its surrounding delivery state machine; there is no hot
+  interception enum or tuple handoff. Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never

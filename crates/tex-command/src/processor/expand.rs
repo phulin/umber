@@ -5,9 +5,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::DeliveryStamp;
 use crate::execution_scratch::ArgumentSetId;
-use crate::input::{
-    InputLevelId, ResidentCommandColdTransition, ResidentCommandInterception, SourceNameClass,
-};
+use crate::input::{InputLevelId, ResidentBoundary, SourceNameClass};
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -29,7 +27,7 @@ enum ResidentColdOutcome {
     Retry,
     End,
     ReplayCompleted(crate::CommandReplayEpisode),
-    SyntheticCommand(ResidentCommandInterception),
+    SyntheticCommand(bool),
 }
 
 /// Which of TeX82 §380's two expanded-fetch procedures is driving delivery.
@@ -683,23 +681,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                                              origin| {
                     consume(state, fuel, diagnostic_effects, ch, origin)
                 };
-                self.command.advance_resident_command_or_run_into(
+                self.command.advance_resident_row_into(
                     self.state,
                     self.fuel,
                     self.create_source_control_sequences,
                     command.empty_for_raw_delivery(),
-                    (&mut self.observer, &mut self.immediate_write_retirement),
+                    &mut self.observer,
+                    &mut self.immediate_write_retirement,
                     Some(&mut consume_character),
                 )
             };
             let interception = match advance {
                 Ok(interception) => interception,
-                Err(ResidentCommandColdTransition::CharacterRunEnd) => {
+                Err(ResidentBoundary::CharacterRunEnd) => {
                     destination.take();
                     self.invalidate_delivery_freshness();
                     return Ok(DeliveryStatus::CharacterRun);
                 }
-                Err(ResidentCommandColdTransition::CharacterRunFailure(error)) => {
+                Err(ResidentBoundary::CharacterRunFailure(error)) => {
                     destination.take();
                     self.invalidate_delivery_freshness();
                     return Err(error);
@@ -723,7 +722,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else {
                 self.publish_resident_delivery();
             }
-            if matches!(interception, ResidentCommandInterception::Outer) {
+            if interception {
                 Self::check_outer_validity_entry(self, command)?;
             }
             return Ok(DeliveryStatus::CharacterRunBoundary);
@@ -792,16 +791,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[cold]
     fn settle_resident_cold_transition(
         &mut self,
-        cold: ResidentCommandColdTransition,
+        cold: ResidentBoundary,
         command: &mut CurrentCommand<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         match cold {
-            ResidentCommandColdTransition::CharacterRunEnd => {
+            ResidentBoundary::CharacterRunEnd => {
                 unreachable!("scalar delivery cannot end a character run")
             }
-            ResidentCommandColdTransition::CharacterRunFailure(error) => Err(error),
-            ResidentCommandColdTransition::Failure => Err(CommandError::input_invariant()),
-            ResidentCommandColdTransition::Empty => {
+            ResidentBoundary::CharacterRunFailure(error) => Err(error),
+            ResidentBoundary::Failure => Err(CommandError::input_invariant()),
+            ResidentBoundary::Empty => {
                 observe!(
                     self,
                     CommandObservation::Input(InputRecord {
@@ -819,7 +818,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Err(failure) => Err(failure),
                 }
             }
-            ResidentCommandColdTransition::InvalidCharacter => {
+            ResidentBoundary::InvalidCharacter => {
                 self.report_recoverable(
                     INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
                     "Text line contains an invalid character".into(),
@@ -830,7 +829,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
                 Ok(ResidentColdOutcome::Retry)
             }
-            ResidentCommandColdTransition::NeedLine(identity) => {
+            ResidentBoundary::NeedLine(identity) => {
                 let line = self.acquire_source_line(true)?;
                 let exhausted = if line.is_none() {
                     match self.finish_exhausted_source(identity) {
@@ -850,7 +849,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Ok(ResidentColdOutcome::Retry)
                 }
             }
-            ResidentCommandColdTransition::SourceExhausted(identity) => {
+            ResidentBoundary::SourceExhausted(identity) => {
                 #[cfg(test)]
                 {
                     self.command
@@ -875,7 +874,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Ok(ResidentColdOutcome::Retry)
                 }
             }
-            ResidentCommandColdTransition::TokenExhausted { identity, .. } => {
+            ResidentBoundary::TokenExhausted { identity, .. } => {
                 #[cfg(test)]
                 {
                     self.command
@@ -945,13 +944,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
                         self.readmit_delivery_stamp(command.delivery_stamp());
-                        Ok(ResidentColdOutcome::SyntheticCommand(
-                            ResidentCommandInterception::Ready,
-                        ))
+                        Ok(ResidentColdOutcome::SyntheticCommand(false))
                     }
                 }
             }
-            ResidentCommandColdTransition::ReplayCompleted(episode) => {
+            ResidentBoundary::ReplayCompleted(episode) => {
                 Ok(ResidentColdOutcome::ReplayCompleted(episode))
             }
         }
@@ -1023,12 +1020,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return self.fail_expanded_delivery(destination, depth, failure);
                 }
                 'resident: loop {
-                    let interception = match self.command.advance_resident_command_into(
+                    let outer = match self.command.advance_resident_row_into(
                         self.state,
                         self.fuel,
                         self.create_source_control_sequences,
                         command.empty_for_raw_delivery(),
-                        (&mut self.observer, &mut self.immediate_write_retirement),
+                        &mut self.observer,
+                        &mut self.immediate_write_retirement,
+                        None,
                     ) {
                         Ok(interception) => interception,
                         Err(cold) => {
@@ -1052,7 +1051,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     }
                                     continue 'delivery;
                                 }
-                                ResidentColdOutcome::SyntheticCommand(interception) => interception,
+                                ResidentColdOutcome::SyntheticCommand(outer) => outer,
                             }
                         }
                     };
@@ -1062,9 +1061,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     } else {
                         self.publish_resident_delivery();
                     }
-                    if matches!(interception, ResidentCommandInterception::Outer)
-                        && let Err(failure) = self.check_outer_validity_entry(command)
-                    {
+                    if outer && let Err(failure) = self.check_outer_validity_entry(command) {
                         return self.fail_expanded_delivery(destination, depth, failure);
                     }
                     if self.is_observed() {

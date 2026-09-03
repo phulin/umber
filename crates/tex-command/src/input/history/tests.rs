@@ -174,15 +174,17 @@ fn token_cursor_mutation_is_one_typed_access_and_one_coalesced_journal_transitio
         assert_exact_direct_transition(&mut state, (0, 2, 0), |state| {
             let mut command = crate::command::CurrentCommand::empty();
             let delivery = state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("token delivery succeeds");
-            assert_eq!(delivery, crate::input::ResidentCommandInterception::Ready);
+            assert!(!delivery);
         });
     });
 }
@@ -236,15 +238,17 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
             let mut fuel = crate::CommandFuelLedger::default();
             let mut command = crate::command::CurrentCommand::empty();
             let transition = state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("stored variant delivery");
-            assert_eq!(transition, crate::input::ResidentCommandInterception::Ready);
+            assert!(!transition);
             assert_eq!(
                 command.spelling().semantic_token(),
                 Token::Cs(name.symbol())
@@ -272,7 +276,7 @@ fn replay_attempt_and_durable_spans_share_one_exact_inline_advance() {
 fn stored_token_position_transitions_are_present_in_every_build() {
     let source = include_str!("../history.rs");
     let hot_transition = source
-        .split("pub(crate) fn advance_resident_command_into")
+        .split("pub(crate) fn advance_resident_row_into")
         .nth(1)
         .expect("resident transition exists")
         .split("fn finish_resident_exhaustion")
@@ -340,12 +344,14 @@ fn warm_position_and_later_cold_token_state_rollback_in_order() {
 
         let mut command = crate::command::CurrentCommand::empty();
         state
-            .advance_resident_command_into(
+            .advance_resident_row_into(
                 &mut context,
                 fuel.fuel_mut(),
                 true,
                 command.empty_for_raw_delivery(),
-                (&mut None, &mut None),
+                &mut None,
+                &mut None,
+                None,
             )
             .expect("warm token delivery");
         assert!(state.input.levels.toggle_top_token_retirement());
@@ -383,12 +389,14 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
         for _ in 0..300 {
             let mut command = crate::command::CurrentCommand::empty();
             state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("forward replay delivery");
             first.push(command.spelling());
@@ -412,12 +420,14 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
         for _ in 0..300 {
             let mut command = crate::command::CurrentCommand::empty();
             state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("candidate replay delivery");
             replayed.push(command.spelling());
@@ -458,12 +468,14 @@ fn sequential_replay_cursor_checkpoint_replay_reject_and_accept_are_exact() {
         for _ in 0..301 {
             let mut command = crate::command::CurrentCommand::empty();
             state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("accepted candidate replay delivery");
         }
@@ -540,15 +552,17 @@ fn macro_argument_mutation_uses_the_same_direct_transition() {
         assert_exact_direct_transition(&mut state, (0, 0, 2), |state| {
             let mut command = crate::command::CurrentCommand::empty();
             let delivery = state
-                .advance_resident_command_into(
+                .advance_resident_row_into(
                     &mut context,
                     fuel.fuel_mut(),
                     true,
                     command.empty_for_raw_delivery(),
-                    (&mut None, &mut None),
+                    &mut None,
+                    &mut None,
+                    None,
                 )
                 .expect("macro-argument delivery succeeds");
-            assert_eq!(delivery, crate::input::ResidentCommandInterception::Ready);
+            assert!(!delivery);
         });
     });
 }
@@ -755,15 +769,17 @@ fn one_and_4096_typed_resident_branches_select_and_write_exactly_once() {
                 for _ in 0..operations {
                     let mut command = crate::command::CurrentCommand::empty();
                     let transition = state
-                        .advance_resident_command_into(
+                        .advance_resident_row_into(
                             &mut context,
                             fuel.fuel_mut(),
                             true,
                             command.empty_for_raw_delivery(),
-                            (&mut None, &mut None),
+                            &mut None,
+                            &mut None,
+                            None,
                         )
                         .expect("resident delivery succeeds");
-                    assert_eq!(transition, crate::input::ResidentCommandInterception::Ready);
+                    assert!(!transition);
                 }
             }
             let allocations_after =

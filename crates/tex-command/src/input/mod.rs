@@ -39,8 +39,7 @@ pub(crate) use stack::source_registration_counters;
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
     FileWarningBoundary, InputRetirement, InputRetirementAction, InputRetirementError,
-    InputRetirementReason, ResidentCommandColdTransition, ResidentCommandInterception,
-    input_level_identity,
+    InputRetirementReason, ResidentBoundary, input_level_identity,
 };
 
 pub use lines::{
