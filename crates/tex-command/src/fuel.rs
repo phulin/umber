@@ -184,6 +184,20 @@ impl CommandFuel {
         Ok(())
     }
 
+    /// Number of immediately chargeable command transitions.
+    pub(crate) const fn remaining(&self) -> u64 {
+        self.remaining
+    }
+
+    /// Charges one already-classified contiguous run.
+    pub(crate) fn charge_run(&mut self, count: u32) -> Result<(), crate::CommandError> {
+        if u64::from(count) > self.remaining {
+            return Err(self.exhausted_error());
+        }
+        self.remaining -= u64::from(count);
+        Ok(())
+    }
+
     #[cold]
     #[inline(never)]
     fn exhausted_error(&self) -> crate::CommandError {
@@ -216,6 +230,16 @@ impl CommandFuel {
         }
         if meaning_lookup {
             self.work.meaning_lookups = self.work.meaning_lookups.saturating_add(1);
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn record_raw_run(&mut self, scanner: bool, kind: RawDeliveryKind, count: u32) {
+        let count = u64::from(count);
+        self.work.raw_delivery_kinds[kind as usize] =
+            self.work.raw_delivery_kinds[kind as usize].saturating_add(count);
+        if scanner {
+            self.work.scanner_tokens = self.work.scanner_tokens.saturating_add(count);
         }
     }
 

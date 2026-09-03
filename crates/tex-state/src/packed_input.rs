@@ -222,6 +222,22 @@ impl InputFrame {
         consumed
     }
 
+    /// Advances an already-admitted contiguous resident run.
+    ///
+    /// The storage owner proves the complete run before calling this method,
+    /// so the frame needs one end check rather than one check per word.
+    pub const fn advance_resident_run(&mut self, count: u32) -> Option<u32> {
+        let Some(end) = self.position.checked_add(count) else {
+            return None;
+        };
+        if end > self.limit {
+            return None;
+        }
+        let consumed = self.position;
+        self.position = end;
+        Some(consumed)
+    }
+
     /// Extends a token frame after tokens are prepended before first delivery.
     pub const fn extend_limit(&mut self, additional: u32) -> Option<()> {
         let Some(limit) = self.limit.checked_add(additional) else {

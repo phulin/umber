@@ -605,6 +605,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())?;
         debug_assert_eq!(first_depth, 1);
         loop {
+            if !self.is_observed()
+                && self
+                    .command
+                    .consume_plain_macro_body_argument_run(&mut tokens, self.fuel)?
+                    != 0
+            {
+                continue;
+            }
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
             }
@@ -671,6 +679,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut delivered = None;
 
         loop {
+            // Delimiters are inactive inside a balanced group. Consume the
+            // ordinary literal prefix of an admitted macro body in place and
+            // return to scalar delivery only at a brace, control sequence,
+            // parameter, alignment, provenance/block, or input boundary.
+            if tokens.brace_depth() != 0
+                && !self.is_observed()
+                && self
+                    .command
+                    .consume_plain_macro_body_argument_run(&mut tokens, self.fuel)?
+                    != 0
+            {
+                continue;
+            }
             if self.get_token_into(&mut delivered)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
             }

@@ -5,7 +5,6 @@
 //! inherited lane mark once no pending child owns the suffix. No macro
 //! invocation owns a heap buffer, linked segment, or attempt-arena scope.
 
-#[cfg(any(test, feature = "profiling"))]
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -816,6 +815,44 @@ impl MacroWordLane {
         Some((word, origin))
     }
 
+    /// Lends the physical and provenance-contiguous span beginning at
+    /// `index`. The run cursor is admitted once and advances only when the
+    /// caller reaches a real provenance boundary.
+    fn with_sequential_span<R>(
+        &self,
+        index: u32,
+        end: u32,
+        run: &mut u32,
+        consume: impl FnOnce(&[TokenWord], OriginId) -> R,
+    ) -> Option<R> {
+        if index >= end || end > self.len {
+            return None;
+        }
+        let mut run_index = *run as usize;
+        if self
+            .origins
+            .get(run_index + 1)
+            .is_some_and(|next| next.start <= index)
+        {
+            run_index += 1;
+            *run = u32::try_from(run_index).ok()?;
+        }
+        let origin = self.origins.get(run_index)?.origin;
+        let next_origin = self
+            .origins
+            .get(run_index + 1)
+            .map_or(end, |next| next.start.min(end));
+        let index_usize = index as usize;
+        let chunk = self.active.get(index_usize / MACRO_WORD_RESERVE)?;
+        let offset = index_usize % MACRO_WORD_RESERVE;
+        let physical_end =
+            ((index_usize / MACRO_WORD_RESERVE + 1) * MACRO_WORD_RESERVE).min(next_origin as usize);
+        Some(consume(
+            &chunk.words[offset..offset + physical_end - index_usize],
+            origin,
+        ))
+    }
+
     /// Moves one unpublished pending-frame suffix into the dead prefix left by
     /// its last active ancestor. No admitted argument cursor can name the
     /// pending frame yet, so its compact ranges and provenance runs may move
@@ -1598,6 +1635,64 @@ impl<G> ExecutionScratch<G> {
         Ok(writer.brace_depth)
     }
 
+    /// Appends one already-classified ordinary span to the resident writer.
+    ///
+    /// Callers stop before braces, delimiters, paragraph commands, control
+    /// sequences, and input transitions, so every word in this run has the
+    /// same no-boundary settlement. Provenance is represented once by the
+    /// run origin and retained by the existing sparse origin lane.
+    pub(crate) fn append_plain_argument_cell_span(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+        words: &[Cell<TokenWord>],
+        origin: OriginId,
+    ) -> Result<(), ScratchError> {
+        for word in words {
+            let token =
+                ClassifiedToken::from_word(TracedTokenWord::from_parts(word.get(), origin), None);
+            self.append_argument_token(writer, token, true)?;
+        }
+        Ok(())
+    }
+
+    /// Copies the ordinary literal prefix of one admitted argument span into
+    /// the active child writer. Source and destination share the canonical
+    /// lane; the physical span is classified once, its borrow ends, and the
+    /// settled prefix is appended without a command or temporary buffer.
+    pub(crate) fn append_plain_from_argument_span(
+        &mut self,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        writer: &mut MacroArgumentWriter<G>,
+        limit: usize,
+    ) -> Result<u32, ScratchError> {
+        let mut run = *origin_run;
+        let count = self
+            .with_admitted_argument_span(source, position, &mut run, |words, _| {
+                words
+                    .iter()
+                    .take(limit)
+                    .take_while(|word| plain_macro_scan_word(**word))
+                    .count()
+            })
+            .unwrap_or(0);
+        for offset in 0..count {
+            let absolute = source
+                .start
+                .checked_add(position)
+                .and_then(|position| position.checked_add(offset as u32))
+                .ok_or(ScratchError::CapacityOverflow)?;
+            let (word, origin) = self
+                .macro_words
+                .get_sequential_parts(absolute, origin_run)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            let token = ClassifiedToken::from_word(TracedTokenWord::from_parts(word, origin), None);
+            self.append_argument_token(writer, token, true)?;
+        }
+        Ok(count as u32)
+    }
+
     pub(crate) fn match_words(
         &self,
         writer: &MacroArgumentWriter<G>,
@@ -1958,6 +2053,18 @@ impl<G> ExecutionScratch<G> {
         }
     }
 
+    pub(crate) fn with_admitted_argument_span<R>(
+        &self,
+        range: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        consume: impl FnOnce(&[TokenWord], OriginId) -> R,
+    ) -> Option<R> {
+        let absolute = range.start.checked_add(position)?;
+        self.macro_words
+            .with_sequential_span(absolute, range.end, origin_run, consume)
+    }
+
     pub(crate) fn argument_word_len(&self) -> usize {
         self.macro_words.len() as usize
     }
@@ -2257,6 +2364,19 @@ impl<G> ExecutionScratch<G> {
     fn truncate_macro_words(&mut self, mark: u32) -> Result<(), ScratchError> {
         self.macro_words.truncate(mark)
     }
+}
+
+fn plain_macro_scan_word(word: TokenWord) -> bool {
+    use tex_state::token::Token;
+
+    matches!(
+        word.semantic_token(),
+        Token::Char { cat, .. }
+            if !matches!(
+                cat,
+                Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active
+            )
+    )
 }
 
 #[cfg(test)]

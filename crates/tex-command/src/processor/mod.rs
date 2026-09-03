@@ -126,7 +126,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) state: &'episode mut CommandContext<'admission, G>,
     pub(crate) host: CommandHostContext<'episode, G>,
     observer: Option<&'episode mut dyn CommandObserver>,
-    fuel: &'episode mut CommandFuel,
+    pub(crate) fuel: &'episode mut CommandFuel,
     diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer

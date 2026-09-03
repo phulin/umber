@@ -913,6 +913,141 @@ impl<G> InputStack<G> {
 }
 
 impl<G> crate::CommandState<G> {
+    /// Consumes the ordinary literal prefix of the active macro-body span
+    /// directly into an argument writer.
+    ///
+    /// The prefix stops before every token that needs the canonical delivery
+    /// machine: control sequences (including active characters), parameter
+    /// substitution, brace/alignment accounting, or input exhaustion. The
+    /// scanner therefore crosses the input/scratch boundary once for the
+    /// whole admitted physical span rather than once per ordinary token.
+    pub(crate) fn consume_plain_macro_body_argument_run(
+        &mut self,
+        writer: &mut crate::execution_scratch::MacroArgumentWriter<G>,
+        fuel: &mut crate::fuel::CommandFuel,
+    ) -> Result<u32, crate::CommandError> {
+        let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
+            return Ok(0);
+        };
+        let (roots, scratch) = (&mut self.roots, &mut self.scratch);
+        let InputLevel::Resident(row) = &mut roots.input.levels.rows[resident_index] else {
+            return Ok(0);
+        };
+        let position = row.header.frame.position();
+        let available = fuel.remaining().min(u64::from(u32::MAX)) as usize;
+        if available == 0 {
+            fuel.charge()?;
+            unreachable!("zero remaining fuel must fail")
+        }
+        let (consumed, inline, argument_source) = match &mut row.storage {
+            super::ResidentTokenStorage::MacroBody(body) => {
+                let mut append_error = None;
+                let consumed = body.body.with_contiguous_span(position as usize, |span| {
+                    let count = span
+                        .iter()
+                        .take(available)
+                        .take_while(|word| plain_macro_scan_word(word.get()))
+                        .count();
+                    if count != 0
+                        && let Err(error) = scratch.append_plain_argument_cell_span(
+                            writer,
+                            &span[..count],
+                            tex_state::token::OriginId::UNKNOWN,
+                        )
+                    {
+                        append_error = Some(error);
+                    }
+                    count as u32
+                });
+                if append_error.is_some() {
+                    return Err(crate::CommandError::input_invariant());
+                }
+                (
+                    consumed.unwrap_or(0),
+                    InputLevelInlineState::token_position(position),
+                    false,
+                )
+            }
+            super::ResidentTokenStorage::MacroArgument(argument) => {
+                let prior_run = argument.origin_run;
+                let consumed = scratch
+                    .append_plain_from_argument_span(
+                        argument.range,
+                        position,
+                        &mut argument.origin_run,
+                        writer,
+                        available,
+                    )
+                    .map_err(|_| crate::CommandError::input_invariant())?;
+                (
+                    consumed,
+                    InputLevelInlineState::macro_argument(position, prior_run),
+                    true,
+                )
+            }
+            _ => return Ok(0),
+        };
+        #[cfg(not(any(test, feature = "profiling")))]
+        let _ = argument_source;
+        if consumed == 0 {
+            return Ok(0);
+        }
+        // The span append above succeeded in full, so cursor, rollback, and
+        // fuel can settle as one atomic scalar run.
+        if roots.input.levels.recording {
+            let interval = roots.input.levels.interval;
+            if !row.header.rollback.in_epoch(interval) {
+                append_resident_inline_inverse(
+                    resident_index,
+                    inline,
+                    interval,
+                    &mut row.header.rollback,
+                    &mut roots.input.levels.undo,
+                    #[cfg(test)]
+                    &mut roots.input.levels.cursor_mutations.first_touch_transitions,
+                );
+            }
+        }
+        row.header
+            .frame
+            .advance_resident_run(consumed)
+            .ok_or_else(crate::CommandError::input_invariant)?;
+        fuel.charge_run(consumed)?;
+        #[cfg(feature = "profiling")]
+        fuel.record_raw_run(
+            true,
+            if argument_source {
+                crate::fuel::RawDeliveryKind::MacroArgument
+            } else {
+                crate::fuel::RawDeliveryKind::StoredToken
+            },
+            consumed,
+        );
+        #[cfg(test)]
+        {
+            if argument_source {
+                self.macro_kernel_counters.argument_words = self
+                    .macro_kernel_counters
+                    .argument_words
+                    .saturating_add(u64::from(consumed));
+                self.macro_kernel_counters.argument_cursor_advances = self
+                    .macro_kernel_counters
+                    .argument_cursor_advances
+                    .saturating_add(1);
+            } else {
+                self.macro_kernel_counters.body_words = self
+                    .macro_kernel_counters
+                    .body_words
+                    .saturating_add(u64::from(consumed));
+                self.macro_kernel_counters.body_cursor_advances = self
+                    .macro_kernel_counters
+                    .body_cursor_advances
+                    .saturating_add(1);
+            }
+        }
+        Ok(consumed)
+    }
+
     /// Delivers and advances the exact resident input cursor at the semantic top.
     ///
     /// Source, token-list, and direct macro-argument rows enter this one typed
@@ -1681,6 +1816,19 @@ impl<G> crate::CommandState<G> {
         }
         popped.then(|| self.complete_replay(identity)).flatten()
     }
+}
+
+fn plain_macro_scan_word(word: tex_state::token::TokenWord) -> bool {
+    use tex_state::token::{Catcode, Token};
+
+    matches!(
+        word.semantic_token(),
+        Token::Char { cat, .. }
+            if !matches!(
+                cat,
+                Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active
+            )
+    )
 }
 
 pub(crate) fn observed_retirement_reason(

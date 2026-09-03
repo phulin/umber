@@ -2869,6 +2869,16 @@ owners before later recovery input can be read.
     as a macro-body input level owning the argument ranges; and
 13. restores the matching scanner status, when one was installed.
 
+Within a balanced argument group, ordinary literal words from a resident macro
+body or replayed macro argument are consumed as one admitted physical and
+provenance span. The matcher writes that prefix directly into its caller-owned
+argument destination and commits one input-position/fuel run. It stops before
+every scalar semantic boundary: control-sequence resolution, active-character
+resolution, parameter substitution, brace or alignment accounting, delimiter
+matching at depth zero, input exhaustion/change, observation, recovery, or a
+fuel limit. The boundary word remains owned by the canonical `get_token` path,
+so outer validity, `\long`, rollback, and suspension semantics are unchanged.
+
 The initial promoted implementation does not use a compiled delimiter
 automaton, macro bytecode, or alternate fast matcher. Such acceleration may be
 added only through the optimization policy in section 32, with the canonical

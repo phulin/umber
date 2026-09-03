@@ -554,6 +554,17 @@ they do not allocate child arenas. When a macro-body input retires, the
 corresponding activation is removed and its strict-LIFO segment suffix is
 returned for reuse.
 
+When raw matching is already inside a balanced group, the ordinary unobserved
+path consumes literal macro-body and macro-argument words one admitted physical
+and provenance span at a time. It appends directly into the same writer and
+advances the authoritative input frame by the settled run length. A run stops
+before a control sequence or active character, parameter substitution, brace
+or alignment transition, provenance/block boundary, exhaustion, or fuel limit;
+the canonical scalar delivery path handles that boundary word. Observation
+retains exact per-token delivery and therefore deliberately uses the scalar
+path. No span borrow, cached position, or second token representation survives
+the call.
+
 Scanner control is mostly ordinary stack state: a `ScannerEpisode`, phase
 enum, counters, and sink coordinates. `AttemptArena` owns one shared
 fixed-chunk token lane. Each ordinary token scan reserves a parent-owned row

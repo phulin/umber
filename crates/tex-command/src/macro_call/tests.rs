@@ -574,6 +574,127 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
 }
 
 #[test]
+fn nested_macro_argument_consumes_plain_body_words_as_one_span() {
+    crate::test_harness::with_universe(|universe| {
+        let inner = install_macro(universe, "inner_span", &[Token::Param(1)]);
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let outer = install_replacement_macro(
+            universe,
+            "outer_span",
+            &[inner, begin, letter('a'), letter('b'), letter('c'), end],
+        );
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [outer]);
+        command.profile_reset_macro_kernel_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        for expected in ['a', 'b', 'c'] {
+            let command = processor
+                .get_x_token()
+                .expect("nested expansion")
+                .expect("argument token");
+            assert_eq!(command.spelling().semantic_token(), letter(expected));
+        }
+        let (body_words, body_advances, _, body_writes, ..) =
+            processor.command.profile_macro_kernel_counters();
+        assert!(body_words >= 6);
+        assert!(
+            body_advances < body_words,
+            "the ordinary argument interior advances as one admitted span"
+        );
+        assert!(
+            body_writes < body_words,
+            "span-consumed words never materialize CurrentCommand values"
+        );
+    });
+}
+
+#[test]
+fn nested_macro_argument_consumes_replayed_argument_without_a_command_handoff() {
+    crate::test_harness::with_universe(|universe| {
+        let inner = install_macro(universe, "inner_argument_span", &[Token::Param(1)]);
+        let definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(Token::Param(1))],
+                &[TokenWord::pack(inner), TokenWord::pack(Token::Param(1))],
+            )
+            .expect("outer definition");
+        let symbol = universe.intern("outer_argument_span").expect("outer name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("outer meaning");
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                Token::Cs(symbol.symbol()),
+                begin,
+                letter('a'),
+                letter('b'),
+                letter('c'),
+                end,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        processor.command.profile_reset_macro_kernel_counters();
+
+        for expected in ['a', 'b', 'c'] {
+            let command = processor
+                .get_x_token()
+                .expect("nested expansion")
+                .expect("argument token");
+            assert_eq!(command.spelling().semantic_token(), letter(expected));
+        }
+        let (_, _, _, _, argument_words, argument_advances, argument_writes) =
+            processor.command.profile_macro_kernel_counters();
+        assert!(argument_words >= 3);
+        assert!(
+            argument_writes < argument_words,
+            "words={argument_words} advances={argument_advances} writes={argument_writes}"
+        );
+    });
+}
+
+#[test]
 #[cfg(feature = "profiling")]
 fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
     #[derive(Debug, Eq, PartialEq)]

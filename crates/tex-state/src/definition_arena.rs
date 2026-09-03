@@ -570,6 +570,34 @@ impl DefinitionRegionOwner {
         let overflow = index as usize - INLINE_DEFINITION_WORD_CAPACITY;
         overflow / DEFINITION_WORD_CHUNK_CAPACITY < self.overflow_words.borrow().len()
     }
+
+    /// Lends the one physical word span containing `start`.
+    ///
+    /// The callback keeps the overflow-directory borrow shorter than the
+    /// owning `Rc`; no reference or parallel cursor escapes admission.
+    fn with_word_span<R>(
+        &self,
+        start: u32,
+        end: u32,
+        consume: impl FnOnce(&[Cell<TokenWord>]) -> R,
+    ) -> Option<R> {
+        if start >= end {
+            return None;
+        }
+        let start = start as usize;
+        let end = end as usize;
+        if start < INLINE_DEFINITION_WORD_CAPACITY {
+            let end = end.min(INLINE_DEFINITION_WORD_CAPACITY);
+            return Some(consume(&self.inline_words[start..end]));
+        }
+        let overflow = start - INLINE_DEFINITION_WORD_CAPACITY;
+        let chunk = overflow / DEFINITION_WORD_CHUNK_CAPACITY;
+        let offset = overflow % DEFINITION_WORD_CHUNK_CAPACITY;
+        let words = self.overflow_words.borrow();
+        let chunk = words.get(chunk)?;
+        let len = (end - start).min(DEFINITION_WORD_CHUNK_CAPACITY - offset);
+        Some(consume(&chunk.words[offset..offset + len]))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1107,6 +1135,23 @@ impl<G> ResidentMacroBody<G> {
         let absolute = self.start + position as u32;
         self.record_word_read(absolute);
         self.owner.word(absolute)
+    }
+
+    /// Lends the physical replacement span beginning at `position`.
+    ///
+    /// A span ends only at the replacement end or a storage-block boundary.
+    /// Semantic consumers may stop earlier and commit only their consumed
+    /// prefix. Words remain in their sole canonical representation.
+    #[must_use]
+    #[inline]
+    pub fn with_contiguous_span<R>(
+        &self,
+        position: usize,
+        consume: impl FnOnce(&[Cell<TokenWord>]) -> R,
+    ) -> Option<R> {
+        (position < self.len()).then_some(())?;
+        let absolute = self.start.checked_add(position as u32)?;
+        self.owner.with_word_span(absolute, self.end, consume)
     }
 
     #[inline(always)]

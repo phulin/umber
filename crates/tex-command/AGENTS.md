@@ -55,7 +55,12 @@ collector (see `src/conditionals.rs`).
   position, classifies its literal catcode once into a compact open, close, or
   neither brace delta for both first-scan and depth settlement, and advances
   those scalars exactly once without another frame/slot lookup or processor
-  forwarding helper. Publication validates the frame once
+  forwarding helper. Inside an already-balanced argument group, ordinary
+  unobserved macro-body and argument input lends one physical/provenance span
+  directly to that writer and settles its literal prefix with one input/fuel
+  advance; control sequences, active characters, parameters, braces,
+  alignment tabs, observation, and storage boundaries return to scalar
+  delivery. Publication validates the frame once
   and installs the already-written span and facts directly in the slot;
   delimiter-prefix holdback retains the first classification until commit.
   Sealing changes only the frame role; retirement
