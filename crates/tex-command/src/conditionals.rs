@@ -538,11 +538,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
-        let condition = self.command.conditions.push_with_inversion(
-            ConditionalKind::IfDim,
-            source_line,
-            inverted,
-        );
+        let condition = self
+            .command
+            .conditions
+            .push_with_inversion(kind, source_line, inverted);
         let frame = self
             .command
             .conditions
@@ -1363,14 +1362,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)?
         {
             control.kind
-        } else if self
+        } else if let Some(control) = self
             .command
             .scratch
             .top_if_dimension_control()
             .map_err(crate::scan_toks::scratch_command_error)?
-            .is_some()
         {
-            ConditionalKind::IfDim
+            control.kind
         } else {
             return Err(CommandError::input_invariant());
         };
