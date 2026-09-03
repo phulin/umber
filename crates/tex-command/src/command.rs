@@ -657,6 +657,18 @@ impl<G> HotCommand<G> {
         self.token.origin
     }
 
+    /// Returns the character represented by a compact character command. The
+    /// expanded driver uses this for `\csname` without materializing a rich
+    /// `CurrentCommand` on every collected character.
+    pub(crate) fn character_token(&self) -> Option<char> {
+        matches!(self.command.class(), CommandClass::Character).then(|| {
+            match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
+                Meaning::CharToken { ch, .. } => ch,
+                _ => unreachable!("character command carries a character meaning"),
+            }
+        })
+    }
+
     pub(crate) const fn control_sequence(&self) -> Option<Symbol> {
         self.token.site.control_sequence
     }

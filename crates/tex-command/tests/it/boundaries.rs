@@ -829,7 +829,8 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(structural.contains(".store_expandafter_frame(PendingExpandAfter"));
     assert!(pdf_string.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
     assert!(pdf_string.contains("PdfStringComparePhase::Right { left }"));
-    assert!(structural.contains("PendingExpansionResume::CsName { name }"));
+    assert!(structural.contains("begin_csname_continuation"));
+    assert!(expansion.contains("top_csname_control"));
     let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
         .expect("read conditional continuation ownership");
     assert!(conditionals.contains("PendingExpansionResume::IfCsName"));

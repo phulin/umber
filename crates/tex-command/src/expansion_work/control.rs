@@ -121,6 +121,16 @@ pub(crate) struct TheControl {
     pub(crate) opener: OriginId,
 }
 
+/// Compact synchronous `\csname` state. The accumulated spelling lives in
+/// the generation-owned name lane; this record retains only its mark, opener,
+/// and the dynamically scoped `ifincsname` value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousCsNameControl {
+    pub(crate) opener: OriginId,
+    pub(crate) name: ExpansionNameMark,
+    pub(crate) previous_in_csname: bool,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -165,5 +175,6 @@ pub(crate) enum ExpansionControl<G> {
     },
     ExpandAfter(ExpandAfterControl<G>),
     The(TheControl),
+    CsName(SynchronousCsNameControl),
     Primitive(PrimitiveControl<G>),
 }

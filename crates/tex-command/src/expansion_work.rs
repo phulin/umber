@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::CurrentCommand;
 use crate::execution_scratch::ScratchError;
 
-mod control;
+pub(crate) mod control;
 use control::*;
 
 const COMMANDS_PER_CHUNK: usize = 32;
@@ -520,6 +520,29 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
+    /// Starts a synchronous `\csname` continuation. Name bytes share the
+    /// existing fixed-chunk lane, while the control itself remains copy-small
+    /// and independent of the rich command representation.
+    pub(crate) fn push_csname_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        previous_in_csname: bool,
+    ) -> Result<(), ScratchError> {
+        let name = self.synchronous_name_mark()?;
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::CsName(SynchronousCsNameControl {
+            opener,
+            name,
+            previous_in_csname,
+        })) {
+            self.driver
+                .pop_continuation()
+                .expect("failed csname-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Returns the active top `\the` opener, if the synchronous continuation
     /// at the top of the control lane is one.  Looking at the lane's top slot
     /// avoids a parallel stack of continuation pointers.
@@ -550,6 +573,53 @@ impl<G> ExpansionWork<G> {
         };
         self.driver.pop_continuation()?;
         Ok(opener)
+    }
+
+    /// Returns the top synchronous `\csname` record without borrowing it
+    /// across the next delivery instruction.
+    pub(crate) fn top_csname_control(
+        &self,
+    ) -> Result<Option<SynchronousCsNameControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::CsName(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Pops one completed `\csname`, retiring only its name-lane suffix.
+    pub(crate) fn pop_csname_control(&mut self) -> Result<SynchronousCsNameControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::CsName(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        let _ = self.controls.take_top(id)?;
+        self.names.truncate(control.name.offset)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
+    /// Opens a name mark even when a synchronous driver has no parked cold
+    /// root. A zero root serial is reserved for that rootless hot episode;
+    /// parked resumptions continue to use their real active-root serial.
+    fn synchronous_name_mark(&self) -> Result<ExpansionNameMark, ScratchError> {
+        match self.active_roots.last().copied() {
+            Some(root) => Ok(ExpansionNameMark {
+                owner: self.owner,
+                root_serial: root.serial(),
+                offset: self.names.len,
+            }),
+            None => Ok(ExpansionNameMark {
+                owner: self.owner,
+                root_serial: 0,
+                offset: self.names.len,
+            }),
+        }
     }
 
     #[cfg(test)]
@@ -790,12 +860,13 @@ impl<G> ExpansionWork<G> {
         &self,
         mark: ExpansionNameMark,
     ) -> Result<NameBytes<'_>, ScratchError> {
-        let root = self
-            .active_roots
-            .last()
-            .copied()
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        if mark.owner != self.owner || mark.root_serial != root.serial() {
+        let root = self.active_roots.last().copied();
+        let root_matches = match (mark.root_serial, root) {
+            (0, None) => true,
+            (serial, Some(root)) => serial == root.serial(),
+            _ => false,
+        };
+        if mark.owner != self.owner || !root_matches {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.names.bytes_from(mark.offset)

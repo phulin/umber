@@ -1129,6 +1129,44 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            // `\csname` is another expanded-token consumer. Its spelling is
+            // kept in the generation-owned name lane while this compact
+            // control remains at the top of the same delivery stack. Nested
+            // character-producing expansions therefore return here instead
+            // of entering `scan_csname_characters` recursively.
+            let csname_control = self
+                .command
+                .scratch
+                .top_csname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if csname_control.is_some() {
+                match action {
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::CsName,
+                    )) => {
+                        self.begin_csname_continuation(command.origin())?;
+                        fetch = true;
+                        continue;
+                    }
+                    ExpandedCommandAction::Expand(_) => {}
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                        if command.command_word().expandable_primitive()
+                            == Some(ExpandablePrimitive::EndCsName)
+                        {
+                            self.complete_csname_continuation(None)?;
+                        } else if let Some(character) = command.character_token() {
+                            self.append_csname_character(character)?;
+                            fetch = true;
+                            continue;
+                        } else {
+                            self.complete_csname_continuation(Some(command.materialize()))?;
+                        }
+                        fetch = true;
+                        continue;
+                    }
+                }
+            }
+
             // A `\the` operand is itself an expanded-token request.  Keep
             // that request in the generation-owned control lane and consume
             // targets from this same hot loop.  In particular, a nested
@@ -3438,7 +3476,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.expand_expandafter()
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::CsName) => {
-                    self.expand_csname(command, &mut expansion_resume, &mut suspended_resume)
+                    self.begin_csname_continuation(command.origin())
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::String) => {
                     self.expand_string(command)

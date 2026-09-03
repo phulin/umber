@@ -303,9 +303,6 @@ pub(crate) enum PendingExpansionChildDestination {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum PendingExpansionResume {
     Dispatch,
-    CsName {
-        name: String,
-    },
     IfCsName {
         condition: crate::processor::status::ConditionId,
         inverted: bool,

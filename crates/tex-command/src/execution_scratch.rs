@@ -1336,6 +1336,19 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.push_the_control(opener)
     }
 
+    pub(crate) fn push_csname_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        previous_in_csname: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_csname_control(opener, previous_in_csname)
+    }
+
+    pub(crate) fn push_name_byte(&mut self, byte: u8) -> Result<(), ScratchError> {
+        self.expansion_work.push_name_byte(byte)
+    }
+
     /// Reads the top synchronous `\the` continuation without creating a
     /// command-sized carrier.
     pub(crate) fn top_the_control(
@@ -1347,6 +1360,26 @@ impl<G> ExecutionScratch<G> {
     /// Closes one completed synchronous `\the` continuation in LIFO order.
     pub(crate) fn pop_the_control(&mut self) -> Result<tex_state::token::OriginId, ScratchError> {
         self.expansion_work.pop_the_control()
+    }
+
+    pub(crate) fn top_csname_control(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::SynchronousCsNameControl>, ScratchError>
+    {
+        self.expansion_work.top_csname_control()
+    }
+
+    pub(crate) fn pop_csname_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousCsNameControl, ScratchError> {
+        self.expansion_work.pop_csname_control()
+    }
+
+    pub(crate) fn expansion_name_bytes(
+        &self,
+        mark: crate::expansion_work::ExpansionNameMark,
+    ) -> Result<crate::expansion_work::NameBytes<'_>, ScratchError> {
+        self.expansion_work.name_bytes(mark)
     }
 
     #[cfg(test)]
