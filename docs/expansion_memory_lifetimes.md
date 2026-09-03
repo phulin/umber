@@ -938,7 +938,7 @@ ordinary source execution state;
 control-word and `^^` probes copy it without cloning an `Arc`, `Vec`, or `Box`.
 The generation-tied `InputStack` owns stable source rows and one resident-token
 row shape. Its one compact `InputUndo` history orders copy-small
-lexer/frame first touches, cold typed source-owner swaps, row replacement and
+lexer/frame exposure captures, cold typed source-owner swaps, row replacement and
 reuse, retirement, rollback/redo, candidate settlement, and prefix release.
 Each row carries its own packed rollback epoch/state marker, so these operations
 select the row and its capture authority together without a parallel vector.
@@ -962,10 +962,11 @@ input representation or the generic logical-stack stored-state machinery.
 Each source slot caches its current line's contribution to TeX's `buffer`, and
 the input stack owns one scalar sum across live slots. Cold line/backing owner
 and row transitions update those values; byte/scalar cursor advancement does
-not inspect or recount the line. Replay-backed stored-token advancement
-journals the header position together with its storage-only run/segment/in-
-segment cursor on the first warm touch in a checkpoint interval. Durable and
-attempt rows journal that same header position. All three then enter one shared
+not inspect or recount the line. Checkpoint creation journals the exposed
+replay-backed row's header position together with its storage-only run/segment/
+in-segment cursor. A descendant pop does the same for the older row it exposes;
+newly admitted rows need no inverse. Durable and attempt rows journal that same
+header position. All three then enter one shared
 advance, parameter, and exhaustion transition after their distinct word read.
 If the
 same row later takes a cold retirement, limit, or flag transition, a separately
@@ -974,7 +975,7 @@ redo preserve both transitions without constructing a complete token frame on
 every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
-The source first-touch inverse is at most 48 bytes. One processor-owned
+The source exposure inverse is at most 48 bytes. One processor-owned
 resident frame loop reads the `InputStack` top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal resident-
 top enum, repeats no row discrimination, and returns no cursor carrier. Its

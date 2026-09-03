@@ -372,6 +372,132 @@ fn rollback_restores_a_mutated_input_frame_cursor() {
 }
 
 #[test]
+fn popping_a_checkpoint_descendant_captures_the_newly_exposed_parent() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let (parent, child) = {
+            let mut stores = universe.command_context().expect("command context");
+            let parent = stores
+                .allocate_token_list(&[
+                    TokenWord::pack(Token::Char {
+                        ch: 'a',
+                        cat: Catcode::Other,
+                    }),
+                    TokenWord::pack(Token::Char {
+                        ch: 'b',
+                        cat: Catcode::Other,
+                    }),
+                ])
+                .expect("parent token list allocates");
+            let child = stores
+                .allocate_token_list(&[TokenWord::pack(Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Other,
+                })])
+                .expect("child token list allocates");
+            (parent, child)
+        };
+        {
+            let stores = universe.command_context().expect("command context");
+            command.push_token_level(
+                crate::input::PackedTokenSpanHandle::durable(stores.token_list(parent)),
+                crate::input::TokenBehavior::Ordinary,
+                crate::input::RetirementBehavior::Pop,
+                crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
+            );
+        }
+        let mut capabilities = crate::CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("parent delivery")
+                    .expect("parent token")
+                    .spelling(),
+                word('a')
+            );
+        }
+        {
+            let stores = universe.command_context().expect("command context");
+            command.push_token_level(
+                crate::input::PackedTokenSpanHandle::durable(stores.token_list(child)),
+                crate::input::TokenBehavior::Ordinary,
+                crate::input::RetirementBehavior::Pop,
+                crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
+            );
+        }
+        let snapshot = command.snapshot(universe).expect("nested input snapshots");
+        command.profile_reset_input_cursor_mutation_counters();
+
+        {
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("child delivery")
+                    .expect("child token")
+                    .spelling(),
+                word('x')
+            );
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("exposed parent delivery")
+                    .expect("parent token")
+                    .spelling(),
+                word('b')
+            );
+        }
+        assert_eq!(command.profile_input_cursor_mutation_counters().1, 1);
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("nested input rolls back");
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("restored child delivery")
+                .expect("restored child token")
+                .spelling(),
+            word('x')
+        );
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("restored parent delivery")
+                .expect("restored parent token")
+                .spelling(),
+            word('b')
+        );
+    });
+}
+
+#[test]
 fn dropping_a_summary_never_mutates_its_physical_timeline() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
@@ -617,7 +743,7 @@ fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
 }
 
 #[test]
-fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
+fn source_checkpoint_captures_exposed_lexer_and_cold_transition_moves_owner() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
         let source = command
@@ -630,8 +756,14 @@ fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
             .open_registered_source(source)
             .expect("source opening");
         let slot = std::ptr::from_ref(top_source_slot(&command));
-        let snapshot = command.snapshot(universe).expect("source checkpoint");
         let before = command.input.levels.counters();
+        let snapshot = command.snapshot(universe).expect("source checkpoint");
+        let captured = command.input.levels.counters();
+        assert_eq!(captured.owner_swaps, before.owner_swaps);
+        assert_eq!(
+            captured.stored_state_captures - before.stored_state_captures,
+            1
+        );
         let mut capabilities = crate::CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -658,11 +790,8 @@ fn source_first_touch_moves_cold_owners_and_restores_one_stable_slot() {
         }
         let after = command.input.levels.counters();
         assert_eq!(after.full_payload_history_clones, 0);
-        assert_eq!(after.owner_swaps - before.owner_swaps, 1);
-        assert_eq!(
-            after.stored_state_captures - before.stored_state_captures,
-            1
-        );
+        assert_eq!(after.owner_swaps - captured.owner_swaps, 1);
+        assert_eq!(after.stored_state_captures, captured.stored_state_captures);
 
         command
             .rollback(&snapshot, universe)

@@ -118,7 +118,7 @@ collector (see `src/conditionals.rs`).
   snapshot roots and survive rollback without shared synchronization.
 - `src/timeline.rs`: generation-owned reversible storage for the remaining
   copy-small command stacks. Immutable frame payloads are admitted once in
-  dense rows; fixed-chunk journals retain first-touch inline execution state
+  dense rows; fixed-chunk journals retain exposed-row inline execution state
   or generation-checked handles to displaced payloads. A row admitted or
   already replaced after the newest
   observable mark is overwritten directly on pop/push reuse only while its
@@ -289,7 +289,7 @@ collector (see `src/conditionals.rs`).
   scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
   and advances only the common frame position. All resident storage domains
-  share one header transition for first touch, logical position advance,
+  share one header transition for logical position advance,
   parameter interception, and exhaustion; the storage tag performs only the
   lifetime-specific word read. A successful safe read proves the admitted
   frame position and advances that scalar without a second bounds decision.
@@ -348,11 +348,13 @@ collector (see `src/conditionals.rs`).
   `src/tracing_nesting.rs`.
 - `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
   Stable source, stored-token, and macro-argument rows share one ordered
-  `InputUndo` journal for first-touch advances, cold source-owner swaps,
+  `InputUndo` journal for exposed-row captures, cold source-owner swaps,
   replacement/reuse, retirement, rollback/redo, candidate settlement, and
   prefix release. One row-aligned packed marker records the rollback epoch and
   its admitted, inline-captured, or cold-captured class; there are no parallel
-  touched/cold epoch vectors. Repeated source-owner changes coalesce to the
+  touched/cold epoch vectors. Checkpoint creation captures the current top;
+  newly admitted descendants need no inverse, and a descendant pop captures
+  the older row it exposes before returning to delivery. Repeated source-owner changes coalesce to the
   first inverse per checkpoint-visible row and interval. Later cursor, everyeof, and backing
   transitions release displaced owners directly without materializing a cold
   execution-state carrier; rows admitted in the interval do the same. Alternate
@@ -368,30 +370,30 @@ collector (see `src/conditionals.rs`).
   settlement helper separates cursor advancement from expansion
   classification. Every non-source replay-token,
   durable-token, attempt-token, macro-body, and macro-argument arm enters one
-  compile-time-inlined resident-token transition for first touch, parameter
+  compile-time-inlined resident-token transition for parameter
   handling, exhaustion, and final delivery. Each arm keeps only its concrete
   lifetime-specific word read and cursor update. The storage tag is selected
-  exactly once before that arm drives rollback admission, authoritative
+  exactly once before that arm drives authoritative
   shared-header advance, parameter interception, and accounting; none of
   those tails rematches the row. No runtime storage-handle match, stored-top
   wrapper, advance result, or redispatch survives selection.
-  The three stored variants embed the same resident header. Their first warm
-  checkpoint touch journals the header's logical position; replay includes its
-  separate physical run/segment cursor. A
+  The three stored variants embed the same resident header. The checkpoint or
+  exposure transition journals the header's logical position; replay includes
+  its separate physical run/segment cursor. A
   later cold retirement, limit, or flag mutation records
   the remaining token state separately in the same ordered history. Every arm
   ends its storage borrow with only the word, origin, position, and source
   scalars required by one branch-independent final-command write and common
   post-borrow settlement, while preserving its distinct cursor owner. Source,
   token-list, macro-body, and macro-argument cursors therefore share a single
-  top access, matching first-touch transition, direct final-command write,
+  top access, direct final-command write,
   fuel/alignment/parameter settlement,
   restartable exhaustion pop, retirement observation/alignment/replay settlement,
   without a callback, returned exhaustion result, or diagnostic invalidation
   write. A cold diagnostic boundary instead captures the exposed packed frame;
   TeX82 §1038's unobserved horizontal character lookahead may lend consecutive
   letter/other tokens from that same resident front directly to the executor's
-  admitted list builder. It advances and journals the authoritative cursor,
+  admitted list builder. It advances the already-captured authoritative cursor,
   charges the run in place, preserves each packed origin, and resolves only the
   first non-character tail into `CurrentCommand`. Source-line, resident-row,
   active-alignment, observation, tracked-region, missing-character, and fuel
@@ -590,7 +592,7 @@ collector (see `src/conditionals.rs`).
   specialized macro-body row. That row retains the existing exact local-region
   lease and carries an optional `ArgumentSetId`; parameterless macros create no
   matcher or argument state. Resident selection returns the bare body or
-  argument cursor, constructs checkpoint state only on a real first touch, and
+  argument cursor, relies on checkpoint or exposure capture, and
   advances one packed word before testing `Param` and writing the final command
   slot. Argument cursors admit word/origin parts directly, derive the delivery
   position from their one absolute coordinate, and advance one provenance-run

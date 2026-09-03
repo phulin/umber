@@ -180,6 +180,18 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         .nth(1)
         .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
         .expect("locate singular delivery entry");
+    for forbidden in [
+        ".recording",
+        ".interval",
+        ".rollback",
+        "InputLevelInlineState",
+        "record_resident_first_touch",
+    ] {
+        assert!(
+            !delivery_entry.contains(forbidden),
+            "token delivery must not perform rollback bookkeeping through {forbidden}"
+        );
+    }
     assert!(!delivery_entry.contains("destination.as_ref()"));
     assert_eq!(delivery_entry.matches(".as_mut()").count(), 1);
     assert!(!expansion.contains(".advance_resident_row_into("));

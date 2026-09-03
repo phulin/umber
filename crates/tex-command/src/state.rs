@@ -1209,7 +1209,7 @@ impl<G> CommandState<G> {
         self.input.levels.reset_cursor_mutation_counters();
     }
 
-    /// Returns `(typed top accesses, first touches, closure dispatches)` for
+    /// Returns `(typed top accesses, exposure captures, closure dispatches)` for
     /// the direct resident-input mutation boundary.
     #[doc(hidden)]
     #[cfg(test)]
@@ -1218,7 +1218,7 @@ impl<G> CommandState<G> {
         let counters = self.input.levels.cursor_mutation_counters();
         (
             counters.typed_top_accesses,
-            counters.first_touch_transitions,
+            counters.exposure_captures,
             counters.closure_dispatches,
         )
     }

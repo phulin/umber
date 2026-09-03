@@ -86,9 +86,9 @@ pub(crate) struct InputSourceContextCounters {
 
 /// Profiling proof for the unified resident-input cursor mutation boundary.
 ///
-/// One call performs one typed top-row access. The first call in a checkpoint
-/// interval appends the row's matching inverse; later calls coalesce against
-/// it. The resident transition has no callback dispatch to increment.
+/// Cursor advancement performs one typed top-row access and no rollback work.
+/// Checkpoint and exposure transitions capture the sole mutable row before a
+/// delivery can reach it. The resident transition has no callback dispatch.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct InputCursorMutationCounters {
@@ -100,7 +100,7 @@ pub(crate) struct InputCursorMutationCounters {
     pub(crate) durable_domain_dispatches: u64,
     pub(crate) attempt_domain_dispatches: u64,
     pub(crate) macro_body_domain_dispatches: u64,
-    pub(crate) first_touch_transitions: u64,
+    pub(crate) exposure_captures: u64,
     pub(crate) closure_dispatches: u64,
 }
 
@@ -144,16 +144,8 @@ impl SourceOwnerTransition {
 }
 
 pub(crate) struct ResidentSourceTop<'a, G> {
-    pub(crate) index: usize,
     pub(crate) source: &'a mut SourceLevel<G>,
     pub(crate) slot: &'a mut SourceSlot<G>,
-    pub(crate) recording: bool,
-    pub(crate) interval: u64,
-    pub(crate) undo: &'a mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
-    pub(crate) source_lex_states: &'a mut PayloadSlab<SourceLexExecutionState>,
-    pub(crate) source_lex_captures: &'a mut u64,
-    #[cfg(test)]
-    pub(crate) counters: &'a mut InputCursorMutationCounters,
 }
 
 pub(crate) enum ResidentSourceAdvance {
@@ -177,29 +169,6 @@ impl<G> ResidentSourceTop<'_, G> {
     #[inline(always)]
     pub(crate) fn force_eof(&self, requested: bool) -> bool {
         requested && self.slot.name_class == super::SourceNameClass::File
-    }
-
-    #[inline(always)]
-    fn record_first_touch(&mut self) {
-        let needs_inverse = self.recording && !self.source.rollback.in_epoch(self.interval);
-        if needs_inverse {
-            *self.source_lex_captures = self.source_lex_captures.saturating_add(1);
-            let payload = self
-                .source_lex_states
-                .insert(SourceLexExecutionState::capture(self.source, self.slot));
-            self.undo.append(InputUndo::SourceLex {
-                index: u32::try_from(self.index).expect("input row index fits u32"),
-                payload,
-            });
-            self.source
-                .rollback
-                .set(self.interval, RowRollbackState::Inline);
-            #[cfg(test)]
-            {
-                self.counters.first_touch_transitions =
-                    self.counters.first_touch_transitions.saturating_add(1);
-            }
-        }
     }
 
     /// Lends the current line's ordinary single-byte prefix without entering
@@ -269,7 +238,6 @@ impl<G> ResidentSourceTop<'_, G> {
             });
         }
 
-        self.record_first_touch();
         let line = self.slot.cursor.line.as_mut().ok_or(())?;
         line.cursor.byte_cursor = line
             .cursor
@@ -301,7 +269,6 @@ impl<G> ResidentSourceTop<'_, G> {
         if state.tracked_region_is_active() {
             super::observe_immutable_source(state, self.source, self.slot);
         }
-        self.record_first_touch();
         let identity = self.source.identity();
         let step = {
             let mut queries = super::stack::LiveSourceQueries {
@@ -434,16 +401,16 @@ pub(crate) enum InputUndo<G> {
         generation: core::marker::PhantomData<fn() -> G>,
     },
     /// An editor-root backing substitution. Keeping this distinct from a
-    /// complete owner capture lets the first later cursor mutation retain
-    /// the checkpoint's execution state in the ordinary ordered journal.
+    /// complete owner capture lets an exposure boundary retain the row's
+    /// resulting execution state in the ordinary ordered journal.
     PhysicalBacking {
         index: u32,
         payload: PayloadHandle,
         generation: core::marker::PhantomData<fn() -> G>,
     },
     /// One active external-source scalar changed by editor-root rebinding.
-    /// This remains separate from ordinary cursor first-touch capture so a
-    /// later delivery still records its initial execution position.
+    /// This remains separate from exposed-row cursor capture so a later
+    /// exposure still records the row's initial delivery position.
     SourceContext {
         index: u32,
         source: Option<tex_state::packed_input::SourceContext>,
@@ -452,27 +419,6 @@ pub(crate) enum InputUndo<G> {
         index: u32,
         payload: PayloadHandle,
     },
-}
-
-#[cold]
-#[inline(never)]
-pub(crate) fn append_resident_inline_inverse<G>(
-    index: usize,
-    state: InputLevelInlineState,
-    interval: u64,
-    rollback: &mut RowRollbackMarker,
-    undo: &mut PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
-    #[cfg(test)] first_touch_transitions: &mut u64,
-) {
-    rollback.set(interval, RowRollbackState::Inline);
-    undo.append(InputUndo::Inline {
-        index: u32::try_from(index).expect("input row index fits u32"),
-        state,
-    });
-    #[cfg(test)]
-    {
-        *first_touch_transitions = first_touch_transitions.saturating_add(1);
-    }
 }
 
 /// One rollback coordinate in a generation's dedicated input history.
@@ -974,32 +920,15 @@ impl<G> InputStack<G> {
         mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         let index = self.top.checked_sub(1)?;
-        let recording = self.recording;
-        let interval = self.interval;
-        let (rows, slots, states, undo) = (
-            &mut self.rows,
-            &mut self.source_slots,
-            &mut self.source_lex_states,
-            &mut self.undo,
-        );
+        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
         let InputLevel::Source(source) = &mut rows[index] else {
             return None;
         };
         let key = source.slot;
-        let needs_inverse = recording && !source.rollback.in_epoch(interval);
         let slot = slots
             .value_mut(key.0)
             .expect("source row names its live ABA-checked slot");
         record_source_lex_slot_borrow();
-        if needs_inverse {
-            self.source_lex_captures = self.source_lex_captures.saturating_add(1);
-            let payload = states.insert(SourceLexExecutionState::capture(source, slot));
-            undo.append(InputUndo::SourceLex {
-                index: u32::try_from(index).expect("input row index fits u32"),
-                payload,
-            });
-            source.rollback.set(interval, RowRollbackState::Inline);
-        }
         let result = mutate(source, slot);
         Some(result)
     }
@@ -1032,7 +961,7 @@ impl<G> crate::CommandState<G> {
             fuel.charge()?;
             unreachable!("zero remaining fuel must fail")
         }
-        let (consumed, inline, argument_source) = match &mut row.storage {
+        let (consumed, argument_source) = match &mut row.storage {
             super::ResidentTokenStorage::MacroBody(body) => {
                 let mut append_error = None;
                 let consumed = body.body.with_contiguous_span(position as usize, |span| {
@@ -1055,14 +984,9 @@ impl<G> crate::CommandState<G> {
                 if append_error.is_some() {
                     return Err(crate::CommandError::input_invariant());
                 }
-                (
-                    consumed.unwrap_or(0),
-                    InputLevelInlineState::token_position(position),
-                    false,
-                )
+                (consumed.unwrap_or(0), false)
             }
             super::ResidentTokenStorage::MacroArgument(argument) => {
-                let prior_run = argument.origin_run;
                 let consumed = scratch
                     .append_plain_from_argument_span(
                         argument.range,
@@ -1072,11 +996,7 @@ impl<G> crate::CommandState<G> {
                         available,
                     )
                     .map_err(|_| crate::CommandError::input_invariant())?;
-                (
-                    consumed,
-                    InputLevelInlineState::macro_argument(position, prior_run),
-                    true,
-                )
+                (consumed, true)
             }
             _ => return Ok(0),
         };
@@ -1085,22 +1005,9 @@ impl<G> crate::CommandState<G> {
         if consumed == 0 {
             return Ok(0);
         }
-        // The span append above succeeded in full, so cursor, rollback, and
-        // fuel can settle as one atomic scalar run.
-        if roots.input.levels.recording {
-            let interval = roots.input.levels.interval;
-            if !row.header.rollback.in_epoch(interval) {
-                append_resident_inline_inverse(
-                    resident_index,
-                    inline,
-                    interval,
-                    &mut row.header.rollback,
-                    &mut roots.input.levels.undo,
-                    #[cfg(test)]
-                    &mut roots.input.levels.cursor_mutations.first_touch_transitions,
-                );
-            }
-        }
+        // The span append above succeeded in full, so the authoritative cursor
+        // and fuel settle as one atomic scalar run. Rollback was captured when
+        // this row became exposed.
         row.header
             .frame
             .advance_resident_run(consumed)
@@ -1541,6 +1448,7 @@ impl<G> InputStack<G> {
                 self.source_slots.release(source.slot.0);
             }
         }
+        self.capture_exposed_top();
         Some(result)
     }
 
@@ -1556,6 +1464,7 @@ impl<G> InputStack<G> {
         if !self.recording {
             self.rows.pop();
         }
+        self.capture_exposed_top();
     }
 
     pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {
@@ -1663,7 +1572,7 @@ impl<G> InputStack<G> {
             active_macro_bodies: self.active_macro_bodies,
             active_macro_parameters: self.active_macro_parameters,
         };
-        self.next_interval();
+        self.begin_interval();
         Some(mark)
     }
 
@@ -1695,7 +1604,7 @@ impl<G> InputStack<G> {
             self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
             self.active_macro_bodies = mark.active_macro_bodies;
             self.active_macro_parameters = mark.active_macro_parameters;
-            self.next_interval();
+            self.begin_interval();
         }
         restored
     }
@@ -1748,7 +1657,7 @@ impl<G> InputStack<G> {
             accepted_active_macro_bodies,
             accepted_active_macro_parameters,
         });
-        self.next_interval();
+        self.begin_interval();
     }
 
     pub(crate) fn reject_checkpoint_candidate(&mut self) {
@@ -1774,7 +1683,7 @@ impl<G> InputStack<G> {
         self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
         self.active_macro_bodies = fork.accepted_active_macro_bodies;
         self.active_macro_parameters = fork.accepted_active_macro_parameters;
-        self.next_interval();
+        self.begin_interval();
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) {
@@ -1792,7 +1701,7 @@ impl<G> InputStack<G> {
                 inverse.release(displaced, source_lex, source_owners, source_slots);
             },
         );
-        self.next_interval();
+        self.begin_interval();
     }
 
     pub(crate) fn as_slice(&self) -> &[InputLevel<G>] {
@@ -1870,6 +1779,67 @@ impl<G> InputStack<G> {
         });
     }
 
+    /// Captures the one row that may mutate in the current interval.
+    ///
+    /// A row admitted after the interval began is already tagged `Admitted`
+    /// and needs no inverse. Every older row is captured exactly when a
+    /// checkpoint begins or a pop exposes it, before control can return to a
+    /// token consumer. Cursor advancement can therefore update only the
+    /// authoritative row and perform no rollback test or journal access.
+    fn capture_exposed_top(&mut self) {
+        if !self.recording {
+            return;
+        }
+        let Some(index) = self.top.checked_sub(1) else {
+            return;
+        };
+        if self.rows[index].rollback_marker().in_epoch(self.interval) {
+            return;
+        }
+        match &self.rows[index] {
+            InputLevel::Source(source) => {
+                let state = SourceLexExecutionState::capture(source, self.source_slot(source.slot));
+                let payload = self.source_lex_states.insert(state);
+                self.rows[index]
+                    .rollback_marker_mut()
+                    .set(self.interval, RowRollbackState::Inline);
+                self.undo.append(InputUndo::SourceLex {
+                    index: u32::try_from(index).expect("input row index fits u32"),
+                    payload,
+                });
+                self.source_lex_captures = self.source_lex_captures.saturating_add(1);
+            }
+            InputLevel::Resident(row) => {
+                let position = row.header.frame.position();
+                let state = match &row.storage {
+                    super::ResidentTokenStorage::Replay { cursor, .. } => {
+                        InputLevelInlineState::replay_cursor(position, *cursor)
+                    }
+                    super::ResidentTokenStorage::MacroArgument(argument) => {
+                        InputLevelInlineState::macro_argument(position, argument.origin_run)
+                    }
+                    super::ResidentTokenStorage::Durable(_)
+                    | super::ResidentTokenStorage::Attempt(_)
+                    | super::ResidentTokenStorage::MacroBody(_) => {
+                        InputLevelInlineState::token_position(position)
+                    }
+                };
+                self.rows[index]
+                    .rollback_marker_mut()
+                    .set(self.interval, RowRollbackState::Inline);
+                self.undo.append(InputUndo::Inline {
+                    index: u32::try_from(index).expect("input row index fits u32"),
+                    state,
+                });
+            }
+        }
+        #[cfg(test)]
+        {
+            self.cursor_mutations.exposure_captures =
+                self.cursor_mutations.exposure_captures.saturating_add(1);
+        }
+    }
+
     /// Captures the complete cold token execution state once per interval.
     /// A preceding resident advance may already have retained only the scalar
     /// position, so cold retirement/limit/flag mutation has its own capture
@@ -1895,7 +1865,7 @@ impl<G> InputStack<G> {
         });
     }
 
-    fn next_interval(&mut self) {
+    fn begin_interval(&mut self) {
         self.interval = if self.interval == MAX_ROW_ROLLBACK_EPOCH {
             1
         } else {
@@ -1906,6 +1876,7 @@ impl<G> InputStack<G> {
                 *row.rollback_marker_mut() = RowRollbackMarker::default();
             }
         }
+        self.capture_exposed_top();
     }
 
     fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {

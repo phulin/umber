@@ -6,9 +6,8 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use crate::command::DeliveryStamp;
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
-    InputLevel, InputLevelId, InputLevelInlineState, ResidentBoundary, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
-    SourceNameClass, TokenBehavior, append_resident_inline_inverse,
+    InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
+    ResidentSourceTop, ResidentTokenStorage, SourceLocation, SourceNameClass, TokenBehavior,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -1031,29 +1030,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             }
                         };
                     }
-                    macro_rules! record_resident_first_touch {
-                        ($command_state:expr, $resident_index:expr, $rollback:expr, $state:expr) => {{
-                            if $command_state.roots.input.levels.recording {
-                                let interval = $command_state.roots.input.levels.interval;
-                                if !$rollback.in_epoch(interval) {
-                                    append_resident_inline_inverse(
-                                        $resident_index,
-                                        $state,
-                                        interval,
-                                        $rollback,
-                                        &mut $command_state.roots.input.levels.undo,
-                                        #[cfg(test)]
-                                        &mut $command_state
-                                            .roots
-                                            .input
-                                            .levels
-                                            .cursor_mutations
-                                            .first_touch_transitions,
-                                    );
-                                }
-                            }
-                        }};
-                    }
                     'frame: {
                         let command_state = &mut *self.command;
                         let state = &mut *self.state;
@@ -1125,30 +1101,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         .levels
                                         .source_slots
                                         .resident_value_mut(source.slot.0.slot);
-                                    let mut top = ResidentSourceTop {
-                                        index: resident_index,
-                                        source,
-                                        slot,
-                                        recording: command_state.roots.input.levels.recording,
-                                        interval: command_state.roots.input.levels.interval,
-                                        undo: &mut command_state.roots.input.levels.undo,
-                                        source_lex_states: &mut command_state
-                                            .roots
-                                            .input
-                                            .levels
-                                            .source_lex_states,
-                                        source_lex_captures: &mut command_state
-                                            .roots
-                                            .input
-                                            .levels
-                                            .source_lex_captures,
-                                        #[cfg(test)]
-                                        counters: &mut command_state
-                                            .roots
-                                            .input
-                                            .levels
-                                            .cursor_mutations,
-                                    };
+                                    let mut top = ResidentSourceTop { source, slot };
                                     let force_eof =
                                         top.force_eof(command_state.roots.input.force_eof);
                                     let identity = top.source.identity();
@@ -1307,18 +1260,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     let position = row.header.frame.position();
                                     macro_rules! drive_selected_cursor {
                             (
-                                inline: $inline:expr,
                                 read: $read:expr,
                                 arguments: $arguments:expr,
                                 on_word: $on_word:block,
                                 on_parameter: $on_parameter:block $(,)?
                             ) => {{
-                                record_resident_first_touch!(
-                                    command_state,
-                                    resident_index,
-                                    &mut row.header.rollback,
-                                    $inline
-                                );
                                 let Some((word, origin)) = $read else {
                                     if character_run.is_some() {
                                         finish_character_run_accounting!(_fuel);
@@ -1399,7 +1345,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                     .saturating_add(1);
                                             }
                                             drive_selected_cursor! {
-                                                inline: InputLevelInlineState::replay_cursor(position, *cursor),
                                                 read: command_state.roots.input.replay.advance_sequential(
                                                     *replay,
                                                     cursor,
@@ -1472,7 +1417,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                     .saturating_add(1);
                                             }
                                             drive_selected_cursor! {
-                                                inline: InputLevelInlineState::token_position(position),
                                                 read: command_state.attempt.arena().resident_token_word(
                                                     list,
                                                     position as usize,
@@ -1527,7 +1471,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                     .saturating_add(1);
                                             }
                                             drive_selected_cursor! {
-                                                inline: InputLevelInlineState::token_position(position),
                                                 read: list.word_at(position as usize).map(|word| (
                                                     word,
                                                     tex_state::token::OriginId::UNKNOWN,
@@ -1594,7 +1537,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                 macro_body_delivery = true;
                                             }
                                             drive_selected_cursor! {
-                                                inline: InputLevelInlineState::token_position(position),
                                                 read: body.body.word(position as usize).map(|word| (
                                                     word,
                                                     tex_state::token::OriginId::UNKNOWN,
@@ -1647,10 +1589,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                     crate::fuel::RawDeliveryKind::MacroArgument;
                                             }
                                             drive_selected_cursor! {
-                                                inline: InputLevelInlineState::macro_argument(
-                                                    position,
-                                                    argument.origin_run,
-                                                ),
                                                 read: argument.advance_delivery(position, &command_state.scratch),
                                                 arguments: None,
                                                 on_word: {},

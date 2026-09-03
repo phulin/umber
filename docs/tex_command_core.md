@@ -194,7 +194,7 @@ the command through repeated `as_ref`/`as_mut`, nor takes it on successful
 return. Each concrete
 source arm retains the separate lexer transition. The delivery loop selects a
 non-source resident frame's lifetime-specific storage once and keeps its one
-authoritative cursor through read, first-touch capture, increment, parameter
+authoritative cursor through read, increment, parameter
 interception, resolution, and expansion-or-return. Exhaustion leaves through a
 cold handler; there is no runtime call/result carrier or second storage
 dispatch. After that borrow ends, one branch-independent
@@ -1942,8 +1942,8 @@ character-index representation.
 Ordinary delivery reads the semantic top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal top enum
 and performs no second row discrimination. The selected source, stored-token,
-or macro-argument arm borrows only that kind's cursor and first-touch journal
-fields. Shared fuel, alignment, and final-command settlement begins only after
+or macro-argument arm borrows only that kind's cursor. Shared fuel, alignment,
+and final-command settlement begins only after
 that concrete branch borrow ends. Exhausted ordinary token and macro-argument rows
 are popped from that already-selected resident coordinate, their macro/replay/
 alignment and observation effects settle there, and the same transition
@@ -1957,7 +1957,7 @@ source branch lends its row and checked slot together, tokenizes one word, and
 advances the row's compact position before ending that borrow. The replay,
 attempt, and durable variants embed the same resident token-row header. Each
 variant is selected once and keeps its admitted storage-specific cursor while
-driving one shared first-touch, packed-word read, logical advance,
+driving one shared packed-word read, logical advance,
 `OutParameter` interception, and exhaustion transition. Rollback state,
 parameter policy, and delivery accounting therefore do not redispatch the
 storage tag after selection. A safe successful read is the proof for the header's
@@ -1990,13 +1990,18 @@ history coordinates, rollback/redo payloads, and any lookup not protected by
 the resident-row borrow continue to validate the complete generation-bearing
 key before mutation.
 
-The first source mutation after an observable mark stores only the eight-byte
+The checkpoint or row-exposure transition stores only the eight-byte
 slot key, four-byte input position, 24-byte lexical cursor, and registration
 flags. The resulting packed inverse is at most 48 bytes. Cold line, backing,
 replacement, and `everyeof` transitions move their old owners to checked
 reusable payload slots. Both kinds append to the same ordered `InputUndo`
 lane, so reverse rollback and forward redo preserve their real interleaving.
-At depths 1 and 4,096, 4,096 warmed lexical changes produce the same one
+Checkpoint creation captures the current exposed row. Rows pushed afterward
+are interval-local and need no inverse; when one pops, that lifecycle boundary
+captures the older row it exposes before delivery resumes. Thus scalar and run
+token advancement update only the authoritative cursor: they test neither
+recording state nor rollback epoch and append no history.
+At depths 1 and 4,096, 4,096 warmed lexical changes use the same one
 48-byte inverse, 4,095 coalesced changes, zero owner swaps, zero whole-frame
 clones, and zero heap allocations.
 
@@ -2117,7 +2122,7 @@ Every ordinary token-list source is adapted once at level creation into a
 instead borrows a `DefinitionView` synchronously, records its compact
 `DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
 then pushes the specialized body row. Resident selection yields that bare
-cursor, creates checkpoint state only on a real first touch, reads one packed
+cursor, reads one packed
 word, and increments the store-owned cursor. Exact per-word structural counters
 exist only in test builds; profiling fixtures derive known sequential reads and
 chunk crossings at their boundary. It tests `Token::Param` before the
@@ -2140,7 +2145,7 @@ the resident coordinate once. Only an actual segment boundary
 inspects the next segment header, and only the e-TeX prepended-prefix boundary
 selects the body run. Cold diagnostic and semantic-projection consumers retain
 an explicitly indexed lookup; command delivery cannot call it. The input
-first-touch journal swaps this one resident coordinate, so rollback, retry,
+exposed-row journal swaps this one resident coordinate, so rollback, retry,
 rejection, and acceptance resume the identical logical and physical word
 without a prefix rescan or a second frame-position mutation.
 
@@ -2175,7 +2180,7 @@ rows point to one stable, checked `SourceSlot`, which is the sole owner of
 backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
 authoritative slot receives a monotonic runtime incarnation which is never
 rolled back with semantic `InputLevelId`; compact and owner inverses validate
-that incarnation before changing the row. An ordinary source first touch copies
+that incarnation before changing the row. A source exposure capture copies
 only its packed frame, 24-byte lexer cursor,
 and two registration bits into the reusable source-state slab. Physical-line,
 replacement-backing, read-line-backing, and `everyeof` transitions move their
@@ -2187,8 +2192,8 @@ cannot settle source state separately from its input row. No
 Each authoritative `InputLevel` directly owns one eight-byte rollback marker
 which packs its capture epoch with an admitted, inline-captured, or cold-
 captured state. An epoch mismatch directly means the row predates the current
-capture. The marker selects ordinary first touch, rare cold capture, and safe
-pop/push reuse in constant time from the same row lookup; no row-aligned side
+capture. The marker selects checkpoint/exposure capture, rare cold capture, and
+safe pop/push reuse in constant time at lifecycle transitions; no row-aligned side
 lane or former parallel touched, partial, and cold epoch vectors exist. Stored
 span length, position, identity, source context, behavior, and retirement
 remain encoded once in the common frame; the resident storage tag performs the
@@ -2543,8 +2548,9 @@ The implemented destination-directed state machine owns source and
 token-cursor selection, resident ordinary retirement/restart, inline stored token/origin
 reconstruction, `OutParameter` replay, one-delivery backed-up suppression,
 current-meaning resolution, and literal brace `align_state` accounting.
-`get_token` is routed through that same loop. A warm stored-token first touch
-retains only the scalar position needed for rollback. Cold token retirement,
+`get_token` is routed through that same loop. Checkpoint and exposure
+transitions retain only the scalar position needed for rollback, so warm stored-
+token advancement performs no rollback bookkeeping. Cold token retirement,
 limit, or flag mutation materializes its separate complete execution inverse
 only when a checkpoint can observe that mutation.
 Scanner-status outer recovery and alignment-template interception have their
@@ -3722,16 +3728,17 @@ root cell within one checkpoint interval: the record retains the first old
 value, the live root retains the final new value, reverse rollback swaps the
 old value into place, and forward redo swaps the final value back. A logical
 pop therefore leaves its payload reachable until the named mark is rejected or
-sealed. Logical-stack first-touch epochs apply the same interval rule to cursor
-and phase changes: 1,024 advances of one token frame publish one at-most-48-byte
-record and 1,023 coalesced writes. Push, pop, and replacement order remains in
+sealed. Other logical-stack first-touch epochs apply the same interval rule to
+phase changes. Input instead captures the exposed row at interval creation and
+after a descendant pop: 1,024 advances of one token frame publish one at-most-
+48-byte record and perform no rollback tests. Push, pop, and replacement order remains in
 the logical top and replacement-handle journal, so intermediate diagnostics
 continue to observe the exact live stack.
 
 The live journal stores no coalesced-write census. Focused gates derive that
 evidence at their explicit measurement boundary from known mutation attempts
-minus observed first-touch records, so an already-touched production row or
-root scalar pays only the interval/touched test.
+minus observed first-touch records, so an already-touched production root
+scalar pays only the interval/touched test. Input delivery pays neither.
 
 Only state cells whose intermediate values cannot escape the checkpoint
 transaction are coalesced: filename-scan activity, pending after-assignment,
