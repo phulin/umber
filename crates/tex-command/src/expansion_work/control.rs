@@ -2,6 +2,7 @@
 
 use crate::command::HotCommand;
 use crate::execution_scratch::ScannerFrameKey;
+use tex_state::meaning::Meaning;
 use tex_state::token::OriginId;
 
 use super::{ExpansionChild, ExpansionCommandSlot, ExpansionNameMark};
@@ -118,8 +119,20 @@ pub(crate) struct IfNumberControl<G> {
 /// currently owned by the delivery loop and is materialised only at the
 /// scalar scanner boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThePhase {
+    NeedTarget,
+    Index {
+        target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TheControl {
     pub(crate) opener: OriginId,
+    pub(crate) phase: ThePhase,
 }
 
 /// Compact synchronous `\csname` state. The accumulated spelling lives in
@@ -405,6 +418,7 @@ pub(crate) enum ExpansionControl<G> {
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
+    assert!(core::mem::size_of::<TheControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);

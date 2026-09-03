@@ -1377,8 +1377,15 @@ impl<G> ExecutionScratch<G> {
     /// command-sized carrier.
     pub(crate) fn top_the_control(
         &self,
-    ) -> Result<Option<tex_state::token::OriginId>, ScratchError> {
+    ) -> Result<Option<crate::expansion_work::control::TheControl>, ScratchError> {
         self.expansion_work.top_the_control()
+    }
+
+    pub(crate) fn set_the_phase(
+        &mut self,
+        phase: crate::expansion_work::control::ThePhase,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.set_the_phase(phase)
     }
 
     /// Closes one completed synchronous `\the` continuation in LIFO order.

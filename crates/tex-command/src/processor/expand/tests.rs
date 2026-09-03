@@ -169,6 +169,45 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
 }
 
 #[test]
+fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        for depth in [1_024, 10_240, 100_000] {
+            let mut input = Vec::with_capacity(depth * 2 + 2);
+            for _ in 0..depth {
+                input.extend([the, count]);
+            }
+            input.extend([
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ]);
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            let output = collect_expanded_characters(universe, &mut command);
+            assert_eq!(output, "0X");
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
+        }
+    });
+}
+
+#[test]
 fn nested_fontname_operands_use_the_shared_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let fontname = install_static(

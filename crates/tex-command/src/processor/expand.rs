@@ -1450,29 +1450,69 @@ impl<G> CommandProcessor<'_, '_, G> {
             // second `expanded_next`/`get_x_token` call.  We remove the
             // completed control before entering a scalar scanner because a
             // register's own index probe is an independent scalar child.
-            let the_opener = self
+            let the_control = self
                 .command
                 .scratch
                 .top_the_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(the_opener) = the_opener {
-                match action {
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::The,
-                    )) => {
+            if let Some(the_control) = the_control {
+                match (the_control.phase, action) {
+                    (
+                        crate::expansion_work::control::ThePhase::NeedTarget,
+                        ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            ExpandablePrimitive::The,
+                        )),
+                    ) => {
                         self.begin_the_continuation(command.origin())?;
                         fetch = true;
                         continue;
                     }
-                    ExpandedCommandAction::Expand(_) => {}
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                    (
+                        crate::expansion_work::control::ThePhase::NeedTarget,
+                        ExpandedCommandAction::Expand(_),
+                    ) => {}
+                    (
+                        crate::expansion_work::control::ThePhase::Index { .. },
+                        ExpandedCommandAction::Expand(_),
+                    ) => {}
+                    (
+                        crate::expansion_work::control::ThePhase::Index { .. },
+                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                    ) => {
+                        if self.advance_the_index_continuation(command)? {
+                            fetch = true;
+                            continue;
+                        }
+                        fetch = true;
+                        continue;
+                    }
+                    (
+                        crate::expansion_work::control::ThePhase::NeedTarget,
+                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                    ) => {
+                        let meaning = match command.resolved_meaning() {
+                            ResolvedMeaning::Static(meaning) => meaning,
+                            ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+                        };
+                        if Self::compact_the_register_target(meaning) {
+                            self.command.scratch.set_the_phase(
+                                crate::expansion_work::control::ThePhase::Index {
+                                    target: meaning,
+                                    negative: false,
+                                    value: 0,
+                                    seen_digit: false,
+                                },
+                            )?;
+                            fetch = true;
+                            continue;
+                        }
                         let _ = self
                             .command
                             .scratch
                             .pop_the_control()
                             .map_err(crate::scan_toks::scratch_command_error)?;
                         let target = command.materialize();
-                        match self.complete_the_continuation(&target, the_opener) {
+                        match self.complete_the_continuation(&target, the_control.opener) {
                             Ok(()) => {
                                 fetch = true;
                                 continue;
@@ -1480,7 +1520,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             Err(error) if error.is_resource_suspension() => {
                                 return self.park_the_continuation(
                                     target,
-                                    the_opener,
+                                    the_control.opener,
                                     delivery_expanded,
                                     error,
                                     destination,

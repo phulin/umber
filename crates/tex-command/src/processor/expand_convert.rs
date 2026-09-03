@@ -1,12 +1,12 @@
 //! TeX and e-TeX conversion and mark primitives.
 
-use tex_state::meaning::ExpandablePrimitive;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::token::{OriginId, Token};
 
+use crate::command::{CommandClass, HotCommand};
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::{CommandError, CurrentCommand};
-use crate::command::{CommandClass, HotCommand};
 
 use super::expand_render::{
     append_scaled_without_unit, format_scaled, meaning_text, page_mark, render_the_value,
@@ -15,6 +15,130 @@ use super::expand_render::{
 use super::{CommandProcessor, DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Advances the compact register-index phase of `\the`.  Register
+    /// selectors are the common internal-value form that used to re-enter
+    /// `get_x_token` from `scan_something_internal`; keeping their decimal
+    /// index in the same control record makes chains such as
+    /// `\the\count\the\count0` stackless as well.
+    pub(super) fn advance_the_index_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
+        let control = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let ThePhase::Index {
+            target,
+            negative,
+            value,
+            seen_digit,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let character = command.character_token();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|character| character.is_ascii_digit())
+            .map(|character| i64::from(character as u8 - b'0'));
+        let accumulate = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let finish = |this: &mut Self, value: i64, negative: bool| -> Result<(), CommandError> {
+            let value = value.min(i64::from(i32::MAX));
+            let value = if negative {
+                value.saturating_neg()
+            } else {
+                value
+            };
+            let value = i32::try_from(value).unwrap_or_else(|_| {
+                if value.is_negative() {
+                    i32::MIN
+                } else {
+                    i32::MAX
+                }
+            });
+            let limit = if this.command.profile().capabilities().supports_etex() {
+                32_767
+            } else {
+                i32::from(u8::MAX)
+            };
+            let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
+            let opener = this
+                .command
+                .scratch
+                .pop_the_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            let value = this.scan_the_register_value(target, index)?;
+            this.expand_the_value(opener, value)
+        };
+
+        match character {
+            _ if is_space && !seen_digit => {
+                self.command.scratch.set_the_phase(ThePhase::Index {
+                    target,
+                    negative,
+                    value,
+                    seen_digit,
+                })?;
+                Ok(false)
+            }
+            Some('+') | Some('-') if !seen_digit => {
+                self.command.scratch.set_the_phase(ThePhase::Index {
+                    target,
+                    negative: character == Some('-'),
+                    value,
+                    seen_digit,
+                })?;
+                Ok(false)
+            }
+            Some(_) if digit.is_some() => {
+                self.command.scratch.set_the_phase(ThePhase::Index {
+                    target,
+                    negative,
+                    value: accumulate(value, digit.expect("digit matched")),
+                    seen_digit: true,
+                })?;
+                Ok(false)
+            }
+            _ if !seen_digit => {
+                self.back_input(command.materialize())?;
+                self.missing_number_error()?;
+                finish(self, 0, false)?;
+                Ok(true)
+            }
+            _ => {
+                if !is_space {
+                    self.back_input(command.materialize())?;
+                }
+                finish(self, value, negative)?;
+                Ok(true)
+            }
+        }
+    }
+
+    pub(super) fn compact_the_register_target(meaning: Meaning) -> bool {
+        matches!(
+            meaning,
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Count
+                    | UnexpandablePrimitive::Dimen
+                    | UnexpandablePrimitive::Skip
+                    | UnexpandablePrimitive::Muskip
+                    | UnexpandablePrimitive::Toks
+            )
+        )
+    }
+
     /// Starts the compact `\fontname` operand protocol.  The opener is kept
     /// as an origin in the generation-owned control lane, so a chain of font
     /// name conversions never nests a scanner call frame.
@@ -137,7 +261,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             let value = value.min(i64::from(i32::MAX));
             let value = if negative { -value } else { value };
             let value = i32::try_from(value).unwrap_or_else(|_| {
-                if value.is_negative() { i32::MIN } else { i32::MAX }
+                if value.is_negative() {
+                    i32::MIN
+                } else {
+                    i32::MAX
+                }
             });
             let _ = this
                 .command

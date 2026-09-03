@@ -536,7 +536,10 @@ impl<G> ExpansionWork<G> {
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::The(TheControl { opener })) {
+        if let Err(error) = self.push_control(ExpansionControl::The(TheControl {
+            opener,
+            phase: ThePhase::NeedTarget,
+        })) {
             self.driver
                 .pop_continuation()
                 .expect("failed the-control push restores driver depth");
@@ -619,18 +622,26 @@ impl<G> ExpansionWork<G> {
     /// Returns the active top `\the` opener, if the synchronous continuation
     /// at the top of the control lane is one.  Looking at the lane's top slot
     /// avoids a parallel stack of continuation pointers.
-    pub(crate) fn top_the_control(
-        &self,
-    ) -> Result<Option<tex_state::token::OriginId>, ScratchError> {
+    pub(crate) fn top_the_control(&self) -> Result<Option<TheControl>, ScratchError> {
         let id = match self.controls.top_id() {
             Ok(id) => id,
             Err(ScratchError::InvalidCoordinate) => return Ok(None),
             Err(error) => return Err(error),
         };
         match self.controls.get(id)? {
-            ExpansionControl::The(control) => Ok(Some(control.opener)),
+            ExpansionControl::The(control) => Ok(Some(*control)),
             _ => Ok(None),
         }
+    }
+
+    pub(crate) fn set_the_phase(&mut self, phase: ThePhase) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::The(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = phase;
+        Ok(())
     }
 
     /// Pops exactly one completed synchronous `\the` continuation.

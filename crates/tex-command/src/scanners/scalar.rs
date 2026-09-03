@@ -3317,6 +3317,55 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    /// Completes the compact register-index form used by the iterative
+    /// `\the` driver.  The target primitive has already been classified and
+    /// its decimal index was consumed by the hot control, so this boundary
+    /// performs only the state lookup and the normal internal-value
+    /// observation.  More specialized internal quantities retain the legacy
+    /// scalar path until their own typed lane is introduced.
+    pub(crate) fn scan_the_register_value(
+        &mut self,
+        target: Meaning,
+        index: u16,
+    ) -> Result<InternalValue, CommandError> {
+        let value = match target {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
+                InternalValue::Integer(self.state.count(index).unwrap_or(0))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                InternalValue::Dimension(self.state.dimen(index))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+                let identity = self.state.glue_register(index).ok().flatten();
+                self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((false, index));
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+                let identity = self.state.muskip(index);
+                self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((true, index));
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("scanner produced an admitted token-register index");
+                InternalValue::Tokens {
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                }
+            }
+            _ => return Err(CommandError::input_invariant()),
+        };
+        self.observe_internal_value(value.clone());
+        Ok(value)
+    }
+
     pub fn scan_the_internal_value_retained(
         &mut self,
         target: &CurrentCommand<G>,

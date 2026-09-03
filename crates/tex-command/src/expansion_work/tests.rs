@@ -30,7 +30,7 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionControlSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionNameMark>() <= 16);
-    assert!(core::mem::size_of::<TheControl>() <= 16);
+    assert!(core::mem::size_of::<TheControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousCsNameControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousIfCsNameControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
