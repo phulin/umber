@@ -92,6 +92,46 @@ fn the_scans_its_target_from_the_same_expanded_delivery_loop() {
 }
 
 #[test]
+fn deeply_nested_the_requests_use_the_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let toks = install_static(universe, "toks", Meaning::ToksRegister(0));
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        for depth in [1_024, 10_240, 100_000] {
+            let mut input = Vec::with_capacity(depth * 2 + 1);
+            input.extend(std::iter::repeat_n(the, depth));
+            input.extend(std::iter::repeat_n(toks, depth));
+            input.push(relax);
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let settled = processor
+                .get_x_token()
+                .expect("nested the delivery")
+                .expect("terminal command");
+            assert_eq!(settled.meaning(), Meaning::Relax);
+            drop(processor);
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        }
+    });
+}
+
+#[test]
 fn parameterless_macro_expands_from_a_generation_typed_definition() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {
