@@ -37,6 +37,7 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
+    assert!(core::mem::size_of::<SynchronousExpandedControl>() <= 128);
     assert!(core::mem::size_of::<ExpandedDeliveryDriver>() <= 16);
 }
 
@@ -51,6 +52,32 @@ fn synchronous_the_controls_are_lifo_and_do_not_retain_commands() {
     for _ in 0..1_024 {
         work.pop_the_control().expect("the control pop");
     }
+    assert_eq!(work.driver_continuation_depth(), 0);
+    assert!(work.is_quiescent());
+}
+
+#[test]
+fn synchronous_expanded_controls_share_one_lifo_lane() {
+    let mut work = ExpansionWork::<()>::default();
+    let mut attempt = crate::CommandAttempt::<()>::default();
+    let opening = attempt.arena().mark();
+    let writer = attempt
+        .arena_mut()
+        .allocate_token_buffer()
+        .expect("expanded writer");
+    work.push_expanded_control(OriginId::UNKNOWN, opening, writer)
+        .expect("expanded control");
+    assert_eq!(work.driver_continuation_depth(), 1);
+    assert_eq!(
+        work.top_expanded_control()
+            .expect("expanded control")
+            .expect("top")
+            .kind,
+        SynchronousExpandedKind::Expanded
+    );
+    work.begin_expanded_body().expect("expanded opening");
+    let control = work.pop_expanded_control().expect("expanded pop");
+    assert_eq!(control.writer, writer);
     assert_eq!(work.driver_continuation_depth(), 0);
     assert!(work.is_quiescent());
 }
