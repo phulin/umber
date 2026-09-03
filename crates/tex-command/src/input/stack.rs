@@ -461,6 +461,12 @@ impl<G> CommandState<G> {
         identity
     }
 
+    /// Accounts for TeX82's logical `begin_token_list` boundary when an empty
+    /// simple macro needs no resident input row.
+    pub(crate) fn record_empty_macro_activation(&mut self) {
+        self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
+    }
+
     pub(crate) fn push_token_level<P: super::PackedTokenSpanSource<G>>(
         &mut self,
         source: P,

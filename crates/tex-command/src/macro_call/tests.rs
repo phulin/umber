@@ -128,6 +128,141 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
 }
 
 #[test]
+fn unobserved_parameterless_macro_activates_directly_and_elides_empty_body_row() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_replacement_macro(universe, "directempty", &[]);
+        let terminal = letter('z');
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [macro_token, terminal]);
+        let before = super::macro_activation_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let delivered = processor
+            .get_x_token()
+            .expect("expanded delivery")
+            .expect("terminal command");
+        let after = super::macro_activation_counters();
+        assert_eq!(delivered.spelling().semantic_token(), terminal);
+        assert_eq!(after.simple - before.simple, 1);
+        assert_eq!(after.empty_rows_elided - before.empty_rows_elided, 1);
+        assert_eq!(after.matching - before.matching, 0);
+        assert_eq!(after.exceptional - before.exceptional, 0);
+        assert_eq!(processor.command.stack_usage().input_stack, 1);
+        assert!(
+            !processor
+                .command
+                .input
+                .levels
+                .iter()
+                .any(|level| level.macro_body().is_some()),
+            "an empty simple replacement has no resident input row"
+        );
+    });
+}
+
+#[test]
+fn observed_parameterless_macro_keeps_exceptional_activation_semantics() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_replacement_macro(universe, "observedempty", &[]);
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [macro_token]);
+        let before = super::macro_activation_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        )
+        .with_observer(&mut observer);
+        let mut call = processor
+            .get_next()
+            .expect("macro delivery")
+            .expect("macro command");
+
+        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        let after = super::macro_activation_counters();
+        assert_eq!(after.exceptional - before.exceptional, 1);
+        assert_eq!(after.simple - before.simple, 0);
+        assert_eq!(after.empty_rows_elided - before.empty_rows_elided, 0);
+        assert!(
+            processor.command.input.levels.last().is_some_and(|level| {
+                level.macro_body().is_some_and(|body| body.body.is_empty())
+            })
+        );
+    });
+}
+
+#[test]
+fn empty_final_macro_keeps_replay_completion_on_an_exceptional_descendant() {
+    crate::test_harness::with_universe(|universe| {
+        let macro_token = install_replacement_macro(universe, "completionempty", &[]);
+        let replay = universe
+            .allocate_token_list(&[TokenWord::pack(macro_token)])
+            .expect("stored replay");
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [letter('z')]);
+        let episode = {
+            let context = universe.command_context().expect("command context");
+            command.push_discretionary_episode(&context, replay)
+        };
+        let before = super::macro_activation_counters();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("replay completion"),
+            DeliveryStatus::ReplayCompleted(episode)
+        );
+        assert!(destination.is_none());
+        let after = super::macro_activation_counters();
+        assert_eq!(after.exceptional - before.exceptional, 1);
+        assert_eq!(after.empty_rows_elided - before.empty_rows_elided, 0);
+        assert_eq!(
+            processor
+                .get_x_token_with_replay_completion_into(&mut destination)
+                .expect("enclosing command"),
+            DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("enclosing command value")
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+    });
+}
+
+#[test]
 fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_macro(

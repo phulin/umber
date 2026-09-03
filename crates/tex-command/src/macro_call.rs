@@ -27,6 +27,65 @@ struct MacroDelimiter<'definition, G> {
     len: usize,
 }
 
+/// Activation shape of one already-admitted immutable macro definition.
+///
+/// The exceptional variant is selected by live observation, tracing, scanner,
+/// recovery, alignment, or replay-completion state. It deliberately retains
+/// the canonical scalar boundary instead of teaching the hot path those
+/// semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacroActivationClass {
+    Simple,
+    Matching,
+    Exceptional,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct MacroActivationCounters {
+    simple: u64,
+    matching: u64,
+    exceptional: u64,
+    empty_rows_elided: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static MACRO_ACTIVATION_COUNTERS: core::cell::Cell<MacroActivationCounters> =
+        const { core::cell::Cell::new(MacroActivationCounters {
+            simple: 0,
+            matching: 0,
+            exceptional: 0,
+            empty_rows_elided: 0,
+        }) };
+}
+
+#[cfg(test)]
+fn macro_activation_counters() -> MacroActivationCounters {
+    MACRO_ACTIVATION_COUNTERS.with(core::cell::Cell::get)
+}
+
+fn record_macro_activation_class(activation: MacroActivationClass) {
+    #[cfg(not(test))]
+    let _ = activation;
+    #[cfg(test)]
+    MACRO_ACTIVATION_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        match activation {
+            MacroActivationClass::Simple => {
+                counters.simple = counters.simple.saturating_add(1);
+            }
+            MacroActivationClass::Matching => {
+                counters.matching = counters.matching.saturating_add(1);
+            }
+            MacroActivationClass::Exceptional => {
+                counters.exceptional = counters.exceptional.saturating_add(1);
+            }
+        }
+        slot.set(counters);
+    });
+}
+
 impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §323's diagnostic for a named token-list parameter installed by
     /// `begin_token_list`. Unlike ordinary macro calls, these lists trace only
@@ -80,10 +139,40 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         let call_site = call.origin();
-        let (pattern, parameter_len, body) = self
+        let admitted = self
             .state
-            .admit_macro_body(definition)
+            .admit_macro_definition(definition)
             .ok_or_else(CommandError::input_invariant)?;
+        let (activation, pattern, parameter_len, body) = match admitted {
+            tex_state::AdmittedMacroDefinition::SimpleMacro { pattern, body } => {
+                let activation = self.classify_macro_activation(true, body.is_none());
+                if activation == MacroActivationClass::Simple {
+                    record_macro_activation_class(activation);
+                    return self.activate_simple_macro(macro_name, call_site, body);
+                }
+                let body = match body {
+                    Some(body) => body,
+                    None => {
+                        self.state
+                            .admit_macro_body(definition)
+                            .ok_or_else(CommandError::input_invariant)?
+                            .2
+                    }
+                };
+                (activation, pattern, 0, body)
+            }
+            tex_state::AdmittedMacroDefinition::MatchingMacro {
+                pattern,
+                parameter_len,
+                body,
+            } => (
+                self.classify_macro_activation(false, body.is_empty()),
+                pattern,
+                parameter_len,
+                body,
+            ),
+        };
+        record_macro_activation_class(activation);
         self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
@@ -225,6 +314,72 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         if let Some(episode) = episode {
             self.finish_scanner_episode(episode);
+        }
+        Ok(true)
+    }
+
+    #[inline(always)]
+    fn classify_macro_activation(
+        &self,
+        parameterless: bool,
+        replacement_is_empty: bool,
+    ) -> MacroActivationClass {
+        let exceptional = self.command.delivery_mode.requires_slow_settlement()
+            || self.state.int_param(IntParam::TRACING_MACROS) > 0
+            || (replacement_is_empty && self.empty_macro_needs_completion_descendant());
+        if exceptional {
+            MacroActivationClass::Exceptional
+        } else if parameterless {
+            MacroActivationClass::Simple
+        } else {
+            MacroActivationClass::Matching
+        }
+    }
+
+    /// True when §390 will retire the owner of a replay-completion fence and
+    /// therefore needs the normally installed macro row as its descendant.
+    fn empty_macro_needs_completion_descendant(&self) -> bool {
+        let Some(owner) = self.command.youngest_replay_completion_owner() else {
+            return false;
+        };
+        self.command
+            .input
+            .levels
+            .iter()
+            .rev()
+            .take_while(|level| {
+                matches!(level, crate::input::InputLevel::Resident(row)
+                    if !matches!(row.header.behavior(), crate::input::TokenBehavior::VTemplate)
+                        && level.stored_is_exhausted() == Some(true))
+            })
+            .any(|level| crate::input::input_level_identity(level) == owner)
+    }
+
+    /// TeX82 §392's `end_match` branch for an ordinary unobserved macro.
+    ///
+    /// No argument owner or rich command is constructed. The replacement
+    /// owner moves directly into its input row after §390 conservation; an
+    /// empty replacement records the same logical push maximum but exposes no
+    /// immediately exhausted row.
+    #[inline(always)]
+    fn activate_simple_macro(
+        &mut self,
+        macro_name: tex_state::interner::Symbol,
+        call_site: OriginId,
+        body: Option<tex_state::ResidentMacroBody<G>>,
+    ) -> Result<bool, CommandError> {
+        if let Some(body) = body {
+            self.conserve_input_stack_for_descendant()?;
+            let _ = self.push_macro_activation(macro_name, body, call_site, None);
+        } else {
+            self.conserve_input_stack()?;
+            self.command.record_empty_macro_activation();
+            #[cfg(test)]
+            MACRO_ACTIVATION_COUNTERS.with(|slot| {
+                let mut counters = slot.get();
+                counters.empty_rows_elided = counters.empty_rows_elided.saturating_add(1);
+                slot.set(counters);
+            });
         }
         Ok(true)
     }

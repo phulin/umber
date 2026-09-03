@@ -1011,6 +1011,16 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.admit_macro_body(id)
     }
 
+    /// Classifies one immutable definition while admitting only the owner an
+    /// activation actually needs. Empty parameterless replacements retain no
+    /// region owner on the ordinary path.
+    pub fn admit_macro_definition(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<crate::AdmittedMacroDefinition<G>> {
+        self.admitted.admit_macro_definition(id)
+    }
+
     pub fn begin_definition_build(
         &mut self,
         global: bool,

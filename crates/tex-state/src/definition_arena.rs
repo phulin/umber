@@ -1109,6 +1109,24 @@ pub struct ResidentMacroBody<G> {
     end: u32,
 }
 
+/// One immutable macro definition admitted for activation.
+///
+/// A parameterless empty replacement needs no resident region owner until an
+/// exceptional observed or recovery path explicitly requests the traditional
+/// empty input row. Nonempty simple and matching definitions carry the exact
+/// resident body owner acquired by this admission.
+pub enum AdmittedMacroDefinition<G> {
+    SimpleMacro {
+        pattern: MacroParameterPattern,
+        body: Option<ResidentMacroBody<G>>,
+    },
+    MatchingMacro {
+        pattern: MacroParameterPattern,
+        parameter_len: usize,
+        body: ResidentMacroBody<G>,
+    },
+}
+
 impl<G> ResidentMacroBody<G> {
     #[must_use]
     pub const fn definition_ref(&self) -> DefinitionRef<G> {
@@ -1383,7 +1401,68 @@ pub(crate) struct DefinitionArena<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
+fn admit_resident_macro_body<G>(
+    id: DefinitionRef<G>,
+    region: DefinitionRegionRef<'_>,
+    header: DefinitionHeader,
+) -> Option<ResidentMacroBody<G>> {
+    let replacement_start = header.start.checked_add(header.parameter_len)?;
+    let replacement_len = header.end.checked_sub(replacement_start)?;
+    let owner = region.owner.as_ref()?;
+    if replacement_len != 0 && !owner.has_word(replacement_start) {
+        return None;
+    }
+    #[cfg(any(test, feature = "testing"))]
+    RESIDENT_MACRO_BODY_READ_COUNTERS.set({
+        let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
+        counters.admission_chunk_lookups = counters
+            .admission_chunk_lookups
+            .saturating_add(u64::from(replacement_len != 0));
+        counters.region_owner_acquisitions = counters.region_owner_acquisitions.saturating_add(1);
+        counters
+    });
+    let owner = Rc::clone(owner);
+    drop(region);
+    Some(ResidentMacroBody {
+        definition: id,
+        owner,
+        parameter_start: header.start,
+        start: replacement_start,
+        end: header.end,
+    })
+}
+
 impl<G> DefinitionArena<G> {
+    pub(crate) fn admit_macro_definition(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<AdmittedMacroDefinition<G>> {
+        let region_id = id.region();
+        let region = self.region(region_id)?;
+        let header = *region.headers.get(id.row_index() as usize)?;
+        if header.parameter_len == 0 && header.start == header.end {
+            return Some(AdmittedMacroDefinition::SimpleMacro {
+                pattern: header.pattern,
+                body: None,
+            });
+        }
+        let body = admit_resident_macro_body(id, region, header)?;
+        let pattern = header.pattern;
+        let parameter_len = header.parameter_len as usize;
+        if parameter_len == 0 {
+            Some(AdmittedMacroDefinition::SimpleMacro {
+                pattern,
+                body: Some(body),
+            })
+        } else {
+            Some(AdmittedMacroDefinition::MatchingMacro {
+                pattern,
+                parameter_len,
+                body,
+            })
+        }
+    }
+
     pub(crate) fn admit_macro_body(
         &self,
         id: DefinitionRef<G>,
@@ -1391,37 +1470,10 @@ impl<G> DefinitionArena<G> {
         let region_id = id.region();
         let region = self.region(region_id)?;
         let header = *region.headers.get(id.row_index() as usize)?;
-        let replacement_start = header.start.checked_add(header.parameter_len)?;
-        let replacement_len = header.end.checked_sub(replacement_start)?;
-        let owner = region.owner.as_ref()?;
-        if replacement_len != 0 && !owner.has_word(replacement_start) {
-            return None;
-        }
-        #[cfg(any(test, feature = "testing"))]
-        RESIDENT_MACRO_BODY_READ_COUNTERS.set({
-            let mut counters = RESIDENT_MACRO_BODY_READ_COUNTERS.get();
-            counters.admission_chunk_lookups = counters
-                .admission_chunk_lookups
-                .saturating_add(u64::from(replacement_len != 0));
-            counters.region_owner_acquisitions =
-                counters.region_owner_acquisitions.saturating_add(1);
-            counters
-        });
-        let owner = Rc::clone(owner);
         let parameter_len = header.parameter_len as usize;
         let pattern = header.pattern;
-        drop(region);
-        Some((
-            pattern,
-            parameter_len,
-            ResidentMacroBody {
-                definition: id,
-                owner,
-                parameter_start: header.start,
-                start: replacement_start,
-                end: header.end,
-            },
-        ))
+        let body = admit_resident_macro_body(id, region, header)?;
+        Some((pattern, parameter_len, body))
     }
 
     fn try_get(&self, id: DefinitionRef<G>) -> Option<DefinitionView<'_, G>> {

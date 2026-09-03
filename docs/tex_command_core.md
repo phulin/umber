@@ -2103,7 +2103,9 @@ eight-byte non-owning
 `DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
 owns the exact format, revision-global, or local-group semantic region plus an
 opaque replacement span. Only parameterized macros store
-an `ArgumentSetId`; parameterless macros allocate and push only the body row.
+an `ArgumentSetId`; parameterless macros push only the body row. An ordinary
+unobserved empty replacement records the same logical stack maximum without
+acquiring a region owner or installing an immediately exhausted row.
 
 The argument cursor locates its opening provenance run once at admission and
 then advances that run index only when sequential replay crosses a provenance
@@ -2227,8 +2229,11 @@ The implemented ownership model has no macro activation chain. A specialized
 `MacroBody` input row is the complete live-call record: an 8-byte non-owning
 definition coordinate, optional local-region lease, optional `ArgumentSetId`,
 name, invocation origin, and compact replacement cursor. Parameterless macros
-publish only this row. `InputLevelId` is typed separately from source identity
-and is present on source, stored-token, macro-body, and argument rows.
+publish only this row when their replacement is nonempty or exceptional
+observation, tracing, recovery, or replay-completion semantics require its
+lifecycle. An ordinary unobserved empty replacement publishes no row.
+`InputLevelId` is typed separately from source identity and is present on
+source, stored-token, macro-body, and argument rows.
 
 An executing macro borrows its `DefinitionView` synchronously, completes any
 argument matching, and admits the immutable replacement cursor. The input row
@@ -2897,7 +2902,10 @@ the new subsystem.
 
 TeX82 §392 skips the parameter matcher entirely for a definition beginning
 with `end_match`: a parameterless macro pushes its replacement body directly,
-without a `Matching` observation. Otherwise the implementation installs
+without a `Matching` observation. An ordinary unobserved empty replacement
+performs the same stack conservation and maximum accounting without installing
+an exhausted input row; exceptional observation, tracing, recovery, and replay
+completion retain the scalar row lifecycle. Otherwise the implementation installs
 `Matching` around compulsory-prefix and argument delivery. It uses raw `get_token`, strips precisely one outer argument group,
 retains nested literal braces, and lets the existing outer-validity operation
 perform all inserted-token recovery. TeX82 §394 backs up a forbidden `\par`

@@ -1281,6 +1281,47 @@ fn resident_local_body_retains_one_exact_region_after_group_retirement() {
 }
 
 #[test]
+fn admitted_macro_definition_classifies_simple_matching_and_ownerless_empty() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let word = TokenWord::pack(Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        });
+        let empty = direct_definition(arena, super::DefinitionDestination::Global, &[], &[]);
+        let simple = direct_definition(arena, super::DefinitionDestination::Global, &[], &[word]);
+        let matching = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[TokenWord::pack(Token::param(1))],
+            &[TokenWord::pack(Token::param(1))],
+        );
+
+        super::reset_resident_macro_body_read_counters();
+        assert!(matches!(
+            arena.admit_macro_definition(empty),
+            Some(super::AdmittedMacroDefinition::SimpleMacro { body: None, .. })
+        ));
+        assert_eq!(
+            super::resident_macro_body_read_counters().region_owner_acquisitions,
+            0,
+            "empty simple admission does not acquire an unused region owner"
+        );
+        assert!(matches!(
+            arena.admit_macro_definition(simple),
+            Some(super::AdmittedMacroDefinition::SimpleMacro { body: Some(_), .. })
+        ));
+        assert!(matches!(
+            arena.admit_macro_definition(matching),
+            Some(super::AdmittedMacroDefinition::MatchingMacro {
+                parameter_len: 1,
+                ..
+            })
+        ));
+    });
+}
+
+#[test]
 fn resident_format_global_and_local_bodies_share_the_same_direct_read_contract() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();

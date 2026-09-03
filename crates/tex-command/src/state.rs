@@ -1688,6 +1688,17 @@ impl<G> CommandState<G> {
         }
     }
 
+    /// Returns the exact input owner of the youngest replay completion fence.
+    ///
+    /// Empty direct macro activation uses this only to decide whether TeX82
+    /// §390 still needs a concrete descendant to carry a completion across
+    /// stack conservation. Ordinary input delivery does not poll this state.
+    pub(crate) fn youngest_replay_completion_owner(&self) -> Option<InputLevelId> {
+        self.replay_completions
+            .last()
+            .map(|completion| completion.owner)
+    }
+
     /// Schedules a frozen `\everypar` list after canonical main control has
     /// completed TeX82's `new_graf` state transition.  Source ownership stays
     /// entirely inside command state; executor control never fabricates an

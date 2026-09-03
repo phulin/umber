@@ -182,9 +182,9 @@ pub use command_context::{
 #[cfg(any(test, feature = "profiling", feature = "testing"))]
 pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
-    DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey, DefinitionBuildPhase,
-    DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView, DefinitionWords,
-    ResidentMacroBody,
+    AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey,
+    DefinitionBuildPhase, DefinitionBuilder, DefinitionDestination, DefinitionRef, DefinitionView,
+    DefinitionWords, ResidentMacroBody,
 };
 #[cfg(any(test, feature = "testing"))]
 pub use definition_arena::{

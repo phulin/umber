@@ -408,6 +408,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions().admit_macro_body(id)
     }
 
+    pub(crate) fn admit_macro_definition(
+        &self,
+        id: DefinitionRef<G>,
+    ) -> Option<crate::AdmittedMacroDefinition<G>> {
+        self.generation.definitions().admit_macro_definition(id)
+    }
+
     #[inline(always)]
     pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<G> {
         self.generation.token_lists().get(id)

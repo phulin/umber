@@ -536,7 +536,10 @@ known. A specialized macro-body input row is the call record: it holds the
 optional `ArgumentSet` coordinate. Format and revision-global definitions need
 no lease operation. Parameterless macros publish only this row; they create no
 matcher, argument set, frame, block, or owner. Delivery and cold context borrow
-the replacement span directly through the key.
+the replacement span directly through the key. An ordinary unobserved empty
+replacement records the logical input-stack push maximum but publishes no
+immediately exhausted row and acquires no region owner; observation, tracing,
+recovery, and replay-completion ownership retain the canonical row lifecycle.
 
 ### Macro, scanner, and operation nesting
 
