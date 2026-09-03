@@ -835,21 +835,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                         })?;
                         return Ok(IfDimensionAdvance::Continue);
                     }
-                } else if decimal && unit == 0 {
-                    if let Some(digit) = digit {
-                        let (fraction, fraction_digits) =
-                            accumulate_fraction(fraction, fraction_digits, digit);
-                        self.command.scratch.set_if_dimension_phase(Phase::Left {
-                            negative,
-                            value,
-                            fraction,
-                            fraction_digits,
-                            decimal,
-                            unit,
-                            seen_digit: true,
-                        })?;
-                        return Ok(IfDimensionAdvance::Continue);
-                    }
+                } else if decimal
+                    && unit == 0
+                    && let Some(digit) = digit
+                {
+                    let (fraction, fraction_digits) =
+                        accumulate_fraction(fraction, fraction_digits, digit);
+                    self.command.scratch.set_if_dimension_phase(Phase::Left {
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit,
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
                 }
                 if character == Some('p') && unit == 0 && seen_digit {
                     self.command.scratch.set_if_dimension_phase(Phase::Left {
@@ -1009,23 +1010,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                         })?;
                         return Ok(IfDimensionAdvance::Continue);
                     }
-                } else if decimal && unit == 0 {
-                    if let Some(digit) = digit {
-                        let (fraction, fraction_digits) =
-                            accumulate_fraction(fraction, fraction_digits, digit);
-                        self.command.scratch.set_if_dimension_phase(Phase::Right {
-                            left,
-                            relation,
-                            negative,
-                            value,
-                            fraction,
-                            fraction_digits,
-                            decimal,
-                            unit,
-                            seen_digit: true,
-                        })?;
-                        return Ok(IfDimensionAdvance::Continue);
-                    }
+                } else if decimal
+                    && unit == 0
+                    && let Some(digit) = digit
+                {
+                    let (fraction, fraction_digits) =
+                        accumulate_fraction(fraction, fraction_digits, digit);
+                    self.command.scratch.set_if_dimension_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit,
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfDimensionAdvance::Continue);
                 }
                 if character == Some('p') && unit == 0 && seen_digit {
                     self.command.scratch.set_if_dimension_phase(Phase::Right {
@@ -1296,8 +1298,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfNumberAdvance::Continue);
                 }
-                let left = i32::try_from(signed(value, negative))
-                    .unwrap_or_else(|_| if negative { i32::MIN } else { i32::MAX });
+                let left = i32::try_from(signed(value, negative)).unwrap_or(if negative {
+                    i32::MIN
+                } else {
+                    i32::MAX
+                });
                 if is_space {
                     self.command
                         .scratch

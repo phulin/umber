@@ -258,6 +258,7 @@ fn is_ranked_fused_expansion(dispatch: ExpansionDispatch) -> bool {
                     | ExpandablePrimitive::IfCsName
                     | ExpandablePrimitive::Number
                     | ExpandablePrimitive::The
+                    | ExpandablePrimitive::PdfUniformDeviate
             )
     )
 }
@@ -1414,8 +1415,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .top_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = number_control {
-                if matches!(
+            if let Some(control) = number_control
+                && matches!(
                     action,
                     ExpandedCommandAction::Return
                         | ExpandedCommandAction::EndTemplate
@@ -1430,11 +1431,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndexAwait {
                             ..
                         }
-                ) {
-                    let _complete = self.advance_number_continuation(command)?;
-                    fetch = true;
-                    continue;
-                }
+                )
+            {
+                let _complete = self.advance_number_continuation(command)?;
+                fetch = true;
+                continue;
             }
 
             // `\fontname` consumes one expanded font identifier.  Keep its
@@ -1517,6 +1518,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command.origin(),
                     primitive == ExpandablePrimitive::RomanNumeral,
                 )?;
+                fetch = true;
+                continue;
+            }
+
+            // pdfTeX's uniform-deviate conversion shares TeX's integer
+            // operand grammar. Give it the same compact accumulator so a
+            // nested enquiry returns through this driver instead of
+            // re-entering the retained scalar scanner.
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::PdfUniformDeviate,
+            )) = action
+            {
+                self.begin_pdf_uniform_deviate_continuation(command.origin())?;
                 fetch = true;
                 continue;
             }
