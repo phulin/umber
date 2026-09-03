@@ -480,6 +480,96 @@ fn main_loop_character_run_resolves_only_its_non_character_tail() {
 }
 
 #[test]
+fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"xab c"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let first = processor
+            .get_next()
+            .expect("source line acquisition")
+            .expect("first source token");
+        assert_eq!(
+            first.spelling().semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }
+        );
+        processor
+            .command
+            .profile_reset_input_cursor_mutation_counters();
+        processor
+            .command
+            .profile_reset_input_source_context_counters();
+        let ownership_before = crate::command::command_ownership_counters();
+        let mut destination = None;
+        let mut characters = String::new();
+        let mut origins = Vec::new();
+        assert_eq!(
+            processor
+                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, origin| {
+                    characters.push(ch);
+                    origins.push(origin);
+                    true
+                },)
+                .expect("source character run"),
+            crate::DeliveryStatus::CharacterRun
+        );
+        assert_eq!(characters, "ab");
+        assert_eq!(origins.len(), 2);
+        assert_ne!(origins[0], origins[1]);
+        assert!(destination.is_none());
+        assert_eq!(
+            processor.command.profile_resident_input_branch_counters(),
+            (1, 1, 0, 0)
+        );
+        assert_eq!(
+            processor.command.profile_input_source_context_counters(),
+            (0, 0, 0, 1)
+        );
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(
+            ownership_after.resolved_writes - ownership_before.resolved_writes,
+            0
+        );
+
+        assert_eq!(
+            processor
+                .main_loop_character_run_into(&mut destination, &mut |_, _, _, _, _| true)
+                .expect("scalar source boundary"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert!(matches!(
+            destination.as_ref().expect("space boundary").meaning(),
+            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            })
+        ));
+    });
+}
+
+#[test]
 fn noexpand_suppresses_exactly_one_expandable_delivery() {
     crate::test_harness::with_universe(|universe| {
         let noexpand = install_static(

@@ -175,6 +175,12 @@ enum ResidentSourceAdvance {
     Exhausted(super::InputLevelId),
 }
 
+enum ResidentSourceCharacterRun<E> {
+    Unavailable,
+    Consumed { count: u32 },
+    Failed { count: u32, error: E },
+}
+
 impl<G> ResidentSourceTop<'_, G> {
     #[inline(always)]
     fn force_eof(&self, requested: bool) -> bool {
@@ -202,6 +208,93 @@ impl<G> ResidentSourceTop<'_, G> {
                     self.counters.first_touch_transitions.saturating_add(1);
             }
         }
+    }
+
+    /// Lends the current line's ordinary single-byte prefix without entering
+    /// the scalar tokenizer. The source line and packed frame remain the sole
+    /// cursors and settle together once for the accepted prefix.
+    #[inline(always)]
+    fn advance_character_run<E>(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        mut consume: impl FnMut(
+            &mut tex_state::CommandContext<'_, G>,
+            char,
+            tex_state::token::OriginId,
+        ) -> Result<bool, E>,
+    ) -> Result<ResidentSourceCharacterRun<E>, ()> {
+        record_source_lex_slot_borrow();
+        let Some(line) = self.slot.cursor.line.as_ref() else {
+            return Ok(ResidentSourceCharacterRun::Unavailable);
+        };
+        let start = line.cursor.byte_cursor;
+        if start >= line.retained_end {
+            return Ok(ResidentSourceCharacterRun::Unavailable);
+        }
+        let mode = self.slot.cursor.current_backing().mode;
+        let bytes = self.slot.cursor.current_backing().bytes.as_ref();
+        let source = line.physical.source;
+        let limit = line.retained_end;
+        let start_index = usize::try_from(start).map_err(|_| ())?;
+        let limit_index = usize::try_from(limit).map_err(|_| ())?;
+        let run_bytes = bytes.get(start_index..limit_index).ok_or(())?;
+        let mut count = 0_u32;
+        let mut failure = None;
+        for &byte in run_bytes {
+            let offset = start.checked_add(u64::from(count)).ok_or(())?;
+            let code = match mode {
+                crate::CharacterMode::EightBitExact => crate::CharacterCode::from_byte(byte),
+                crate::CharacterMode::UnicodeExtended if byte.is_ascii() => {
+                    crate::CharacterCode::from(char::from(byte))
+                }
+                crate::CharacterMode::UnicodeExtended => break,
+            };
+            let ch = crate::profile::token_character(code);
+            if !matches!(
+                state.catcode(ch),
+                tex_state::token::Catcode::Letter | tex_state::token::Catcode::Other
+            ) {
+                break;
+            }
+            let origin = state.source_token_origin(source, offset, offset.saturating_add(1));
+            match consume(state, ch, origin) {
+                Ok(keep_going) => {
+                    count = count.checked_add(1).ok_or(())?;
+                    if !keep_going {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        if count == 0 {
+            return Ok(match failure {
+                Some(error) => ResidentSourceCharacterRun::Failed { count, error },
+                None => ResidentSourceCharacterRun::Unavailable,
+            });
+        }
+
+        self.record_first_touch();
+        let line = self.slot.cursor.line.as_mut().ok_or(())?;
+        line.cursor.byte_cursor = line
+            .cursor
+            .byte_cursor
+            .checked_add(u64::from(count))
+            .ok_or(())?;
+        line.cursor.scalar_cursor = line
+            .cursor
+            .scalar_cursor
+            .checked_add(u64::from(count))
+            .ok_or(())?;
+        line.cursor.lexer_state = super::LexerState::MidLine;
+        self.source.frame.advance_resident_run(count).ok_or(())?;
+        Ok(match failure {
+            Some(error) => ResidentSourceCharacterRun::Failed { count, error },
+            None => ResidentSourceCharacterRun::Consumed { count },
+        })
     }
 
     #[inline(never)]
@@ -1204,6 +1297,76 @@ impl<G> crate::CommandState<G> {
                         let identity = top.source.identity();
                         let position = top.slot.cursor.next_physical_offset;
                         let active_source = top.source.frame.source_context();
+                        if let Some(consume) = character_run.as_deref_mut()
+                            && matches!(
+                                self.roots.scanner.status(),
+                                crate::processor::ScannerStatus::Normal
+                            )
+                        {
+                            let run = top
+                                .advance_character_run(state, |state, ch, origin| {
+                                    _fuel.charge()?;
+                                    Ok(consume(state, _fuel, ch, origin))
+                                })
+                                .map_err(|()| super::ResidentCommandColdTransition::Failure)?;
+                            match run {
+                                ResidentSourceCharacterRun::Unavailable => {}
+                                ResidentSourceCharacterRun::Consumed { count } => {
+                                    let _ = count;
+                                    let line = top
+                                        .slot
+                                        .cursor
+                                        .line
+                                        .as_ref()
+                                        .expect("a consumed source run retains its line");
+                                    let location = super::SourceLocation::new(
+                                        line.physical.source,
+                                        line.cursor.byte_cursor.saturating_sub(1),
+                                    );
+                                    #[cfg(feature = "profiling")]
+                                    {
+                                        character_run_count =
+                                            character_run_count.saturating_add(count);
+                                        character_run_kind =
+                                            Some(crate::fuel::RawDeliveryKind::Source);
+                                    }
+                                    self.last_diagnostic_location = Some(location);
+                                    finish_character_run_accounting!();
+                                    return Err(
+                                        super::ResidentCommandColdTransition::CharacterRunEnd,
+                                    );
+                                }
+                                ResidentSourceCharacterRun::Failed { count, error } => {
+                                    let location = (count != 0).then(|| {
+                                        let line =
+                                            top.slot.cursor.line.as_ref().expect(
+                                                "a consumed source prefix retains its line",
+                                            );
+                                        super::SourceLocation::new(
+                                            line.physical.source,
+                                            line.cursor.byte_cursor.saturating_sub(1),
+                                        )
+                                    });
+                                    #[cfg(feature = "profiling")]
+                                    if count != 0 {
+                                        character_run_count =
+                                            character_run_count.saturating_add(count);
+                                        character_run_kind =
+                                            Some(crate::fuel::RawDeliveryKind::Source);
+                                    }
+                                    let _ = count;
+                                    if location.is_some() {
+                                        self.last_diagnostic_location = location;
+                                    }
+                                    finish_character_run_accounting!();
+                                    return Err(
+                                        super::ResidentCommandColdTransition::CharacterRunFailure(
+                                            error,
+                                        ),
+                                    );
+                                }
+                            }
+                        }
                         match top
                             .advance(
                                 self.roots.profile,
