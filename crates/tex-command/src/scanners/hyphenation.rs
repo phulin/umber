@@ -157,7 +157,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         loop {
             let mut command = None;
-            if self.get_x_token_into(&mut command)? != DeliveryStatus::Command {
+            if self.request_expanded_token(&mut command)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let command = command.expect("command delivery initializes destination");

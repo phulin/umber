@@ -134,7 +134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// accompanying ``Display math should end with $$`` diagnostic.
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let mut destination = None;
-        match self.get_x_token_into(&mut destination)? {
+        match self.request_expanded_token(&mut destination)? {
             super::DeliveryStatus::End => return Ok(false),
             super::DeliveryStatus::Command => {}
             _ => unreachable!("ordinary expanded delivery returns only commands"),

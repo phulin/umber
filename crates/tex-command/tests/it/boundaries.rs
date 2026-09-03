@@ -936,7 +936,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert_eq!(scanner.matches("fn drive_collector_expansion(").count(), 1);
     assert!(expansion.contains("PendingCollectorExpansion"));
     assert!(expansion.contains("error.is_resource_suspension()"));
-    assert!(expansion.contains("self.expand_into(destination, true)"));
+    assert!(expansion.contains("self.request_expansion_into(destination, true)"));
     assert!(expansion.contains("command: destination.take()"));
     assert!(expansion.contains("self.append_direct_the_toks(collector, expansion_operand)"));
     assert!(
@@ -944,7 +944,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         "the replacement collector must not enter a second ordinary expansion loop"
     );
     assert!(
-        splice.contains("self.get_x_token_into(target)?"),
+        splice.contains("self.request_expanded_token(target)?"),
         "\\the must retain its expanded internal-value target before selecting a token list"
     );
     assert!(splice.contains("self.push_scan_toks_word(collector, word)?"));

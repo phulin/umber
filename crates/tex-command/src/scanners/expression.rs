@@ -364,7 +364,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PendingExpressionPhase::FactorLeading => {
                     let first = loop {
                         let mut first = None;
-                        let delivery = match self.get_x_token_into(&mut first) {
+                        let delivery = match self.request_expanded_token(&mut first) {
                             Ok(delivery) => delivery,
                             Err(error) => {
                                 return self.suspend_expression(
@@ -575,7 +575,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ExpressionOperator, CommandError> {
         let command = loop {
             let mut command = None;
-            let delivery = self.get_x_token_into(&mut command)?;
+            let delivery = self.request_expanded_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::End => return Ok(ExpressionOperator::None),
                 DeliveryStatus::Command => {

@@ -21,6 +21,44 @@ const COMMANDS_PER_CHUNK: usize = 32;
 const CONTROLS_PER_CHUNK: usize = 32;
 const NAME_BYTES_PER_CHUNK: usize = 1_024;
 
+/// Bounded state for the one synchronous expanded-delivery interpreter.
+///
+/// The interpreter's hot token/command pair remains in the processor loop;
+/// this sidecar owns only its typed continuation depth.  A continuation is
+/// therefore represented by a fixed-width control-lane record instead of a
+/// Rust call frame.  The checked increment is the static recursion guard: a
+/// malformed input can exhaust the generation-scoped coordinate space, but it
+/// cannot recurse through the host stack.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ExpandedDeliveryDriver {
+    continuation_depth: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<ExpandedDeliveryDriver>() <= 16);
+
+impl ExpandedDeliveryDriver {
+    fn push_continuation(&mut self) -> Result<(), ScratchError> {
+        self.continuation_depth = self
+            .continuation_depth
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        Ok(())
+    }
+
+    fn pop_continuation(&mut self) -> Result<(), ScratchError> {
+        self.continuation_depth = self
+            .continuation_depth
+            .checked_sub(1)
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn continuation_depth(&self) -> u32 {
+        self.continuation_depth
+    }
+}
+
 static NEXT_WORK_OWNER: AtomicU64 = AtomicU64::new(1);
 
 fn next_work_owner() -> NonZeroU64 {
@@ -172,6 +210,16 @@ impl<T, G, const N: usize> FixedChunkLane<T, G, N> {
         let value = slot.value.take().ok_or(ScratchError::InvalidCoordinate)?;
         self.len -= 1;
         Ok(value)
+    }
+
+    fn top_id(&self) -> Result<LaneId<G>, ScratchError> {
+        let index = self
+            .len
+            .checked_sub(1)
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        let slot = self.slot_by_index(index)?;
+        let serial = NonZeroU32::new(slot.serial).ok_or(ScratchError::InvalidCoordinate)?;
+        LaneId::new(index, serial)
     }
 
     fn truncate(&mut self, mark: u32) -> Result<(), ScratchError> {
@@ -419,6 +467,7 @@ pub(crate) struct ExpansionWork<G> {
     controls: FixedChunkLane<ExpansionControl<G>, G, CONTROLS_PER_CHUNK>,
     names: ExpansionNameLane,
     active_roots: Vec<LaneId<G>>,
+    driver: ExpandedDeliveryDriver,
     counters: ExpansionWorkCounters,
 }
 
@@ -432,6 +481,7 @@ impl<G> PartialEq for ExpansionWork<G> {
             && self.commands.len() == other.commands.len()
             && self.controls.len() == other.controls.len()
             && self.names.len == other.names.len
+            && self.driver == other.driver
     }
 }
 
@@ -445,12 +495,68 @@ impl<G> Default for ExpansionWork<G> {
             controls: FixedChunkLane::default(),
             names: ExpansionNameLane::default(),
             active_roots: Vec::new(),
+            driver: ExpandedDeliveryDriver::default(),
             counters: ExpansionWorkCounters::default(),
         }
     }
 }
 
 impl<G> ExpansionWork<G> {
+    /// Pushes a synchronous `\the` continuation into the same generation
+    /// owned control lane used by cold expansion suspension.  The control is
+    /// intentionally not a second mailbox: its position is the canonical
+    /// LIFO continuation coordinate and its payload is copy-small.
+    pub(crate) fn push_the_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::The(TheControl { opener })) {
+            self.driver
+                .pop_continuation()
+                .expect("failed the-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Returns the active top `\the` opener, if the synchronous continuation
+    /// at the top of the control lane is one.  Looking at the lane's top slot
+    /// avoids a parallel stack of continuation pointers.
+    pub(crate) fn top_the_control(
+        &self,
+    ) -> Result<Option<tex_state::token::OriginId>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::The(control) => Ok(Some(control.opener)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Pops exactly one completed synchronous `\the` continuation.
+    pub(crate) fn pop_the_control(&mut self) -> Result<tex_state::token::OriginId, ScratchError> {
+        let id = self.controls.top_id()?;
+        match self.controls.get(id)? {
+            ExpansionControl::The(_) => {}
+            _ => return Err(ScratchError::InvalidCoordinate),
+        }
+        let opener = match self.controls.take_top(id)? {
+            ExpansionControl::The(control) => control.opener,
+            _ => unreachable!("validated top control remains a the continuation"),
+        };
+        self.driver.pop_continuation()?;
+        Ok(opener)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn driver_continuation_depth(&self) -> u32 {
+        self.driver.continuation_depth()
+    }
+
     /// Parks the one command owner only after expansion has produced a real
     /// immutable-resource suspension. Every fallible step restores the exact
     /// pending value to the caller.
@@ -711,6 +817,14 @@ impl<G> ExpansionWork<G> {
         self.truncate_to(key.mark)?;
         let popped = self.active_roots.pop();
         debug_assert!(popped == Some(key.root));
+        if self.active_roots.is_empty() {
+            // A synchronous parent (currently `\the`) has no parked root of
+            // its own.  Once its last cold child aborts, discard that parent
+            // control as part of the same deepest-first abort rather than
+            // leaking a continuation into the next processor episode.
+            self.controls.truncate(0)?;
+            self.driver = ExpandedDeliveryDriver::default();
+        }
         self.counters.aborted_roots = self.counters.aborted_roots.saturating_add(1);
         Ok(())
     }

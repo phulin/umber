@@ -128,7 +128,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             (first, second)
         };
         if second.as_ref().is_none_or(is_expandable_command) {
-            if let Err(error) = self.expand_into(&mut second, true) {
+            if let Err(error) = self.request_expansion_into(&mut second, true) {
                 if error.is_resource_suspension() {
                     let key = self
                         .command
@@ -205,7 +205,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = (|| {
             let mut destination = None;
             loop {
-                let status = match self.get_x_token_into(&mut destination) {
+                let status = match self.request_expanded_token(&mut destination) {
                     Ok(status) => status,
                     Err(error) => {
                         if error.is_resource_suspension() {

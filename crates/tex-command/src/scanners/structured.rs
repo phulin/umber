@@ -6267,7 +6267,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let mut destination = None;
         let command = loop {
-            if self.get_x_token_into(&mut destination)? != DeliveryStatus::Command {
+            if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let command = destination.take().ok_or(CommandError::input_invariant())?;
@@ -7004,7 +7004,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(ScannedLeaderPayload::BoxRegister { index, copy });
         }
         let mut destination = None;
-        match self.get_x_token_into(&mut destination)? {
+        match self.request_expanded_token(&mut destination)? {
             DeliveryStatus::End => return Ok(ScannedLeaderPayload::Missing),
             DeliveryStatus::Command => {}
             _ => return Err(CommandError::input_invariant()),
@@ -7527,7 +7527,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_box_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
         let mut destination = None;
         loop {
-            match self.get_x_token_into(&mut destination)? {
+            match self.request_expanded_token(&mut destination)? {
                 DeliveryStatus::End => return Ok(ScannedBoxShiftPayload::Missing),
                 DeliveryStatus::Command => {}
                 _ => return Err(CommandError::input_invariant()),
@@ -7606,7 +7606,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
         let mut destination = None;
         loop {
-            if self.get_x_token_into(&mut destination)? != DeliveryStatus::Command {
+            if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let opening = destination.take().ok_or(CommandError::input_invariant())?;
@@ -8093,7 +8093,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 self.scanner_resume = Some(key);
             }
-            if let Err(error) = self.expand_into(destination, true) {
+            if let Err(error) = self.request_expansion_into(destination, true) {
                 if error.is_resource_suspension() {
                     *pending = Some(PendingPreambleSpanExpansion {
                         child: crate::execution_scratch::ChildContinuation::capture(
@@ -8130,7 +8130,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .is_some_and(crate::processor::expand::is_expandable_command)
             {
-                if let Err(error) = self.expand_into(destination, true) {
+                if let Err(error) = self.request_expansion_into(destination, true) {
                     if error.is_resource_suspension() {
                         *pending = Some(PendingPreambleSpanExpansion {
                             child: crate::execution_scratch::ChildContinuation::capture(
@@ -8554,7 +8554,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ScannedFileName, CommandError> {
         let mut destination = None;
         let first = loop {
-            let command = match self.get_x_token_into(&mut destination) {
+            let command = match self.request_expanded_token(&mut destination) {
                 Ok(DeliveryStatus::Command) => {
                     destination.take().ok_or(CommandError::input_invariant())?
                 }
@@ -8612,7 +8612,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ScannedFileName, CommandError> {
         let mut destination = None;
         loop {
-            let command = match self.get_x_token_into(&mut destination) {
+            let command = match self.request_expanded_token(&mut destination) {
                 Ok(DeliveryStatus::Command) => {
                     destination.take().ok_or(CommandError::input_invariant())?
                 }
@@ -8879,7 +8879,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let delivery = self.get_x_token_into(destination)?;
+            let delivery = self.request_expanded_token(destination)?;
             if delivery == DeliveryStatus::End {
                 return Ok(DeliveryStatus::End);
             }

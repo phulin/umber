@@ -1092,6 +1092,42 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             let action = classify_hot_command(&command);
+
+            // A `\the` operand is itself an expanded-token request.  Keep
+            // that request in the generation-owned control lane and consume
+            // targets from this same hot loop.  In particular, a nested
+            // `\the` pushes another copy-small control and never invokes a
+            // second `expanded_next`/`get_x_token` call.  We remove the
+            // completed control before entering a scalar scanner because a
+            // register's own index probe is an independent scalar child.
+            let the_opener = self
+                .command
+                .scratch
+                .top_the_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(the_opener) = the_opener {
+                match action {
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::The,
+                    )) => {
+                        self.begin_the_continuation(command.origin())?;
+                        fetch = true;
+                        continue;
+                    }
+                    ExpandedCommandAction::Expand(_) => {}
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                        let _ = self
+                            .command
+                            .scratch
+                            .pop_the_control()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        let target = command.materialize();
+                        self.complete_the_continuation(&target, the_opener)?;
+                        fetch = true;
+                        continue;
+                    }
+                }
+            }
             match action {
                 ExpandedCommandAction::Return => {
                     break 'delivery self.finish_expanded_command(&command, delivery_expanded);
@@ -1897,6 +1933,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
+    }
+
+    /// Requests one expanded token from the generation-scoped delivery
+    /// driver.  Scanner and primitive code uses this typed status boundary;
+    /// it never reaches into the driver's loop or recursively calls a
+    /// delivery implementation by name.
+    pub(crate) fn request_expanded_token(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.get_x_token_into(destination)
+    }
+
+    /// Requests one already-delivered command's expansion from the same
+    /// driver.  This is the only nested expansion request used by structural
+    /// scanners; suspension and completion remain represented by the typed
+    /// `Result` status returned here.
+    pub(crate) fn request_expansion_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        self.expand_into(destination, report_trace)
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.
@@ -3296,7 +3355,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::The) => {
-                    self.expand_the(command, &mut expansion_resume, &mut suspended_resume)
+                    self.begin_the_continuation(command.origin())
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Unexpanded) => {
                     self.expand_unexpanded()

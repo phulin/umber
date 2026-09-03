@@ -56,6 +56,42 @@ fn collect_expanded_characters<G>(
 }
 
 #[test]
+fn the_scans_its_target_from_the_same_expanded_delivery_loop() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                the,
+                count,
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        let output = collect_expanded_characters(universe, &mut command);
+        assert_eq!(output, "0X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn parameterless_macro_expands_from_a_generation_typed_definition() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {

@@ -1,6 +1,7 @@
 //! Compact typed control vocabulary for parked expansion work.
 
 use crate::execution_scratch::ScannerFrameKey;
+use tex_state::token::OriginId;
 
 use super::{ExpansionChild, ExpansionCommandSlot, ExpansionNameMark};
 
@@ -106,6 +107,20 @@ pub(crate) struct IfNumberControl<G> {
     pub(crate) phase: IfNumberPhase<G>,
 }
 
+/// The compact continuation for an expanded `\the` operand.
+///
+/// `\the` is a particularly important continuation because the operand is
+/// itself delivered through the expanded-token loop.  Keeping only the
+/// opener's origin here lets that loop consume an arbitrary chain of
+/// `\the`/macro expansions without retaining a `CurrentCommand` or entering
+/// a second delivery routine.  The target command is always the hot command
+/// currently owned by the delivery loop and is materialised only at the
+/// scalar scanner boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TheControl {
+    pub(crate) opener: OriginId,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -149,5 +164,6 @@ pub(crate) enum ExpansionControl<G> {
         >,
     },
     ExpandAfter(ExpandAfterControl<G>),
+    The(TheControl),
     Primitive(PrimitiveControl<G>),
 }

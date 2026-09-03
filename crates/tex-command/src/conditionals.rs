@@ -1230,7 +1230,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<(), CommandError> {
-        if self.get_x_token_into(destination)? != crate::DeliveryStatus::Command {
+        if self.request_expanded_token(destination)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
         Ok(())
@@ -1332,7 +1332,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// so the second operand is still scanned and the comparison completes.
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let mut relation = None;
-        if self.get_x_token_into(&mut relation)? != crate::DeliveryStatus::Command {
+        if self.request_expanded_token(&mut relation)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
         let relation = relation.expect("command status initializes destination");

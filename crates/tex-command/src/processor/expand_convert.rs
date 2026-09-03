@@ -14,6 +14,29 @@ use super::expand_render::{
 use super::{CommandProcessor, DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Starts the iterative `\the` operand request.  The opener is reduced to
+    /// its packed origin before the request enters the shared expansion-work
+    /// control lane; no rich command is retained while the operand expands.
+    pub(super) fn begin_the_continuation(&mut self, opener: OriginId) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_the_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    /// Completes one iterative `\the` operand after the expanded loop has
+    /// settled its target command.  This entry point deliberately accepts the
+    /// already-delivered command, so it never calls `get_x_token_into` and
+    /// cannot recursively re-enter expanded delivery.
+    pub(super) fn complete_the_continuation(
+        &mut self,
+        target: &CurrentCommand<G>,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let scanned = self.scan_internal_value_or_zero_from_target(target)?;
+        self.expand_the_value(opener, scanned.value)
+    }
+
     /// e-TeX 2.6 etex.ch §53a's `\detokenize`.
     ///
     /// `scan_general_text` collects without expansion, `token_show` renders
@@ -118,35 +141,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.push_rendered_text(&text, opener.origin());
         Ok(())
-    }
-
-    /// Expands TeX82 `the_toks` after command-owned internal-quantity scanning.
-    ///
-    /// The internal scanner owns a primitive register's `scan_eight_bit_int`
-    /// episode.  In particular, `\\the\\count21` must deliver both index digits
-    /// before it backs up the next source token and installs rendered output.
-    /// Reaching into the target meaning here would leave that index to a later
-    /// scanner and changes the observable input ordering.
-    pub(super) fn expand_the(
-        &mut self,
-        opener: &CurrentCommand<G>,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
-    ) -> Result<(), CommandError> {
-        if !matches!(
-            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
-            crate::state::PendingExpansionResume::Dispatch
-                | crate::state::PendingExpansionResume::The
-        ) {
-            return Err(CommandError::input_invariant());
-        }
-        let scan = self.scan_internal_value_or_zero_retained();
-        let target = self.retain_expansion_scalar(
-            scan,
-            crate::state::PendingExpansionResume::The,
-            suspended,
-        )?;
-        self.expand_the_value(opener.origin(), target.value)
     }
 
     /// Installs one TeX82 §467 `ins_the_toks` result.

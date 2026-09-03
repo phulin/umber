@@ -30,6 +30,41 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionControlSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionNameMark>() <= 16);
+    assert!(core::mem::size_of::<TheControl>() <= 16);
+    assert!(core::mem::size_of::<ExpandedDeliveryDriver>() <= 16);
+}
+
+#[test]
+fn synchronous_the_controls_are_lifo_and_do_not_retain_commands() {
+    let mut work = ExpansionWork::<()>::default();
+    for _ in 0..1_024 {
+        work.push_the_control(OriginId::UNKNOWN)
+            .expect("the control");
+    }
+    assert_eq!(work.driver_continuation_depth(), 1_024);
+    for _ in 0..1_024 {
+        work.pop_the_control().expect("the control pop");
+    }
+    assert_eq!(work.driver_continuation_depth(), 0);
+    assert!(work.is_quiescent());
+}
+
+#[test]
+fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
+    let mut work = ExpansionWork::<()>::default();
+    work.push_the_control(OriginId::UNKNOWN)
+        .expect("the parent");
+    let key = work
+        .park_suspension(crate::state::PendingExpansion {
+            command: empty_command(),
+            resume: crate::state::PendingExpansionResume::The,
+            delivery_expanded: true,
+            child: None,
+        })
+        .expect("suspended child");
+    work.abort(key).expect("deepest-first abort");
+    assert_eq!(work.driver_continuation_depth(), 0);
+    assert!(work.is_quiescent());
 }
 
 #[test]

@@ -1327,6 +1327,33 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.resume_suspension(key)
     }
 
+    /// Begins one synchronous expanded `\the` continuation in the shared
+    /// generation-scoped control lane.
+    pub(crate) fn push_the_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_the_control(opener)
+    }
+
+    /// Reads the top synchronous `\the` continuation without creating a
+    /// command-sized carrier.
+    pub(crate) fn top_the_control(
+        &self,
+    ) -> Result<Option<tex_state::token::OriginId>, ScratchError> {
+        self.expansion_work.top_the_control()
+    }
+
+    /// Closes one completed synchronous `\the` continuation in LIFO order.
+    pub(crate) fn pop_the_control(&mut self) -> Result<tex_state::token::OriginId, ScratchError> {
+        self.expansion_work.pop_the_control()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn driver_continuation_depth(&self) -> u32 {
+        self.expansion_work.driver_continuation_depth()
+    }
+
     pub(crate) fn cancel_expansion(
         &mut self,
         key: crate::ExpansionWorkKey<G>,
