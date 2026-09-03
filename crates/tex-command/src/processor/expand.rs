@@ -915,7 +915,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                             };
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::End => {
+                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                        self.command
+                                            .scratch
+                                            .abort_synchronous_controls()
+                                            .map_err(crate::scan_toks::scratch_command_error)?;
+                                    }
+                                    break 'delivery DeliveryStatus::End;
+                                }
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                 }
@@ -940,7 +948,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                             };
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::End => {
+                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                        self.command
+                                            .scratch
+                                            .abort_synchronous_controls()
+                                            .map_err(crate::scan_toks::scratch_command_error)?;
+                                    }
+                                    break 'delivery DeliveryStatus::End;
+                                }
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                 }
@@ -984,7 +1000,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                             };
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
+                                ResidentColdOutcome::End => {
+                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                        self.command
+                                            .scratch
+                                            .abort_synchronous_controls()
+                                            .map_err(crate::scan_toks::scratch_command_error)?;
+                                    }
+                                    break 'delivery DeliveryStatus::End;
+                                }
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     break 'delivery DeliveryStatus::ReplayCompleted(episode);
                                 }

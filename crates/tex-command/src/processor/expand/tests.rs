@@ -349,6 +349,57 @@ fn expanded_missing_opening_brace_uses_balanced_recovery() {
 }
 
 #[test]
+fn expanded_unterminated_body_aborts_synchronous_controls_at_end() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let mut command = CommandState::default();
+        let operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert!(
+            processor
+                .get_x_token()
+                .expect("unterminated delivery")
+                .is_none()
+        );
+        drop(processor);
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        command
+            .rollback_attempt_operation(operation)
+            .expect("rollback after unterminated expanded body");
+        assert!(command.scratch.is_quiescent());
+        assert!(command.attempt.is_empty());
+    });
+}
+
+#[test]
 fn deeply_nested_the_requests_use_the_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

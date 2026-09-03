@@ -53,7 +53,6 @@ impl ExpandedDeliveryDriver {
         Ok(())
     }
 
-    #[cfg(test)]
     fn continuation_depth(&self) -> u32 {
         self.continuation_depth
     }
@@ -812,6 +811,20 @@ impl<G> ExpansionWork<G> {
         let _ = self.controls.take_top(id)?;
         self.driver.pop_continuation()?;
         Ok(control)
+    }
+
+    /// Aborts all synchronous controls for a failed direct operation in
+    /// deepest-first order. Parked cold roots are owned separately and must
+    /// never be discarded by this operation-local cleanup.
+    pub(crate) fn abort_synchronous_controls(&mut self) -> Result<(), ScratchError> {
+        if !self.active_roots.is_empty() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.controls.truncate(0)?;
+        self.commands.truncate(0)?;
+        self.names.truncate(0)?;
+        self.driver = ExpandedDeliveryDriver::default();
+        Ok(())
     }
 
     /// Returns the top synchronous `\csname` record without borrowing it
@@ -1725,7 +1738,6 @@ impl<G> ExpansionWork<G> {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.driver.continuation_depth()
     }

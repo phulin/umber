@@ -1683,7 +1683,10 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_expanded_control()
     }
 
-    #[cfg(test)]
+    pub(crate) fn abort_synchronous_controls(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.abort_synchronous_controls()
+    }
+
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
     }

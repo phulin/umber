@@ -93,6 +93,9 @@ impl<G> CommandState<G> {
             .take()
             .ok_or(crate::AttemptError::InvalidCoordinate)?;
         let result = (|| {
+            self.scratch
+                .abort_synchronous_controls()
+                .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
             while self.scratch.frame_len() > mark.macro_depth() {
                 let frame = self
                     .scratch
