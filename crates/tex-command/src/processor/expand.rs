@@ -1167,6 +1167,44 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            // `\ifcsname` shares the expanded character stream with
+            // `\csname`, but its terminator completes a conditional frame
+            // instead of backing a control-sequence token. Keeping this
+            // predicate in the same control lane removes the recursive
+            // scanner edge while preserving the evaluating condition limit.
+            let ifcsname_control = self
+                .command
+                .scratch
+                .top_ifcsname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if ifcsname_control.is_some() {
+                match action {
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::IfCsName,
+                    )) => {
+                        self.begin_ifcsname_continuation(false)?;
+                        fetch = true;
+                        continue;
+                    }
+                    ExpandedCommandAction::Expand(_) => {}
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                        if command.command_word().expandable_primitive()
+                            == Some(ExpandablePrimitive::EndCsName)
+                        {
+                            self.complete_ifcsname_continuation(None)?;
+                        } else if let Some(character) = command.character_token() {
+                            self.append_csname_character(character)?;
+                            fetch = true;
+                            continue;
+                        } else {
+                            self.complete_ifcsname_continuation(Some(command.materialize()))?;
+                        }
+                        fetch = true;
+                        continue;
+                    }
+                }
+            }
+
             // A `\the` operand is itself an expanded-token request.  Keep
             // that request in the generation-owned control lane and consume
             // targets from this same hot loop.  In particular, a nested
@@ -3445,7 +3483,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ExpansionDispatch::Primitive(primitive)
                     if crate::conditionals::ConditionalKind::from_primitive(primitive)
-                        .is_some() =>
+                        .is_some_and(|kind| {
+                            kind != crate::conditionals::ConditionalKind::IfCsName
+                        }) =>
                 {
                     self.expand_conditional(
                         command,
@@ -3456,6 +3496,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => {
                     self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::IfCsName) => {
+                    self.begin_ifcsname_continuation(false)
                 }
                 ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::Else

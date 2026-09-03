@@ -132,6 +132,84 @@ fn deeply_nested_the_requests_use_the_control_lane() {
 }
 
 #[test]
+fn ifcsname_collects_in_the_shared_delivery_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let ifcsname = install_static(
+            universe,
+            "ifcsname",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCsName),
+        );
+        let endcsname = install_static(
+            universe,
+            "endcsname",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+        );
+        let _known = install_static(universe, "known", Meaning::Relax);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                ifcsname,
+                Token::Char {
+                    ch: 'k',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'n',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'o',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'w',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'n',
+                    cat: Catcode::Letter,
+                },
+                endcsname,
+                Token::Char {
+                    ch: 'T',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'F',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let result = processor
+            .get_x_token()
+            .expect("ifcsname delivery")
+            .expect("selected branch");
+        assert_eq!(
+            result.spelling().semantic_token(),
+            Token::Char {
+                ch: 'T',
+                cat: Catcode::Letter,
+            }
+        );
+        drop(processor);
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn parameterless_macro_expands_from_a_generation_typed_definition() {
     crate::test_harness::with_universe(|universe| {
         let replacement = Token::Char {

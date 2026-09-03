@@ -543,6 +543,31 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
+    /// Starts a synchronous `\ifcsname` continuation over the same name lane.
+    pub(crate) fn push_ifcsname_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+        previous_in_csname: bool,
+    ) -> Result<(), ScratchError> {
+        let name = self.synchronous_name_mark()?;
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::IfCsName(SynchronousIfCsNameControl {
+                condition,
+                inverted,
+                name,
+                previous_in_csname,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed ifcsname-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Returns the active top `\the` opener, if the synchronous continuation
     /// at the top of the control lane is one.  Looking at the lane's top slot
     /// avoids a parallel stack of continuation pointers.
@@ -596,6 +621,36 @@ impl<G> ExpansionWork<G> {
         let id = self.controls.top_id()?;
         let control = match self.controls.get(id)? {
             ExpansionControl::CsName(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        let _ = self.controls.take_top(id)?;
+        self.names.truncate(control.name.offset)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
+    /// Returns the active top `\ifcsname` continuation.
+    pub(crate) fn top_ifcsname_control(
+        &self,
+    ) -> Result<Option<SynchronousIfCsNameControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::IfCsName(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Pops one completed `\ifcsname` and retires its name suffix.
+    pub(crate) fn pop_ifcsname_control(
+        &mut self,
+    ) -> Result<SynchronousIfCsNameControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::IfCsName(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
         };
         let _ = self.controls.take_top(id)?;

@@ -131,6 +131,17 @@ pub(crate) struct SynchronousCsNameControl {
     pub(crate) previous_in_csname: bool,
 }
 
+/// Compact synchronous `\ifcsname` state. The condition identity and name
+/// mark are enough to complete the predicate after the expanded name stream
+/// reaches its delimiter; no rich command is retained in this control.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousIfCsNameControl {
+    pub(crate) condition: crate::processor::status::ConditionId,
+    pub(crate) inverted: bool,
+    pub(crate) name: ExpansionNameMark,
+    pub(crate) previous_in_csname: bool,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -176,5 +187,6 @@ pub(crate) enum ExpansionControl<G> {
     ExpandAfter(ExpandAfterControl<G>),
     The(TheControl),
     CsName(SynchronousCsNameControl),
+    IfCsName(SynchronousIfCsNameControl),
     Primitive(PrimitiveControl<G>),
 }

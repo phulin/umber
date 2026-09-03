@@ -418,6 +418,89 @@ impl ConditionStack {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Begins an iterative `\ifcsname` predicate in the shared expansion
+    /// control lane. The conditional frame is established before any name
+    /// character is requested, matching TeX's evaluating-limit semantics.
+    pub(super) fn begin_ifcsname_continuation(
+        &mut self,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+        let condition = self.command.conditions.push_with_inversion(
+            ConditionalKind::IfCsName,
+            source_line,
+            inverted,
+        );
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or_else(CommandError::input_invariant)?;
+        self.trace_conditional_enter(&frame);
+        self.observe_condition("push", &frame, None);
+        let previous = self.is_in_csname;
+        if let Err(error) = self
+            .command
+            .scratch
+            .push_ifcsname_control(condition, inverted, previous)
+            .map_err(crate::scan_toks::scratch_command_error)
+        {
+            let _ = self.command.conditions.pop();
+            return Err(error);
+        }
+        self.is_in_csname = true;
+        Ok(())
+    }
+
+    /// Completes the iterative `\ifcsname` predicate, retaining only a
+    /// compact name-lane mark until this semantic boundary. An optional
+    /// offending command performs the same missing-`\endcsname` recovery as
+    /// the ordinary `\csname` collector before the lookup.
+    pub(super) fn complete_ifcsname_continuation(
+        &mut self,
+        offending: Option<crate::CurrentCommand<G>>,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .top_ifcsname_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let bytes = self
+            .command
+            .scratch
+            .expansion_name_bytes(control.name)
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .collect::<Vec<_>>();
+        let name = String::from_utf8(bytes).map_err(|_| CommandError::input_invariant())?;
+        let control = self
+            .command
+            .scratch
+            .pop_ifcsname_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        self.is_in_csname = control.previous_in_csname;
+        if let Some(command) = offending {
+            let rendered = crate::processor::expand_render::print_esc_text(self.state, "endcsname");
+            self.back_error_reporting(
+                command,
+                crate::processor::expand_structural::MISSING_ENDCSNAME_DIAGNOSTIC,
+                format!("Missing {rendered} inserted"),
+                &[
+                    "The control sequence marked <to be read again> should",
+                    "not appear between \\csname and \\endcsname.",
+                ],
+            )?;
+        }
+        let result = self
+            .state
+            .known_control_sequence(&name)
+            .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined);
+        self.command
+            .record_csname_buffer_usage(name.chars().count());
+        self.complete_boolean(control.condition, result ^ control.inverted)
+    }
+
     /// Detaches the active stack from innermost to outermost for `\showifs`.
     #[must_use]
     pub fn active_conditions(&self) -> Vec<ActiveCondition> {
@@ -661,6 +744,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             )?;
             return Ok(());
         };
+        if _kind == ConditionalKind::IfCsName {
+            if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
+                && self.state.int_param(IntParam::TRACING_IFS) <= 0
+            {
+                self.print_unless_command_trace(
+                    crate::processor::expand_render::PrintCommand::from_current(&next),
+                );
+            }
+            return self.begin_ifcsname_continuation(true);
+        }
         if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
             && self.state.int_param(IntParam::TRACING_IFS) <= 0
         {

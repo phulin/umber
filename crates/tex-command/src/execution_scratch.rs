@@ -1349,6 +1349,16 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.push_name_byte(byte)
     }
 
+    pub(crate) fn push_ifcsname_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        inverted: bool,
+        previous_in_csname: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_ifcsname_control(condition, inverted, previous_in_csname)
+    }
+
     /// Reads the top synchronous `\the` continuation without creating a
     /// command-sized carrier.
     pub(crate) fn top_the_control(
@@ -1380,6 +1390,19 @@ impl<G> ExecutionScratch<G> {
         mark: crate::expansion_work::ExpansionNameMark,
     ) -> Result<crate::expansion_work::NameBytes<'_>, ScratchError> {
         self.expansion_work.name_bytes(mark)
+    }
+
+    pub(crate) fn top_ifcsname_control(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::SynchronousIfCsNameControl>, ScratchError>
+    {
+        self.expansion_work.top_ifcsname_control()
+    }
+
+    pub(crate) fn pop_ifcsname_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousIfCsNameControl, ScratchError> {
+        self.expansion_work.pop_ifcsname_control()
     }
 
     #[cfg(test)]
