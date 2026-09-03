@@ -70,8 +70,9 @@ that reserves locks and manifests for downloaded files, generated-format cache
 binding, and multi-release pdfTeX parity without compiling each historical
 engine.
 
-`arxiv_census/` contains machine-readable captures for the recent arXiv sample.
-Its README records the exact interpretation and partial-capture status.
+`target/arxiv_census/` contains generated machine-readable captures for the
+recent arXiv sample. It is build output, not checked-in documentation; its
+README records the exact interpretation and partial-capture status.
 
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract

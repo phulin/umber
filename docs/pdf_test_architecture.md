@@ -229,19 +229,6 @@ validation. CI and release invocation is
 `scripts/check-pdf-external.sh --ci`; local invocation is the same command with
 `--local`.
 
-## Delivery order
-
-1. Add F and migrate synthetic inputs.
-2. Obtain the one Hayro trailer accessor, build H, and migrate semantic and
-   normalized assertions.
-3. Migrate remaining output tests to G/B/H and remove `lopdf` manifests and
-   lockfile entries.
-4. Add the E matrix and document its local and CI invocation.
-
-At every step `cargo test --tests` remains hermetic. The final dependency audit
-must show no `lopdf` package or source reference and no change to the normal
-`umber-wasm` production dependency graph.
-
 ## Final dependency and artifact audit
 
 The completed migration leaves no `lopdf` entry in a workspace manifest,

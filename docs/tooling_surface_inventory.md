@@ -99,16 +99,3 @@ The candidate-specific rows govern their scripts. For clarity:
   owner-approved historical surfaces were retired by `18.4`; every other row
   in this inventory remains supported compatibility, an active gate, or a
   reproducible diagnostic.
-
-## Handoff
-
-- `umber2-vgjr.18.2` may move the reference-process kernel into fixturegen and
-  contract parity around comparison/triage, but must preserve or separately
-  retire the two compatibility surfaces identified above.
-- `umber2-vgjr.18.3` may retire the two completed layout migration commands and
-  registries only as an explicit compatibility change. The shared cohort
-  transaction and ordinary regeneration modes survive.
-- `umber2-vgjr.18.4` rehomed layout and width workloads under `tex-typeset`
-  and the pure-memo edit workload under `tex-incr`, without changing workload
-  or baseline bytes. Its fresh audit found no intervening caller or authority,
-  so it retired only the three approved historical surfaces.

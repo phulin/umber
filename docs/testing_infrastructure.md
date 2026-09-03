@@ -676,7 +676,7 @@ paired-format, format-receipt, TeX Live runtime, archive, and output paths.
 After the survey, pass the same arguments with `--verify-only`; that path
 launches no compiler and rehashes the complete source and artifact evidence
 before reproducing the ordered report and totals. The 2026-09-02 capture is
-`docs/arxiv_census/recent-20260902-pdftex-pdf/`: 87 of 94 declared-pdfLaTeX
+`target/arxiv_census/recent-20260902-pdftex-pdf/`: 87 of 94 declared-pdfLaTeX
 rows produced authoritative reference PDFs, six stopped at an undefined
 control sequence, and one hit the 120-second guard with a non-authoritative
 partial PDF. This tier must not invoke Umber, inspect an Umber PDF, or patch a
