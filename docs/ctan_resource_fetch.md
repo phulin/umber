@@ -3,6 +3,9 @@
 The cross-subsystem target identity, verification, admission, and publication
 vocabulary is fixed by [Canonical resource identity and lifecycle](resource_lifecycle.md).
 This document remains authoritative for implemented native host acquisition.
+The proposed replacement for installed Umber, including direct TeX Live mirror
+acquisition and annual release selection, is
+[TeX Live Distribution Acquisition and Release Selection](texlive_release_selection.md).
 
 Status: complete under the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session

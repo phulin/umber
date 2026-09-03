@@ -65,10 +65,10 @@ checksum coverage, immutable/job-local split, and migration from schema 9.
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.
 
-`texlive_release_selection.md` defines annual TeX Live selection, the boundary
-that reserves locks and manifests for downloaded files, generated-format cache
-binding, and multi-release pdfTeX parity without compiling each historical
-engine.
+`texlive_release_selection.md` proposes direct verified acquisition from TeX
+Live `tlnet-final` package repositories, platform-cache ownership, lazy and
+complete-distribution caching, existing generated-format cache binding, and
+multi-release pdfTeX parity without compiling each historical engine.
 
 `target/arxiv_census/` contains generated machine-readable captures for the
 recent arXiv sample. It is build output, not checked-in documentation; its
