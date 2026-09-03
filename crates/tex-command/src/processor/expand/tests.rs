@@ -247,6 +247,33 @@ fn nested_the_integer_expressions_use_the_shared_control_lane() {
 }
 
 #[test]
+fn the_direct_internal_meanings_use_the_hot_value_projection() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let count_alias = install_static(universe, "countalias", Meaning::CountRegister(0));
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                the,
+                count_alias,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn the_integer_expression_lane_preserves_operator_precedence() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

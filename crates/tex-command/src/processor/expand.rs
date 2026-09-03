@@ -1538,6 +1538,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                             fetch = true;
                             continue;
                         }
+                        if let Some(value) = self.scan_the_direct_value(meaning)? {
+                            let opener = self
+                                .command
+                                .scratch
+                                .pop_the_control()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                            self.expand_the_value(opener, value)?;
+                            fetch = true;
+                            continue;
+                        }
                         let _ = self
                             .command
                             .scratch

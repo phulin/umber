@@ -3366,6 +3366,167 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(value)
     }
 
+    /// Reads an internal meaning which has no following selector token.
+    ///
+    /// `scan_something_internal` normally receives a rich command and owns
+    /// the complete TeX scanner cascade.  The expanded-delivery driver has
+    /// already settled the command for the compact `\the` lane, though, so
+    /// re-entering that scanner merely to fetch a value that is embedded in
+    /// the meaning would put a Rust delivery frame back on the stack.  Keep
+    /// this projection deliberately limited to meanings whose value is
+    /// available without consuming input; selector-bearing primitives still
+    /// return `None` and use their typed child lane.
+    pub(crate) fn scan_the_direct_value(
+        &mut self,
+        meaning: Meaning,
+    ) -> Result<Option<InternalValue>, CommandError> {
+        let value = match meaning {
+            Meaning::CountRegister(index) => {
+                InternalValue::Integer(self.state.count(index).unwrap_or(0))
+            }
+            Meaning::IntParam(index) => InternalValue::Integer(
+                self.state
+                    .int_param(tex_state::env::banks::IntParam::new(index)),
+            ),
+            Meaning::PageInteger(integer) => {
+                InternalValue::Integer(self.state.page_integer(integer))
+            }
+            Meaning::InternalInteger(integer) => {
+                let value = self.fetch_internal_integer(integer);
+                let enquiry_kind = match integer {
+                    InternalInteger::CurrentGroupLevel => Some("current_group_level"),
+                    InternalInteger::CurrentGroupType => Some("current_group_type"),
+                    InternalInteger::CurrentIfLevel => Some("current_condition_level"),
+                    InternalInteger::CurrentIfType => Some("current_condition_type"),
+                    InternalInteger::CurrentIfBranch => Some("current_condition_branch"),
+                    _ => None,
+                };
+                if let Some(kind) = enquiry_kind {
+                    self.observe(CommandObservation::Scanner(ScannerRecord {
+                        kind,
+                        value: ObservationValue::Integer(i64::from(value)),
+                    }));
+                }
+                InternalValue::Integer(value)
+            }
+            Meaning::DimenRegister(index) => InternalValue::Dimension(self.state.dimen(index)),
+            Meaning::DimenParam(index) => {
+                InternalValue::Dimension(self.state.dimen_param(DimenParam::new(index)))
+            }
+            Meaning::PageDimension(dimension) => InternalValue::Dimension(
+                self.state
+                    .page_dimension_with_output_routine(dimension, self.output_routine_active),
+            ),
+            Meaning::SkipRegister(index) => {
+                let identity = self.state.glue_register(index).ok().flatten();
+                self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((false, index));
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::MuskipRegister(index) => {
+                let identity = self.state.muskip(index);
+                self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((true, index));
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::GlueParam(index) => {
+                let identity = self
+                    .state
+                    .glue_param(tex_state::env::banks::GlueParam::new(index));
+                self.scanned_glue_identity = identity;
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::MuGlueParam(index) => {
+                let identity = self
+                    .state
+                    .glue_param(tex_state::env::banks::GlueParam::new(index));
+                self.scanned_glue_identity = identity;
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
+            }
+            Meaning::ToksRegister(index) => {
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("meaning contains an admitted token-register index");
+                InternalValue::Tokens {
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                }
+            }
+            Meaning::TokParam(index) => {
+                let tokens = self
+                    .state
+                    .token_parameter(tex_state::env::banks::TokParam::new(index))
+                    .expect("meaning contains an admitted token-parameter index");
+                InternalValue::Tokens {
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                }
+            }
+            Meaning::Font(font) => self.font_identity(font),
+            Meaning::CharGiven(character) => InternalValue::Integer(
+                i32::try_from(u32::from(character)).expect("characters fit in i32"),
+            ),
+            Meaning::MathCharGiven(code) => InternalValue::Integer(i32::from(code)),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
+                self.font_identity(self.state.current_font())
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
+                let value = self.host.space_factor();
+                if value.is_none() {
+                    self.improper_auxiliary_error("spacefactor")?;
+                }
+                InternalValue::Integer(value.unwrap_or(0))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+                let value = self.host.prev_depth(self.state);
+                if value.is_none() {
+                    self.improper_auxiliary_error("prevdepth")?;
+                }
+                InternalValue::Dimension(value.unwrap_or(Scaled::from_raw(0)))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
+                InternalValue::Integer(self.host.prev_graf().unwrap_or(0))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastPenalty) => {
+                InternalValue::Integer(match self.host.last_node(self.state) {
+                    Some(crate::LastNodeItem::Penalty(value)) => value,
+                    _ => 0,
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
+                InternalValue::Dimension(match self.host.last_node(self.state) {
+                    Some(crate::LastNodeItem::Kern(value)) => value,
+                    _ => Scaled::from_raw(0),
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
+                match self.host.last_node(self.state) {
+                    Some(crate::LastNodeItem::Glue(value)) => InternalValue::Glue(value),
+                    Some(crate::LastNodeItem::MuGlue(value)) => InternalValue::MuGlue(value),
+                    _ => InternalValue::Glue(GlueSpec::ZERO),
+                }
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
+                let value = self.state.interaction_mode_value();
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "interaction_mode",
+                    value: ObservationValue::Integer(i64::from(value)),
+                }));
+                InternalValue::Integer(value)
+            }
+            _ => return Ok(None),
+        };
+        self.observe_internal_value(value.clone());
+        Ok(Some(value))
+    }
+
     pub fn scan_the_internal_value_retained(
         &mut self,
         target: &CurrentCommand<G>,
