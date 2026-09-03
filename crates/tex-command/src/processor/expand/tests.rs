@@ -187,6 +187,71 @@ fn expanded_body_uses_the_shared_lane_for_nested_the() {
 }
 
 #[test]
+fn nested_expanded_bodies_return_through_the_same_driver() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let definition = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                })],
+            )
+            .expect("nested definition");
+        let symbol = universe.intern("nested").expect("nested name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("nested meaning");
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(symbol.symbol()),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "nested expanded bodies must not re-enter the delivery method"
+        );
+    });
+}
+
+#[test]
 fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
     crate::test_harness::with_universe(|universe| {
         let expanded = install_static(
