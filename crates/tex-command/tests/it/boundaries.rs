@@ -1487,6 +1487,7 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
     }
     for control in [
         "ExpandedDeliveryDriver",
+        "TheControl",
         "SynchronousExpandAfterControl",
         "SynchronousCsNameControl",
         "SynchronousIfCsNameControl",
@@ -1502,6 +1503,7 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
         );
     }
     assert!(controls.contains("size_of::<SynchronousExpandAfterControl<()>>() <= 128"));
+    assert!(controls.contains("size_of::<TheControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfCompareControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfNumberControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfDimensionControl>() <= 64"));
