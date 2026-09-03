@@ -4655,6 +4655,17 @@ it has collapsed two distinct labels into one, and the extra expanded
 deliveries desynchronize the semantic stream from the first word of body text
 onward.
 
+In the unobserved horizontal hot path, those raw deliveries are represented as
+one borrow of the authoritative resident input row. The input kernel lends each
+consecutive `letter`/`other_char` value and its packed origin directly to the
+current list's pending character builder, advances the one journaled cursor,
+and charges the same per-token fuel as the scalar loop. It constructs no
+`CurrentCommand` for the run. The first non-character is resolved once into the
+existing command destination and resumes §1038's normal `x_token` tail; a line
+or resident-storage boundary returns before acquisition or retirement. Active
+alignment, observation, tracked dependency recording, missing-font exit, and
+all scanner/control-flow cases keep scalar delivery.
+
 `MainControl::main_loop_active` carries the live label. It is set
 only by §1030's four `main_loop` entries -- `hmode+letter`,
 `hmode+other_char`, `hmode+char_given`, `hmode+char_num` -- and only when

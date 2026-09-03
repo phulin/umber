@@ -1145,6 +1145,26 @@ fn command_processor<'episode, 'admission, G>(
     )
 }
 
+fn character_run_processor<'episode, 'admission, G>(
+    command: &'episode mut PersistentInterpreter<G>,
+    fuel: &'episode mut tex_command::CommandFuel,
+    capabilities: &'episode mut CommandHostCapabilities,
+    host_facts: &'episode mut dyn tex_command::CommandHostFacts<G>,
+    observations: &'episode mut ObservationSlot,
+    diagnostic_effects: &'episode mut DiagnosticEffects,
+    stores: &'episode mut CommandContext<'admission, G>,
+) -> InterpreterProcessor<'episode, 'admission, G> {
+    command_processor(
+        command,
+        fuel,
+        capabilities,
+        host_facts,
+        observations,
+        diagnostic_effects,
+        stores,
+    )
+}
+
 fn publish_named_token_list_pushes<G>(
     command: &mut PersistentInterpreter<G>,
     context: &mut CommandContext<'_, G>,

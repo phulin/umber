@@ -71,6 +71,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             super::DeliveryStatus::PendingExpanded => {
                 unreachable!("alignment delivery commits terminal observations")
             }
+            super::DeliveryStatus::CharacterRun | super::DeliveryStatus::CharacterRunBoundary => {
+                unreachable!("alignment delivery never selects main-loop character runs")
+            }
         })
     }
     /// Delivers active-cell input into caller-provided command storage.

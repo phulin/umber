@@ -106,11 +106,28 @@ pub(super) enum AlignmentInterceptionPolicy {
 pub enum DeliveryStatus {
     End,
     Command,
+    /// One or more ordinary main-loop characters were consumed directly and
+    /// the input boundary remains for the next delivery episode.
+    CharacterRun,
+    /// A character run was consumed and its first non-character tail is
+    /// resident but has not entered expanded-command classification yet.
+    CharacterRunBoundary,
     PendingExpanded,
     ReplayCompleted(crate::CommandReplayEpisode),
     AlignmentEndTemplate,
     AlignmentClosingBrace,
 }
+
+/// Borrowed sink for one admitted TeX82 §1038 ordinary-character run.
+pub type MainLoopCharacterConsumer<'a, G> =
+    dyn for<'state, 'admission, 'fuel, 'effects> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'fuel mut crate::CommandFuel,
+            &'effects mut tex_state::diagnostic::DiagnosticEffects,
+            char,
+            tex_state::token::OriginId,
+        ) -> bool
+        + 'a;
 
 pub(crate) use status::{ScannerState, ScannerStatus};
 

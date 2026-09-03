@@ -20,6 +20,10 @@ use super::{
 /// path owns diagnostics and input insertion.
 #[derive(Debug)]
 pub(crate) enum ResidentCommandColdTransition {
+    /// A borrowed main-loop character run ended at an input boundary before
+    /// another token was consumed.
+    CharacterRunEnd,
+    CharacterRunFailure(crate::CommandError),
     InvalidCharacter,
     NeedLine(InputLevelId),
     SourceExhausted(InputLevelId),

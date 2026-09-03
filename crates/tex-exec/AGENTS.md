@@ -65,6 +65,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   or entering `dispatch_typed_operation`. Only a retained cold branch constructs
   a borrow-typed `ColdExecutionEpisode`; there is no generic prepare/apply
   readiness mailbox.
+  While TeX82 §1038's unobserved horizontal character loop is active, the same
+  admitted context accepts a command-owned borrowed letter/other run directly
+  into the pending character builder. The executor owns no token cursor or run
+  cache: command delivery journals and advances input, and the builder consumes
+  each `(char, origin)` before the borrow returns. Every semantic or
+  instrumentation boundary remains on scalar dispatch.
   A move-only `OperationFrame` packages the resident episode and cold slot only
   when resource, diagnostic, or exact rollback suspension must outlive the
   call. Do not recreate a nested preflight command, generic operation payload,

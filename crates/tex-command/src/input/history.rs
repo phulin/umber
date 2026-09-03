@@ -19,6 +19,14 @@ use super::{
     SourceLevelExecutionState, SourceLexExecutionState, SourceSlot, SourceSlotKey,
 };
 
+type ResidentCharacterConsumer<'a, G> = dyn for<'state, 'admission, 'fuel> FnMut(
+        &'state mut tex_state::CommandContext<'admission, G>,
+        &'fuel mut crate::fuel::CommandFuel,
+        char,
+        tex_state::token::OriginId,
+    ) -> bool
+    + 'a;
+
 const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
 
 const ROW_ROLLBACK_STATE_BITS: u32 = 2;
@@ -1060,6 +1068,27 @@ impl<G> crate::CommandState<G> {
     pub(crate) fn advance_resident_command_into(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
+        fuel: &mut crate::fuel::CommandFuel,
+        create_control_sequences: bool,
+        destination: crate::command::EmptyCommand<'_, G>,
+        retirement_publication: (
+            &mut Option<&mut dyn CommandObserver>,
+            &mut Option<super::InputLevelId>,
+        ),
+    ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
+        self.advance_resident_command_or_run_into(
+            state,
+            fuel,
+            create_control_sequences,
+            destination,
+            retirement_publication,
+            None,
+        )
+    }
+
+    pub(crate) fn advance_resident_command_or_run_into(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
         _fuel: &mut crate::fuel::CommandFuel,
         create_control_sequences: bool,
         mut destination: crate::command::EmptyCommand<'_, G>,
@@ -1067,8 +1096,21 @@ impl<G> crate::CommandState<G> {
             &mut Option<&mut dyn CommandObserver>,
             &mut Option<super::InputLevelId>,
         ),
+        mut character_run: Option<&mut ResidentCharacterConsumer<'_, G>>,
     ) -> Result<super::ResidentCommandInterception, super::ResidentCommandColdTransition> {
         let (observer, immediate_write_retirement) = retirement_publication;
+        #[cfg(feature = "profiling")]
+        let mut character_run_count = 0_u32;
+        #[cfg(feature = "profiling")]
+        let mut character_run_kind = None;
+        macro_rules! finish_character_run_accounting {
+            () => {
+                #[cfg(feature = "profiling")]
+                if let Some(kind) = character_run_kind.take() {
+                    _fuel.record_raw_run(false, kind, character_run_count);
+                }
+            };
+        }
         macro_rules! record_resident_first_touch {
             ($resident_index:expr, $rollback:expr, $state:expr) => {{
                 if self.roots.input.levels.recording {
@@ -1194,14 +1236,27 @@ impl<G> crate::CommandState<G> {
                                 );
                             }
                             ResidentSourceAdvance::InvalidCharacter => {
+                                finish_character_run_accounting!();
                                 return Err(super::ResidentCommandColdTransition::InvalidCharacter);
                             }
                             ResidentSourceAdvance::NeedLine(identity) => {
+                                if character_run.is_some() {
+                                    finish_character_run_accounting!();
+                                    return Err(
+                                        super::ResidentCommandColdTransition::CharacterRunEnd,
+                                    );
+                                }
                                 return Err(super::ResidentCommandColdTransition::NeedLine(
                                     identity,
                                 ));
                             }
                             ResidentSourceAdvance::Exhausted(identity) => {
+                                if character_run.is_some() {
+                                    finish_character_run_accounting!();
+                                    return Err(
+                                        super::ResidentCommandColdTransition::CharacterRunEnd,
+                                    );
+                                }
                                 return Err(super::ResidentCommandColdTransition::SourceExhausted(
                                     identity,
                                 ));
@@ -1234,6 +1289,12 @@ impl<G> crate::CommandState<G> {
                                     $inline
                                 );
                                 let Some((word, origin)) = $read else {
+                                    if character_run.is_some() {
+                                        finish_character_run_accounting!();
+                                        return Err(
+                                            super::ResidentCommandColdTransition::CharacterRunEnd,
+                                        );
+                                    }
                                     if let Some(transition) = self
                                         .finish_resident_exhaustion(
                                             resident_index,
@@ -1551,6 +1612,42 @@ impl<G> crate::CommandState<G> {
                     }
                 }
             };
+            if let Some(consume) = character_run.as_deref_mut()
+                && matches!(
+                    self.roots.scanner.status(),
+                    crate::processor::ScannerStatus::Normal
+                )
+                && let tex_state::token::Token::Char {
+                    ch,
+                    cat: tex_state::token::Catcode::Letter | tex_state::token::Catcode::Other,
+                } = word.semantic_token()
+            {
+                if let Err(error) = _fuel.charge() {
+                    finish_character_run_accounting!();
+                    return Err(super::ResidentCommandColdTransition::CharacterRunFailure(
+                        error,
+                    ));
+                }
+                #[cfg(feature = "profiling")]
+                {
+                    character_run_count = character_run_count.saturating_add(1);
+                    character_run_kind = Some(raw_delivery_kind);
+                }
+                if consume(state, _fuel, ch, origin) {
+                    continue 'resident;
+                }
+                finish_character_run_accounting!();
+                return Err(super::ResidentCommandColdTransition::CharacterRunEnd);
+            }
+            if character_run.is_some() {
+                if let Err(error) = _fuel.charge() {
+                    finish_character_run_accounting!();
+                    return Err(super::ResidentCommandColdTransition::CharacterRunFailure(
+                        error,
+                    ));
+                }
+                finish_character_run_accounting!();
+            }
             #[cfg(test)]
             {
                 if generic_stored_delivery {

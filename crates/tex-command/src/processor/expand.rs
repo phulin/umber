@@ -653,6 +653,83 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
+    /// Lends the consecutive ordinary-character prefix of §1038's raw
+    /// lookahead directly to the admitted list builder.
+    ///
+    /// The resident input row stays authoritative. Letter/other tokens charge
+    /// fuel and advance provenance in place without constructing a
+    /// [`CurrentCommand`]; the first non-character is resolved into
+    /// `destination` and continues through the canonical expansion tail.
+    /// Observation keeps scalar delivery so its one-record-per-command
+    /// contract remains exact.
+    pub fn main_loop_character_run_into(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
+        debug_assert!(!self.is_observed());
+        self.invalidate_delivery_freshness();
+        *destination = Some(CurrentCommand::empty());
+        loop {
+            let command = destination
+                .as_mut()
+                .expect("character-run delivery owns its tail destination");
+            let advance = {
+                let diagnostic_effects = &mut *self.diagnostic_effects;
+                let mut consume_character = |state: &mut tex_state::CommandContext<'_, G>,
+                                             fuel: &mut crate::CommandFuel,
+                                             ch,
+                                             origin| {
+                    consume(state, fuel, diagnostic_effects, ch, origin)
+                };
+                self.command.advance_resident_command_or_run_into(
+                    self.state,
+                    self.fuel,
+                    self.create_source_control_sequences,
+                    command.empty_for_raw_delivery(),
+                    (&mut self.observer, &mut self.immediate_write_retirement),
+                    Some(&mut consume_character),
+                )
+            };
+            let interception = match advance {
+                Ok(interception) => interception,
+                Err(ResidentCommandColdTransition::CharacterRunEnd) => {
+                    destination.take();
+                    self.invalidate_delivery_freshness();
+                    return Ok(DeliveryStatus::CharacterRun);
+                }
+                Err(ResidentCommandColdTransition::CharacterRunFailure(error)) => {
+                    destination.take();
+                    self.invalidate_delivery_freshness();
+                    return Err(error);
+                }
+                Err(cold) => match self.settle_resident_cold_transition(cold, command)? {
+                    ResidentColdOutcome::Retry => continue,
+                    ResidentColdOutcome::End => {
+                        destination.take();
+                        return Ok(DeliveryStatus::End);
+                    }
+                    ResidentColdOutcome::ReplayCompleted(episode) => {
+                        destination.take();
+                        return Ok(DeliveryStatus::ReplayCompleted(episode));
+                    }
+                    ResidentColdOutcome::SyntheticCommand(interception) => interception,
+                },
+            };
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+            if command.is_direct_source_delivery() {
+                self.readmit_delivery_stamp(command.delivery_stamp());
+            } else {
+                self.publish_resident_delivery();
+            }
+            if matches!(interception, ResidentCommandInterception::Outer) {
+                Self::check_outer_validity_entry(self, command)?;
+            }
+            return Ok(DeliveryStatus::CharacterRunBoundary);
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn resume_expanded_delivery(
@@ -719,6 +796,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &mut CurrentCommand<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         match cold {
+            ResidentCommandColdTransition::CharacterRunEnd => {
+                unreachable!("scalar delivery cannot end a character run")
+            }
+            ResidentCommandColdTransition::CharacterRunFailure(error) => Err(error),
             ResidentCommandColdTransition::Failure => Err(CommandError::input_invariant()),
             ResidentCommandColdTransition::Empty => {
                 observe!(

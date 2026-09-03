@@ -150,6 +150,76 @@ impl<G> MainControl<G> {
                 let tracked_region_is_active = context.tracked_region_is_active();
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
+                if raw_main_loop_delivery
+                    && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+                    && self.active_alignment.is_none()
+                    && self.operation_observations.is_none()
+                    && !tracked_region_is_active
+                {
+                    let etex_extended = self.command_profile() == CommandProfile::ETEX26;
+                    let mut forbidden_host_facts = CommandMachineHostFacts::Forbidden;
+                    let mut processor = character_run_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut forbidden_host_facts,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    );
+                    let mut count = 0_usize;
+                    let mut continues = true;
+                    let mut apply_error = None;
+                    let status = processor.main_loop_character_run_into(
+                        &mut frame.command,
+                        &mut |context, fuel, diagnostic_effects, ch, origin| {
+                            count = count.saturating_add(1);
+                            if let Err(error) = crate::box_runtime::append_character_with_fuel(
+                                &mut self.modes,
+                                context,
+                                diagnostic_effects,
+                                ch,
+                                origin,
+                                etex_extended,
+                                fuel,
+                            ) {
+                                apply_error = Some(error);
+                                continues = false;
+                                return false;
+                            }
+                            continues = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
+                                context
+                                    .font_char_metrics(context.current_font(), code)
+                                    .is_some()
+                            });
+                            continues
+                        },
+                    );
+                    drop(processor);
+                    if let Some(error) = apply_error {
+                        frame.error = Some(error);
+                        return PreflightReadiness::Failed;
+                    }
+                    match status {
+                        Ok(tex_command::DeliveryStatus::CharacterRun) if count != 0 => {
+                            self.main_loop_active = continues;
+                            host_preparation.fill_applied_direct();
+                            return PreflightReadiness::Ready;
+                        }
+                        Ok(tex_command::DeliveryStatus::CharacterRunBoundary) => {
+                            // The resolved raw tail remains in `frame.command`; the
+                            // ordinary processor below performs §1038's `x_token`.
+                        }
+                        Ok(tex_command::DeliveryStatus::CharacterRun) => {}
+                        Ok(_) => unreachable!(
+                            "borrowed character-run delivery returns a run or raw boundary"
+                        ),
+                        Err(error) => {
+                            frame.error = Some(command_error(error));
+                            return PreflightReadiness::Failed;
+                        }
+                    }
+                }
                 {
                     let mut host_facts = ExecutorHostFacts {
                         modes: &self.modes,
@@ -1090,6 +1160,10 @@ pub(super) fn scan_alignment_delivery_step<G>(
         }
         tex_command::DeliveryStatus::PendingExpanded => {
             unreachable!("alignment delivery commits terminal observations")
+        }
+        tex_command::DeliveryStatus::CharacterRun
+        | tex_command::DeliveryStatus::CharacterRunBoundary => {
+            unreachable!("alignment delivery does not admit main-loop character runs")
         }
     }
 }
@@ -3276,6 +3350,12 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                         }
                         tex_command::DeliveryStatus::PendingExpanded => {
                             unreachable!("alignment delivery commits terminal observations");
+                        }
+                        tex_command::DeliveryStatus::CharacterRun
+                        | tex_command::DeliveryStatus::CharacterRunBoundary => {
+                            unreachable!(
+                                "alignment delivery does not admit main-loop character runs"
+                            );
                         }
                     }
                 }

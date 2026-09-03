@@ -385,6 +385,14 @@ collector (see `src/conditionals.rs`).
   restartable exhaustion pop, retirement observation/alignment/replay settlement,
   without a callback, returned exhaustion result, or diagnostic invalidation
   write. A cold diagnostic boundary instead captures the exposed packed frame;
+  TeX82 §1038's unobserved horizontal character lookahead may lend consecutive
+  letter/other tokens from that same resident front directly to the executor's
+  admitted list builder. It advances and journals the authoritative cursor,
+  charges the run in place, preserves each packed origin, and resolves only the
+  first non-character tail into `CurrentCommand`. Source-line, resident-row,
+  active-alignment, observation, tracked-region, missing-character, and fuel
+  boundaries return to the scalar owner; no borrowed run survives the processor
+  episode.
   source tops add their stable slot and exact line/cursor owner coordinate.
   The resident transition continues immediately from the new top after an
   ordinary token or macro-argument pop, including a v-template that has

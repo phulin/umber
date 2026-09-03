@@ -418,6 +418,68 @@ fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
 }
 
 #[test]
+fn main_loop_character_run_resolves_only_its_non_character_tail() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let ownership_before = crate::command::command_ownership_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        let mut characters = String::new();
+        assert_eq!(
+            processor
+                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
+                    characters.push(ch);
+                    true
+                },)
+                .expect("borrowed character run"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert_eq!(characters, "Ab");
+        assert!(matches!(
+            destination.as_ref().expect("tail command").meaning(),
+            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            })
+        ));
+        drop(processor);
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(
+            ownership_after.resolved_writes - ownership_before.resolved_writes,
+            1,
+            "the borrowed characters never become CurrentCommand values"
+        );
+    });
+}
+
+#[test]
 fn noexpand_suppresses_exactly_one_expandable_delivery() {
     crate::test_harness::with_universe(|universe| {
         let noexpand = install_static(
