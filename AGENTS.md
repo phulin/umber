@@ -140,6 +140,7 @@ bd close <id>
 
 Use Beads for all task tracking and persistent project memory. Do not create
 Markdown TODO lists or ad hoc memory files.
+Do not use `bd remember`; record durable project context on the relevant issue.
 
 Issues live in a local Dolt database and synchronize through `refs/dolt/data`.
 `.beads/issues.jsonl` is a passive export. See the [Beads synchronization documentation](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md) for details and anti-patterns.
