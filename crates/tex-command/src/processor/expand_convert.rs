@@ -1,6 +1,7 @@
 //! TeX and e-TeX conversion and mark primitives.
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning, UnexpandablePrimitive};
+use tex_state::scaled::{PhysicalUnit, scaled_from_decimal_parts};
 use tex_state::token::{OriginId, Token};
 
 use crate::command::{CommandClass, HotCommand};
@@ -187,6 +188,308 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     pub(super) fn compact_the_expression_target(meaning: Meaning) -> bool {
         meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
+    }
+
+    /// Advances the common literal `\the\dimexpr` form.  The full e-TeX
+    /// expression scanner remains the semantic fallback for parenthesized,
+    /// glue, and internal-unit expressions; this compact path handles the
+    /// fixed-point `pt` stream used by nested conversion chains without
+    /// retaining a scalar scanner call frame.
+    pub(super) fn advance_the_dimension_expression_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
+        let control = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let ThePhase::DimensionExpression {
+            target,
+            expression,
+            expression_sign,
+            term,
+            term_operator,
+            term_active,
+            negative,
+            value,
+            fraction,
+            fraction_digits,
+            decimal,
+            unit,
+            seen_digit,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        if target != Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) {
+            return Err(CommandError::input_invariant());
+        }
+
+        let character = command.character_token();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        let is_relax = matches!(
+            command.resolved_meaning(),
+            ResolvedMeaning::Static(Meaning::Relax)
+        );
+        let digit = character
+            .filter(|character| character.is_ascii_digit())
+            .map(|character| i32::from(character as u8 - b'0'));
+        let accumulate = |value: i32, digit: i32| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i32::MAX)
+        };
+        let accumulate_fraction = |fraction: i32, digits: u8, digit: i32| {
+            if digits >= 9 {
+                (fraction, digits)
+            } else {
+                (
+                    fraction.saturating_mul(10).saturating_add(digit),
+                    digits + 1,
+                )
+            }
+        };
+        let factor = |value: i32, fraction: i32, digits: u8, decimal: bool, negative: bool| {
+            let fraction = if decimal && digits != 0 {
+                let mut denominator = 1_i64;
+                for _ in 0..digits.min(9) {
+                    denominator = denominator.saturating_mul(10);
+                }
+                let rounded = (i64::from(fraction)
+                    .saturating_mul(i64::from(tex_state::scaled::Scaled::UNITY))
+                    .saturating_add(denominator / 2))
+                    / denominator;
+                i32::try_from(rounded).unwrap_or(tex_state::scaled::Scaled::UNITY - 1)
+            } else {
+                0
+            };
+            let result = scaled_from_decimal_parts(value, fraction, PhysicalUnit::Pt)
+                .map(|value| value.raw())
+                .unwrap_or(i32::MAX);
+            if negative {
+                result.saturating_neg()
+            } else {
+                result
+            }
+        };
+        let finish = |this: &mut Self,
+                      expression: i32,
+                      expression_sign: i8,
+                      term: i32,
+                      term_active: bool|
+         -> Result<(), CommandError> {
+            let result = expression.saturating_add(
+                i32::from(expression_sign).saturating_mul(if term_active { term } else { 0 }),
+            );
+            let opener = this
+                .command
+                .scratch
+                .pop_the_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            this.expand_the_value(
+                opener,
+                crate::InternalValue::Dimension(tex_state::scaled::Scaled::from_raw(result)),
+            )
+        };
+        let reset = |this: &mut Self,
+                     expression,
+                     expression_sign,
+                     term,
+                     term_operator,
+                     term_active|
+         -> Result<(), CommandError> {
+            this.command
+                .scratch
+                .set_the_phase(ThePhase::DimensionExpression {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative: false,
+                    value: 0,
+                    fraction: 0,
+                    fraction_digits: 0,
+                    decimal: false,
+                    unit: 0,
+                    seen_digit: false,
+                })?;
+            Ok(())
+        };
+
+        if unit == 0 {
+            if is_space && !seen_digit {
+                return Ok(false);
+            }
+            if (character == Some('+') || character == Some('-')) && !seen_digit {
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::DimensionExpression {
+                        target,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        negative: character == Some('-'),
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit,
+                        seen_digit,
+                    })?;
+                return Ok(false);
+            }
+            if let Some(digit) = digit {
+                let value = if decimal {
+                    value
+                } else {
+                    accumulate(value, digit)
+                };
+                let (fraction, fraction_digits) = if decimal {
+                    accumulate_fraction(fraction, fraction_digits, digit)
+                } else {
+                    (fraction, fraction_digits)
+                };
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::DimensionExpression {
+                        target,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit,
+                        seen_digit: true,
+                    })?;
+                return Ok(false);
+            }
+            if (character == Some('.') || character == Some(',')) && !decimal {
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::DimensionExpression {
+                        target,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal: true,
+                        unit,
+                        seen_digit,
+                    })?;
+                return Ok(false);
+            }
+            if character == Some('p') && seen_digit {
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::DimensionExpression {
+                        target,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        negative,
+                        value,
+                        fraction,
+                        fraction_digits,
+                        decimal,
+                        unit: 1,
+                        seen_digit,
+                    })?;
+                return Ok(false);
+            }
+        } else if unit == 1 && character == Some('t') {
+            self.command
+                .scratch
+                .set_the_phase(ThePhase::DimensionExpression {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative,
+                    value,
+                    fraction,
+                    fraction_digits,
+                    decimal,
+                    unit: 2,
+                    seen_digit,
+                })?;
+            return Ok(false);
+        }
+
+        if unit != 2 {
+            if !is_relax {
+                self.back_input(command.materialize())?;
+            }
+            self.missing_number_error()?;
+            finish(self, expression, expression_sign, term, term_active)?;
+            return Ok(true);
+        }
+
+        let current = factor(value, fraction, fraction_digits, decimal, negative);
+        if is_space {
+            // Spaces after a complete factor are scanner separators. Keep
+            // the completed unit marker so the next operator can commit it.
+            return Ok(false);
+        }
+        if character == Some('+') || character == Some('-') {
+            let expression = expression.saturating_add(
+                i32::from(expression_sign).saturating_mul(if term_active { term } else { current }),
+            );
+            reset(
+                self,
+                expression,
+                if character == Some('+') { 1 } else { -1 },
+                0,
+                0,
+                false,
+            )?;
+            return Ok(false);
+        }
+        if is_relax {
+            finish(
+                self,
+                expression,
+                expression_sign,
+                if term_active { term } else { current },
+                true,
+            )?;
+            return Ok(true);
+        }
+        self.back_input(command.materialize())?;
+        finish(
+            self,
+            expression,
+            expression_sign,
+            if term_active { term } else { current },
+            true,
+        )?;
+        Ok(true)
+    }
+
+    pub(super) fn compact_the_dimension_expression_target(meaning: Meaning) -> bool {
+        meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr)
     }
 
     /// Advances the compact register-index phase of `\the`.  Register

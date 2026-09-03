@@ -562,6 +562,121 @@ fn number_integer_expression_uses_the_shared_expression_lane() {
 }
 
 #[test]
+fn the_dimension_expression_lane_preserves_fixed_point_addition() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let dimexpr = install_static(
+            universe,
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::DimExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                the,
+                dimexpr,
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'p',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '+',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'p',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Other,
+                },
+                relax,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(
+            collect_expanded_characters(universe, &mut command),
+            "3.0ptX"
+        );
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
+fn deeply_nested_the_dimension_expressions_stay_on_the_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let dimexpr = install_static(
+            universe,
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::DimExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        for depth in [1_024, 10_240, 100_000] {
+            let mut input = Vec::with_capacity(depth * 3 + 5);
+            for _ in 0..depth {
+                input.extend([the, dimexpr]);
+            }
+            input.extend([
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'p',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Other,
+                },
+            ]);
+            input.extend(std::iter::repeat_n(relax, depth));
+            input.push(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            });
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(
+                collect_expanded_characters(universe, &mut command),
+                "0.0ptX"
+            );
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
+        }
+    });
+}
+
+#[test]
 fn nested_fontname_operands_use_the_shared_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let fontname = install_static(

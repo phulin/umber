@@ -138,6 +138,21 @@ pub(crate) enum ThePhase {
         value: i64,
         seen_digit: bool,
     },
+    DimensionExpression {
+        target: Meaning,
+        expression: i32,
+        expression_sign: i8,
+        term: i32,
+        term_operator: u8,
+        term_active: bool,
+        negative: bool,
+        value: i32,
+        fraction: i32,
+        fraction_digits: u8,
+        decimal: bool,
+        unit: u8,
+        seen_digit: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
