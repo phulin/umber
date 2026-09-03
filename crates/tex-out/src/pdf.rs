@@ -232,12 +232,6 @@ pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
     PdfPaintProgram::rectangles(rectangles).finish()
 }
 
-/// Encodes the compact rectangle-and-text page policy through `pdf_writer`.
-#[must_use]
-pub fn page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
-    PdfPaintProgram::compact(operations).finish()
-}
-
 /// Encodes ordered pdfTeX page operations through the vendored `pdf_writer`.
 #[must_use]
 pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {

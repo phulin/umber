@@ -6,17 +6,12 @@ use super::{PdfContentOperation, PdfContentRectangle, PdfContentRule};
 
 pub(super) enum PdfPaintProgram<'a> {
     Rectangles(&'a [PdfContentRectangle]),
-    Compact(&'a [PdfContentOperation]),
     Ordered(&'a [PdfContentOperation]),
 }
 
 impl<'a> PdfPaintProgram<'a> {
     pub(super) fn rectangles(rectangles: &'a [PdfContentRectangle]) -> Self {
         Self::Rectangles(rectangles)
-    }
-
-    pub(super) fn compact(operations: &'a [PdfContentOperation]) -> Self {
-        Self::Compact(operations)
     }
 
     pub(super) fn ordered(operations: &'a [PdfContentOperation]) -> Self {
@@ -27,24 +22,6 @@ impl<'a> PdfPaintProgram<'a> {
         let mut painter = PdfPainter::new();
         match self {
             Self::Rectangles(rectangles) => painter.compact_rectangles(rectangles),
-            Self::Compact(operations) => {
-                for operation in operations {
-                    if let PdfContentOperation::Rule(rule) = operation {
-                        painter.rule(rule);
-                    }
-                }
-                painter.compact_rectangles(operations.iter().filter_map(
-                    |operation| match operation {
-                        PdfContentOperation::Rectangle(rectangle) => Some(rectangle),
-                        _ => None,
-                    },
-                ));
-                for operation in operations {
-                    if let PdfContentOperation::Text(run) = operation {
-                        painter.text(run);
-                    }
-                }
-            }
             Self::Ordered(operations) => {
                 for operation in operations {
                     painter.ordered(operation);

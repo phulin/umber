@@ -12,7 +12,7 @@ use super::{
     PdfNamesObject, PdfNumber, PdfObject, PdfObjectId, PdfOutlineItemObject, PdfOutlineObject,
     PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfSerializeError,
     PdfThreadObject, PdfTrailer, PdfValue, PdfVersion, UnvalidatedPdfDocument,
-    ordered_page_content, page_content,
+    ordered_page_content,
 };
 use crate::positioned::{BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage};
 use crate::{ContentHash, PageArtifact, PageNode};
@@ -582,7 +582,6 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         let mut page_images = BTreeMap::<Vec<u8>, PdfObjectId>::new();
         let mut page_group_selected = false;
         let mut page_group = None;
-        let mut has_pdf_graphics = false;
         let mut procset = PdfProcSetUsage::default();
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
@@ -858,7 +857,6 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
                 PositionedEvent::PdfGraphics(graphics) => {
-                    has_pdf_graphics = true;
                     let raw_x = graphics
                         .x
                         .checked_add(record.h_origin())
@@ -1065,11 +1063,10 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
             id: contents_id,
             object: PdfObject::Stream {
                 dictionary: PdfDictionary::new(),
-                data: if has_pdf_graphics {
-                    ordered_page_content(&content_operations)
-                } else {
-                    page_content(&content_operations)
-                },
+                // pdftex.web §§729, 731--734 walk the shipped list in node
+                // order. Each rule calls `pdf_set_rule`, which ends the active
+                // text object (§691), before traversal resumes at the next node.
+                data: ordered_page_content(&content_operations),
             },
         });
 

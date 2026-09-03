@@ -75,6 +75,38 @@ fn canonical_rule_paint_selects_strokes_and_fills_at_one_bp() {
 }
 
 #[test]
+fn page_paint_preserves_text_and_rule_node_order() {
+    // pdftex.web §§729, 731--734 visit hlist nodes in order, and §691
+    // ends the current text object immediately before painting each rule.
+    let text = |bytes: &[u8]| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 0.0,
+            exact_position: None,
+            raster: None,
+            baseline: 0.0,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            horizontal_scale: 1.0,
+            bytes: bytes.to_vec(),
+            advance: None,
+        })
+    };
+    let content = String::from_utf8(ordered_page_content(&[
+        text(b"before"),
+        canonical_rule(2 * 65_782, 65_782),
+        text(b"after"),
+    ]))
+    .expect("ASCII content");
+
+    let before = content.find("(before) Tj").expect("first text run");
+    let rule = content.find("[] 0 d").expect("intervening rule");
+    let after = content.find("(after) Tj").expect("second text run");
+    assert!(before < rule && rule < after, "{content}");
+    assert_eq!(content.matches("BT").count(), 2, "{content}");
+    assert_eq!(content.matches("ET").count(), 2, "{content}");
+}
+
+#[test]
 fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
     let bytes = ordered_page_content(&[
         PdfContentOperation::Save {
