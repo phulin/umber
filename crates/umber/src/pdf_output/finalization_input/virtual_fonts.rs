@@ -20,6 +20,7 @@ struct LocalInstance {
     identity: FontSourceIdentity,
     name: String,
     size: Scaled,
+    expansion_ratio: i16,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +133,7 @@ pub(super) fn materialize_destination_font_instances(
                         identity: font_use.identity,
                         name: font.artifact_resource.name.clone(),
                         size: font.artifact_resource.at_size,
+                        expansion_ratio: expansion_ratio(&font.artifact_resource.construction),
                     },
                     code: font_use.code,
                     depth: 0,
@@ -266,7 +268,7 @@ fn register_virtual_local_fonts(
     // resource materialization: an unselected local definition consumes a
     // font number even though it never creates a PDF font dictionary.
     for local in program.program.local_fonts() {
-        let (instance, _) = load_local_instance(resources, parent, local.number)?;
+        let (instance, _, _) = load_local_instance(resources, parent, local.number)?;
         font_numbers.register(instance.identity)?;
     }
     Ok(())
@@ -285,15 +287,24 @@ fn materialize_local_instance(
     font_numbers: &FontNumberTimeline<'_>,
     next_object: &mut u32,
 ) -> Result<LocalInstance, PdfBuildError> {
-    let (instance, loaded) = load_local_instance(resources, parent, number)?;
+    let (instance, loaded, base) = load_local_instance(resources, parent, number)?;
     let LocalInstance {
         identity,
         ref name,
         size,
+        expansion_ratio,
     } = instance;
     let resource_number = font_numbers.number(identity);
     let name = name.clone();
     if !fonts.contains_key(&identity) {
+        let source_identity = base.as_ref().map(tex_fonts::LoadedFont::source_identity);
+        let construction =
+            source_identity.map_or(FontArtifactConstructionRecipe::Loaded, |source_identity| {
+                FontArtifactConstructionRecipe::Expanded {
+                    source_identity,
+                    ratio: expansion_ratio,
+                }
+            });
         let recipe = FontArtifactRecipe {
             name: name.clone(),
             tfm_content_hash: loaded.content_hash(),
@@ -304,7 +315,7 @@ fn materialize_local_instance(
             mapping_fallback: loaded.mapping_fallback(),
             opentype: None,
             semantic_identity: identity,
-            construction: FontArtifactConstructionRecipe::Loaded,
+            construction,
         };
         let map_entry = resolved_map.get(name.as_bytes()).cloned();
         let encoding = map_entry
@@ -370,51 +381,82 @@ fn materialize_local_instance(
             (resource_number, object_number)
         };
         let configuration = pdf.font_configuration();
-        fonts.insert(
-            identity,
-            PdfFontInput {
-                artifact_resource: FontResource {
-                    font_id: 0,
-                    name: name.clone(),
-                    tfm_content_hash: loaded.content_hash(),
-                    tfm_checksum: loaded.checksum(),
-                    design_size: loaded.design_size(),
-                    at_size: loaded.size(),
-                    layout_policy: loaded.layout_policy(),
-                    mapping_fallback: loaded.mapping_fallback(),
-                    opentype: None,
-                    semantic_identity: identity,
-                    construction: FontResourceConstruction::Loaded,
-                },
-                resource_number,
-                object_number,
-                metrics: PdfFontMetricsInput {
-                    widths,
-                    heights,
-                    depths,
-                    x_height: loaded
-                        .parameters()
-                        .get(4)
-                        .copied()
-                        .unwrap_or_else(|| Scaled::from_raw(0)),
-                },
-                included_codes: BTreeSet::new(),
-                descriptor_entries: Vec::new(),
-                generate_to_unicode: configuration.generates_to_unicode(),
-                disable_builtin_to_unicode: false,
-                infer_builtin_glyph_unicode: !glyph_mappings.is_empty(),
-                omit_charset: configuration.omits_charset(),
-                glyph_to_unicode,
-                map_entry,
-                encoding,
-                program,
+        let font_input = PdfFontInput {
+            artifact_resource: FontResource {
+                font_id: 0,
+                name: name.clone(),
+                tfm_content_hash: loaded.content_hash(),
+                tfm_checksum: loaded.checksum(),
+                design_size: loaded.design_size(),
+                at_size: loaded.size(),
+                layout_policy: loaded.layout_policy(),
+                mapping_fallback: loaded.mapping_fallback(),
+                opentype: None,
+                semantic_identity: identity,
+                construction: source_identity.map_or(
+                    FontResourceConstruction::Loaded,
+                    |source_identity| FontResourceConstruction::Expanded {
+                        source_font_id: 0,
+                        source_identity,
+                        ratio: expansion_ratio,
+                    },
+                ),
             },
-        );
+            resource_number,
+            object_number,
+            metrics: PdfFontMetricsInput {
+                widths,
+                heights,
+                depths,
+                x_height: loaded
+                    .parameters()
+                    .get(4)
+                    .copied()
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+            },
+            included_codes: BTreeSet::new(),
+            descriptor_entries: Vec::new(),
+            generate_to_unicode: configuration.generates_to_unicode(),
+            disable_builtin_to_unicode: false,
+            infer_builtin_glyph_unicode: !glyph_mappings.is_empty(),
+            omit_charset: configuration.omits_charset(),
+            glyph_to_unicode,
+            map_entry,
+            encoding,
+            program,
+        };
+        if let (Some(base), Some(source_identity)) = (base, source_identity) {
+            let mut source_input = font_input.clone();
+            source_input.artifact_resource.semantic_identity = source_identity;
+            source_input.artifact_resource.construction = FontResourceConstruction::Loaded;
+            let metrics = base.metrics();
+            source_input.metrics = PdfFontMetricsInput {
+                widths: *metrics.widths(),
+                heights: std::array::from_fn(|code| {
+                    metrics
+                        .character(code as u8)
+                        .map_or(Scaled::from_raw(0), |metric| metric.height)
+                }),
+                depths: std::array::from_fn(|code| {
+                    metrics
+                        .character(code as u8)
+                        .map_or(Scaled::from_raw(0), |metric| metric.depth)
+                }),
+                x_height: base
+                    .parameters()
+                    .get(4)
+                    .copied()
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+            };
+            fonts.entry(source_identity).or_insert(source_input);
+        }
+        fonts.insert(identity, font_input);
     }
     Ok(LocalInstance {
         identity,
         name,
         size,
+        expansion_ratio,
     })
 }
 
@@ -422,7 +464,14 @@ fn load_local_instance(
     resources: &crate::PdfVirtualFontResources,
     parent: &LocalInstance,
     number: i32,
-) -> Result<(LocalInstance, tex_fonts::LoadedFont), PdfBuildError> {
+) -> Result<
+    (
+        LocalInstance,
+        tex_fonts::LoadedFont,
+        Option<tex_fonts::LoadedFont>,
+    ),
+    PdfBuildError,
+> {
     let program = resources
         .virtual_fonts
         .get(&parent.name)
@@ -450,20 +499,39 @@ fn load_local_instance(
             message: format!("{error:?}"),
         },
     )?;
-    let loaded = tfm.into_loaded_font(
+    let base = tfm.into_loaded_font(
         name.clone(),
         PathBuf::from(format!("{name}.tfm")),
         tex_fonts::font_content_hash(&cached.bytes),
     );
+    // pdftex.web's `vf_expand_local_fonts` recursively copies the enclosing
+    // virtual font's expansion parameters to its local fonts. Materialize the
+    // expanded leaf and retain its base resource for §690's shared PDF font.
+    let (loaded, base) = if parent.expansion_ratio == 0 {
+        (base, None)
+    } else {
+        (base.expanded(parent.expansion_ratio), Some(base))
+    };
     let identity = loaded.source_identity();
     Ok((
         LocalInstance {
             identity,
             name,
             size,
+            expansion_ratio: parent.expansion_ratio,
         },
         loaded,
+        base,
     ))
+}
+
+fn expansion_ratio(construction: &FontResourceConstruction) -> i16 {
+    match construction {
+        FontResourceConstruction::Expanded { ratio, .. } => *ratio,
+        FontResourceConstruction::Loaded
+        | FontResourceConstruction::Copied { .. }
+        | FontResourceConstruction::Letterspaced { .. } => 0,
+    }
 }
 
 #[cfg(test)]

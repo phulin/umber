@@ -578,6 +578,37 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
 }
 
 #[test]
+fn expanded_virtual_font_propagates_its_ratio_to_a_real_leaf() {
+    // pdftex.web's `vf_expand_local_fonts` recursively transfers expansion
+    // parameters to local fonts; §690 then emits the leaf with that Tm scale.
+    let bytes = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let loaded = tex_fonts::TfmFont::parse_with_size(
+        bytes,
+        tex_arith::FontSizeSpec::At(Scaled::from_raw(10 * Scaled::UNITY)),
+    )
+    .expect("test TFM")
+    .into_loaded_font(
+        "cmr10",
+        std::path::PathBuf::from("cmr10.tfm"),
+        tex_fonts::font_content_hash(bytes),
+    );
+    let base = loaded.source_identity();
+    let parent = crate::FontResourceConstruction::Expanded {
+        source_font_id: 1,
+        source_identity: tex_fonts::FontSourceIdentity::from_bytes([3; 8]),
+        ratio: -20,
+    };
+
+    let leaf = super::vf::virtual_local_font(loaded, &parent);
+
+    assert!(matches!(
+        leaf.construction(),
+        tex_fonts::FontConstruction::Expanded { source, ratio }
+            if *source == base && *ratio == -20
+    ));
+}
+
+#[test]
 fn pdftex_scalable_width_keeps_its_one_decimal_raster() {
     // pdftex.web §690: `adv_char_width` and `/Widths` share a 1/10000
     // font-size raster, serialized as one decimal place in text-space units.

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
-use tex_fonts::{FontSourceIdentity, TfmFont, VfCommand, VfProgram};
+use tex_fonts::{FontMetrics, FontSourceIdentity, TfmFont, VfCommand, VfProgram};
 
 use crate::positioned::{
     PositionedEvent, PositionedPage, PositionedPdfGraphics, PositionedRule, PositionedTextRun,
@@ -50,7 +50,7 @@ struct Lowerer<'a> {
     input: &'a PdfFinalizationInput,
     programs: BTreeMap<Vec<u8>, Arc<VfProgram>>,
     instances: BTreeMap<(FontSourceIdentity, i32), FontSourceIdentity>,
-    instance_metrics: BTreeMap<FontSourceIdentity, TfmFont>,
+    instance_metrics: BTreeMap<FontSourceIdentity, FontMetrics>,
     font_programs: BTreeMap<FontSourceIdentity, (Vec<u8>, Arc<VfProgram>)>,
     real_fonts: BTreeSet<FontSourceIdentity>,
     active: Vec<(FontSourceIdentity, u32)>,
@@ -356,7 +356,7 @@ impl Lowerer<'_> {
                 number,
             })?;
         let name = String::from_utf8(local.logical_name())
-            .map_err(|_| PdfBuildError::InvalidVirtualLocalFontName(parent_display))?;
+            .map_err(|_| PdfBuildError::InvalidVirtualLocalFontName(parent_display.clone()))?;
         let size = scale_fix(local.scaled_size, parent_size)?;
         let enclosing = self
             .input
@@ -393,18 +393,28 @@ impl Lowerer<'_> {
                     message: format!("{error:?}"),
                 }
             })?;
-        let identity = tfm
-            .clone()
-            .into_loaded_font(
-                name.clone(),
-                PathBuf::from(format!("{name}.tfm")),
-                cached.content_hash,
-            )
-            .source_identity();
+        let loaded = tfm.into_loaded_font(
+            name.clone(),
+            PathBuf::from(format!("{name}.tfm")),
+            cached.content_hash,
+        );
+        // pdftex.web's `vf_expand_local_fonts` gives every recursively
+        // selected VF-local font the containing virtual font's expansion.
+        // Reconstruct that realized leaf identity at the detached boundary;
+        // otherwise lowering silently selects the unexpanded base font and
+        // pdftex.web §690's horizontal text-matrix scale is lost.
+        let parent_resource = self
+            .input
+            .fonts
+            .get(&parent_font)
+            .ok_or_else(|| PdfBuildError::MissingFontResource(parent_display.clone()))?;
+        let loaded = virtual_local_font(loaded, &parent_resource.artifact_resource.construction);
+        let identity = loaded.source_identity();
         if !self.input.fonts.contains_key(&identity) {
             return Err(PdfBuildError::MissingFontResource(name));
         }
-        self.instance_metrics.insert(identity, tfm);
+        self.instance_metrics
+            .insert(identity, loaded.metrics().clone());
         self.instances.insert(key, identity);
         Ok(identity)
     }
@@ -507,7 +517,7 @@ impl Lowerer<'_> {
     fn character_width(&self, font: FontSourceIdentity, code: u8) -> Result<Scaled, PdfBuildError> {
         self.instance_metrics
             .get(&font)
-            .and_then(|tfm| tfm.metrics().character(code))
+            .and_then(|metrics| metrics.character(code))
             .map(|metrics| metrics.width)
             .or_else(|| {
                 self.input
@@ -536,6 +546,18 @@ impl Lowerer<'_> {
             ));
         }
         Ok(())
+    }
+}
+
+pub(super) fn virtual_local_font(
+    loaded: tex_fonts::LoadedFont,
+    parent: &crate::FontResourceConstruction,
+) -> tex_fonts::LoadedFont {
+    match parent {
+        crate::FontResourceConstruction::Expanded { ratio, .. } => loaded.expanded(*ratio),
+        crate::FontResourceConstruction::Loaded
+        | crate::FontResourceConstruction::Copied { .. }
+        | crate::FontResourceConstruction::Letterspaced { .. } => loaded,
     }
 }
 
