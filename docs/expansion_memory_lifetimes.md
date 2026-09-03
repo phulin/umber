@@ -76,6 +76,13 @@ The implementation therefore has at most two live revision generations: the opti
 prior accepted generation and the exclusively leased current candidate. There
 is no third historical arena and no chunk-by-chunk history.
 
+Ordinary macro-argument and `scan_toks` collection keeps its shared brace and
+first-token cursor on the Rust stack beside the caller-owned output sink.
+Already-admitted plain input spans advance that cursor and the sink once per
+run, without a second pending-facts representation. A `scan_toks` continuation
+is published into reusable execution scratch only when immutable-resource
+acquisition actually suspends the operation.
+
 ## Lifetime matrix
 
 "May cross" below means that the value may intentionally survive the named

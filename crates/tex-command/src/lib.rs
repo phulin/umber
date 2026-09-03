@@ -84,6 +84,7 @@ mod processor;
 mod profile;
 mod scalar_journal;
 mod scan_toks;
+mod scanner_kernel;
 mod scanners;
 mod snapshot;
 mod state;

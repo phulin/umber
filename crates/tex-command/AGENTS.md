@@ -73,6 +73,11 @@ collector (see `src/conditionals.rs`).
   definition retains its transactional build key, while a raw definition is
   synchronous and never enters the lane. Every other typed continuation remains
   in the bounded heterogeneous continuation lane.
+- `src/scanner_kernel.rs`: stack-local non-suspending scanner cursor shared by
+  macro arguments and `scan_toks`. It keeps brace and first-token facts beside
+  the caller-owned output sink and settles already-admitted plain input runs
+  once; only a real external suspension promotes the surrounding scanner state
+  into retained scratch.
 - `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
   `src/expansion_work/tests.rs`: current-generation parked-expansion owner used
   only after a real immutable-resource suspension. Fixed command and typed

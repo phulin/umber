@@ -435,53 +435,6 @@ impl MacroArgumentFacts {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct PendingArgumentFacts {
-    rejects_non_long_paragraph: bool,
-    word_count: u32,
-    outer_group_candidate: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(i8)]
-enum ArgumentBraceDelta {
-    Close = -1,
-    Neither = 0,
-    Open = 1,
-}
-
-const _: () = assert!(core::mem::size_of::<ArgumentBraceDelta>() == 1);
-
-impl PendingArgumentFacts {
-    fn settle(
-        &mut self,
-        token: ClassifiedToken,
-        paragraph_checked: bool,
-        brace_depth_before: u32,
-    ) -> ArgumentBraceDelta {
-        self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
-        let brace_delta = match token.spelling().literal_catcode() {
-            Some(Catcode::BeginGroup) => ArgumentBraceDelta::Open,
-            Some(Catcode::EndGroup) => ArgumentBraceDelta::Close,
-            _ => ArgumentBraceDelta::Neither,
-        };
-        if self.word_count == 0 {
-            self.outer_group_candidate = brace_delta == ArgumentBraceDelta::Open;
-        } else if brace_depth_before == 0 {
-            self.outer_group_candidate = false;
-        }
-        self.word_count = self.word_count.saturating_add(1);
-        brace_delta
-    }
-
-    const fn seal(self, brace_depth: u32) -> MacroArgumentFacts {
-        MacroArgumentFacts {
-            rejects_non_long_paragraph: self.rejects_non_long_paragraph,
-            removable_outer_group: self.outer_group_candidate && brace_depth == 0,
-        }
-    }
-}
-
 /// Purpose-built stack-local writer for one pending macro argument.
 ///
 /// Range, brace, first-scan, trimming, and delimiter-prefix state live here
@@ -493,20 +446,22 @@ pub(crate) struct MacroArgumentWriter<G> {
     slot: u8,
     start: u32,
     append: MacroAppendPosition,
-    facts: PendingArgumentFacts,
+    cursor: crate::scanner_kernel::ScannerCursor,
     end_trim: u8,
     delimiter_start: usize,
     delimiter_head: usize,
-    brace_depth: u32,
 }
 
 impl<G> MacroArgumentWriter<G> {
     pub(crate) const fn brace_depth(&self) -> u32 {
-        self.brace_depth
+        self.cursor.brace_depth()
     }
 
     pub(crate) const fn facts(&self) -> MacroArgumentFacts {
-        self.facts.seal(self.brace_depth)
+        MacroArgumentFacts {
+            rejects_non_long_paragraph: self.cursor.rejects_non_long_paragraph(),
+            removable_outer_group: self.cursor.removable_outer_group(),
+        }
     }
 
     pub(crate) fn strip_outer_group(&mut self) -> Result<(), ScratchError> {
@@ -762,6 +717,61 @@ impl MacroWordLane {
         Ok(())
     }
 
+    /// Writes one already-admitted plain-character run to the caller-owned
+    /// destination. Provenance and the physical append coordinate settle at
+    /// run granularity; a chunk boundary is the only cold re-admission point.
+    fn append_cell_run_at(
+        &mut self,
+        position: &mut MacroAppendPosition,
+        words: &[Cell<TokenWord>],
+        origin: OriginId,
+    ) -> Result<u32, ScratchError> {
+        let count = u32::try_from(words.len()).map_err(|_| ScratchError::CapacityOverflow)?;
+        if count == 0 {
+            return Ok(0);
+        }
+        for word in words {
+            self.append_at(position, TracedTokenWord::from_parts(word.get(), origin))?;
+        }
+        Ok(count)
+    }
+
+    /// Transfers one plain prefix between two admitted coordinates in this
+    /// lane. Source classification, provenance movement, and destination
+    /// advancement happen in one pass; no temporary traced-token row or
+    /// preliminary counting pass is materialized.
+    fn append_plain_range_at<G>(
+        &mut self,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        destination: &mut MacroAppendPosition,
+        limit: usize,
+    ) -> Result<u32, ScratchError> {
+        let mut consumed = 0_u32;
+        let start = source
+            .start
+            .checked_add(position)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        while consumed < u32::try_from(limit).unwrap_or(u32::MAX) {
+            let absolute = start
+                .checked_add(consumed)
+                .ok_or(ScratchError::CapacityOverflow)?;
+            if absolute >= source.end {
+                break;
+            }
+            let (word, origin) = self
+                .get_sequential_parts(absolute, origin_run)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            if !plain_macro_scan_word(word) {
+                break;
+            }
+            self.append_at(destination, TracedTokenWord::from_parts(word, origin))?;
+            consumed += 1;
+        }
+        Ok(consumed)
+    }
+
     fn get(&self, index: u32) -> Option<TracedTokenWord> {
         if index >= self.len {
             return None;
@@ -813,44 +823,6 @@ impl MacroWordLane {
             .words
             .get(index % MACRO_WORD_RESERVE)?;
         Some((word, origin))
-    }
-
-    /// Lends the physical and provenance-contiguous span beginning at
-    /// `index`. The run cursor is admitted once and advances only when the
-    /// caller reaches a real provenance boundary.
-    fn with_sequential_span<R>(
-        &self,
-        index: u32,
-        end: u32,
-        run: &mut u32,
-        consume: impl FnOnce(&[TokenWord], OriginId) -> R,
-    ) -> Option<R> {
-        if index >= end || end > self.len {
-            return None;
-        }
-        let mut run_index = *run as usize;
-        if self
-            .origins
-            .get(run_index + 1)
-            .is_some_and(|next| next.start <= index)
-        {
-            run_index += 1;
-            *run = u32::try_from(run_index).ok()?;
-        }
-        let origin = self.origins.get(run_index)?.origin;
-        let next_origin = self
-            .origins
-            .get(run_index + 1)
-            .map_or(end, |next| next.start.min(end));
-        let index_usize = index as usize;
-        let chunk = self.active.get(index_usize / MACRO_WORD_RESERVE)?;
-        let offset = index_usize % MACRO_WORD_RESERVE;
-        let physical_end =
-            ((index_usize / MACRO_WORD_RESERVE + 1) * MACRO_WORD_RESERVE).min(next_origin as usize);
-        Some(consume(
-            &chunk.words[offset..offset + physical_end - index_usize],
-            origin,
-        ))
     }
 
     /// Moves one unpublished pending-frame suffix into the dead prefix left by
@@ -1592,11 +1564,10 @@ impl<G> ExecutionScratch<G> {
             slot: argument_slot,
             start,
             append,
-            facts: PendingArgumentFacts::default(),
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
             end_trim: 0,
             delimiter_start,
             delimiter_head: delimiter_start,
-            brace_depth: 0,
         })
     }
 
@@ -1615,24 +1586,13 @@ impl<G> ExecutionScratch<G> {
     ) -> Result<u32, ScratchError> {
         self.macro_words
             .append_at(&mut writer.append, token.word())?;
-        match writer
-            .facts
-            .settle(token, paragraph_checked, writer.brace_depth)
-        {
-            ArgumentBraceDelta::Open => {
-                writer.brace_depth = writer.brace_depth.saturating_add(1);
-            }
-            ArgumentBraceDelta::Close => {
-                writer.brace_depth = writer.brace_depth.saturating_sub(1);
-            }
-            ArgumentBraceDelta::Neither => {}
-        }
+        let brace_depth = writer.cursor.settle_argument(token, paragraph_checked);
         #[cfg(test)]
         {
             self.match_writer_appends = self.match_writer_appends.saturating_add(1);
             self.match_writer_fact_updates = self.match_writer_fact_updates.saturating_add(1);
         }
-        Ok(writer.brace_depth)
+        Ok(brace_depth)
     }
 
     /// Appends one already-classified ordinary span to the resident writer.
@@ -1647,11 +1607,10 @@ impl<G> ExecutionScratch<G> {
         words: &[Cell<TokenWord>],
         origin: OriginId,
     ) -> Result<(), ScratchError> {
-        for word in words {
-            let token =
-                ClassifiedToken::from_word(TracedTokenWord::from_parts(word.get(), origin), None);
-            self.append_argument_token(writer, token, true)?;
-        }
+        let count = self
+            .macro_words
+            .append_cell_run_at(&mut writer.append, words, origin)?;
+        writer.cursor.settle_plain_run(count);
         Ok(())
     }
 
@@ -1667,30 +1626,15 @@ impl<G> ExecutionScratch<G> {
         writer: &mut MacroArgumentWriter<G>,
         limit: usize,
     ) -> Result<u32, ScratchError> {
-        let mut run = *origin_run;
-        let count = self
-            .with_admitted_argument_span(source, position, &mut run, |words, _| {
-                words
-                    .iter()
-                    .take(limit)
-                    .take_while(|word| plain_macro_scan_word(**word))
-                    .count()
-            })
-            .unwrap_or(0);
-        for offset in 0..count {
-            let absolute = source
-                .start
-                .checked_add(position)
-                .and_then(|position| position.checked_add(offset as u32))
-                .ok_or(ScratchError::CapacityOverflow)?;
-            let (word, origin) = self
-                .macro_words
-                .get_sequential_parts(absolute, origin_run)
-                .ok_or(ScratchError::InvalidCoordinate)?;
-            let token = ClassifiedToken::from_word(TracedTokenWord::from_parts(word, origin), None);
-            self.append_argument_token(writer, token, true)?;
-        }
-        Ok(count as u32)
+        let count = self.macro_words.append_plain_range_at(
+            source,
+            position,
+            origin_run,
+            &mut writer.append,
+            limit,
+        )?;
+        writer.cursor.settle_plain_run(count);
+        Ok(count)
     }
 
     pub(crate) fn match_words(
@@ -1732,7 +1676,7 @@ impl<G> ExecutionScratch<G> {
             .checked_sub(writer.start)
             .and_then(|len| len.checked_sub(u32::from(writer.end_trim)))
             .ok_or(ScratchError::InvalidCoordinate)?;
-        let settled_facts = writer.facts.seal(writer.brace_depth);
+        let settled_facts = writer.facts();
         let slot = &mut self.macro_slots[slot_index];
         slot.arguments[usize::from(writer.slot)] = PackedArgument {
             range: PackedRange {
@@ -2051,18 +1995,6 @@ impl<G> ExecutionScratch<G> {
         } else {
             Err(ScratchError::InvalidCoordinate)
         }
-    }
-
-    pub(crate) fn with_admitted_argument_span<R>(
-        &self,
-        range: MacroArgumentRange<G>,
-        position: u32,
-        origin_run: &mut u32,
-        consume: impl FnOnce(&[TokenWord], OriginId) -> R,
-    ) -> Option<R> {
-        let absolute = range.start.checked_add(position)?;
-        self.macro_words
-            .with_sequential_span(absolute, range.end, origin_run, consume)
     }
 
     pub(crate) fn argument_word_len(&self) -> usize {

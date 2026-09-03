@@ -67,6 +67,7 @@ impl ClassifiedToken {
         }
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<TokenWord>) -> Self {
         Self {
             word,
@@ -147,7 +148,7 @@ pub(crate) enum TokenCollectorPhase {
 pub(crate) struct TokenCollector<G> {
     destination: TokenCollectorDestination<G>,
     phase: TokenCollectorPhase,
-    brace_depth: u32,
+    cursor: crate::scanner_kernel::ScannerCursor,
     pending_parameter: Option<PendingParameter>,
 }
 
@@ -163,7 +164,7 @@ impl<G> TokenCollector<G> {
                 parameter_result: None,
             },
             phase: TokenCollectorPhase::Parameter,
-            brace_depth: 0,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
         }
     }
@@ -172,7 +173,7 @@ impl<G> TokenCollector<G> {
         Self {
             destination: TokenCollectorDestination::Definition { definition },
             phase: TokenCollectorPhase::Parameter,
-            brace_depth: 0,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
         }
     }
@@ -181,7 +182,7 @@ impl<G> TokenCollector<G> {
         Self {
             destination: TokenCollectorDestination::AttemptDefinition { definition },
             phase: TokenCollectorPhase::Parameter,
-            brace_depth: 0,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
         }
     }
@@ -199,7 +200,7 @@ impl<G> TokenCollector<G> {
                     .then(Vec::new),
             },
             phase: TokenCollectorPhase::Parameter,
-            brace_depth: 0,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
             pending_parameter: None,
         }
     }
@@ -213,7 +214,7 @@ impl<G> TokenCollector<G> {
             return Err(());
         }
         self.phase = TokenCollectorPhase::Replacement;
-        self.brace_depth = 1;
+        self.cursor.open_balanced_body();
         Ok(())
     }
 
@@ -252,12 +253,7 @@ impl<G> TokenCollector<G> {
         if self.phase != TokenCollectorPhase::Replacement {
             return Err(());
         }
-        if token.spelling_is_begin_group() {
-            self.brace_depth = self.brace_depth.saturating_add(1);
-        } else if token.spelling_is_end_group() && self.brace_depth != 0 {
-            self.brace_depth -= 1;
-        }
-        Ok(token.spelling_is_end_group() && self.brace_depth == 0)
+        Ok(self.cursor.settle_balanced(token))
     }
 
     pub(crate) fn set_pending_parameter(&mut self, pending: PendingParameter) -> Result<(), ()> {

@@ -12,7 +12,7 @@ use crate::{CommandProcessor, CommandState};
 use crate::observation::{CommandObservation, ScannerStatusRecord};
 
 /// Persistent scanner status and the warning context owned by that status.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ScannerState {
     status: ScannerStatus,
     warning: Option<ScannerWarning>,
@@ -91,22 +91,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// [`Self::finish_scanner_episode`] on every normal or recoverable exit;
     /// outer-validity recovery may clear the live state in between without
     /// losing the canonical exit transition.
+    #[inline(always)]
     pub(crate) fn begin_scanner_episode(
         &mut self,
         status: ScannerStatus,
         visibility: ScannerStatusVisibility,
     ) -> ScannerEpisode {
-        let prior = self.command.begin_scanner_status(status.clone());
-        if visibility.is_observed() {
-            self.observe_scanner_status_transition(
-                prior.status().clone(),
-                self.command.scanner.status().clone(),
-            );
+        let prior = self.command.begin_scanner_status(status);
+        let observed = visibility.is_observed() && self.is_observed();
+        if observed {
+            self.observe_scanner_status_transition(*prior.status(), *self.command.scanner.status());
         }
         ScannerEpisode {
             installed: status,
             prior,
-            visibility,
+            observed,
         }
     }
 
@@ -119,11 +118,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !matches!(self.command.scanner.status(), ScannerStatus::Normal) {
             return;
         }
-        let displaced = self.command.begin_scanner_status(episode.installed.clone());
-        if episode.visibility.is_observed() {
+        let displaced = self.command.begin_scanner_status(episode.installed);
+        if episode.observed {
             self.observe_scanner_status_transition(
-                displaced.status().clone(),
-                self.command.scanner.status().clone(),
+                *displaced.status(),
+                *self.command.scanner.status(),
             );
         }
     }
@@ -131,7 +130,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Publishes an episode's recovery-aware exit and restores its complete
     /// prior scanner state.
     pub(crate) fn finish_scanner_episode(&mut self, episode: ScannerEpisode) {
-        if episode.visibility.is_observed() {
+        if episode.observed {
             self.restore_scanner_status_with_observation(episode.installed, episode.prior);
         } else {
             self.command.restore_scanner_status(episode.prior);
@@ -164,7 +163,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         installed: ScannerStatus,
         prior: ScannerState,
     ) {
-        let current = self.command.scanner.status().clone();
+        let current = *self.command.scanner.status();
         let from = if matches!(current, ScannerStatus::Normal)
             && !matches!(installed, ScannerStatus::Normal)
         {
@@ -172,7 +171,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             current
         };
-        self.observe_scanner_status_transition(from, prior.status().clone());
+        self.observe_scanner_status_transition(from, *prior.status());
         self.command.restore_scanner_status(prior);
     }
 }
@@ -191,16 +190,18 @@ impl ScannerStatusVisibility {
 }
 
 /// Processor-owned lifetime of one live scanner-status installation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScannerEpisode {
     installed: ScannerStatus,
     prior: ScannerState,
-    visibility: ScannerStatusVisibility,
+    /// Observation eligibility is settled once at admission. An ordinary
+    /// unobserved scan never enters name translation or observer dispatch.
+    observed: bool,
 }
 
 /// Typed shell for TeX's live `scanner_status`.
 #[allow(dead_code)] // status variants are installed by later scanner callers
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) enum ScannerStatus {
     #[default]
     Normal,
@@ -333,7 +334,7 @@ pub(crate) struct RecoveryContext {
 impl ScannerState {
     pub(crate) fn recovery_context(&self) -> RecoveryContext {
         RecoveryContext {
-            status: self.status.clone(),
+            status: self.status,
             warning: self.warning,
         }
     }
