@@ -791,6 +791,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
             let roots_address = destination.definitions.as_ptr();
             let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
             let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let trace_start = tex_state::measurement::hot_core_allocation_trace_cursor();
             {
                 let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
                 state
@@ -798,6 +799,34 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                     .expect("measured resident promotion");
             }
             let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+            let trace_end = tex_state::measurement::hot_core_allocation_trace_cursor();
+            let trace_entries = (trace_start..trace_end)
+                .filter_map(tex_state::measurement::hot_core_allocation_trace_entry)
+                .filter(|entry| entry.owner == owner)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                trace_entries.len(),
+                (after.calls - before.calls) as usize,
+                "every measured semantic-apply allocation has one trace entry"
+            );
+            if repetitions == 4_096 {
+                let payload_bytes = 4_096 * std::mem::size_of::<tex_state::token::TokenWord>();
+                let combined_chunk_lower_bound = payload_bytes + 2 * std::mem::size_of::<usize>();
+                assert!(
+                    trace_entries.iter().any(|entry| {
+                        entry.requested_bytes >= combined_chunk_lower_bound
+                            && entry.requested_bytes
+                                <= combined_chunk_lower_bound + std::mem::size_of::<usize>()
+                    }),
+                    "the overflow payload and Rc header must share one allocation: {trace_entries:?}"
+                );
+                assert!(
+                    !trace_entries
+                        .iter()
+                        .any(|entry| entry.requested_bytes == payload_bytes),
+                    "no standalone fixed overflow payload allocation: {trace_entries:?}"
+                );
+            }
 
             let address_changes = usize::from(std::ptr::from_ref(&state) != state_address)
                 + usize::from(std::ptr::from_ref(state.attempt.arena()) != attempt_address)

@@ -488,10 +488,15 @@ impl DefinitionRegion {
 /// which can write them, while admitted readers retain an `Rc` to this block
 /// and load a slot without borrowing the region directory. The two variants
 /// keep the small common prefix cheap while giving overflow blocks a uniform
-/// per-physical-chunk handle.
+/// per-physical-chunk handle. Overflow payloads live inline in the reference-
+/// counted object so each physical chunk has exactly one heap allocation.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the fixed overflow payload must remain inline in its Rc allocation"
+)]
 enum DefinitionWordChunk {
     Inline([Cell<TokenWord>; INLINE_DEFINITION_WORD_CAPACITY]),
-    Overflow(Box<[Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]>),
+    Overflow([Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]),
 }
 
 impl DefinitionWordChunk {
@@ -499,20 +504,13 @@ impl DefinitionWordChunk {
         Self::Inline(std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))))
     }
 
-    fn new_overflow() -> Result<Self, DefinitionBuildError> {
-        Ok(Self::Overflow(Self::try_new_words()?))
-    }
-
-    fn try_new_words<const N: usize>() -> Result<Box<[Cell<TokenWord>; N]>, DefinitionBuildError> {
-        let mut words = Vec::new();
-        words
-            .try_reserve_exact(N)
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
-        words.resize_with(N, || Cell::new(TokenWord::from_raw(0)));
-        words
-            .into_boxed_slice()
-            .try_into()
-            .map_err(|_| DefinitionBuildError::AllocationFailed)
+    /// Initializes one cold overflow payload before moving it into its single
+    /// `Rc` allocation. The bounded stack temporary is released when this
+    /// non-recursive constructor returns; it is never retained per chunk.
+    #[cold]
+    #[inline(never)]
+    fn new_overflow() -> Self {
+        Self::Overflow(std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))))
     }
 
     #[inline(always)]
@@ -557,8 +555,8 @@ struct DefinitionRegionOwner {
     /// that owns this storage without becoming self-referential. Keeping the
     /// overflow directory flat makes the required short reborrow one checked,
     /// constant-time slot access instead of a linked-page walk. Tiny regions
-    /// never acquire an overflow block. The boxed word arrays never move and
-    /// have no owner or lifetime independent of this region.
+    /// never acquire an overflow block. Each overflow payload is part of its
+    /// `Rc` allocation and has no owner or lifetime independent of this region.
     inline_words: Rc<DefinitionWordChunk>,
     overflow_words: RefCell<Vec<Rc<DefinitionWordChunk>>>,
     headers: RefCell<Vec<DefinitionHeader>>,
@@ -598,7 +596,7 @@ impl DefinitionRegionOwner {
                 .try_reserve_exact(additional)
                 .map_err(|_| DefinitionBuildError::AllocationFailed)?;
             while words.len() <= chunk {
-                words.push(Rc::new(DefinitionWordChunk::new_overflow()?));
+                words.push(Rc::new(DefinitionWordChunk::new_overflow()));
             }
         }
         Ok(())
