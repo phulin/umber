@@ -22,7 +22,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. If writing tests, read `docs/testing_policy.md`.
 - Make sure you can run the test suite very quickly so we don't gate our progress on test su ite speed. Run `cargo test` with `--tests` so you don't run the doctests.
 - Limit `rg` output aggressively - you can easily fill up your context with it.
-- Codex: For `wait` and `write_stdin`, schedule timeout of at least 180s, and for `wait_agent`, 600s.
+- Codex: For `wait` and `write_stdin`, schedule timeout of at least 10m, and for `wait_agent`, 30m.
 - To the extent possible, combine adjacent commands into one (e.g. use && to sequence a commit IF tests pass).
 - Working a canonical-command (`umber2-johp`) semantic or DVI divergence: read
   [Canonical Divergence Working Contract](docs/canonical_divergence_workflow.md)
