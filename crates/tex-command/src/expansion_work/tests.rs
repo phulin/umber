@@ -57,7 +57,9 @@ fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
     let key = work
         .park_suspension(crate::state::PendingExpansion {
             command: empty_command(),
-            resume: crate::state::PendingExpansionResume::The,
+            resume: crate::state::PendingExpansionResume::The {
+                opener: tex_state::token::OriginId::UNKNOWN,
+            },
             delivery_expanded: true,
             child: None,
         })
@@ -440,7 +442,9 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
     let outer = work
         .park_suspension(crate::state::PendingExpansion {
             command: empty_command(),
-            resume: crate::state::PendingExpansionResume::The,
+            resume: crate::state::PendingExpansionResume::The {
+                opener: tex_state::token::OriginId::UNKNOWN,
+            },
             delivery_expanded: false,
             child: None,
         })
@@ -467,7 +471,12 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
     );
     assert!(inner.delivery_expanded);
     let outer = work.resume_suspension(outer).expect("outer resumes second");
-    assert_eq!(outer.resume, crate::state::PendingExpansionResume::The);
+    assert_eq!(
+        outer.resume,
+        crate::state::PendingExpansionResume::The {
+            opener: tex_state::token::OriginId::UNKNOWN,
+        }
+    );
     assert!(!outer.delivery_expanded);
     assert!(work.is_quiescent());
     assert_eq!(work.counters().stale_key_rejections, 1);

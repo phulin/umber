@@ -324,7 +324,9 @@ pub(crate) enum PendingExpansionResume {
     PdfMarginKern {
         primitive: tex_state::meaning::ExpandablePrimitive,
     },
-    The,
+    The {
+        opener: tex_state::token::OriginId,
+    },
     FontName,
     MarkClass {
         primitive: tex_state::meaning::ExpandablePrimitive,

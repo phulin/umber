@@ -834,6 +834,7 @@ impl<G> ExpansionWork<G> {
             && self.controls.len() == 0
             && self.commands.len() == 0
             && self.names.len == 0
+            && self.driver.continuation_depth == 0
     }
 
     pub(crate) const fn counters(&self) -> ExpansionWorkCounters {

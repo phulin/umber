@@ -1093,6 +1093,42 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             let action = classify_hot_command(&command);
 
+            // A `\the` scalar child may cross an immutable resource barrier
+            // (for example while resolving a font/register operand).  Its
+            // control has already been removed before entering the scalar
+            // scanner, so the resumed phase carries only the opener origin
+            // and re-enters this same loop with the original target command.
+            // This branch must run before ordinary classification: the
+            // restored command is the target, not a new top-level expansion.
+            let resumed_the = match self.resumed_expansion.take() {
+                Some(crate::state::PendingExpansionResume::The { opener }) => Some(opener),
+                Some(other) => {
+                    self.resumed_expansion = Some(other);
+                    None
+                }
+                None => None,
+            };
+            if let Some(opener) = resumed_the {
+                let target = command.materialize();
+                match self.complete_the_continuation(&target, opener) {
+                    Ok(()) => {
+                        fetch = true;
+                        continue;
+                    }
+                    Err(error) if error.is_resource_suspension() => {
+                        return self.park_the_continuation(
+                            target,
+                            opener,
+                            delivery_expanded,
+                            error,
+                            destination,
+                            depth,
+                        );
+                    }
+                    Err(error) => return self.fail_expanded_delivery(destination, depth, error),
+                }
+            }
+
             // A `\the` operand is itself an expanded-token request.  Keep
             // that request in the generation-owned control lane and consume
             // targets from this same hot loop.  In particular, a nested
@@ -1122,9 +1158,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .pop_the_control()
                             .map_err(crate::scan_toks::scratch_command_error)?;
                         let target = command.materialize();
-                        self.complete_the_continuation(&target, the_opener)?;
-                        fetch = true;
-                        continue;
+                        match self.complete_the_continuation(&target, the_opener) {
+                            Ok(()) => {
+                                fetch = true;
+                                continue;
+                            }
+                            Err(error) if error.is_resource_suspension() => {
+                                return self.park_the_continuation(
+                                    target,
+                                    the_opener,
+                                    delivery_expanded,
+                                    error,
+                                    destination,
+                                    depth,
+                                );
+                            }
+                            Err(error) => {
+                                return self.fail_expanded_delivery(destination, depth, error);
+                            }
+                        }
                     }
                 }
             }
@@ -2555,6 +2607,52 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.active_expansion_depth = depth;
         self.invalidate_delivery_freshness();
         Err(failure)
+    }
+
+    /// Parks a completed `\the` target and its scalar child at the one cold
+    /// resource boundary.  The synchronous control itself was popped before
+    /// scanning the target (register indexes and font selectors have their
+    /// own expanded lookahead), so the compact resume payload carries only
+    /// the opener provenance needed to finish rendering after retry.
+    #[cold]
+    #[inline(never)]
+    fn park_the_continuation(
+        &mut self,
+        command: CurrentCommand<G>,
+        opener: OriginId,
+        delivery_expanded: bool,
+        error: CommandError,
+        destination: &mut Option<CurrentCommand<G>>,
+        depth: u32,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let child = crate::execution_scratch::ChildContinuation::capture(
+            &mut self.scanner_resume,
+            crate::state::PendingExpansionChildDestination::Dispatch,
+        );
+        let pending = crate::state::PendingExpansion {
+            command,
+            resume: crate::state::PendingExpansionResume::The { opener },
+            delivery_expanded,
+            child,
+        };
+        match self.command.scratch.store_expansion_frame(pending) {
+            Ok(key) => {
+                self.scanner_resume = Some(key);
+                self.fail_expanded_delivery(destination, depth, error)
+            }
+            Err((store_error, mut pending)) => {
+                if let Some(child) = pending.take_child()
+                    && let Err(failure) = self.abort_continuation(child)
+                {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+                self.fail_expanded_delivery(
+                    destination,
+                    depth,
+                    crate::scan_toks::scratch_command_error(store_error),
+                )
+            }
+        }
     }
 
     #[cold]
