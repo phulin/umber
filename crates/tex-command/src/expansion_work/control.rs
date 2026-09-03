@@ -261,6 +261,18 @@ pub(crate) enum SynchronousIfNumberPhase {
         value: i64,
         seen_digit: bool,
     },
+    RegisterIndex {
+        target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    RegisterIndexAwait {
+        target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
 }
 
 /// Compact hot conditional control for numeric/dimension comparisons.  The

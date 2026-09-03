@@ -1180,7 +1180,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(control) = if_number_control {
                 if matches!(
                     action,
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                    ExpandedCommandAction::Return
+                        | ExpandedCommandAction::EndTemplate
+                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            ExpandablePrimitive::Else
+                                | ExpandablePrimitive::Or
+                                | ExpandablePrimitive::Fi,
+                        ))
                 ) && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft { .. }
@@ -1205,7 +1211,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(control) = if_dimension_control {
                 if matches!(
                     action,
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                    ExpandedCommandAction::Return
+                        | ExpandedCommandAction::EndTemplate
+                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            ExpandablePrimitive::Else
+                                | ExpandablePrimitive::Or
+                                | ExpandablePrimitive::Fi,
+                        ))
                 ) && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
@@ -1236,7 +1248,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(control) = number_control {
                 if matches!(
                     action,
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                    ExpandedCommandAction::Return
+                        | ExpandedCommandAction::EndTemplate
+                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            ExpandablePrimitive::Else
+                                | ExpandablePrimitive::Or
+                                | ExpandablePrimitive::Fi,
+                        ))
                 ) && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
@@ -1660,6 +1678,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
                                         ..
                                     }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndexAwait {
+                                        ..
+                                    }
                             )
                         });
                     let if_number_should_await = self
@@ -1679,7 +1700,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     }
                                     | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
                                         ..
-                                }
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndex {
+                                        ..
+                                    }
                             )
                         });
                     let if_dimension_was_awaiting = self

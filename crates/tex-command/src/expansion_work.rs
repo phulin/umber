@@ -1035,6 +1035,20 @@ impl<G> ExpansionWork<G> {
                 value,
                 seen_digit,
             },
+            SynchronousIfNumberPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfNumberPhase::RegisterIndexAwait { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             SynchronousIfNumberPhase::AwaitLeft { .. }
             | SynchronousIfNumberPhase::AwaitRelation { .. }
             | SynchronousIfNumberPhase::AwaitRight { .. } => {
@@ -1077,10 +1091,22 @@ impl<G> ExpansionWork<G> {
                 value,
                 seen_digit,
             },
+            SynchronousIfNumberPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
             SynchronousIfNumberPhase::NeedLeft
             | SynchronousIfNumberPhase::Left { .. }
             | SynchronousIfNumberPhase::NeedRelation { .. }
-            | SynchronousIfNumberPhase::Right { .. } => {
+            | SynchronousIfNumberPhase::Right { .. }
+            | SynchronousIfNumberPhase::RegisterIndex { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
             }
         };
@@ -1104,6 +1130,7 @@ impl<G> ExpansionWork<G> {
                 // accumulator sees the first terminator, while the binary
                 // protocol reaches `Right` first.
                 | SynchronousIfNumberPhase::Left { .. }
+                | SynchronousIfNumberPhase::RegisterIndex { .. }
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }

@@ -649,6 +649,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             '>' => Some(IfRelation::Greater),
             _ => None,
         });
+
         let accumulate = |value: i64, digit: i64| {
             value
                 .checked_mul(10)
@@ -1014,6 +1015,34 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => None,
         });
 
+        // A register primitive is the first token of a `scan_int` operand;
+        // its selector is the only remaining input. Keep that selector in
+        // the compact conditional record so a macro-valued index returns to
+        // this loop instead of entering the legacy scalar scanner.
+        if control.phase == Phase::NeedLeft
+            && let ResolvedMeaning::Static(meaning) = command.resolved_meaning()
+        {
+            if Self::compact_if_number_register_target(meaning) {
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::RegisterIndex {
+                        target: meaning,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                return Ok(IfNumberAdvance::Continue);
+            }
+            if let Some(value) = self.scan_the_direct_value(meaning)?
+                && let Some(value) = Self::hot_integer_value(&value)
+            {
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::NeedRelation { left: value })?;
+                return Ok(IfNumberAdvance::Continue);
+            }
+        }
+
         // `\ifodd` and `\ifcase` consume one integer and have no relation
         // token.  They share the same compact accumulator so nested unary
         // conditionals take the exact same iterative route as `\ifnum`.
@@ -1073,6 +1102,75 @@ impl<G> CommandProcessor<'_, '_, G> {
             Phase::AwaitLeft { .. } | Phase::AwaitRelation { .. } => {
                 Err(CommandError::input_invariant())
             }
+            Phase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative,
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    let value = value
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .unwrap_or(i64::from(i32::MAX))
+                        .min(i64::from(i32::MAX));
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative,
+                            value,
+                            seen_digit: true,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                let signed = if negative {
+                    value.saturating_neg()
+                } else {
+                    value
+                };
+                let limit = if self.command.profile().capabilities().supports_etex() {
+                    32_767
+                } else {
+                    i64::from(u8::MAX)
+                };
+                let index = u16::try_from(signed.clamp(0, limit)).unwrap_or(0);
+                let internal = self.scan_the_register_value(target, index)?;
+                let left = Self::hot_integer_value(&internal).unwrap_or(0);
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                } else if !is_space {
+                    self.back_input(command.materialize())?;
+                }
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::NeedRelation { left })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
             Phase::Left {
                 negative,
                 value,
@@ -1194,6 +1292,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    fn compact_if_number_register_target(meaning: Meaning) -> bool {
+        matches!(
+            meaning,
+            Meaning::UnexpandablePrimitive(
+                tex_state::meaning::UnexpandablePrimitive::Count
+                    | tex_state::meaning::UnexpandablePrimitive::Dimen
+                    | tex_state::meaning::UnexpandablePrimitive::Skip
+                    | tex_state::meaning::UnexpandablePrimitive::Muskip
+                    | tex_state::meaning::UnexpandablePrimitive::Toks
+            )
+        )
+    }
+
+    fn hot_integer_value(value: &crate::InternalValue) -> Option<i32> {
+        match value {
+            crate::InternalValue::Integer(value) => Some(*value),
+            crate::InternalValue::Dimension(value) => Some(value.raw()),
+            crate::InternalValue::Glue(value) | crate::InternalValue::MuGlue(value) => {
+                Some(value.width.raw())
+            }
+            crate::InternalValue::Font(_) | crate::InternalValue::Tokens { .. } => None,
+        }
+    }
+
     fn advance_if_number_unary(
         &mut self,
         control: crate::expansion_work::control::SynchronousIfNumberControl,
@@ -1294,7 +1416,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             | Phase::AwaitRelation { .. }
             | Phase::NeedRelation { .. }
             | Phase::AwaitRight { .. }
-            | Phase::Right { .. } => Err(CommandError::input_invariant()),
+            | Phase::Right { .. }
+            | Phase::RegisterIndex { .. }
+            | Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
         }
     }
 

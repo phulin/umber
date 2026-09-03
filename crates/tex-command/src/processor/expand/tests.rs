@@ -204,6 +204,55 @@ fn number_register_operands_use_the_shared_index_lane() {
 }
 
 #[test]
+fn ifnum_register_operands_use_the_shared_index_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let ifnum = install_static(
+            universe,
+            "ifnum",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let fi = install_static(
+            universe,
+            "fi",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                ifnum,
+                count,
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                fi,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(
