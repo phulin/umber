@@ -65,8 +65,8 @@ checksum coverage, immutable/job-local split, and migration from schema 9.
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.
 
-`texlive_release_selection.md` proposes direct verified acquisition from TeX
-Live `tlnet-final` package repositories, platform-cache ownership, lazy and
+`texlive_release_selection.md` proposes immutable minimal annual TeX Live
+package mirrors on `assets.umber.ink`, platform-cache ownership, lazy and
 complete-distribution caching, existing generated-format cache binding, and
 multi-release pdfTeX parity without compiling each historical engine.
 

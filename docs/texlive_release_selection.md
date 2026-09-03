@@ -10,21 +10,23 @@ implemented.
 
 An installed Umber binary does not contain a TeX Live tree and does not require
 a separately installed TeX Live. It resolves one explicit TeX Live release,
-downloads the upstream `texlive.tlpdb` and platform-independent package
-archives directly from TeX Live mirrors, and admits package runfiles into the
-existing verified platform cache only as the engine requests them.
+downloads its upstream `texlive.tlpdb` and platform-independent package
+archives from a minimal immutable mirror on `assets.umber.ink`, and admits
+package runfiles into the existing verified platform cache only as the engine
+requests them.
 
-Umber does not publish a second per-file copy of TeX Live and does not run a
-central preprocessing pipeline. The only derived local state is a rebuildable
-lookup index, safe extraction of upstream package archives, the small set of
-configuration files that a TeX Live installation normally generates, and
-Umber-native format images. None of those derived files becomes upstream
-authority.
+The hosted mirror preserves upstream TLPDB and package archive bytes and
+filenames. It is not the current per-file object distribution: there are no
+packed lookup shards, individually republished TEXMF files, or server-side
+rewrites. The only derived local state is a rebuildable lookup index, safe
+extraction of upstream package archives, the small set of configuration files
+that a TeX Live installation normally generates, and Umber-native format
+images. None of those derived files becomes upstream authority.
 
 The user-facing model is:
 
 ```text
-umber run document.tex                 # compiled-in finalized default
+umber run document.tex                 # compiled-in published default
 umber run --texlive 2024 document.tex  # one immutable annual release
 umber texlive cache 2024               # make that release fully usable offline
 umber texlive status
@@ -58,51 +60,41 @@ publishing any member. Safe local extraction does not transform the member
 bytes.
 
 This replaces the project's current root, thousands of packed index shards,
-and content-addressed per-file R2 objects with the upstream TLPDB and package
-archives. It also changes the natural download granularity from a single file
-to one package. That is an acceptable trade: package archives are the smallest
-authenticated, durable objects TeX Live mirrors expose, and one package often
-satisfies several successive TeX requests.
+and content-addressed per-file R2 objects with a minimal byte-for-byte mirror
+of the upstream TLPDB and package archives. It also changes the natural
+download granularity from a single file to one package. That is an acceptable
+trade: package archives are the smallest authenticated, durable objects TeX
+Live publishes, and one package often satisfies several successive TeX
+requests.
 
-## Immutable releases and the rolling repository
+## Immutable annual mirrors
 
 Reproducibility requires more than pinning a TLPDB digest. A current `tlnet`
 mirror mutates and may remove the revisioned package archives named by an old
 TLPDB. A pin to unavailable bytes is not a usable snapshot.
 
-Annual numeric selectors therefore use TeX Live's archived `tlnet-final`
-repositories, for example:
+Each numeric year therefore selects one project-hosted immutable package-level
+mirror, for example:
 
 ```text
-https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/tlnet-final/
+https://assets.umber.ink/texlive/texlive-20250308/
 ```
 
-The URLs in the release policy use a mirror-relative historic path rather than
-the Utah host. The resolver tries configured TeX Live mirrors that carry the
-historic archive and verifies all bytes independently of the chosen mirror.
-The initial supported range is the same 2020 through 2026 range proposed by
-the earlier multi-version design, but a year is enabled only after its
-`tlnet-final` repository exists and its TLPDB pin has shipped in an Umber
-release. Thus 2026 must not silently mean the mutable 2026 repository before
-the 2026 final archive exists.
+The concrete snapshot name contains its upstream date. Following the earlier
+multi-version design, the initial snapshot for each year is the initial/DVD
+release rather than an arbitrary end-of-cycle tree. A later urgent corrected
+snapshot gets a new concrete name; an Umber release may deliberately move the
+year selector to it, but an existing prefix is never mutated.
 
-An optional `current` selector may target the live `tlnet` repository. It is a
-rolling channel, not an alias for a numeric year:
+The initial supported range is 2020 through 2026. Each row is enabled only
+after its complete minimal mirror has been published and verified through the
+public origin. The selected TLPDB identity is recorded in every run receipt,
+so a compile never mixes releases even when two Umber versions map the same
+year to different corrected snapshots.
 
-```text
-umber run --texlive current document.tex
-```
-
-The CLI must say that `current` is mutable, record the exact TLPDB identity in
-the run receipt, and never use it as the compiled-in default. Once acquired,
-one compile session remains bound to those exact metadata bytes. If a named
-archive disappears during acquisition, the run fails instead of mixing two
-TLPDB revisions. Offline reuse remains deterministic for all objects already
-in the verified cache.
-
-The default selector is the newest finalized annual release known to that
-Umber build. A newer default arrives only with a new Umber release. There is no
-remotely resolved `latest` alias.
+The default selector is the newest published immutable annual snapshot known
+to that Umber build. A newer default arrives only with a new Umber release.
+There is no remotely resolved `latest` or mutable `current` alias.
 
 ## Typed release policy
 
@@ -112,7 +104,8 @@ frontend owns reviewed release policy:
 ```rust
 struct TexliveReleaseSpec {
     year: TexliveYear,
-    repository_path: &'static str,
+    distribution: &'static str,
+    base_url: &'static str,
     tlpdb_bytes: u64,
     tlpdb_sha512: [u8; 64],
     format_clock: TexClock,
@@ -125,10 +118,11 @@ and authenticate package archives. `format_clock` is the deterministic job
 clock used when constructing the standard formats for that release; it feeds
 the existing format-cache identity.
 
-The table validates unique years, safe relative repository paths, complete
-SHA-512 values, and one compiled-in default. The browser projection is
-generated from or calls through the same Rust authority. Static product
-policy stays in typed source code; it does not gain a JSON policy manifest.
+The table validates unique years, concrete distribution names, HTTPS URLs
+under the production origin, complete SHA-512 values, and one compiled-in
+default. The browser projection is generated from or calls through the same
+Rust authority. Static product policy stays in typed source code; it does not
+gain a JSON policy manifest.
 
 The initial command-line surface remains compatible with the earlier design:
 
@@ -141,6 +135,67 @@ umber run --texlive 2025 document.tex
 `--distribution-ahash64` pair while that packed-distribution escape hatch is
 retained. `watch` accepts the same selection and keeps one resolved release
 for the lifetime of the session.
+
+## Minimal mirror contents and publication
+
+Each annual prefix preserves the relevant part of an upstream TeX Live package
+repository:
+
+```text
+texlive/texlive-20250308/
+  tlpkg/texlive.tlpdb.xz
+  tlpkg/texlive.tlpdb.xz.sha512
+  tlpkg/texlive.tlpdb.xz.sha512.asc
+  archive/<package>.r<revision>.tar.xz
+```
+
+The TLPDB and every package archive are byte-for-byte upstream files. Archive
+names retain their revision so URLs are immutable and different annual
+prefixes can be audited without aliases. The unversioned package archive names
+are not published or used.
+
+"Minimal" means complete for Umber's platform-independent runtime surface.
+The publisher selects every non-architecture package container with eligible
+runfiles in the TeX, TFM, map, encoding, virtual-font, Type 1, OpenType,
+TrueType, PK, AFM, and supported bibliography areas. Metadata-only collection
+and scheme records require no archive. Documentation containers, source
+containers, TeX Live executables, and packages with only unsupported runtime
+areas are omitted.
+
+The complete upstream TLPDB is retained even though it describes omitted
+documentation, source, and platform packages. Client policy selects only the
+supported runtime records; an omitted non-runtime archive is not a broken
+mirror. Conversely, every selected runtime archive named by the authenticated
+TLPDB must exist before publication can complete.
+
+The TeX Live mirror contains no Web2C `.fmt` files. Official Umber builds may
+publish their existing versioned `latex` and `pdflatex` format images under a
+separate companion prefix on the same origin, as described below. Those images
+are Umber release artifacts, not mirrored TeX Live bytes.
+
+Publication is a bounded copy-and-verify operation, not distribution
+preprocessing:
+
+1. Acquire the pinned annual TLPDB and selected revisioned archives from
+   authenticated TeX Live release media or historic mirrors.
+2. Verify TLPDB and package lengths and SHA-512 values before staging them.
+3. Copy the exact upstream bytes under a new immutable R2 prefix.
+4. Upload package archives first and the TLPDB last.
+5. Fetch the public TLPDB and every selected archive through
+   `https://assets.umber.ink/`, verify identities, CORS, counts, and total
+   bytes, and only then enable the release-policy row.
+
+The publication command is resumable and uses copy semantics, never sync or
+remote deletion. A conflicting existing key fails closed. Published prefixes
+have immutable cache headers and no lifecycle deletion while any released
+Umber version names them. Equal package archives may be server-side copied or
+deduplicated by storage tooling, but every annual URL must continue to return
+the exact upstream bytes independently of another prefix's lifetime.
+
+No custom root manifest is required. The compiled release row authenticates
+the TLPDB, and the TLPDB is the complete inventory and digest authority for the
+mirrored packages. Publication may produce an uncommitted operational receipt,
+but clients do not download or trust it.
 
 ## Installation and cache location
 
@@ -163,7 +218,7 @@ The logical storage classes are:
 
 | Class              | Identity                                                   | Retention and authority                                      |
 | ------------------ | ---------------------------------------------------------- | ------------------------------------------------------------ |
-| TLPDB payload      | SHA-512 and length from release policy or signed live head | authoritative downloaded metadata                            |
+| TLPDB payload      | SHA-512 and length from release policy                     | authoritative downloaded metadata                            |
 | Package archive    | SHA-512 and length from its authenticated TLPDB record     | authoritative downloaded runfiles                            |
 | Extracted runfile  | package identity, member path, and computed content digest | derived, verified against its containing archive receipt     |
 | Distribution index | TLPDB identity and index schema                            | derived and freely rebuildable                               |
@@ -206,9 +261,9 @@ A cold `umber run` resolves resources as follows:
 4. For each unresolved distribution request, select the exact package and
    archive revision named by that TLPDB.
 5. Reuse a verified extracted member or package archive when present.
-6. Otherwise fetch the revisioned `.tar.xz` from a configured TeX Live mirror,
-   enforce the TLPDB length limit, verify SHA-512, and publish the archive
-   atomically.
+6. Otherwise fetch the revisioned `.tar.xz` from the selected
+   `assets.umber.ink` prefix, enforce the TLPDB length limit, verify SHA-512,
+   and publish the archive atomically.
 7. Safely extract the package's runfiles, rejecting absolute paths, parent
    traversal, links, duplicates, undeclared payload members, size violations,
    and a runfile list that differs from the TLPDB record. The standard package
@@ -267,6 +322,19 @@ Umber's existing `.fmt` versioning, validation, and cache remain the sole
 format-image authority. This design does not introduce a per-release format
 lock, another format manifest, or a parallel version scheme.
 
+An official Umber build may publish each standard image at a deterministic URL
+derived from its existing format-cache key, for example:
+
+```text
+https://assets.umber.ink/formats/<umber-release>/<format-cache-key>.fmt
+```
+
+The binary's reviewed acquisition table associates that existing
+`FormatCacheIdentity` with the URL, byte length, and cryptographic payload
+digest. This is an acquisition pin for a downloaded artifact, not another
+format identity or manifest. The published payload is the portable Umber
+format image; the native filesystem cache envelope remains local-only.
+
 For a standard `latex` or `pdflatex` invocation, the prepared-format provider:
 
 1. resolves the selected TeX Live identity;
@@ -274,10 +342,13 @@ For a standard `latex` or `pdflatex` invocation, the prepared-format provider:
    format schema and ABI fingerprints, exact construction-input closure,
    source/build identity, selected release's deterministic clock, and a
    distribution identity derived from the authenticated TLPDB;
-3. restores and fully decodes a matching cached format when present; or
-4. acquires missing construction inputs through the same demand-driven package
+3. restores and fully decodes a matching local cached format when present;
+4. otherwise downloads the matching official image when that exact identity
+   has a published acquisition pin, verifies its transport identity and full
+   format decode, and stores it through the existing format cache; or
+5. acquires missing construction inputs through the same demand-driven package
    resolver, generates the format once, validates it, and atomically stores it
-   through the existing format cache.
+   through that cache when no published image exists.
 
 The current format key already prevents reuse across engine modes, schemas,
 ABIs, construction closures, build identities, clocks, and distributions. The
@@ -290,10 +361,12 @@ The TeX Live archives' Web2C `.fmt` files are neither fetched nor loaded. They
 are not Umber format images and are not portable across the engine boundary.
 
 `umber texlive cache YEAR` includes successful preparation and validation of
-the standard `latex` and `pdflatex` images by default. The command is complete
-only when an immediate `--offline` run of either standard format requires no
-network. These images remain in the existing format-cache namespace rather
-than being copied into a synthetic distribution tree.
+the standard `latex` and `pdflatex` images by default, preferring their pinned
+official artifacts and using the normal local generator as fallback. The
+command is complete only when an immediate `--offline` run of either standard
+format requires no network. These images remain in the existing format-cache
+namespace rather than being copied into a synthetic distribution tree or the
+local package-archive namespace.
 
 ## Explicit complete-distribution caching
 
@@ -334,10 +407,10 @@ umber texlive verify [YEAR]
 umber texlive gc
 ```
 
-`list` shows supported, default, cached, and rolling status. `status` performs
-no network access. `verify` runs the separately explicit complete cache audit;
-ordinary lookup never scans unrelated entries. `gc` removes only unreferenced
-or user-selected derived and authority blobs under the exact cache root and
+`list` shows supported, default, and cached status. `status` performs no network
+access. `verify` runs the separately explicit complete cache audit; ordinary
+lookup never scans unrelated entries. `gc` removes only unreferenced or
+user-selected derived and authority blobs under the exact cache root and
 reports which offline-complete releases cease to be complete.
 
 ## Offline and project pinning behavior
@@ -352,24 +425,18 @@ missing package archives or generated artifacts. It does not collapse a cache
 miss into TeX's optional-file absence and does not suggest installing a system
 TeX Live.
 
-A project may pin a numeric year in its normal Umber configuration. It may
-also pin an exact TLPDB digest for a rolling-channel experiment. The resolved
-TLPDB identity belongs in run receipts, generated-format metadata, and accepted
-input provenance. Neither a project nor an output artifact records the local
-cache path or chosen mirror hostname.
+A project may pin a numeric year in its normal Umber configuration. The
+resolved concrete distribution name and TLPDB identity belong in run receipts,
+generated-format metadata, and accepted input provenance. Neither a project
+nor an output artifact records the local cache path.
 
 ## Native and browser transport
 
 The shared Rust TLPDB parser, index semantics, resource keys, archive
-validation, and format identities remain host-neutral. Native Umber downloads
-directly from TeX Live mirrors.
-
-A browser deployment may use a same-origin gateway or a byte-for-byte mirror
-when upstream CORS or compressed-archive transport is unsuitable. Such a
-gateway may cache the exact TLPDB and package archives but must not produce a
-different per-file distribution format. The archive SHA-512 and TLPDB identity
-remain the cross-frontend authority, so native and browser builds select the
-same member bytes even when their transport origins differ.
+validation, and format identities remain host-neutral. Native and browser
+Umber both download the same package archives from `assets.umber.ink`. The
+production origin supplies CORS and immutable cache headers, so the browser
+does not need a per-file gateway or a second distribution representation.
 
 Browser persistent storage may extract and cache members in IndexedDB rather
 than using the native blob envelope. It must enforce the same archive and
@@ -379,15 +446,18 @@ protocol.
 ## Trust, limits, and mirror policy
 
 Finalized release policy pins the TLPDB SHA-512 in the Umber binary. Package
-archive SHA-512 values come from those authenticated bytes. HTTPS protects
-mirror selection and the digest chain detects corrupt or substituted content.
-If TeX Live's signed TLPDB verification is adopted for the rolling channel,
-signature verification augments this chain; it does not replace the shipped
-annual pins.
+archive SHA-512 values come from those authenticated bytes. HTTPS and the
+compiled production-origin policy protect selection, while the digest chain
+detects corrupt or substituted content. Retaining the upstream detached TLPDB
+signature makes publication independently auditable, but runtime signature
+verification does not replace the shipped annual pin.
 
-Mirrors are transport peers, not identities. Failover may change the hostname
-but never the repository-relative path, declared length, archive digest,
-selected member, or accepted bytes. Redirects must remain HTTPS and bounded.
+Production acquisition does not fail over to mutable upstream mirrors. A
+missing hosted archive is a publication defect and fails closed; it never
+causes the client to select bytes outside the annual prefix. A low-level local
+mirror override may change transport for air-gapped use, but never the TLPDB
+identity, repository-relative path, declared length, archive digest, selected
+member, or accepted bytes.
 
 Existing per-resource and aggregate VFS limits remain authoritative. New
 metadata, package archive, member-count, expansion-ratio, extracted-byte,
@@ -438,24 +508,27 @@ native/browser member parity.
 
 ## Migration from packed hosted snapshots
 
-The migration is additive until direct acquisition proves the full runtime
-surface:
+The migration is additive until package-mirror acquisition proves the full
+runtime surface:
 
-1. Introduce typed final-release policy and a strict bounded parser for the
+1. Introduce typed annual release policy and a strict bounded parser for the
    required TLPDB fields.
 2. Build the derived request index and package-archive resolver behind the
    existing resource host interface.
 3. Reuse `BlobStore` for TLPDB, archive, and extracted-member namespaces.
-4. Implement deterministic language and font-map configuration projections.
-5. Feed the TLPDB-based distribution identity into the existing format cache
+4. Build and verify one minimal annual package mirror on `assets.umber.ink`.
+5. Implement deterministic language and font-map configuration projections.
+6. Feed the TLPDB-based distribution identity into the existing format cache
    and prepared-format provider.
-6. Add `--texlive`, on-demand `run` and `watch`, and the `umber texlive`
+7. Publish pinned standard formats through the existing format identity and
+   validate download-to-cache admission.
+8. Add `--texlive`, on-demand `run` and `watch`, and the `umber texlive`
    maintenance commands.
-7. Prove 2020 and the newest finalized release through native, browser,
+9. Prove 2020 and the newest published release through native, browser,
    offline, format, and parity gates.
-8. Enable the intervening final releases and scheduled matrix.
-9. Retire the self-hosted per-file production pin and publication pipeline
-   only after no supported resource kind depends on it.
+10. Publish and enable the intervening annual mirrors and scheduled matrix.
+11. Retire the self-hosted per-file production pin and publication pipeline
+    only after no supported resource kind depends on it.
 
 The existing `--distribution` local/hosted-root escape hatch may survive one
 compatibility cycle. Old verified cache blobs are not reinterpreted as TLPDB
@@ -465,14 +538,16 @@ retired.
 ## Acceptance criteria
 
 - Installing Umber installs no TeX Live tree and needs no system TeX Live.
-- A numeric year selects one immutable archived TLPDB and package set.
-- The default is a finalized release and changes only with an Umber update.
+- A numeric year selects one immutable package-level mirror on
+  `assets.umber.ink`.
+- The default is a published immutable snapshot and changes only with an Umber
+  update.
 - Native compilation downloads only packages demanded by actual resource
   requests.
 - `umber texlive cache YEAR` makes the supported runtime profile, generated
   configuration, and standard `latex`/`pdflatex` formats usable offline.
-- Upstream runfile bytes come directly from verified TeX Live package archives;
-  no project-hosted per-file distribution or central preprocessing is needed.
+- Hosted TLPDB and package archives are byte-for-byte upstream files; no
+  project-hosted per-file distribution or central preprocessing is needed.
 - Existing `.fmt` versioning and validation remain the only format authority,
   with reuse bound to the selected TLPDB identity.
 - Equal archives and member bytes can be shared across releases without
