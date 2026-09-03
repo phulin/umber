@@ -378,7 +378,22 @@ fn definition_word_chunk_coordinate(index: u32) -> (u32, usize) {
     }
 }
 
+#[inline(always)]
+fn definition_word_tail_offset(head: u32) -> u32 {
+    if head == 0 {
+        return 0;
+    }
+    let (_, offset) = definition_word_chunk_coordinate(head - 1);
+    u32::try_from(offset + 1).expect("definition chunk tail offset fits in u32")
+}
+
 struct DefinitionRegion {
+    /// The one canonical dense header directory for this semantic region.
+    ///
+    /// Word payloads live in the shared region owner below, but headers are
+    /// region state: published row numbers never move and all lookup paths
+    /// read this directory.  Keeping a second copy in the owner made every
+    /// reserve and publication pay for duplicate header storage.
     headers: Vec<DefinitionHeader>,
     owner: Option<Rc<DefinitionRegionOwner>>,
     word_head: u32,
@@ -416,6 +431,79 @@ impl DefinitionRegion {
             .retain(|promotion| promotion.source_row < cursor);
     }
 
+    fn header_len(&self) -> u32 {
+        u32::try_from(self.headers.len()).expect("definition header directory fits in a row")
+    }
+
+    fn build_mark(&self, region: u32, serial: NonZeroU32) -> DefinitionBuildMark {
+        let owner = self.owner.as_ref();
+        DefinitionBuildMark {
+            region,
+            serial,
+            headers: self.header_len(),
+            promotions: u32::try_from(self.promotions.len())
+                .expect("definition promotion directory fits in a row"),
+            word_head: self.word_head,
+            overflow_chunks: owner.map_or(0, |owner| {
+                u32::try_from(owner.overflow_len())
+                    .expect("definition overflow directory fits in a row")
+            }),
+            tail_offset: definition_word_tail_offset(self.word_head),
+            owner_present: owner.is_some(),
+        }
+    }
+
+    /// Restores an unpublished build to its exact physical frontier.
+    ///
+    /// The logical word head is authoritative.  A retained tail chunk is
+    /// never cleared: its prefix may belong to a published definition and
+    /// its unpublished suffix is safe to overwrite only after this build has
+    /// been proven not to have published a reference.  Whole overflow chunks
+    /// created after the mark are dropped in one vector truncation.
+    fn restore_build_mark(&mut self, mark: DefinitionBuildMark, accounting: &MemoryAccounting) {
+        assert!(
+            mark.headers as usize <= self.headers.len(),
+            "definition build header mark is beyond the region"
+        );
+        for header in &self.headers[mark.headers as usize..] {
+            accounting.release_shared_dynamic(definition_memory_words(
+                (header.end - header.start) as usize,
+            ));
+        }
+        self.headers.truncate(mark.headers as usize);
+        assert!(
+            mark.promotions as usize <= self.promotions.len(),
+            "definition build promotion mark is beyond the region"
+        );
+        self.promotions.truncate(mark.promotions as usize);
+
+        let owner = self.owner.as_ref().map(Rc::clone);
+        if mark.owner_present {
+            let owner = owner.expect("definition build mark retained its region owner");
+            assert!(
+                mark.overflow_chunks as usize <= owner.overflow_len(),
+                "definition build chunk mark is beyond the region owner"
+            );
+            owner.truncate_overflow_to(mark.overflow_chunks as usize);
+        } else {
+            assert_eq!(mark.word_head, 0, "ownerless definition mark has no words");
+            assert_eq!(
+                mark.overflow_chunks, 0,
+                "ownerless definition mark has no chunks"
+            );
+            self.owner = None;
+        }
+        self.word_head = mark.word_head;
+        debug_assert_eq!(
+            definition_word_tail_offset(self.word_head),
+            mark.tail_offset
+        );
+        debug_assert_eq!(
+            self.owner.as_ref().map_or(0, |owner| owner.overflow_len()),
+            mark.overflow_chunks as usize
+        );
+    }
+
     fn begin_word_span(&self) -> u32 {
         self.word_head
     }
@@ -450,11 +538,6 @@ impl DefinitionRegion {
             let owner = self
                 .owner
                 .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new()));
-            owner
-                .headers
-                .borrow_mut()
-                .try_reserve(rows)
-                .map_err(|_| DefinitionBuildError::AllocationFailed)?;
             owner.reserve_word_span(self.word_head, word_end)?;
         }
         Ok(())
@@ -473,11 +556,6 @@ impl DefinitionRegion {
     }
 
     fn push_header(&mut self, header: DefinitionHeader) {
-        self.owner
-            .get_or_insert_with(|| Rc::new(DefinitionRegionOwner::new()))
-            .headers
-            .borrow_mut()
-            .push(header);
         self.headers.push(header);
     }
 }
@@ -559,7 +637,6 @@ struct DefinitionRegionOwner {
     /// `Rc` allocation and has no owner or lifetime independent of this region.
     inline_words: Rc<DefinitionWordChunk>,
     overflow_words: RefCell<Vec<Rc<DefinitionWordChunk>>>,
-    headers: RefCell<Vec<DefinitionHeader>>,
 }
 
 impl DefinitionRegionOwner {
@@ -567,7 +644,6 @@ impl DefinitionRegionOwner {
         Self {
             inline_words: Rc::new(DefinitionWordChunk::new_inline()),
             overflow_words: RefCell::new(Vec::new()),
-            headers: RefCell::new(Vec::new()),
         }
     }
 
@@ -613,6 +689,21 @@ impl DefinitionRegionOwner {
             self.ensure_chunk(chunk)?;
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    fn overflow_len(&self) -> usize {
+        self.overflow_words.borrow().len()
+    }
+
+    /// Drops only whole overflow chunks beyond an unpublished build mark.
+    ///
+    /// A chunk containing the published prefix is retained even when the
+    /// mark lies in its middle.  Its unpublished suffix is deliberately left
+    /// in place and is overwritten by the next build, while any resident
+    /// cursor retaining that published chunk remains valid.
+    fn truncate_overflow_to(&self, chunks: usize) {
+        self.overflow_words.borrow_mut().truncate(chunks);
     }
 
     #[inline(always)]
@@ -1539,6 +1630,23 @@ impl<G> core::hash::Hash for LocalRegionPin<G> {
     }
 }
 
+/// Move-only frontier for one unpublished definition build.
+///
+/// The header count protects stable row numbering, while the word/chunk
+/// fields identify the exact physical suffix which may be reclaimed.  The
+/// mark is intentionally not `Copy`: a successful seal or an abort consumes
+/// the only restoration capability before a definition reference can escape.
+struct DefinitionBuildMark {
+    region: u32,
+    serial: NonZeroU32,
+    headers: u32,
+    promotions: u32,
+    word_head: u32,
+    overflow_chunks: u32,
+    tail_offset: u32,
+    owner_present: bool,
+}
+
 impl<G> Clone for DefinitionBuildKey<G> {
     fn clone(&self) -> Self {
         *self
@@ -1564,7 +1672,7 @@ impl<G> Eq for DefinitionBuildKey<G> {}
 struct ActiveDefinitionBuild {
     serial: NonZeroU32,
     region: u32,
-    word_start: u32,
+    mark: DefinitionBuildMark,
     parameter_len: u32,
     replacement_len: u32,
     pattern: MacroParameterPatternBuilder,
@@ -2173,6 +2281,9 @@ impl<G> DefinitionArena<G> {
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+        if self.active_build.is_some() {
+            return Err(DefinitionAllocationError::InvalidDefinition);
+        }
         self.allocate_from_iter(
             parameter_text.iter().copied(),
             replacement_text.iter().copied(),
@@ -2188,6 +2299,9 @@ impl<G> DefinitionArena<G> {
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
     {
+        if self.active_build.is_some() {
+            return Err(DefinitionAllocationError::InvalidDefinition);
+        }
         let mut builder = DefinitionBuilder::new();
         for word in parameter_text {
             builder.push_parameter(word).map_err(map_build_error)?;
@@ -2204,6 +2318,9 @@ impl<G> DefinitionArena<G> {
         &mut self,
         builder: &mut DefinitionBuilder,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+        if self.active_build.is_some() {
+            return Err(DefinitionAllocationError::InvalidDefinition);
+        }
         self.validate_builder(builder)?;
         self.reserve_batch(1, builder.words().len())?;
         Ok(self.publish_prevalidated(builder))
@@ -2222,6 +2339,9 @@ impl<G> DefinitionArena<G> {
         &mut self,
         row: &crate::format::schema::FormatDefinition,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+        if self.active_build.is_some() {
+            return Err(DefinitionAllocationError::InvalidDefinition);
+        }
         let parameter_len = u32::try_from(row.parameter_text.len())
             .map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
         let word_len = row
@@ -2453,21 +2573,21 @@ impl<G> DefinitionArena<G> {
                 self.active_local
             }
         };
-        self.record_region_change(region);
-        let word_start = self
-            .region_mut(region)
-            .expect("selected definition region exists")
-            .begin_word_span();
         let serial = NonZeroU32::new(self.next_build_serial)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         self.next_build_serial = self
             .next_build_serial
             .checked_add(1)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
+        let mark = self
+            .region(region)
+            .expect("selected definition region exists")
+            .build_mark(region, serial);
+        self.record_region_change(region);
         self.active_build = Some(ActiveDefinitionBuild {
             serial,
             region,
-            word_start,
+            mark,
             parameter_len: 0,
             replacement_len: 0,
             pattern: MacroParameterPatternBuilder::new(),
@@ -2583,7 +2703,7 @@ impl<G> DefinitionArena<G> {
             .reserve(1, 0)?;
         let build = self.active_build.take().expect("validated active build");
         let parameter_len = build.parameter_len;
-        let start = build.word_start;
+        let start = build.mark.word_head;
         let origin = build.origin;
         let accounting = self.accounting.clone();
         let mut region = self
@@ -2620,13 +2740,32 @@ impl<G> DefinitionArena<G> {
     }
 
     fn abort_active_build(&mut self) {
-        let _ = self.active_build.take();
+        let Some(build) = self.active_build.take() else {
+            return;
+        };
+        let region_id = build.region;
+        let mark = build.mark;
+        assert_eq!(
+            mark.region, region_id,
+            "definition build mark belongs to its active region"
+        );
+        assert_eq!(
+            mark.serial, build.serial,
+            "definition build mark belongs to its active key"
+        );
+        let accounting = self.accounting.clone();
+        self.region_mut(region_id)
+            .expect("active build region exists")
+            .restore_build_mark(mark, &accounting);
     }
 
     pub(crate) fn promote_global(
         &mut self,
         id: DefinitionRef<G>,
     ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+        if self.active_build.is_some() {
+            return Err(DefinitionAllocationError::InvalidDefinition);
+        }
         if id.region() == GLOBAL_REGION || id.region() == FORMAT_REGION {
             return Ok(id);
         }

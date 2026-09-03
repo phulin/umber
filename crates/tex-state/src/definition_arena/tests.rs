@@ -45,6 +45,18 @@ fn checked_builder(
     builder
 }
 
+fn global_frontier<G>(arena: &super::DefinitionArena<G>) -> (usize, u32, usize, u32) {
+    let owner = arena.global.owner.as_ref();
+    let word_head = arena.global.word_head;
+    let tail_offset = super::definition_word_tail_offset(word_head);
+    (
+        arena.global.headers.len(),
+        word_head,
+        owner.map_or(0, |owner| owner.overflow_words.borrow().len()),
+        tail_offset,
+    )
+}
+
 #[test]
 fn definition_key_fits_the_coordinated_compact_boundary() {
     assert_eq!(std::mem::size_of::<super::DefinitionRef<()>>(), 8);
@@ -210,6 +222,152 @@ fn aborted_direct_definition_discards_unpublished_provenance_and_words() {
         let view = arena.get(definition);
         assert_eq!(view.definition_origin(), origin(21));
         assert!(view.replacement_text().is_empty());
+    });
+}
+
+#[test]
+fn aborted_build_before_words_restores_an_empty_region_frontier() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let before = global_frontier(arena);
+        assert!(arena.global.owner.is_none());
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(31))
+            .expect("definition transaction");
+        arena.abort_build(build);
+        assert_eq!(global_frontier(arena), before);
+        assert!(arena.global.owner.is_none());
+        assert!(arena.active_build.is_none());
+    });
+}
+
+#[test]
+fn aborted_build_rewinds_inline_suffix_and_reuses_one_canonical_header() {
+    with_generation(|mut generation| {
+        let accounting = generation.memory_accounting();
+        let arena = generation.definitions_mut();
+        let retained_word = TokenWord::from_raw(0x11);
+        let retained = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[],
+            &[retained_word; 3],
+        );
+        let before = global_frontier(arena);
+        let before_accounting = accounting.words(false);
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(32))
+            .expect("definition transaction");
+        arena.finish_parameters(build).expect("parameter boundary");
+        for word in [TokenWord::from_raw(0x21), TokenWord::from_raw(0x22)] {
+            arena
+                .push_replacement(build, word)
+                .expect("unpublished replacement");
+        }
+        assert_eq!(global_frontier(arena), (1, 5, 0, 5));
+        arena.abort_build(build);
+        assert_eq!(global_frontier(arena), before);
+        assert_eq!(accounting.words(false), before_accounting);
+        assert_eq!(arena.get(retained).replacement_text(), [retained_word; 3]);
+
+        let replacement = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[],
+            &[TokenWord::from_raw(0x31)],
+        );
+        assert_eq!(replacement.row_index(), 1);
+        assert_eq!(arena.global.headers.len(), 2);
+        assert_eq!(arena.get(retained).replacement_text(), [retained_word; 3]);
+        assert_eq!(
+            arena.get(replacement).replacement_text(),
+            [TokenWord::from_raw(0x31),]
+        );
+    });
+}
+
+#[test]
+fn aborted_build_drops_only_unpublished_overflow_chunks_and_keeps_retained_body_live() {
+    with_generation(|mut generation| {
+        let accounting = generation.memory_accounting();
+        let arena = generation.definitions_mut();
+        let prefix_len =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY - 1;
+        let prefix = (0..prefix_len)
+            .map(|index| TokenWord::from_raw(index as u32 + 1))
+            .collect::<Vec<_>>();
+        let retained = arena
+            .allocate(&[], &prefix)
+            .expect("published prefix definition");
+        let (_, _, mut body) = arena
+            .admit_macro_body(retained)
+            .expect("resident retained body");
+        let before = global_frontier(arena);
+        assert_eq!(before, (1, prefix_len as u32, 1, 4095));
+        let before_accounting = accounting.words(false);
+
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(33))
+            .expect("definition transaction");
+        arena.finish_parameters(build).expect("parameter boundary");
+        for index in 0..(super::DEFINITION_WORD_CHUNK_CAPACITY * 2 + 17) {
+            arena
+                .push_replacement(build, TokenWord::from_raw(0x10000 + index as u32))
+                .expect("unpublished replacement");
+        }
+        assert_eq!(global_frontier(arena).2, 4);
+        arena.abort_build(build);
+
+        assert_eq!(global_frontier(arena), before);
+        assert_eq!(accounting.words(false), before_accounting);
+        assert_eq!(body.word(prefix_len - 1), prefix.last().copied());
+        body.restore_position((prefix_len - 1) as u32);
+        let (word, boundary) = body
+            .read_current_word((prefix_len - 1) as u32)
+            .expect("retained tail cursor remains live");
+        assert_eq!(word, prefix[prefix_len - 1]);
+        assert!(!boundary);
+        let replacement = direct_definition(
+            arena,
+            super::DefinitionDestination::Global,
+            &[],
+            &[TokenWord::from_raw(0xfeed)],
+        );
+        assert_eq!(replacement.row_index(), 1);
+        assert_eq!(arena.get(retained).replacement_text(), prefix);
+        assert_eq!(
+            arena.get(replacement).replacement_text(),
+            [TokenWord::from_raw(0xfeed),]
+        );
+        assert_eq!(body.word(prefix_len - 1), prefix.last().copied());
+    });
+}
+
+#[test]
+fn aborted_build_at_chunk_boundary_retains_the_published_tail_chunk() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let prefix_len =
+            super::INLINE_DEFINITION_WORD_CAPACITY + super::DEFINITION_WORD_CHUNK_CAPACITY;
+        let prefix = vec![TokenWord::from_raw(7); prefix_len];
+        let retained = arena
+            .allocate(&[], &prefix)
+            .expect("published boundary definition");
+        let before = global_frontier(arena);
+        assert_eq!(before, (1, prefix_len as u32, 1, 4096));
+        let build = arena
+            .begin_build(super::DefinitionDestination::Global, origin(34))
+            .expect("definition transaction");
+        arena.finish_parameters(build).expect("parameter boundary");
+        for _ in 0..(super::DEFINITION_WORD_CHUNK_CAPACITY * 2 + 1) {
+            arena
+                .push_replacement(build, TokenWord::from_raw(19))
+                .expect("unpublished replacement");
+        }
+        assert_eq!(global_frontier(arena).2, 4);
+        arena.abort_build(build);
+        assert_eq!(global_frontier(arena), before);
+        assert_eq!(arena.get(retained).replacement_text(), prefix);
     });
 }
 
