@@ -917,13 +917,20 @@ fn exact_byte_profile_serializes_immediate_and_deferred_write_characters_once() 
     source.extend_from_slice(&[0xc3, 0xa3]);
     source.extend_from_slice(
         br"es}}
+        \catcode226=13 \def^^e2{expanded}
+        \immediate\write0{active:\noexpand^^e2}
+        \def\holder{^^e2}\edef\shown{\meaning\holder}
+        \immediate\write0{meaning:\shown}
+        \shipout\hbox{\write0{deferred:\noexpand^^e2}}
         \immediate\closeout0\end",
     );
 
     with_observed_run(&source, |universe, _, observations| {
         assert_eq!(
             universe.world().memory_output("bytes.tex"),
-            Some(&b"Magalh\xc3\xa3es\nMagalh\xc3\xa3es\n"[..])
+            Some(
+                &b"Magalh\xc3\xa3es\nMagalh\xc3\xa3es\nactive:\xe2\nmeaning:macro:->\xe2\ndeferred:\xe2\n"[..]
+            )
         );
         let byte_pairs = observations
             .iter()

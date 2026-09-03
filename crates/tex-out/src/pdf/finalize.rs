@@ -913,6 +913,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
                             let y = page_height
                                 .checked_sub(graphics.y)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
                                 .and_then(|value| value.checked_sub(form.depth()))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             let form_id = object_id(form.object())?;
@@ -1147,7 +1148,9 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
             .ok_or(PdfBuildError::PageGeometryOverflow)?;
         let mut operations = Vec::new();
         let mut nested_forms = BTreeMap::<u32, PdfObjectId>::new();
+        let mut form_images = BTreeMap::<Vec<u8>, PdfObjectId>::new();
         let mut form_fonts = BTreeMap::<u32, PdfObjectId>::new();
+        let mut form_procset = PdfProcSetUsage::default();
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => {
@@ -1226,6 +1229,76 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 x,
                                 y: scaled_to_bp_f32(y, parameters.decimal_digits),
                                 name: format!("Fm{}", nested.resource()).into_bytes(),
+                            }
+                        }
+                        crate::PageEffect::PdfRefXImage {
+                            object,
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            let image = input
+                                .images
+                                .get(&object)
+                                .ok_or(PdfBuildError::MissingRasterImage(object))?;
+                            form_procset.include_image(image.metadata);
+                            let name = image_resource_name(image, parameters);
+                            let image_object = pdf_image_objects
+                                .get(&object)
+                                .copied()
+                                .ok_or(PdfBuildError::MissingRasterImage(object))?;
+                            form_images.insert(name.clone(), image_object);
+                            let total_image_height = height
+                                .checked_add(depth)
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let image_y = total_height
+                                .checked_sub(graphics.y)
+                                .and_then(|value| value.checked_sub(depth))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let (placed_width, placed_height) = match image.metadata {
+                                PdfImageMetadataInput::PdfPage {
+                                    page_box, rotation, ..
+                                } => {
+                                    let box_width = page_box
+                                        .right
+                                        .checked_sub(page_box.left)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    let box_height = page_box
+                                        .top
+                                        .checked_sub(page_box.bottom)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    let (natural_width, natural_height) =
+                                        if rotation_swaps_axes(rotation) {
+                                            (box_height, box_width)
+                                        } else {
+                                            (box_width, box_height)
+                                        };
+                                    (
+                                        scaled_to_bp_f32(width, parameters.decimal_digits)
+                                            / scaled_to_bp_f32(
+                                                natural_width,
+                                                parameters.decimal_digits,
+                                            ),
+                                        scaled_to_bp_f32(
+                                            total_image_height,
+                                            parameters.decimal_digits,
+                                        ) / scaled_to_bp_f32(
+                                            natural_height,
+                                            parameters.decimal_digits,
+                                        ),
+                                    )
+                                }
+                                PdfImageMetadataInput::Raster { .. } => (
+                                    scaled_to_bp_f32(width, parameters.decimal_digits),
+                                    scaled_to_bp_f32(total_image_height, parameters.decimal_digits),
+                                ),
+                            };
+                            PdfContentOperation::ImageXObject {
+                                x,
+                                y: scaled_to_bp_f32(image_y, parameters.decimal_digits),
+                                width: placed_width,
+                                height: placed_height,
+                                name,
                             }
                         }
                         _ => continue,
@@ -1361,15 +1434,20 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         resources.set_raw_entries(form.resource_entries.clone());
         let omit_procset = input.document.form_omit_procset;
         if omit_procset < 0 || (omit_procset == 0 && parameters.major_version < 2) {
-            let mut procset = PdfProcSetUsage::default();
-            procset.include_text(!form_fonts.is_empty());
-            resources.insert("ProcSet", procset.into_pdf_array())?;
+            form_procset.include_text(!form_fonts.is_empty());
+            resources.insert("ProcSet", form_procset.into_pdf_array())?;
         }
-        if !nested_forms.is_empty() {
+        if !nested_forms.is_empty() || !form_images.is_empty() {
             let mut xobjects = PdfDictionary::new();
             for (resource, object) in nested_forms {
                 xobjects.insert(
                     format!("Fm{resource}").as_str(),
+                    PdfValue::Reference(object),
+                )?;
+            }
+            for (name, object) in form_images {
+                xobjects.insert(
+                    std::str::from_utf8(&name).expect("generated image resource name is ASCII"),
                     PdfValue::Reference(object),
                 )?;
             }
@@ -4904,30 +4982,18 @@ fn import_pdf_page(
     }
     let left_bp = scaled_to_bp_f32(page_box.left, 4);
     let bottom_bp = scaled_to_bp_f32(page_box.bottom, 4);
-    let (form_width, form_height, matrix) = match rotation {
-        PdfPageRotationInput::None => (width, height, [1.0, 0.0, 0.0, 1.0, -left_bp, -bottom_bp]),
-        PdfPageRotationInput::Clockwise90 => (
-            height,
-            width,
-            [0.0, 1.0, -1.0, 0.0, height_bp + bottom_bp, -left_bp],
-        ),
-        PdfPageRotationInput::UpsideDown => (
-            width,
-            height,
-            [
-                -1.0,
-                0.0,
-                0.0,
-                -1.0,
-                width_bp + left_bp,
-                height_bp + bottom_bp,
-            ],
-        ),
-        PdfPageRotationInput::Clockwise270 => (
-            height,
-            width,
-            [0.0, -1.0, 1.0, 0.0, -bottom_bp, width_bp + left_bp],
-        ),
+    let matrix = match rotation {
+        PdfPageRotationInput::None => [1.0, 0.0, 0.0, 1.0, -left_bp, -bottom_bp],
+        PdfPageRotationInput::Clockwise90 => [0.0, 1.0, -1.0, 0.0, height_bp + bottom_bp, -left_bp],
+        PdfPageRotationInput::UpsideDown => [
+            -1.0,
+            0.0,
+            0.0,
+            -1.0,
+            width_bp + left_bp,
+            height_bp + bottom_bp,
+        ],
+        PdfPageRotationInput::Clockwise270 => [0.0, -1.0, 1.0, 0.0, -bottom_bp, width_bp + left_bp],
     };
     let [a, b, c, d, e, f] = matrix;
     let matrix = [
@@ -4944,18 +5010,29 @@ fn import_pdf_page(
             object: PdfObject::FormXObject {
                 dictionary,
                 data: imported.data,
-                bbox: [
-                    zero,
-                    zero,
-                    scaled_to_bp_number(form_width, 4)?,
-                    scaled_to_bp_number(form_height, 4)?,
-                ],
+                // A Form's BBox is expressed in form space and is clipped
+                // before its Matrix is applied. Preserve the selected page's
+                // coordinates here; the matrix below maps that box to an
+                // origin-based placement. Zero-basing both made every page
+                // with a nonzero lower-left corner clip its own contents.
+                bbox: imported_pdf_form_bbox(page_box)?,
                 matrix: Some(matrix).filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
             },
         },
         dependencies: imported.dependencies,
         group: imported.group,
     })
+}
+
+fn imported_pdf_form_bbox(
+    page_box: super::PdfPageBoxInput,
+) -> Result<[PdfNumber; 4], PdfBuildError> {
+    Ok([
+        scaled_to_bp_number(page_box.left, 4)?,
+        scaled_to_bp_number(page_box.bottom, 4)?,
+        scaled_to_bp_number(page_box.right, 4)?,
+        scaled_to_bp_number(page_box.top, 4)?,
+    ])
 }
 
 fn rotation_swaps_axes(rotation: PdfPageRotationInput) -> bool {

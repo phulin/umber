@@ -461,7 +461,33 @@ pub fn append_token_string_text<S: TokenDisplayState + ?Sized>(
             text.push(ch);
         }
     } else {
-        append_token_show_text(stores, token, text);
+        // §262's `token_show` reaches `print_cs` while §293's caller has
+        // selected `new_string`. Section 59 makes every character of an
+        // internal string take the raw `print_char` path, including the
+        // one-byte name of an active character. Applying the external
+        // selector spelling here would prematurely turn such a byte into
+        // `^^xx`; §1370 must instead print the completed temporary string
+        // through the write-file selector.
+        append_non_character_token_text(stores, token, text);
+        let name = match token {
+            Token::Cs(symbol) => {
+                if stores.display_control_sequence_kind(symbol)
+                    == Some(ControlSequenceKind::ActiveCharacter)
+                {
+                    return;
+                }
+                stores.display_resolve(symbol).unwrap_or("")
+            }
+            Token::Frozen(_) => stores
+                .display_frozen_primitive_name(token)
+                .unwrap_or("endtemplate"),
+            Token::Char { .. } | Token::Param(_) => return,
+        };
+        let mut chars = name.chars();
+        match (chars.next(), chars.next()) {
+            (Some(ch), None) if stores.display_catcode(ch) != Catcode::Letter => {}
+            _ => text.push(' '),
+        }
     }
 }
 

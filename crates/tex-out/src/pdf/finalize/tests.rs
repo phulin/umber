@@ -81,6 +81,25 @@ fn procset_tracks_pdftex_page_resource_classes() {
 }
 
 #[test]
+fn imported_pdf_form_bbox_preserves_nonzero_page_coordinates() {
+    let page_box = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(2 * Scaled::UNITY),
+        bottom: Scaled::from_raw(3 * Scaled::UNITY),
+        right: Scaled::from_raw(12 * Scaled::UNITY),
+        top: Scaled::from_raw(23 * Scaled::UNITY),
+    };
+    assert_eq!(
+        imported_pdf_form_bbox(page_box).expect("valid page box"),
+        [
+            scaled_to_bp_number(page_box.left, 4).expect("left"),
+            scaled_to_bp_number(page_box.bottom, 4).expect("bottom"),
+            scaled_to_bp_number(page_box.right, 4).expect("right"),
+            scaled_to_bp_number(page_box.top, 4).expect("top"),
+        ]
+    );
+}
+
+#[test]
 fn tounicode_cmap_matches_pdftex_generic_resource_shape() {
     // pdftex.web section 32e delegates to tounicode.c::write_tounicode.
     let mappings = [

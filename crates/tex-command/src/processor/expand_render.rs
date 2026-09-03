@@ -355,7 +355,12 @@ pub(crate) fn append_meaning_token_words<G>(
         if active_selector {
             state.append_token_selector_text(token, text);
         } else {
-            state.append_token_show_text(token, text);
+            // §296 runs `print_meaning` with `selector=new_string` before
+            // turning that string back into other-character tokens. Section
+            // 59 therefore keeps every byte of a macro replacement raw here;
+            // only the direct diagnostic (`active_selector`) path applies
+            // printable `^^xx` spelling.
+            state.append_token_string_text(token, text);
         }
     }
 }

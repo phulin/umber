@@ -194,6 +194,93 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
 }
 
 #[test]
+fn pdf_form_retains_a_nested_external_image_resource() {
+    const IMAGE: &[u8] =
+        include_bytes!("../../../../tests/corpus/pdf/minimal_rule/expected.umber.pdf");
+
+    let completion = crate::with_engine_universe(|stores| {
+        stores.set_interaction_mode(InteractionMode::Nonstop);
+        prepare_pdftex_run_stores(stores);
+        stores
+            .world_mut()
+            .set_memory_file("figure.pdf", IMAGE.to_vec())
+            .expect("seed external PDF");
+        let mut host =
+            FileSessionResolvers::new(Path::new("form-image.tex"), Vec::new(), Vec::new());
+        run_input_collecting_artifacts_with_profile(
+            stores,
+            RetainedRootRequest::authored_job(
+                "form-image",
+                concat!(
+                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\pdfximage{figure.pdf}",
+                    "\\setbox0=\\hbox{\\pdfrefximage\\pdflastximage}",
+                    "\\pdfxform0\\shipout\\hbox{\\pdfrefxform\\pdflastxform}\\end",
+                )
+                .as_bytes(),
+                tex_command::CommandProfile::PDFTEX14029,
+            ),
+            &mut host,
+            tex_command::CommandProfile::PDFTEX14029,
+        )
+        .expect("form containing an external image ships");
+        stores
+            .command_context()
+            .expect("admit form-image completion")
+            .detach_pdf_completion()
+            .expect("detach form-image PDF")
+    })
+    .expect("fresh form-image universe");
+
+    let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
+        &completion,
+        &crate::PdfVirtualFontResources::default(),
+        &crate::PdfRawObjectFileReceipt::default(),
+    )
+    .expect("form-image PDF finalizes");
+    let query = test_support::pdf_query::PdfQuery::new(
+        pdf,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts form-image PDF");
+    let pages = query.pages().expect("query form-image page");
+    let page_operations = &pages[0].content.as_ref().expect("page content").operations;
+    assert_eq!(
+        page_operations[1].operands,
+        [
+            test_support::pdf_query::QueryOperand::Number(1.0),
+            test_support::pdf_query::QueryOperand::Number(0.0),
+            test_support::pdf_query::QueryOperand::Number(0.0),
+            test_support::pdf_query::QueryOperand::Number(1.0),
+            test_support::pdf_query::QueryOperand::Number(72.0),
+            test_support::pdf_query::QueryOperand::Number(72.0),
+        ]
+    );
+    let form_id = pages[0]
+        .resources
+        .categories
+        .get(b"XObject".as_slice())
+        .expect("page has an XObject resource")[0]
+        .get(b"Fm1")
+        .and_then(|value| value.referenced_id())
+        .expect("page references the form");
+    let form = query.stream(form_id).expect("form is a stream");
+    assert!(
+        form.decoded
+            .windows(b"/Im1 Do".len())
+            .any(|window| window == b"/Im1 Do")
+    );
+    let images = form
+        .dictionary
+        .get(b"Resources")
+        .and_then(|value| value.as_dictionary())
+        .and_then(|resources| resources.get(b"XObject"))
+        .and_then(|value| value.as_dictionary())
+        .expect("form has nested XObject resources");
+    assert!(images.get(b"Im1").is_some());
+}
+
+#[test]
 fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
     const FIX_ONE: i32 = 1 << 20;
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
