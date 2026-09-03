@@ -658,6 +658,13 @@ impl<G> HotCommand<G> {
         self.command.resolved_meaning(self.font)
     }
 
+    /// Returns the opaque font identity carried by a compact font command.
+    /// Font commands are the one static command class whose operand is not
+    /// reconstructible from the packed runtime word.
+    pub(crate) const fn font_id(&self) -> Option<FontId> {
+        self.font
+    }
+
     pub(crate) const fn spelling_word(&self) -> TokenWord {
         self.token.word
     }

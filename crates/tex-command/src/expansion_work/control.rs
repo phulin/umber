@@ -275,6 +275,17 @@ pub(crate) struct SynchronousNumberControl {
     pub(crate) phase: SynchronousNumberPhase,
 }
 
+/// Compact operand state for `\fontname`.
+///
+/// Font-name conversion consumes one expanded font identifier.  The only
+/// state needed while that token is delivered is the opener provenance; a
+/// nested `\fontname` pushes another copy-small record and therefore never
+/// retains a rich command on the Rust stack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousFontNameControl {
+    pub(crate) opener: OriginId,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -325,6 +336,7 @@ pub(crate) enum ExpansionControl<G> {
     IfCompare(SynchronousIfCompareControl),
     IfNumber(SynchronousIfNumberControl),
     Number(SynchronousNumberControl),
+    FontName(SynchronousFontNameControl),
     Primitive(PrimitiveControl<G>),
 }
 
@@ -333,4 +345,5 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
+    assert!(core::mem::size_of::<SynchronousFontNameControl>() <= 32);
 };

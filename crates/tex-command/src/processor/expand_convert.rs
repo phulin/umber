@@ -6,7 +6,7 @@ use tex_state::token::{OriginId, Token};
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::{CommandError, CurrentCommand};
-use crate::command::HotCommand;
+use crate::command::{CommandClass, HotCommand};
 
 use super::expand_render::{
     append_scaled_without_unit, format_scaled, meaning_text, page_mark, render_the_value,
@@ -15,6 +15,80 @@ use super::expand_render::{
 use super::{CommandProcessor, DeliveryStatus};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Starts the compact `\fontname` operand protocol.  The opener is kept
+    /// as an origin in the generation-owned control lane, so a chain of font
+    /// name conversions never nests a scanner call frame.
+    pub(super) fn begin_fontname_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_fontname_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    /// Completes one compact `\fontname` operand from the command currently
+    /// owned by the expanded-delivery loop.  Only a valid font selector is
+    /// rendered directly; the invalid-selector branch materializes once at
+    /// the diagnostic/backup boundary, exactly as §577's `back_error` does.
+    pub(super) fn complete_fontname_continuation(
+        &mut self,
+        target: HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_fontname_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let font = match target.command_word().class() {
+            CommandClass::Font => target.font_id(),
+            CommandClass::Unexpandable
+                if target.command_word().unexpandable_primitive()
+                    == Some(tex_state::meaning::UnexpandablePrimitive::Font) =>
+            {
+                Some(self.state.current_font())
+            }
+            _ => None,
+        };
+        let Some(font) = font else {
+            let command = target.materialize();
+            let deferred = {
+                let mut report = self.state.print_err("Missing font identifier");
+                report.help(&[
+                    "I was looking for a control sequence whose",
+                    "current meaning has been defined by \\font.",
+                ]);
+                report.defer()
+            };
+            self.back_input(command)?;
+            let context = self.command.output_open_context(self.state);
+            let mut report = self.state.resume_error_report(deferred);
+            report.context(context);
+            let outcome = report.error();
+            self.finish_error_outcome(outcome)?;
+            self.push_font_name(tex_state::font::NULL_FONT, control.opener)?;
+            return Ok(());
+        };
+        self.push_font_name(font, control.opener)
+    }
+
+    fn push_font_name(
+        &mut self,
+        font: tex_state::ids::FontId,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let mut name = self.state.font_name(font);
+        let size = self.state.font_size(font);
+        if size != self.state.font_design_size(font) {
+            name.push_str(" at ");
+            append_scaled_without_unit(size, &mut name);
+            name.push_str("pt");
+        }
+        self.push_rendered_text(&name, opener);
+        Ok(())
+    }
+
     /// Starts the compact literal operand path for `\number` and
     /// `\romannumeral`.  The opener survives only as provenance in the
     /// generation-owned control lane.

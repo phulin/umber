@@ -1222,6 +1222,50 @@ impl<G> ExpansionWork<G> {
         Ok(control)
     }
 
+    /// Starts a synchronous `\fontname` operand in the shared delivery lane.
+    pub(crate) fn push_fontname_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::FontName(
+            SynchronousFontNameControl { opener },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed fontname-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn top_fontname_control(
+        &self,
+    ) -> Result<Option<SynchronousFontNameControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::FontName(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn pop_fontname_control(
+        &mut self,
+    ) -> Result<SynchronousFontNameControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::FontName(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Opens a name mark even when a synchronous driver has no parked cold
     /// root. A zero root serial is reserved for that rootless hot episode;
     /// parked resumptions continue to use their real active-root serial.

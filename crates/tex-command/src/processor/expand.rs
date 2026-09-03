@@ -1220,12 +1220,39 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            // `\fontname` consumes one expanded font identifier.  Keep its
+            // opener in the compact control lane so nested conversions are
+            // reduced by this loop rather than by recursively re-entering a
+            // font scanner.
+            let fontname_control = self
+                .command
+                .scratch
+                .top_fontname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if fontname_control.is_some() {
+                match action {
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::FontName,
+                    )) => {
+                        self.begin_fontname_continuation(command.origin())?;
+                        fetch = true;
+                        continue;
+                    }
+                    ExpandedCommandAction::Expand(_) => {}
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                        self.complete_fontname_continuation(command)?;
+                        fetch = true;
+                        continue;
+                    }
+                }
+            }
+
             // The comparison controls are entered from the hot loop rather
             // than through the legacy scalar conditional evaluator. Keeping
             // this cutover here leaves that evaluator available to cold
             // callers while every ordinary delivery stays on one loop.
             if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive
+                    primitive
                     @ (ExpandablePrimitive::If
                         | ExpandablePrimitive::IfCat
                         | ExpandablePrimitive::IfNum
@@ -1240,6 +1267,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     self.begin_if_number_continuation(kind, false)?;
                 }
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::FontName,
+            )) = action
+            {
+                self.begin_fontname_continuation(command.origin())?;
                 fetch = true;
                 continue;
             }

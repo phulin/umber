@@ -169,6 +169,49 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
 }
 
 #[test]
+fn nested_fontname_operands_use_the_shared_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let fontname = install_static(
+            universe,
+            "fontname",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName),
+        );
+        let nullfont = install_static(
+            universe,
+            "nullfont",
+            Meaning::Font(tex_state::font::NULL_FONT),
+        );
+        // Only the innermost selector can be valid: each enclosing
+        // `\fontname` sees the first rendered character of its child and
+        // therefore exercises TeX's missing-identifier recovery. Keep the
+        // chain below the engine's fatal-error threshold while still
+        // traversing the compact control lane repeatedly.
+        let depth = 16;
+        let mut input = Vec::with_capacity(depth + 2);
+        input.extend(std::iter::repeat_n(fontname, depth));
+        input.extend([
+            nullfont,
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, input);
+        let output = collect_expanded_characters(universe, &mut command);
+        assert!(output.starts_with("nullfont"));
+        assert!(output.ends_with('X'));
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "nested fontname operands must not re-enter delivery while a control is live"
+        );
+    });
+}
+
+#[test]
 fn ifcsname_collects_in_the_shared_delivery_lane() {
     crate::test_harness::with_universe(|universe| {
         let ifcsname = install_static(

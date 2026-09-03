@@ -1568,6 +1568,28 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_number_control()
     }
 
+    pub(crate) fn push_fontname_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_fontname_control(opener)
+    }
+
+    pub(crate) fn top_fontname_control(
+        &self,
+    ) -> Result<
+        Option<crate::expansion_work::control::SynchronousFontNameControl>,
+        ScratchError,
+    > {
+        self.expansion_work.top_fontname_control()
+    }
+
+    pub(crate) fn pop_fontname_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousFontNameControl, ScratchError> {
+        self.expansion_work.pop_fontname_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
