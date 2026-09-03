@@ -212,22 +212,24 @@ observation, semantic barriers, and snapshots have no parallel expansion
 ledger.
 One stack-branded `OperationHostPreparation` remains stationary from host
 preparation through delivery preflight, transaction classification, semantic
-application, and save-stack settlement. The one preflight `CommandContext`
-fills its mode, effective-tail, PDF-mode, and group fields in place; the
+application, and save-stack settlement. One `CommandContext` is admitted at
+the start of an uninterrupted ordinary run and reused across successive
+preflights, applications, and operation-journal settlements. It fills its
+mode, effective-tail, PDF-mode, and group fields in place; the
 transaction boundary borrows those exact scalars instead of reconstructing
 the 240-byte admitted facade. Hot and ordinary cold application use their
 already-resident semantic context to write the post-apply checked save depth
 back into the same preparation, and settlement drains only that scalar.
-Measured definition, let, and catcode delivery constructs its 240-byte
-semantic context directly in one callback-owned stack slot and retains that
-same borrow through expansion, scanning, semantic application, named-token
-publication, and §1269 `afterassignment` backup.
-The callback passes only narrow mutable borrows; it neither returns nor moves
-the admitted aggregate. Group application ends the callback before its
+Measured definition, let, and catcode delivery retains that same borrow through
+expansion, scanning, semantic application, named-token publication, §1269
+`afterassignment` backup, state/mode/page settlement, and the following
+ordinary command's delivery. The run passes only narrow mutable borrows; it
+neither returns nor moves the admitted aggregate. Group application ends the
+admission before its
 possible page-output boundary and reacquires only for command-local
 publication afterward.
-Residual transaction and cold scanning similarly constructs one callback-local
-context and reborrows it through tracked-region projection, main-control entry,
+Residual transaction and cold scanning similarly construct one directly
+admitted context and reborrow it through tracked-region projection, main-control entry,
 command processing, and scanner settlement. The direct-episode caller passes
 only its already-known tracking bit; nested cold execution propagates that bit
 without retaining the context. The callback ends before diagnostic reporting,
@@ -1343,8 +1345,9 @@ resident aggregate. Session identity, retained-generation state, durable box
 and form closures, shipout scratch, and the page region remain distinct owners
 with their existing transfer and reclamation boundaries. `CommandContext` is
 only the bounded safe-reference view that brings those owners together with the
-admitted dense core for one processor episode; the same admitted view is reused
-by every raw, expanded, and scanner command in that episode. A genuine host,
+admitted dense core for an uninterrupted interpreter run; the same admitted
+view is reused by every raw, expanded, scanner, and ordinary semantic command
+until a boundary. A genuine host,
 diagnostic, suspension, rollback, or publication barrier ends the borrow before
 the owning `Universe` transition runs.
 

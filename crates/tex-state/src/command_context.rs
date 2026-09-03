@@ -692,6 +692,57 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    /// Opens one rollback suffix without ending the admitted command run.
+    ///
+    /// Main control uses this between adjacent ordinary commands.  Both the
+    /// dense state journal and durable-box owner are already borrowed by this
+    /// context, so rebuilding a [`crate::Universe`] admission here would add
+    /// no ownership proof.
+    pub fn begin_state_operation(&mut self) -> crate::StateOperation<G> {
+        let mut operation = self.admitted.state().begin_state_transaction();
+        operation.attach_durable_box(self.durable_boxes.begin_operation());
+        operation
+    }
+
+    /// Commits an operation opened by [`Self::begin_state_operation`].
+    pub fn commit_state_operation(&mut self, mut operation: crate::StateOperation<G>) {
+        let durable = operation.take_durable_box();
+        self.durable_boxes
+            .commit_operation(&mut self.page_nodes, durable);
+        self.admitted
+            .state()
+            .commit_state_transaction(operation.transaction_position());
+    }
+
+    /// Restores an operation opened by [`Self::begin_state_operation`].
+    pub fn restore_state_operation(
+        &mut self,
+        mut operation: crate::StateOperation<G>,
+    ) -> Result<(), StateError> {
+        let durable = operation.take_durable_box();
+        self.durable_boxes
+            .rollback_operation(&mut self.page_nodes, durable);
+        self.admitted.state().rollback_state_transaction(&operation)
+    }
+
+    /// Captures the current page suffix inside an admitted command run.
+    #[must_use]
+    pub fn page_node_cursor(
+        &self,
+    ) -> crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane> {
+        self.page_nodes.operation_mark()
+    }
+
+    /// Truncates a rejected admitted-run page suffix after roots are restored.
+    pub fn truncate_page_nodes(
+        &mut self,
+        cursor: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
+    ) -> Result<(), NodeArenaError> {
+        self.page_nodes
+            .restore_operation(cursor)
+            .map_err(|_| NodeArenaError::ForeignCursor)
+    }
+
     /// Records scanner-owned one-word nodes while their owners coexist.
     pub fn observe_transient_token_words(&mut self, words: usize) {
         self.resident

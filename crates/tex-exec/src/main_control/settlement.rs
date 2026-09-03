@@ -247,6 +247,49 @@ impl<G> MainControl<G> {
         }
     }
 
+    /// Opens the next ordinary operation while the surrounding command run
+    /// still owns its single admitted state/page context.
+    pub(super) fn begin_admitted_direct_operation(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+    ) -> DirectOperationMark<G> {
+        DirectOperationMark {
+            state: stores.begin_state_operation(),
+            mode: self.modes.begin_journal(),
+            attempt: self.command.begin_attempt_operation(),
+            page: stores.page_node_cursor(),
+            active_box_len: self.boxes.active_boxes.len(),
+        }
+    }
+
+    /// Settles an ordinary operation without releasing and reconstructing the
+    /// command context.  Page-region succession is intentionally absent: a
+    /// command which requests it is an enclosing-Universe boundary and never
+    /// reaches this continuation seam.
+    pub(super) fn commit_admitted_direct_operation(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        mark: DirectOperationMark<G>,
+    ) {
+        let DirectOperationMark {
+            state,
+            mode,
+            attempt,
+            ..
+        } = mark;
+        stores.commit_state_operation(state);
+        self.modes
+            .commit_journal(mode)
+            .expect("direct operation owns the top mode journal frame");
+        self.command
+            .commit_attempt_operation(attempt)
+            .expect("committed operation owns a valid command-attempt scope");
+        debug_assert!(
+            !self.page_region_succession_pending,
+            "page-region succession ends an admitted command run"
+        );
+    }
+
     pub(super) fn commit_direct_operation(
         &mut self,
         stores: &mut Universe<G>,

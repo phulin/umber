@@ -477,12 +477,16 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(preflight.contains("processor.main_loop_lookahead_into(&mut frame.command)"));
     assert!(preflight.contains("processor.preflight_command_into(&mut frame.command)"));
     let admitted_episode = preflight
-        .split_once(".with_command_context(|context|")
-        .and_then(|(_, tail)| tail.split_once(".expect(\"live generation\");"))
+        .split_once(
+            "let mut admitted_context = stores.command_context().expect(\"live generation\");",
+        )
+        .and_then(|(_, tail)| tail.split_once("if context_readiness == PreflightReadiness::Failed"))
         .map(|(body, _)| body)
-        .expect("locate one destination-directed preflight context episode");
+        .expect("locate the long-lived destination-directed command context");
     assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
     assert!(!admitted_episode.contains("stores.command_context()"));
+    assert!(preflight.contains("'admitted: loop"));
+    assert!(preflight.contains("self.commit_admitted_direct_operation(context, completed_mark)"));
     assert!(preflight.contains("host_preparation.fill_delivery("));
     assert!(cold_scan.contains("match meaning {"));
     assert!(cold_scan.contains("complete_cold_scan!("));
@@ -541,20 +545,18 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     let residual_scan_admission = control
         .split_once("fn dispatch_typed_operation(")
         .and_then(|(_, tail)| tail.split_once("let mode_fingerprint ="))
-        .and_then(|(_, tail)| {
-            tail.split_once(".expect(\"cold scanning keeps its generation admitted\")?;")
-        })
+        .and_then(|(_, tail)| tail.split_once("// tex.web's `line` is maintained by `get_next`"))
         .map(|(body, _)| body)
-        .expect("locate callback-scoped residual cold scanning");
+        .expect("locate directly admitted residual cold scanning");
     assert_eq!(
         residual_scan_admission
-            .matches(".with_command_context(|context|")
+            .matches(".command_context()")
             .count(),
         1
     );
     assert!(residual_scan_admission.contains("observe_changed_command_projection("));
     assert!(residual_scan_admission.contains("command_processor("));
-    assert!(!residual_scan_admission.contains("stores.command_context()"));
+    assert!(!residual_scan_admission.contains("with_command_context"));
     let scanned_preparation = control
         .split_once("fn prepare_cold_execution_episode<")
         .and_then(|(_, tail)| tail.split_once("fn apply_hot_operation("))
@@ -568,13 +570,14 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         .map(|(body, _)| body)
         .expect("locate resident prepared application");
     let ordinary_application = prepared_application
-        .split_once(".with_command_context(|context| {\n                    if let ColdOperation::ShowGroups")
+        .split_once("context: \"cold operation admission\",")
         .and_then(|(_, body)| {
-            body.split_once(".map_err(|_| ExecError::MissingToken {\n                    context: \"cold operation admission\",")
+            body.split_once("if result.is_ok()\n            && let Some(completion)")
         })
         .map(|(body, _)| body)
-        .expect("locate ordinary resident cold application");
-    assert!(ordinary_application.contains("operation,\n                        context,"));
+        .expect("locate directly admitted resident cold application");
+    assert!(ordinary_application.contains("let result = apply_cold_operation("));
+    assert!(ordinary_application.contains("                    context,"));
     assert!(!ordinary_application.contains("frame.unavailable_mut(cold)"));
     assert!(!ordinary_application.contains("command_context()"));
     assert!(

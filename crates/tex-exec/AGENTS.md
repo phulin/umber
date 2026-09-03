@@ -60,9 +60,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   and the completed hot-family operand. An adjacent caller-owned typed cold
   slot owns uncommon leaves without entering the resident command layout.
   Canonical dispatch applies ordinary character, spacing, paragraph-start,
-  grouping, definition, let, and catcode results directly in the already-admitted
-  command context. The outer loop settles `AppliedDirect` without reclassifying
-  or entering `dispatch_typed_operation`. Only a retained cold branch constructs
+  grouping, definition, let, and catcode results directly in one context
+  admitted for the uninterrupted ordinary run. That context settles each
+  operation's state, mode, command-attempt, and page suffix and immediately
+  delivers the next command; the outer loop regains `Universe` only at a
+  semantic or host boundary. It settles the final `AppliedDirect` without
+  reclassifying or entering `dispatch_typed_operation`. Only a retained cold branch constructs
   a borrow-typed `ColdExecutionEpisode`; there is no generic prepare/apply
   readiness mailbox.
   While TeX82 §1038's unobserved horizontal character loop is active, the same
@@ -87,7 +90,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   returns the completed hot operation directly to the admitted caller, which
   applies it without storing it in `CommandEpisode`. Definition, let,
   and catcode delivery, expansion, scanning, application, ordered evidence
-  publication, and §1269 `afterassignment` backup share one callback-scoped
+  publication, and §1269 `afterassignment` backup share the uninterrupted
   admitted context; a group transition ends admission before a possible
   page/host boundary. Detached
   mutation values and macro-body walks are demand-selected cold evidence.
@@ -105,14 +108,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
   completed leaves directly into the borrowed caller slot while returning only
   compact control outcomes; `apply.rs` mutably borrows the cold branch owned by
   `ColdExecutionEpisode` and consumes only its semantic leaves. Ordinary cold
-  application admits the borrow-only `CommandContext` through a callback which
-  lends `Universe`'s semantically separated command stores directly and returns
+  application admits the borrow-only `CommandContext` directly, lending
+  `Universe`'s semantically separated command stores and returning
   only detached copy-small settlement facts;
   `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
   families without introducing another executor. Residual transaction and
-  cold scanning constructs its admitted `CommandContext` directly inside one
-  callback and reborrows it through tracked-region projection, main-control
-  entry, and scanner settlement. The callback ends before diagnostic
+  cold scanning constructs its admitted `CommandContext` directly and reborrows
+  it through tracked-region projection, main-control entry, and scanner
+  settlement. The admission ends before diagnostic
   reporting, resource preparation, suspension, semantic apply, or rollback;
   nested cold execution carries only the already-known tracking bit.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct

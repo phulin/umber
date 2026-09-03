@@ -110,9 +110,13 @@ pub(super) fn command_requires_transaction_from_facts<G>(
 }
 
 impl<G> MainControl<G> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
+        operation_mark: &mut Option<DirectOperationMark<G>>,
+        operations: &mut usize,
+        max_operations: usize,
         host_preparation: &mut OperationPreparation<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
@@ -121,14 +125,19 @@ impl<G> MainControl<G> {
         frame.assert_empty();
         self.ensure_primitive_handles(stores);
         let mut diagnostics = Vec::new();
-        let mut hot_admission = None;
-        let mut hot_operation = None;
-        let mut direct_cold_operation = false;
+        let mut hot_admission;
+        let mut hot_operation;
+        let mut direct_cold_operation;
         let raw_main_loop_delivery = self.main_loop_active;
         let outer_paragraph_was_active =
             self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
-        let context_readiness = stores
-            .with_command_context(|context| {
+        let context_readiness = {
+            let mut admitted_context = stores.command_context().expect("live generation");
+            let context = &mut admitted_context;
+            'admitted: loop {
+                hot_admission = None;
+                hot_operation = None;
+                direct_cold_operation = false;
                 let mode = self.modes.current_mode();
                 if self.active_alignment.is_some()
                     || (mode == Mode::DisplayMath
@@ -465,9 +474,48 @@ impl<G> MainControl<G> {
                     frame.clear_cold(cold);
                     hot_admission = Some((admission, output_start));
                 }
-                PreflightReadiness::Ready
-            })
-            .expect("live generation");
+                let can_continue =
+                    hot_admission
+                        .as_ref()
+                        .is_some_and(|(admission, output_start)| {
+                            admission.result.is_ok()
+                                && admission.settled_in_admission
+                                && !admission.pending_page_output.is_pending()
+                                && diagnostic_effects.is_empty()
+                                && self.pending_named_boundaries.is_empty()
+                                && !self.page_region_succession_pending
+                                && context.artifact_commit_count() == output_start.artifact_count
+                                && context.effect_record_count() == output_start.effect_count
+                                && *operations + 1 < max_operations
+                        });
+                if !can_continue {
+                    break 'admitted PreflightReadiness::Ready;
+                }
+
+                // The command has applied, published its mutation evidence,
+                // and scheduled `afterassignment` entirely through this
+                // admitted context.  Settle its journals here and immediately
+                // reuse the same borrowed owners for the next ordinary
+                // delivery.  Any page, diagnostic, observation, resource, or
+                // checkpoint work fails the predicate above and returns to
+                // the enclosing-Universe driver instead.
+                let checked = host_preparation
+                    .take_checked_save_stack_words()
+                    .expect("admitted direct operation captures save-stack usage");
+                self.max_save_stack = self.max_save_stack.max(checked);
+                self.page_output_observations.clear();
+                frame.clear_operation_origin();
+                frame.assert_empty();
+                *operations += 1;
+                let completed_mark = operation_mark
+                    .take()
+                    .expect("admitted run owns its current operation mark");
+                self.commit_admitted_direct_operation(context, completed_mark);
+                *operation_mark = Some(self.begin_admitted_direct_operation(context));
+                *host_preparation = OperationPreparation::new();
+                continue 'admitted;
+            }
+        };
         if context_readiness == PreflightReadiness::Failed {
             return PreflightReadiness::Failed;
         }

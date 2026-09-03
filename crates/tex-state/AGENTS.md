@@ -22,7 +22,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   checkpoints, bounded cursor tuples, mutation-free restore planning, and the
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
-  direct command and execution work. Its small, safe-reference-only episode
+  direct command and execution work. Its small, safe-reference-only run
   view borrows the session epoch, retained-generation stores, durable box/form
   owners, operation scratch, admitted dense core, and checked page-region
   parts directly from `Universe`; no monolithic command-state owner, copied
@@ -36,7 +36,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   including e-TeX's assignment-free forced-online diagnostic scope,
   PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without
-  per-read owner admission. Copy-small host artifact/effect boundaries can be
+  per-read owner admission. It opens, commits, and restores ordinary state and
+  page suffixes directly so adjacent commands retain the same admitted owners.
+  Copy-small host artifact/effect boundaries can be
   captured from the same episode before semantic application without
   reconstructing the context. Page-material allocation/copy counters remain
   observable through this boundary so retained-range zero-copy gates are not
