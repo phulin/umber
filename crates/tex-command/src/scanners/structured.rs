@@ -4719,6 +4719,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         kind: MathDelimiterBoundaryKind,
     ) -> Result<MathDelimiterBoundary, CommandError> {
+        // A `\delimiter` operand is a retained structured scalar when its
+        // number scan crosses a resource boundary.  The enclosing executor
+        // retry keeps only this boundary kind in its operation phase, so
+        // restore the typed scalar frame before asking for another boundary
+        // token; otherwise the resumed call would consume the numeric
+        // operand as though it were a fresh delimiter character.
+        if self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
+        {
+            self.restore_structured_unary(StructuredUnaryScalar::DelimiterNumber)?;
+            return Ok(MathDelimiterBoundary {
+                kind,
+                delimiter: self.scan_delimiter_number()?,
+            });
+        }
         let mut destination = None;
         match self.next_non_blank_non_relax_x_token_hot(&mut destination)? {
             DeliveryStatus::End => {

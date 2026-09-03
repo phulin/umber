@@ -2117,7 +2117,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | DeliveryStatus::PendingExpanded
                 | DeliveryStatus::AlignmentClosingBrace => {}
                 DeliveryStatus::AlignmentEndTemplate => {
-                    return Ok(DeliveryStatus::AlignmentEndTemplate);
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?
+                        .materialize();
+                    self.begin_scalar_alignment_v_template(&command)?;
+                    continue;
                 }
                 DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
                     return Err(CommandError::input_invariant());

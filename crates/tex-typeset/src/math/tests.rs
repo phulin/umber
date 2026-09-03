@@ -1783,6 +1783,46 @@ fn left_right_delimiters_size_to_enclosed_list() {
 }
 
 #[test]
+fn left_right_delimiters_size_to_direct_rule_node() {
+    // TeX82 §730 measures a rule node directly during the first mlist pass.
+    // This is the mechanism used by LaTeX's `\bigg` macro, whose private
+    // `\vrule` sits between a left and a right delimiter without a noad
+    // wrapper.
+    let mut universe = setup_universe();
+    let delimiter = delimiter_code(1, b'(', 1, b'|');
+    let input = universe.publish_page_nodes(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter },
+            MathField::Empty,
+        )),
+        // Keep this as a direct rule node. Wrapping it in `SubBox` would test
+        // §1076's ordinary math-mode box path instead of §730.
+        Node::Rule {
+            width: Some(sc(4)),
+            height: Some(sc(40)),
+            depth: Some(sc(10)),
+        },
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter { delimiter },
+            MathField::Empty,
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let nodes = root_nodes(&hlist);
+
+    let Some(MathNode::VList(left)) = nodes.first().copied() else {
+        panic!("expected left delimiter")
+    };
+    let Some(MathNode::VList(right)) = nodes.last().copied() else {
+        panic!("expected right delimiter")
+    };
+    assert!(list_nodes(&hlist, left.list).len() > 3);
+    assert!(list_nodes(&hlist, right.list).len() > 3);
+}
+
+#[test]
 fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
     // e-TeX etex.ch [36.727, 36.760, 36.762] makes a middle noad reset the
     // current style just like a right noad, then sends every delimiter in the

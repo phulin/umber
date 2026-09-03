@@ -466,6 +466,21 @@ fn first_pass<S: MathTypesetState>(
             }
             other => {
                 // AppG rule 1
+                // TeX82 §730 sends a rule node directly through the first
+                // pass and includes its height/depth in the enclosing
+                // delimiter extent.  LaTeX's `\bigg` relies on this: its
+                // `\vrule` is a direct mlist rule between the left/right
+                // noads.  Other direct nodes do not participate in
+                // `check_dimensions`; boxes contribute only when wrapped in
+                // a noad, as in §1076's math-mode box path.
+                if let NodeView::Rule { height, depth, .. } = &other {
+                    if let Some(height) = height {
+                        *max_height = (*max_height).max(*height);
+                    }
+                    if let Some(depth) = depth {
+                        *max_depth = (*max_depth).max(*depth);
+                    }
+                }
                 out.push(WorkItem::Node(source_node(
                     ctx.state,
                     &ctx.source_lists,
