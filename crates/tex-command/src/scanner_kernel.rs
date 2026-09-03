@@ -4,7 +4,7 @@
 //! only the semantic state which advances beside an already-admitted input
 //! span: brace depth and the first-token facts needed by macro arguments.
 
-use tex_state::token::Catcode;
+use tex_state::token::{Catcode, TokenWord};
 
 use crate::token_collector::ClassifiedToken;
 
@@ -86,5 +86,24 @@ impl ScannerCursor {
 
     pub(crate) fn open_balanced_body(&mut self) {
         self.brace_depth = 1;
+    }
+
+    /// Settles one balanced-body spelling without requiring a fully resolved
+    /// command.  Expanded token collectors make this transition from the
+    /// hot command word: only the literal catcode contributes to the body
+    /// depth, exactly as [`Self::settle_balanced`] does for a classified
+    /// command.
+    #[inline(always)]
+    pub(crate) fn settle_balanced_word(&mut self, word: TokenWord) -> bool {
+        match word.literal_catcode() {
+            Some(Catcode::BeginGroup) => {
+                self.brace_depth = self.brace_depth.saturating_add(1);
+            }
+            Some(Catcode::EndGroup) if self.brace_depth != 0 => {
+                self.brace_depth -= 1;
+            }
+            _ => {}
+        }
+        matches!(word.literal_catcode(), Some(Catcode::EndGroup)) && self.brace_depth == 0
     }
 }

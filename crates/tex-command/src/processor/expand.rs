@@ -1094,6 +1094,76 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             let action = classify_hot_command(&command);
 
+            // e-TeX `\expanded` is a balanced expanded-token collector.  Its
+            // body stays in the same hot delivery loop: expandable commands
+            // fall through to the ordinary dispatch below, while settled
+            // words are appended to the attempt-owned buffer here.  This is
+            // deliberately before the other operand controls so a nested
+            // `\the`/conditional can use the same LIFO lane.
+            let expanded_control = self
+                .command
+                .scratch
+                .top_expanded_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = expanded_control {
+                match control.phase {
+                    crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
+                        let is_space =
+                            command.character_catcode() == Some(tex_state::token::Catcode::Space);
+                        let is_relax = matches!(
+                            command.resolved_meaning(),
+                            ResolvedMeaning::Static(Meaning::Relax)
+                        );
+                        if is_space || is_relax {
+                            fetch = true;
+                            continue;
+                        }
+                        if command.character_catcode()
+                            == Some(tex_state::token::Catcode::BeginGroup)
+                        {
+                            self.command
+                                .scratch
+                                .begin_expanded_body()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                            fetch = true;
+                            continue;
+                        }
+                        // The compact path handles the ordinary valid
+                        // `\expanded{...}` grammar.  Keep malformed opening
+                        // recovery on the reviewed legacy scanner until its
+                        // diagnostic/status phase has a typed destination.
+                        return self.fail_expanded_delivery(
+                            destination,
+                            depth,
+                            CommandError::input_invariant(),
+                        );
+                    }
+                    crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
+                        if matches!(
+                            action,
+                            ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                        ) {
+                            let _ = self.append_expanded_word(&command)?;
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Starting `\expanded` itself is a control-lane transition.  A
+            // nested occurrence follows the same path and is therefore
+            // reduced iteratively rather than invoking `scan_toks` from the
+            // live delivery frame.
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::Expanded,
+            )) = action
+            {
+                self.begin_expanded_continuation(command.origin())?;
+                fetch = true;
+                continue;
+            }
+
             // `\expandafter` owns two raw operands but only the second one is
             // expanded. Its compact control intercepts the first command and
             // then lets every nested expansion continue through this same

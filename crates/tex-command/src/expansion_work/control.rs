@@ -1,7 +1,9 @@
 //! Compact typed control vocabulary for parked expansion work.
 
+use crate::attempt::{AttemptMark, AttemptTokenBufferId};
 use crate::command::HotCommand;
 use crate::execution_scratch::ScannerFrameKey;
+use crate::scanner_kernel::ScannerCursor;
 use tex_state::meaning::Meaning;
 use tex_state::token::OriginId;
 
@@ -160,6 +162,32 @@ pub(crate) enum ThePhase {
 pub(crate) struct TheControl {
     pub(crate) opener: OriginId,
     pub(crate) phase: ThePhase,
+}
+
+/// Phase of the compact e-TeX `\expanded` collector.
+///
+/// The balanced body is expanded by the canonical delivery loop itself.  The
+/// collector therefore needs only its opening transition and the reusable
+/// brace cursor; the attempt-owned token buffer is identified by a typed
+/// coordinate rather than retained as a second command/result owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousExpandedPhase {
+    NeedOpening,
+    Collecting,
+}
+
+/// Copy-small state for one synchronous `\expanded` token collector.
+///
+/// The output buffer belongs to the enclosing command attempt.  Keeping its
+/// coordinate here lets nested expandable operands run in the same delivery
+/// loop without a `TokenCollector` or `CurrentCommand` on the Rust stack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousExpandedControl {
+    pub(crate) opener: OriginId,
+    pub(crate) attempt_opening: AttemptMark,
+    pub(crate) writer: AttemptTokenBufferId,
+    pub(crate) cursor: ScannerCursor,
+    pub(crate) phase: SynchronousExpandedPhase,
 }
 
 /// Compact synchronous `\csname` state. The accumulated spelling lives in
@@ -476,6 +504,7 @@ pub(crate) enum ExpansionControl<G> {
     IfDimension(SynchronousIfDimensionControl),
     Number(SynchronousNumberControl),
     FontName(SynchronousFontNameControl),
+    Expanded(SynchronousExpandedControl),
     Primitive(PrimitiveControl<G>),
 }
 
@@ -487,4 +516,5 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
     assert!(core::mem::size_of::<SynchronousFontNameControl>() <= 32);
+    assert!(core::mem::size_of::<SynchronousExpandedControl>() <= 128);
 };

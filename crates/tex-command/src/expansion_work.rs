@@ -659,6 +659,102 @@ impl<G> ExpansionWork<G> {
         Ok(opener)
     }
 
+    /// Starts a synchronous `\expanded` collector in the shared control
+    /// lane.  The token buffer was admitted by the enclosing attempt before
+    /// this call, so a failed control admission cannot leave a detached
+    /// collector owner behind.
+    pub(crate) fn push_expanded_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+                opener,
+                attempt_opening,
+                writer,
+                cursor: crate::scanner_kernel::ScannerCursor::default(),
+                phase: SynchronousExpandedPhase::NeedOpening,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed expanded-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Returns the active top `\expanded` collector, if any.
+    pub(crate) fn top_expanded_control(
+        &self,
+    ) -> Result<Option<SynchronousExpandedControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::Expanded(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Opens the balanced body after the required expanded left brace has
+    /// settled.  The cursor remains in the control lane and is advanced by
+    /// the same hot loop that delivers each body token.
+    pub(crate) fn begin_expanded_body(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::Expanded(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousExpandedPhase::NeedOpening {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        control.cursor.open_balanced_body();
+        control.phase = SynchronousExpandedPhase::Collecting;
+        Ok(())
+    }
+
+    /// Settles one body spelling and reports whether it was the closing
+    /// delimiter.  Only the literal catcode matters for `scan_toks` balance;
+    /// semantic resolution and expansion are handled by the delivery loop.
+    pub(crate) fn settle_expanded_word(
+        &mut self,
+        word: tex_state::token::TokenWord,
+    ) -> Result<bool, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::Expanded(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousExpandedPhase::Collecting {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        Ok(control.cursor.settle_balanced_word(word))
+    }
+
+    /// Retires one completed synchronous `\expanded` collector and returns
+    /// its attempt-owned output coordinate and opener provenance.
+    pub(crate) fn pop_expanded_control(
+        &mut self,
+    ) -> Result<SynchronousExpandedControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::Expanded(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if control.phase != SynchronousExpandedPhase::Collecting {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Returns the top synchronous `\csname` record without borrowing it
     /// across the next delivery instruction.
     pub(crate) fn top_csname_control(

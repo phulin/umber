@@ -1047,6 +1047,113 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    /// Starts the compact expanded-token collector used by e-TeX's
+    /// `\expanded` conversion.  Its attempt buffer is admitted before the
+    /// control, so a failed control push rolls back the complete local suffix
+    /// without leaving a half-open collector behind.
+    pub(super) fn begin_expanded_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let attempt_opening = self.command.attempt.arena().mark();
+        let writer = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        if let Err(error) =
+            self.command
+                .scratch
+                .push_expanded_control(opener, attempt_opening, writer)
+        {
+            self.command
+                .attempt
+                .arena_mut()
+                .truncate(attempt_opening)
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            return Err(crate::scan_toks::scratch_command_error(error));
+        }
+        Ok(())
+    }
+
+    /// Appends one settled unexpandable token to the active `\expanded`
+    /// body.  Balance is updated from the literal spelling, as required by
+    /// `scan_toks`; the closing delimiter is consumed rather than stored.
+    /// Returning `true` retires the collector and inserts its attempt-owned
+    /// result into the same input stack used by ordinary `ins_list` output.
+    pub(super) fn append_expanded_word(
+        &mut self,
+        command: &HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        let closes = self
+            .command
+            .scratch
+            .settle_expanded_word(command.spelling_word())
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let control = if closes {
+            Some(
+                self.command
+                    .scratch
+                    .pop_expanded_control()
+                    .map_err(crate::scan_toks::scratch_command_error)?,
+            )
+        } else {
+            None
+        };
+        if !closes {
+            let word = tex_state::token::TracedTokenWord::pack(
+                command.spelling_word().semantic_token(),
+                command.origin(),
+            );
+            let writer = self
+                .command
+                .scratch
+                .top_expanded_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .ok_or_else(CommandError::input_invariant)?
+                .writer;
+            self.command
+                .attempt
+                .arena_mut()
+                .push_buffer_token(writer, word)
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            return Ok(false);
+        }
+        let control = control.expect("closing expanded word retires its control");
+        let list = self
+            .command
+            .attempt
+            .arena_mut()
+            .finish_token_buffer(control.writer)
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        let len = self
+            .command
+            .attempt_token_words(list)
+            .map_err(crate::scan_toks::attempt_command_error)?
+            .len();
+        let first = if len == 0 {
+            None
+        } else {
+            Some(
+                self.command
+                    .attempt
+                    .arena()
+                    .token_word(list, 0)
+                    .map_err(crate::scan_toks::attempt_command_error)?
+                    .semantic_token(),
+            )
+        };
+        self.insert_expansion_list(
+            crate::input::PackedTokenSpanHandle::AttemptList {
+                list,
+                len: u32::try_from(len).map_err(|_| CommandError::input_invariant())?,
+            },
+            first,
+        );
+        Ok(true)
+    }
+
     /// Completes one iterative `\the` operand after the expanded loop has
     /// settled its target command.  This entry point deliberately accepts the
     /// already-delivered command, so it never calls `get_x_token_into` and

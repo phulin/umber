@@ -92,6 +92,52 @@ fn the_scans_its_target_from_the_same_expanded_delivery_loop() {
 }
 
 #[test]
+fn expanded_collects_a_balanced_body_in_the_shared_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'B',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "ABX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "expanded collection must stay in the shared delivery loop"
+        );
+    });
+}
+
+#[test]
 fn deeply_nested_the_requests_use_the_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

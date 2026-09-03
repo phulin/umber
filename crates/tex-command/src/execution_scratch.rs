@@ -1629,6 +1629,40 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_fontname_control()
     }
 
+    pub(crate) fn push_expanded_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_expanded_control(opener, attempt_opening, writer)
+    }
+
+    pub(crate) fn top_expanded_control(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::SynchronousExpandedControl>, ScratchError>
+    {
+        self.expansion_work.top_expanded_control()
+    }
+
+    pub(crate) fn begin_expanded_body(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.begin_expanded_body()
+    }
+
+    pub(crate) fn settle_expanded_word(
+        &mut self,
+        word: tex_state::token::TokenWord,
+    ) -> Result<bool, ScratchError> {
+        self.expansion_work.settle_expanded_word(word)
+    }
+
+    pub(crate) fn pop_expanded_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousExpandedControl, ScratchError> {
+        self.expansion_work.pop_expanded_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
