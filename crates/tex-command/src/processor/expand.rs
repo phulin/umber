@@ -1024,10 +1024,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     #[cfg(feature = "profiling")]
                     let mut character_run_kind = None;
                     macro_rules! finish_character_run_accounting {
-                        () => {
+                        ($fuel:expr) => {
                             #[cfg(feature = "profiling")]
                             if let Some(kind) = character_run_kind.take() {
-                                _fuel.record_raw_run(false, kind, character_run_count);
+                                $fuel.record_raw_run(false, kind, character_run_count);
                             }
                         };
                     }
@@ -1198,7 +1198,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                 }
                                                 command_state.last_diagnostic_location =
                                                     Some(location);
-                                                finish_character_run_accounting!();
+                                                finish_character_run_accounting!(_fuel);
                                                 break 'delivery DeliveryStatus::CharacterRun;
                                             }
                                             ResidentSourceCharacterRun::Failed { count, error } => {
@@ -1224,7 +1224,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                                     command_state.last_diagnostic_location =
                                                         location;
                                                 }
-                                                finish_character_run_accounting!();
+                                                finish_character_run_accounting!(_fuel);
                                                 return self.fail_expanded_delivery(
                                                     destination,
                                                     depth,
@@ -1274,19 +1274,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                                             );
                                         }
                                         ResidentSourceAdvance::InvalidCharacter => {
-                                            finish_character_run_accounting!();
+                                            finish_character_run_accounting!(_fuel);
                                             resident_boundary!('frame, ResidentBoundary::InvalidCharacter);
                                         }
                                         ResidentSourceAdvance::NeedLine(identity) => {
                                             if character_run.is_some() {
-                                                finish_character_run_accounting!();
+                                                finish_character_run_accounting!(_fuel);
                                                 break 'delivery DeliveryStatus::CharacterRun;
                                             }
                                             resident_boundary!('frame, ResidentBoundary::NeedLine(identity));
                                         }
                                         ResidentSourceAdvance::Exhausted(identity) => {
                                             if character_run.is_some() {
-                                                finish_character_run_accounting!();
+                                                finish_character_run_accounting!(_fuel);
                                                 break 'delivery DeliveryStatus::CharacterRun;
                                             }
                                             resident_boundary!('frame, ResidentBoundary::SourceExhausted(identity));
@@ -1321,7 +1321,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 );
                                 let Some((word, origin)) = $read else {
                                     if character_run.is_some() {
-                                        finish_character_run_accounting!();
+                                        finish_character_run_accounting!(_fuel);
                                         break 'delivery DeliveryStatus::CharacterRun;
                                     }
                                     let retirement = match command_state.finish_resident_exhaustion(
@@ -1673,7 +1673,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             } = word.semantic_token()
                         {
                             if let Err(error) = _fuel.charge() {
-                                finish_character_run_accounting!();
+                                finish_character_run_accounting!(_fuel);
                                 return self.fail_expanded_delivery(destination, depth, error);
                             }
                             #[cfg(feature = "profiling")]
@@ -1684,15 +1684,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                             if consume(state, _fuel, diagnostic_effects, ch, origin) {
                                 continue 'delivery;
                             }
-                            finish_character_run_accounting!();
+                            finish_character_run_accounting!(_fuel);
                             break 'delivery DeliveryStatus::CharacterRun;
                         }
                         if character_run.is_some() {
                             if let Err(error) = _fuel.charge() {
-                                finish_character_run_accounting!();
+                                finish_character_run_accounting!(_fuel);
                                 return self.fail_expanded_delivery(destination, depth, error);
                             }
-                            finish_character_run_accounting!();
+                            finish_character_run_accounting!(_fuel);
                         }
                         #[cfg(test)]
                         {
