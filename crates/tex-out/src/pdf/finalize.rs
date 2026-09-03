@@ -447,6 +447,29 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         });
     }
 
+    // writepng.c creates one document-wide transparency group for alpha PNGs
+    // and attaches it to every output page that uses one. The group changes
+    // the page's compositing color space, so omitting it is render-visible
+    // even when the decoded RGB and soft-mask samples are byte-identical.
+    let transparent_raster_group = input
+        .images
+        .values()
+        .any(|image| raster_needs_transparency_page_group(image.metadata, input.document.version))
+        .then(|| {
+            let id = object_id(next_object)?;
+            next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            let mut group = PdfDictionary::new();
+            group.insert("Type", PdfValue::Name("Group".into()))?;
+            group.insert("S", PdfValue::Name("Transparency".into()))?;
+            group.insert("CS", PdfValue::Name("DeviceRGB".into()))?;
+            group.insert("I", PdfValue::Bool(true))?;
+            objects.push(indirect_dictionary(id, group));
+            Ok::<_, PdfBuildError>(id)
+        })
+        .transpose()?;
+
     let mut pdf_image_groups = BTreeMap::<u32, Option<PdfObjectId>>::new();
     let mut pdf_image_objects = BTreeMap::<u32, PdfObjectId>::new();
     let mut lowered_images =
@@ -936,6 +959,14 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
                                 .get(&object)
                                 .ok_or(PdfBuildError::MissingRasterImage(object))?;
                             procset.include_image(image.metadata);
+                            if raster_needs_transparency_page_group(
+                                image.metadata,
+                                input.document.version,
+                            ) && page_group.is_none()
+                            {
+                                page_group = transparent_raster_group;
+                                page_group_selected = page_group.is_some();
+                            }
                             if matches!(image.metadata, PdfImageMetadataInput::PdfPage { .. }) {
                                 let group = pdf_image_groups.get(&object).copied().flatten();
                                 if group.is_some() {
@@ -4228,6 +4259,20 @@ struct RasterMetadata {
     color_space: PdfRasterColorSpaceInput,
     alpha: bool,
     png_color_type: Option<u8>,
+}
+
+fn raster_needs_transparency_page_group(
+    metadata: PdfImageMetadataInput,
+    version: (u8, u8),
+) -> bool {
+    matches!(
+        metadata,
+        PdfImageMetadataInput::Raster {
+            format: PdfRasterFormatInput::Png,
+            alpha: true,
+            ..
+        }
+    ) && (version.0 > 1 || version.1 >= 4)
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.

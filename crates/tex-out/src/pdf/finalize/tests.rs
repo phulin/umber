@@ -25,6 +25,27 @@ fn raster_metadata(
 }
 
 #[test]
+fn alpha_png_requires_pdftex_page_transparency_group_from_pdf_14() {
+    let alpha = PdfImageMetadataInput::Raster {
+        format: PdfRasterFormatInput::Png,
+        width: 1,
+        height: 1,
+        bits_per_component: 8,
+        color_space: PdfRasterColorSpaceInput::Rgb,
+        alpha: true,
+        png_color_type: Some(6),
+    };
+
+    assert!(!raster_needs_transparency_page_group(alpha, (1, 3)));
+    assert!(raster_needs_transparency_page_group(alpha, (1, 4)));
+    assert!(raster_needs_transparency_page_group(alpha, (2, 0)));
+    assert!(!raster_needs_transparency_page_group(
+        raster_metadata(PdfRasterColorSpaceInput::Rgb, Some(2)),
+        (1, 7),
+    ));
+}
+
+#[test]
 fn procset_tracks_pdftex_page_resource_classes() {
     // pdftex.web §§766--768 set /Text from the font resource list and union
     // writeimg.c's direct-image color mask. Empty pages and ordinary graphics
