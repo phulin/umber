@@ -33,6 +33,7 @@ pub(in crate::main_control) struct RootedPdfImageRequest<T> {
     pub(in crate::main_control) color_space_object: i32,
     pub(in crate::main_control) page_box: tex_command::PdfImagePageBox,
     pub(in crate::main_control) page_box_explicit: bool,
+    pub(in crate::main_control) resolution: u32,
     pub(in crate::main_control) attr: Option<T>,
 }
 
@@ -47,6 +48,7 @@ impl<G> From<tex_command::PdfImageRequest> for RootedPdfImageRequest<OperationTo
             color_space_object: request.color_space_object,
             page_box: request.page_box,
             page_box_explicit: request.page_box_explicit,
+            resolution: request.resolution,
             attr: request.attr.map(Into::into),
         }
     }

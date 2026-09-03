@@ -2277,6 +2277,12 @@ impl<G> MainControl<G> {
         }
         apply_pdf_image_compatibility_policy(&mut context);
         request.page_box = pdf_image_page_box(&context, request);
+        request.resolution = u32::try_from(
+            context
+                .int_param(IntParam::PDF_IMAGE_RESOLUTION)
+                .clamp(0, 65_535),
+        )
+        .expect("clamped image resolution is nonnegative");
         drop(context);
         let host_request = PdfImageRequest {
             name: request.name.clone(),
@@ -2287,6 +2293,7 @@ impl<G> MainControl<G> {
             color_space_object: request.color_space_object,
             page_box: request.page_box,
             page_box_explicit: request.page_box_explicit,
+            resolution: request.resolution,
             attr: request.attr.as_ref().map(|root| {
                 root.attempt_id()
                     .expect("PDF image resource resolution precedes root preparation")

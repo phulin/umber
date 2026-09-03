@@ -895,6 +895,8 @@ pub struct PdfImageRequest {
     /// Whether source selected `page_box` rather than leaving it to the live
     /// pdfTeX page-box parameters applied by canonical main control.
     pub page_box_explicit: bool,
+    /// pdftex.web §1553's live fallback DPI, frozen when the host lookup begins.
+    pub resolution: u32,
     pub attr: Option<AttemptTokenListId>,
 }
 
@@ -916,6 +918,7 @@ impl PdfImageRequest {
             && self.color_space_object == other.color_space_object
             && self.page_box == other.page_box
             && self.page_box_explicit == other.page_box_explicit
+            && self.resolution == other.resolution
     }
 }
 
@@ -5918,6 +5921,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         color_space_object: progress.color_space_object,
                         page_box_explicit: page_box.is_some(),
                         page_box: page_box.unwrap_or(PdfImagePageBox::Crop),
+                        resolution: 0,
                         attr: progress.attr,
                     });
                 }

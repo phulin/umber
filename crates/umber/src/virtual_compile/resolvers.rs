@@ -262,7 +262,7 @@ fn output_image_request(request: &tex_command::PdfImageRequest) -> PdfImageReque
             tex_command::PdfImagePageBox::Trim => tex_exec::PdfImagePageBox::Trim,
             tex_command::PdfImagePageBox::Art => tex_exec::PdfImagePageBox::Art,
         },
-        resolution: 0,
+        resolution: request.resolution,
     }
 }
 
@@ -361,11 +361,17 @@ pub(crate) fn parse_image(
     if request.page != tex_exec::PdfImagePageSelection::Number(1) {
         return Err("raster images have only page 1".to_owned());
     }
+    let (x_resolution, y_resolution) = match metadata.format {
+        PdfRasterFormat::Png => png_resolution(bytes).unwrap_or((0, 0)),
+        PdfRasterFormat::Jpeg => (0, 0),
+    };
+    let (x_resolution, y_resolution) =
+        effective_raster_resolution(x_resolution, y_resolution, request.resolution);
     Ok(PdfExternalImageSource {
         identity: content.hash(),
         metadata: PdfExternalImageMetadata::Raster(metadata),
-        natural_width: pixels_to_scaled(metadata.width, request.resolution),
-        natural_height: pixels_to_scaled(metadata.height, request.resolution),
+        natural_width: pixels_to_scaled(metadata.width, x_resolution),
+        natural_height: pixels_to_scaled(metadata.height, y_resolution),
         bytes: content.shared_bytes(),
     })
 }
@@ -431,6 +437,49 @@ fn png_has_chunk(bytes: &[u8], wanted: &[u8; 4]) -> bool {
         cursor = next;
     }
     false
+}
+
+/// Returns libpng's metre-based `pHYs` density as rounded dots per inch.
+///
+/// pdfTeX's `read_png_info` uses `round(0.0254 * pixels_per_meter)`, and
+/// pdftex.web §1553 uses the live `\pdfimageresolution` only when either
+/// intrinsic axis is absent.
+fn png_resolution(bytes: &[u8]) -> Option<(u32, u32)> {
+    let mut cursor = 8usize;
+    while cursor.checked_add(12)? <= bytes.len() {
+        let length = usize::try_from(u32::from_be_bytes(
+            bytes.get(cursor..cursor + 4)?.try_into().ok()?,
+        ))
+        .ok()?;
+        let data_start = cursor.checked_add(8)?;
+        let data_end = data_start.checked_add(length)?;
+        let next = data_end.checked_add(4)?;
+        if next > bytes.len() {
+            return None;
+        }
+        if &bytes[cursor + 4..cursor + 8] == b"pHYs" && length == 9 {
+            let data = &bytes[data_start..data_end];
+            if data[8] != 1 {
+                return None;
+            }
+            let x = u32::from_be_bytes(data[0..4].try_into().ok()?);
+            let y = u32::from_be_bytes(data[4..8].try_into().ok()?);
+            let to_dpi = |pixels_per_metre: u32| {
+                u32::try_from((u64::from(pixels_per_metre) * 254 + 5_000) / 10_000).ok()
+            };
+            return Some((to_dpi(x)?, to_dpi(y)?));
+        }
+        cursor = next;
+    }
+    None
+}
+
+fn effective_raster_resolution(x: u32, y: u32, fallback: u32) -> (u32, u32) {
+    if fallback > 0 && (x == 0 || y == 0) {
+        (fallback, fallback)
+    } else {
+        (x, y)
+    }
 }
 
 fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
@@ -870,7 +919,8 @@ impl VirtualFontResolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FileOpenIntent, HostLookup, VirtualFileResolver, parse_pdf_image, pixels_to_scaled,
+        FileOpenIntent, HostLookup, VirtualFileResolver, effective_raster_resolution,
+        parse_pdf_image, pixels_to_scaled, png_resolution,
     };
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
@@ -887,6 +937,23 @@ mod tests {
     fn zero_image_resolution_uses_pdftexs_seventy_two_dpi_fallback() {
         assert_eq!(pixels_to_scaled(10, 0), pixels_to_scaled(10, 72));
         assert_eq!(pixels_to_scaled(10, 144), pixels_to_scaled(5, 72));
+    }
+
+    #[test]
+    fn png_phys_density_precedes_the_live_fallback_resolution() {
+        // pdftex.web §1553 and writepng.c's `read_png_info`: a metre-based
+        // pHYs chunk supplies both natural-size axes, while a missing axis
+        // makes the live \pdfimageresolution replace both.
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&9_u32.to_be_bytes());
+        png.extend_from_slice(b"pHYs");
+        png.extend_from_slice(&3_937_u32.to_be_bytes());
+        png.extend_from_slice(&7_874_u32.to_be_bytes());
+        png.push(1);
+        png.extend_from_slice(&[0; 4]);
+        assert_eq!(png_resolution(&png), Some((100, 200)));
+        assert_eq!(effective_raster_resolution(100, 200, 72), (100, 200));
+        assert_eq!(effective_raster_resolution(100, 0, 144), (144, 144));
     }
 
     #[test]
