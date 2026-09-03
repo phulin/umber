@@ -514,9 +514,114 @@ fn ifdim_literal_operands_use_the_shared_dimension_control_lane() {
         assert_expanded_end(&mut processor);
         assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
         assert_eq!(
-            processor.command.scratch.recursive_delivery_entries_with_control(),
+            processor
+                .command
+                .scratch
+                .recursive_delivery_entries_with_control(),
             0,
             "ifdim and its nested number must stay in one delivery loop"
+        );
+    });
+}
+
+#[test]
+fn ifpdfabsnum_literal_operands_use_the_shared_number_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let if_abs_num = install(universe, "ifpdfabsnum", ExpandablePrimitive::IfPdfAbsNum);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_abs_num,
+                other('-'),
+                other('3'),
+                space(),
+                other('>'),
+                space(),
+                other('2'),
+                space(),
+                other('Y'),
+                otherwise,
+                other('N'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert_eq!(next_character(&mut processor), 'Y');
+        assert_expanded_end(&mut processor);
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            processor
+                .command
+                .scratch
+                .recursive_delivery_entries_with_control(),
+            0,
+            "ifpdfabsnum must stay in the shared delivery loop"
+        );
+    });
+}
+
+#[test]
+fn ifpdfabsdim_literal_operands_use_the_shared_dimension_control_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let if_abs_dim = install(universe, "ifpdfabsdim", ExpandablePrimitive::IfPdfAbsDim);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_abs_dim,
+                other('-'),
+                other('3'),
+                other('p'),
+                other('t'),
+                space(),
+                other('>'),
+                space(),
+                other('2'),
+                other('p'),
+                other('t'),
+                space(),
+                other('Y'),
+                otherwise,
+                other('N'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        assert_eq!(next_character(&mut processor), 'Y');
+        assert_expanded_end(&mut processor);
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            processor
+                .command
+                .scratch
+                .recursive_delivery_entries_with_control(),
+            0,
+            "ifpdfabsdim must stay in the shared delivery loop"
         );
     });
 }

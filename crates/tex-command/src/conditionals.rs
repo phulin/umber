@@ -8,6 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
+use crate::command::HotCommand;
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
@@ -15,7 +16,6 @@ use crate::processor::status::{
 };
 use crate::scanners::RestrictedIntegerClass;
 use crate::{CommandError, CommandState};
-use crate::command::HotCommand;
 
 use crate::observation::{
     CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
@@ -493,6 +493,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !matches!(
             kind,
             ConditionalKind::IfNum
+                | ConditionalKind::IfPdfAbsNum
                 | ConditionalKind::IfDim
                 | ConditionalKind::IfOdd
                 | ConditionalKind::IfCase
@@ -530,8 +531,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// command while nested expandable operands are delivered.
     pub(super) fn begin_if_dimension_continuation(
         &mut self,
+        kind: ConditionalKind,
         inverted: bool,
     ) -> Result<(), CommandError> {
+        if !matches!(kind, ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim) {
+            return Err(CommandError::input_invariant());
+        }
         let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
         let condition = self.command.conditions.push_with_inversion(
             ConditionalKind::IfDim,
@@ -549,7 +554,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Err(error) = self
             .command
             .scratch
-            .push_if_dimension_control(condition, inverted)
+            .push_if_dimension_control(condition, kind, inverted)
             .map_err(crate::scan_toks::scratch_command_error)
         {
             let _ = self.command.conditions.pop();
@@ -604,7 +609,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)?;
         self.complete_boolean(
             control.condition,
-            relation.compare(left, right) ^ control.inverted,
+            relation.compare(
+                if control.kind == ConditionalKind::IfPdfAbsDim {
+                    left.saturating_abs()
+                } else {
+                    left
+                },
+                if control.kind == ConditionalKind::IfPdfAbsDim {
+                    right.saturating_abs()
+                } else {
+                    right
+                },
+            ) ^ control.inverted,
         )
     }
 
@@ -1002,14 +1018,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `\ifodd` and `\ifcase` consume one integer and have no relation
         // token.  They share the same compact accumulator so nested unary
         // conditionals take the exact same iterative route as `\ifnum`.
-        if matches!(control.kind, ConditionalKind::IfOdd | ConditionalKind::IfCase) {
-            return self.advance_if_number_unary(
-                control,
-                command,
-                character,
-                is_space,
-                digit,
-            );
+        if matches!(
+            control.kind,
+            ConditionalKind::IfOdd | ConditionalKind::IfCase
+        ) {
+            return self.advance_if_number_unary(control, command, character, is_space, digit);
         }
 
         let saturating_digit = |value: i64, radix: i64, digit: i64| {
@@ -1053,9 +1066,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // command so the relation scanner sees it after `0`.
                 self.back_input(command.materialize())?;
                 self.report_missing_number_for_hot_conditional()?;
-                self.command.scratch.set_if_number_phase(Phase::NeedRelation {
-                    left: 0,
-                })?;
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::NeedRelation { left: 0 })?;
                 Ok(IfNumberAdvance::Continue)
             }
             Phase::AwaitLeft { .. } | Phase::AwaitRelation { .. } => {
@@ -1074,9 +1087,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfNumberAdvance::Continue);
                 }
-                let left = i32::try_from(signed(value, negative)).unwrap_or_else(|_| {
-                    if negative { i32::MIN } else { i32::MAX }
-                });
+                let left = i32::try_from(signed(value, negative))
+                    .unwrap_or_else(|_| if negative { i32::MIN } else { i32::MAX });
                 if is_space {
                     self.command
                         .scratch
@@ -1210,7 +1222,11 @@ impl<G> CommandProcessor<'_, '_, G> {
          -> Result<(), CommandError> {
             let value = signed(value, negative);
             let value = i32::try_from(value).unwrap_or_else(|_| {
-                if value.is_negative() { i32::MIN } else { i32::MAX }
+                if value.is_negative() {
+                    i32::MIN
+                } else {
+                    i32::MAX
+                }
             });
             let _ = this
                 .command
@@ -1295,8 +1311,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             .pop_if_number_control()
             .map_err(crate::scan_toks::scratch_command_error)?;
         let right = i32::try_from(right).unwrap_or_else(|_| {
-            if right.is_negative() { i32::MIN } else { i32::MAX }
+            if right.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
         });
+        let (left, right) = if control.kind == ConditionalKind::IfPdfAbsNum {
+            (left.saturating_abs(), right.saturating_abs())
+        } else {
+            (left, right)
+        };
         self.complete_boolean(
             control.condition,
             relation.compare(left, right) ^ control.inverted,
@@ -1311,7 +1336,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             Vec::new(),
         );
         let context = self.command.output_open_context(self.state);
-        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write() {
+        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
@@ -1330,14 +1356,26 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn report_missing_relation_for_hot_conditional(&mut self) -> Result<(), CommandError> {
-        let kind = self
+        let kind = if let Some(control) = self
             .command
             .scratch
             .top_if_number_control()
             .map_err(crate::scan_toks::scratch_command_error)?
-            .ok_or_else(CommandError::input_invariant)?
-            .kind;
-        let name = crate::processor::expand_render::print_esc_text(self.state, kind.canonical_name());
+        {
+            control.kind
+        } else if self
+            .command
+            .scratch
+            .top_if_dimension_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .is_some()
+        {
+            ConditionalKind::IfDim
+        } else {
+            return Err(CommandError::input_invariant());
+        };
+        let name =
+            crate::processor::expand_render::print_esc_text(self.state, kind.canonical_name());
         let context = self.command.output_open_context(self.state);
         let message = format!("Missing = inserted for {name}");
         let mut report = self.state.print_err(&message);
@@ -1702,6 +1740,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             ConditionalKind::If
                 | ConditionalKind::IfCat
                 | ConditionalKind::IfNum
+                | ConditionalKind::IfPdfAbsNum
+                | ConditionalKind::IfDim
+                | ConditionalKind::IfPdfAbsDim
                 | ConditionalKind::IfOdd
                 | ConditionalKind::IfCase
         ) {
@@ -1714,6 +1755,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return if matches!(_kind, ConditionalKind::If | ConditionalKind::IfCat) {
                 self.begin_if_compare_continuation(_kind, true)
+            } else if matches!(_kind, ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim) {
+                self.begin_if_dimension_continuation(_kind, true)
             } else {
                 self.begin_if_number_continuation(_kind, true)
             };

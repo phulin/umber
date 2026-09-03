@@ -1184,12 +1184,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ) && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft { .. }
-                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation {
-                            ..
-                        }
-                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
-                            ..
-                        }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation { .. }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight { .. }
                 ) {
                     match self.advance_if_number_continuation(command)? {
                         crate::conditionals::IfNumberAdvance::Continue
@@ -1283,21 +1279,30 @@ impl<G> CommandProcessor<'_, '_, G> {
             // this cutover here leaves that evaluator available to cold
             // callers while every ordinary delivery stays on one loop.
             if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                    primitive
-                    @ (ExpandablePrimitive::If
-                        | ExpandablePrimitive::IfCat
-                        | ExpandablePrimitive::IfNum
-                        | ExpandablePrimitive::IfDim
-                        | ExpandablePrimitive::IfOdd
-                        | ExpandablePrimitive::IfCase),
+                primitive @ (ExpandablePrimitive::If
+                | ExpandablePrimitive::IfCat
+                | ExpandablePrimitive::IfNum
+                | ExpandablePrimitive::IfPdfAbsNum
+                | ExpandablePrimitive::IfDim
+                | ExpandablePrimitive::IfPdfAbsDim
+                | ExpandablePrimitive::IfOdd
+                | ExpandablePrimitive::IfCase),
             )) = action
             {
                 let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
                     .ok_or_else(CommandError::input_invariant)?;
-                if matches!(kind, crate::conditionals::ConditionalKind::If | crate::conditionals::ConditionalKind::IfCat) {
+                if matches!(
+                    kind,
+                    crate::conditionals::ConditionalKind::If
+                        | crate::conditionals::ConditionalKind::IfCat
+                ) {
                     self.begin_if_compare_continuation(kind, false)?;
-                } else if kind == crate::conditionals::ConditionalKind::IfDim {
-                    self.begin_if_dimension_continuation(false)?;
+                } else if matches!(
+                    kind,
+                    crate::conditionals::ConditionalKind::IfDim
+                        | crate::conditionals::ConditionalKind::IfPdfAbsDim
+                ) {
+                    self.begin_if_dimension_continuation(kind, false)?;
                 } else {
                     self.begin_if_number_continuation(kind, false)?;
                 }
@@ -1639,9 +1644,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .is_some_and(|control| {
                             matches!(
                                 control.phase,
-                                crate::expansion_work::control::SynchronousNumberPhase::Await {
-                                    ..
-                                }
+                                crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
                             )
                         });
                     let number_should_await = self

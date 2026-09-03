@@ -1502,10 +1502,8 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_if_number_control(
         &self,
-    ) -> Result<
-        Option<crate::expansion_work::control::SynchronousIfNumberControl>,
-        ScratchError,
-    > {
+    ) -> Result<Option<crate::expansion_work::control::SynchronousIfNumberControl>, ScratchError>
+    {
         self.expansion_work.top_if_number_control()
     }
 
@@ -1533,18 +1531,17 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn push_if_dimension_control(
         &mut self,
         condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
         inverted: bool,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_if_dimension_control(condition, inverted)
+            .push_if_dimension_control(condition, kind, inverted)
     }
 
     pub(crate) fn top_if_dimension_control(
         &self,
-    ) -> Result<
-        Option<crate::expansion_work::control::SynchronousIfDimensionControl>,
-        ScratchError,
-    > {
+    ) -> Result<Option<crate::expansion_work::control::SynchronousIfDimensionControl>, ScratchError>
+    {
         self.expansion_work.top_if_dimension_control()
     }
 
@@ -1579,10 +1576,8 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_number_control(
         &self,
-    ) -> Result<
-        Option<crate::expansion_work::control::SynchronousNumberControl>,
-        ScratchError,
-    > {
+    ) -> Result<Option<crate::expansion_work::control::SynchronousNumberControl>, ScratchError>
+    {
         self.expansion_work.top_number_control()
     }
 
@@ -1616,10 +1611,8 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_fontname_control(
         &self,
-    ) -> Result<
-        Option<crate::expansion_work::control::SynchronousFontNameControl>,
-        ScratchError,
-    > {
+    ) -> Result<Option<crate::expansion_work::control::SynchronousFontNameControl>, ScratchError>
+    {
         self.expansion_work.top_fontname_control()
     }
 

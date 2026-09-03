@@ -517,10 +517,8 @@ impl<G> ExpansionWork<G> {
         if active_depth == 0 {
             return;
         }
-        self.counters.recursive_delivery_entries = self
-            .counters
-            .recursive_delivery_entries
-            .saturating_add(1);
+        self.counters.recursive_delivery_entries =
+            self.counters.recursive_delivery_entries.saturating_add(1);
         if self.driver.continuation_depth != 0 {
             self.counters.recursive_delivery_entries_with_control = self
                 .counters
@@ -940,14 +938,14 @@ impl<G> ExpansionWork<G> {
         inverted: bool,
     ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::IfNumber(
-            SynchronousIfNumberControl {
+        if let Err(error) =
+            self.push_control(ExpansionControl::IfNumber(SynchronousIfNumberControl {
                 condition,
                 kind,
                 inverted,
                 phase: SynchronousIfNumberPhase::NeedLeft,
-            },
-        )) {
+            }))
+        {
             self.driver
                 .pop_continuation()
                 .expect("failed if-number-control push restores driver depth");
@@ -1107,12 +1105,14 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn push_if_dimension_control(
         &mut self,
         condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
         inverted: bool,
     ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
         if let Err(error) = self.push_control(ExpansionControl::IfDimension(
             SynchronousIfDimensionControl {
                 condition,
+                kind,
                 inverted,
                 phase: SynchronousIfDimensionPhase::NeedLeft,
             },
@@ -1159,17 +1159,15 @@ impl<G> ExpansionWork<G> {
             return Err(ScratchError::InvalidCoordinate);
         };
         control.phase = match control.phase {
-            SynchronousIfDimensionPhase::NeedLeft => {
-                SynchronousIfDimensionPhase::AwaitLeft {
-                    negative: false,
-                    value: 0,
-                    fraction: 0,
-                    fraction_digits: 0,
-                    decimal: false,
-                    unit: 0,
-                    seen_digit: false,
-                }
-            }
+            SynchronousIfDimensionPhase::NeedLeft => SynchronousIfDimensionPhase::AwaitLeft {
+                negative: false,
+                value: 0,
+                fraction: 0,
+                fraction_digits: 0,
+                decimal: false,
+                unit: 0,
+                seen_digit: false,
+            },
             SynchronousIfDimensionPhase::Left {
                 negative,
                 value,
@@ -1305,13 +1303,11 @@ impl<G> ExpansionWork<G> {
         roman: bool,
     ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::Number(
-            SynchronousNumberControl {
-                opener,
-                roman,
-                phase: SynchronousNumberPhase::Need,
-            },
-        )) {
+        if let Err(error) = self.push_control(ExpansionControl::Number(SynchronousNumberControl {
+            opener,
+            roman,
+            phase: SynchronousNumberPhase::Need,
+        })) {
             self.driver
                 .pop_continuation()
                 .expect("failed number-control push restores driver depth");
@@ -1398,9 +1394,7 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
-    pub(crate) fn pop_number_control(
-        &mut self,
-    ) -> Result<SynchronousNumberControl, ScratchError> {
+    pub(crate) fn pop_number_control(&mut self) -> Result<SynchronousNumberControl, ScratchError> {
         let id = self.controls.top_id()?;
         let control = match self.controls.get(id)? {
             ExpansionControl::Number(control) => *control,
@@ -1423,9 +1417,11 @@ impl<G> ExpansionWork<G> {
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::FontName(
-            SynchronousFontNameControl { opener },
-        )) {
+        if let Err(error) =
+            self.push_control(ExpansionControl::FontName(SynchronousFontNameControl {
+                opener,
+            }))
+        {
             self.driver
                 .pop_continuation()
                 .expect("failed fontname-control push restores driver depth");

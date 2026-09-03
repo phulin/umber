@@ -307,6 +307,7 @@ pub(crate) enum SynchronousIfDimensionPhase {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SynchronousIfDimensionControl {
     pub(crate) condition: crate::processor::status::ConditionId,
+    pub(crate) kind: crate::conditionals::ConditionalKind,
     pub(crate) inverted: bool,
     pub(crate) phase: SynchronousIfDimensionPhase,
 }
