@@ -2,7 +2,19 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::{CommandHostCapabilities, CommandProfile, CommandState};
+use crate::{
+    CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation, CommandObserver,
+    CommandProfile, CommandState, InputTransition, RecoveryKind,
+};
+
+#[derive(Default)]
+struct RecordingObserver(Vec<CommandObservation>);
+
+impl CommandObserver for RecordingObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 
 fn install_static<G>(universe: &mut tex_state::Universe<G>, name: &str, meaning: Meaning) -> Token {
     let symbol = universe.intern(name).expect("intern primitive");
@@ -89,6 +101,163 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
             }
         );
         assert!(processor.get_x_token().expect("end").is_none());
+    });
+}
+
+#[test]
+fn active_character_unexpandable_result_preserves_origin_and_backs_up_once() {
+    crate::test_harness::with_universe(|universe| {
+        let active = universe
+            .intern_active_character('~')
+            .expect("active character");
+        universe
+            .assign_meaning(
+                active,
+                MeaningWord::from_static(Meaning::CharGiven('A')),
+                AssignmentScope::Global,
+            )
+            .expect("active character meaning");
+
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"x"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut observer = RecordingObserver::default();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        )
+        .with_observer(&mut observer);
+
+        let source_command = processor
+            .get_next()
+            .expect("source delivery")
+            .expect("source command");
+        let origin = source_command.origin();
+        assert_ne!(origin, OriginId::UNKNOWN);
+        let fuel_before_treatment = processor.fuel.burned();
+        processor
+            .treat_as_active_character('~', origin)
+            .expect("active-character treatment");
+        assert_eq!(processor.fuel.burned(), fuel_before_treatment);
+
+        let backed_up = processor
+            .get_next()
+            .expect("backed-up active character")
+            .expect("active character command");
+        assert_eq!(
+            backed_up.spelling().semantic_token(),
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            }
+        );
+        assert_eq!(backed_up.origin(), origin);
+        drop(processor);
+
+        let expanded = observer
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Command(record)
+                    if record.boundary == CommandDeliveryBoundary::Expanded =>
+                {
+                    Some(record)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].provenance.origin, origin);
+        assert!(expanded[0].provenance.has_origin);
+        assert_eq!(
+            observer
+                .0
+                .iter()
+                .filter(|observation| {
+                    matches!(
+                        observation,
+                        CommandObservation::Recovery(record) if record.kind == RecoveryKind::Backup
+                    )
+                })
+                .count(),
+            1,
+        );
+        assert!(observer.0.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Backup
+            )
+        }));
+    });
+}
+
+#[test]
+fn active_character_empty_macro_retires_replay_before_settling_next_command() {
+    crate::test_harness::with_universe(|universe| {
+        let active = universe
+            .intern_active_character('~')
+            .expect("active character");
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty active macro definition");
+        universe
+            .assign_meaning(
+                active,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("active macro meaning");
+
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            }],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        processor
+            .treat_as_active_character('~', OriginId::UNKNOWN)
+            .expect("empty active macro treatment");
+        let backed_up = processor
+            .get_next()
+            .expect("backed-up next command")
+            .expect("settled command");
+        assert_eq!(
+            backed_up.spelling().semantic_token(),
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            }
+        );
+        assert!(processor.get_next().expect("end of input").is_none());
     });
 }
 

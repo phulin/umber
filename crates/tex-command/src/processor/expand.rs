@@ -1953,8 +1953,57 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | DeliveryStatus::PendingExpanded
                 | DeliveryStatus::AlignmentEndTemplate
                 | DeliveryStatus::AlignmentClosingBrace
+                | DeliveryStatus::ReplayCompleted(_)
         ));
         Ok(result)
+    }
+
+    /// Completes TeX82 §1152's active-character `x_token` handoff.
+    ///
+    /// The ordinary destination-directed expanded entry exposes
+    /// `PendingExpanded` and `AlignmentClosingBrace` only as internal
+    /// observer transport markers; both already leave the settled command in
+    /// `destination`. Active-character treatment has the same settled-command
+    /// ownership, so it must normalize those statuses without constructing or
+    /// redelivering another command. An intercepted alignment end-template is
+    /// the one exceptional boundary: its command is consumed to begin the
+    /// scalar v-template, after which `x_token` retries with no pending
+    /// command above the newly installed input frame.
+    #[cold]
+    #[inline(never)]
+    fn active_x_token_into(
+        &mut self,
+        pending: CurrentCommand<G>,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut pending = Some(pending);
+        loop {
+            match self.x_token_from_into(pending.take(), destination)? {
+                DeliveryStatus::End => return Ok(DeliveryStatus::End),
+                DeliveryStatus::Command
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                    // The intercepted delimiter has been consumed by the
+                    // alignment transition. The next x-token starts with a
+                    // fresh input fetch, rather than redelivering it.
+                    pending = None;
+                }
+                DeliveryStatus::ReplayCompleted(_) => {
+                    // Stored replay retirement is an input-boundary event,
+                    // not a settled active-character command. Continue the
+                    // same x-token operation after the continuation retires.
+                    pending = None;
+                }
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    unreachable!("active-character delivery has no character consumer")
+                }
+            }
+        }
     }
 
     /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
@@ -1996,13 +2045,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, self.state);
         let mut destination = None;
-        let status = self.x_token_from_into(Some(command), &mut destination)?;
+        let status = self.active_x_token_into(command, &mut destination)?;
         let settled = match status {
             DeliveryStatus::End => return Ok(()),
             DeliveryStatus::Command => destination
                 .take()
                 .expect("command status initializes destination"),
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
+            _ => unreachable!("active-character delivery normalizes to commands"),
         };
         // §325 needs only `cur_tok`; the settled token is `x_token`'s result
         // rather than a delivery this call is undoing, exactly as in §326.
