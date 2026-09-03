@@ -521,6 +521,16 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(!ownership_surface.contains("frame.hot_mut()"));
     assert!(preflight.contains("ScannedOperation::Hot(operation)"));
     assert!(preflight.contains("apply_hot_operation_admitted("));
+    assert!(preflight.contains("frame.unavailable(cold).executes_directly()"));
+    assert!(preflight.contains("self.apply_direct_cold_operation("));
+    assert!(control.contains("OperationDelivery::AppliedDirect"));
+    let direct_settlement = control
+        .split_once("let applied = if applied_directly {")
+        .and_then(|(_, tail)| tail.split_once("} else {"))
+        .map(|(body, _)| body)
+        .expect("locate direct admitted settlement");
+    assert!(direct_settlement.contains("Ok(ReplayStep::Continue)"));
+    assert!(!direct_settlement.contains("execute_typed_operation("));
     assert!(preparation_front.contains("OperationDelivery::ResidentCold"));
     assert_eq!(
         preparation_front

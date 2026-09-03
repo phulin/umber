@@ -32,7 +32,7 @@ pub(super) fn operation_barrier<G>(
                 crate::transaction_protocol::canonical_command_barrier(command.meaning())
             }),
         },
-        OperationDelivery::AppliedHot => None,
+        OperationDelivery::AppliedDirect => None,
         _ => None,
     }
 }
@@ -123,6 +123,7 @@ impl<G> MainControl<G> {
         let mut diagnostics = Vec::new();
         let mut hot_admission = None;
         let mut hot_operation = None;
+        let mut direct_cold_operation = false;
         let raw_main_loop_delivery = self.main_loop_active;
         let outer_paragraph_was_active =
             self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
@@ -293,11 +294,15 @@ impl<G> MainControl<G> {
                                 Ok(ScannedOperation::Cold) => {
                                     frame.retain_source_role();
                                     frame.clear_preflight();
-                                    host_preparation.fill_delivery(
-                                        OperationDelivery::ResidentCold,
-                                        None,
-                                        None,
-                                    );
+                                    if frame.unavailable(cold).executes_directly() {
+                                        direct_cold_operation = true;
+                                    } else {
+                                        host_preparation.fill_delivery(
+                                            OperationDelivery::ResidentCold,
+                                            None,
+                                            None,
+                                        );
+                                    }
                                 }
                                 Err(error) => {
                                     let cursor = processor.delivery_cursor();
@@ -372,6 +377,24 @@ impl<G> MainControl<G> {
                     );
                     hot_admission = Some((admission, output_start));
                 }
+                if diagnostics.is_empty() && direct_cold_operation {
+                    let output_start = OperationOutputStart {
+                        outer_paragraph_was_active,
+                        source_role: frame.operation_source_role(),
+                        artifact_count: context.artifact_commit_count(),
+                        effect_count: context.effect_record_count(),
+                        prepared_page_count: self.prepared_dvi_pages.len(),
+                        tracked_region_is_active: false,
+                    };
+                    let admission = self.apply_direct_cold_operation(
+                        context,
+                        host_preparation,
+                        diagnostic_effects,
+                        frame.unavailable_mut(cold),
+                    );
+                    frame.clear_cold(cold);
+                    hot_admission = Some((admission, output_start));
+                }
                 PreflightReadiness::Ready
             })
             .expect("live generation");
@@ -393,7 +416,7 @@ impl<G> MainControl<G> {
             }
             frame.clear_preflight();
             frame.clear_operation_origin();
-            host_preparation.fill_applied_hot();
+            host_preparation.fill_applied_direct();
             host_preparation.discard_delivery_status();
             return PreflightReadiness::Ready;
         }
@@ -420,7 +443,7 @@ impl<G> MainControl<G> {
                 frame.error = Some(error);
             }
             frame.clear_operation_origin();
-            host_preparation.fill_applied_hot();
+            host_preparation.fill_applied_direct();
             host_preparation.discard_delivery_status();
             return PreflightReadiness::Ready;
         }

@@ -3529,7 +3529,18 @@ impl<G> MainControl<G> {
                 }
                 _ => None,
             };
-            let barrier = operation_barrier(host_preparation.delivery(), &command_episode);
+            // The admitted delivery callback has already executed and settled
+            // an ordinary direct operation. Do not send that caller-owned result
+            // back through command classification or the typed executor.
+            let applied_directly = matches!(
+                host_preparation.delivery(),
+                OperationDelivery::AppliedDirect
+            );
+            let barrier = if applied_directly {
+                None
+            } else {
+                operation_barrier(host_preparation.delivery(), &command_episode)
+            };
             if matches!(
                 barrier,
                 Some(crate::transaction_protocol::CommandBarrier::Resource)
@@ -3687,7 +3698,8 @@ impl<G> MainControl<G> {
             if matches!(
                 barrier,
                 Some(crate::transaction_protocol::CommandBarrier::Transaction(_))
-            ) || self.command_requires_transaction(stores, &command_episode)
+            ) || (!applied_directly
+                && self.command_requires_transaction(stores, &command_episode))
             {
                 if operations != 0 {
                     self.record_direct_episode_commit(
@@ -3918,72 +3930,81 @@ impl<G> MainControl<G> {
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
-            let applied = match self.execute_typed_operation(
-                stores,
-                &mut host_preparation,
-                &mut diagnostic_effects,
-                &mut command_episode,
-                &mut cold_operation,
-                tracked_mark.is_some(),
-            ) {
-                Err(TypedOperationError::Preparation(error)) => {
-                    command_episode.error = Some(error);
-                    if let Some(interaction) = saved_interaction {
-                        stores.set_interaction_mode(interaction);
-                    }
-                    if let Some(mark) = tracked_mark {
-                        let _ = stores.abandon_dependency_region(mark);
-                    }
-                    let result = if command_episode.has_unavailable(&cold_operation) {
-                        self.finish_unavailable_prepared_resource_operation(
-                            stores,
-                            operation_mark,
-                            command_episode,
-                            cold_operation,
-                            barrier,
-                        )
-                    } else {
-                        let result = self.finish_resource_preflight_failure(
-                            stores,
-                            command_episode.take_error(),
-                        );
-                        if matches!(result, Ok(StepResult::Suspended(_))) {
-                            let alignment_scanner = command_episode.alignment_scanner.take();
-                            let destination = own_alignment_retry_child(
-                                alignment_delivery,
-                                command_episode,
-                                cold_operation,
-                                alignment_scanner,
-                            )
-                            .expect("resource suspension retains one direct caller destination");
-                            self.retain_direct_delivery_for_retry(
+            let applied = if applied_directly {
+                match command_episode.error.take() {
+                    Some(error) => Err(error),
+                    None => Ok(ReplayStep::Continue),
+                }
+            } else {
+                match self.execute_typed_operation(
+                    stores,
+                    &mut host_preparation,
+                    &mut diagnostic_effects,
+                    &mut command_episode,
+                    &mut cold_operation,
+                    tracked_mark.is_some(),
+                ) {
+                    Err(TypedOperationError::Preparation(error)) => {
+                        command_episode.error = Some(error);
+                        if let Some(interaction) = saved_interaction {
+                            stores.set_interaction_mode(interaction);
+                        }
+                        if let Some(mark) = tracked_mark {
+                            let _ = stores.abandon_dependency_region(mark);
+                        }
+                        let result = if command_episode.has_unavailable(&cold_operation) {
+                            self.finish_unavailable_prepared_resource_operation(
                                 stores,
                                 operation_mark,
-                                destination,
-                            );
+                                command_episode,
+                                cold_operation,
+                                barrier,
+                            )
                         } else {
-                            self.commit_direct_operation(stores, operation_mark);
-                        }
-                        result
-                    };
-                    return match result {
-                        Err(error) => {
-                            let error = {
-                                let mut context =
-                                    stores.command_context().expect("diagnostic admission");
-                                error.freeze_diagnostic_origin(
-                                    &mut context,
-                                    self.command.diagnostic_input_context(8),
+                            let result = self.finish_resource_preflight_failure(
+                                stores,
+                                command_episode.take_error(),
+                            );
+                            if matches!(result, Ok(StepResult::Suspended(_))) {
+                                let alignment_scanner = command_episode.alignment_scanner.take();
+                                let destination = own_alignment_retry_child(
+                                    alignment_delivery,
+                                    command_episode,
+                                    cold_operation,
+                                    alignment_scanner,
                                 )
-                            };
-                            Self::publish_pdf_fatal_error(stores, &error)?;
-                            Err(error)
-                        }
-                        result => result,
-                    };
+                                .expect(
+                                    "resource suspension retains one direct caller destination",
+                                );
+                                self.retain_direct_delivery_for_retry(
+                                    stores,
+                                    operation_mark,
+                                    destination,
+                                );
+                            } else {
+                                self.commit_direct_operation(stores, operation_mark);
+                            }
+                            result
+                        };
+                        return match result {
+                            Err(error) => {
+                                let error = {
+                                    let mut context =
+                                        stores.command_context().expect("diagnostic admission");
+                                    error.freeze_diagnostic_origin(
+                                        &mut context,
+                                        self.command.diagnostic_input_context(8),
+                                    )
+                                };
+                                Self::publish_pdf_fatal_error(stores, &error)?;
+                                Err(error)
+                            }
+                            result => result,
+                        };
+                    }
+                    Err(TypedOperationError::Application(error)) => Err(error),
+                    Ok(step) => Ok(step),
                 }
-                Err(TypedOperationError::Application(error)) => Err(error),
-                Ok(step) => Ok(step),
             };
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
@@ -6581,7 +6602,7 @@ impl<G> MainControl<G> {
             );
         } else if matches!(&delivery, OperationDelivery::Command) {
             frame.assert_command_only();
-        } else if matches!(&delivery, OperationDelivery::AppliedHot) {
+        } else if matches!(&delivery, OperationDelivery::AppliedDirect) {
             assert!(
                 frame.command.is_none()
                     && frame.expansion.is_none()
@@ -6599,7 +6620,7 @@ impl<G> MainControl<G> {
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let source_role = frame.operation_source_role();
-        if matches!(delivery, OperationDelivery::AppliedHot) {
+        if matches!(delivery, OperationDelivery::AppliedDirect) {
             return match frame.error.take() {
                 Some(error) => Err(TypedOperationError::Application(error)),
                 None => Ok(ReplayStep::Continue),
@@ -6860,7 +6881,7 @@ impl<G> MainControl<G> {
                                     )?,
                                 }
                             }
-                            OperationDelivery::AppliedHot => {
+                            OperationDelivery::AppliedDirect => {
                                 unreachable!("applied hot delivery returns before scanning")
                             }
                             OperationDelivery::ResidentCold => {
@@ -7196,6 +7217,7 @@ impl<G> MainControl<G> {
         if result.is_err() || !fires_afterassignment {
             return HotApplyAdmission {
                 result,
+                main_loop_active: None,
                 settled_in_admission: false,
                 fires_afterassignment,
                 pending_page_output: PendingPageOutputFacts::capture(context),
@@ -7244,10 +7266,76 @@ impl<G> MainControl<G> {
         }
         HotApplyAdmission {
             result,
+            main_loop_active: None,
             settled_in_admission: true,
             fires_afterassignment,
             pending_page_output: PendingPageOutputFacts::capture(context),
             assignment_receipts,
+        }
+    }
+
+    /// Applies a rootless ordinary command in the same long-lived command
+    /// context which delivered it. The operation remains in the caller's
+    /// result slot and no retained command or execution frame is created.
+    fn apply_direct_cold_operation(
+        &mut self,
+        context: &mut CommandContext<'_, G>,
+        host_preparation: &mut OperationPreparation<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+        operation: &mut PreparedColdCommand<G>,
+    ) -> HotApplyAdmission {
+        debug_assert!(operation.executes_directly());
+        let parking = self.suspend_main_control_parking(operation);
+        let mut command = CommandMachine {
+            state: &mut self.command,
+            fuel: self.fuel.fuel_mut(),
+            capabilities: &mut self.capabilities,
+            host_facts: CommandMachineHostFacts::Forbidden,
+            observations: &mut self.operation_observations,
+            assignment_receipts: None,
+            diagnostic_effects,
+            shown_mode: &mut self.shown_mode,
+            initex: self.initex,
+            emit_dvi_override: self.emit_dvi_override,
+            immediate_prints: &mut self.immediate_prints,
+            prepared_shipout: &mut self.prepared_shipout,
+            pending_show_completion: None,
+            pending_outer_page_build_context: None,
+            output_routine_active: self.boxes.output_routine_active,
+        };
+        let result = apply_cold_operation(
+            operation,
+            context,
+            &mut self.modes,
+            &mut self.next_alignment_identity,
+            &mut self.active_alignment,
+            &mut command,
+            &mut self.boxes,
+            &self.active_discretionaries,
+            &self.active_math_choices,
+            &mut self.active_math_fields,
+            &self.active_math_left_boundaries,
+            &self.active_math_shifts,
+            &mut self.prepared_dvi_pages,
+        );
+        if result.is_ok() {
+            command.publish_named_token_list_pushes(context);
+        }
+        Self::capture_save_stack_usage(
+            host_preparation,
+            context,
+            &self.boxes,
+            command.state,
+            command.state.profile(),
+        );
+        let main_loop_active = parking.post_apply(self.modes.current_mode(), context);
+        HotApplyAdmission {
+            result,
+            main_loop_active,
+            settled_in_admission: false,
+            fires_afterassignment: false,
+            pending_page_output: PendingPageOutputFacts::capture(context),
+            assignment_receipts: None,
         }
     }
 
@@ -7261,11 +7349,17 @@ impl<G> MainControl<G> {
     ) -> Result<ReplayStep, ExecError> {
         let HotApplyAdmission {
             result,
+            main_loop_active,
             settled_in_admission,
             fires_afterassignment,
             pending_page_output,
             assignment_receipts,
         } = admission;
+        if result.is_ok()
+            && let Some(main_loop_active) = main_loop_active
+        {
+            self.main_loop_active = main_loop_active;
+        }
         if result.is_ok() {
             self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         }
@@ -8953,6 +9047,7 @@ struct PendingPageOutputFacts {
 /// releasing that borrow for host-side page and effect publication.
 struct HotApplyAdmission {
     result: Result<ReplayStep, ExecError>,
+    main_loop_active: Option<bool>,
     settled_in_admission: bool,
     fires_afterassignment: bool,
     pending_page_output: PendingPageOutputFacts,

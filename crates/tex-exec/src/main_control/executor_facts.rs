@@ -47,8 +47,8 @@ impl<G> OperationPreparation<G> {
         self.delivery.is_some()
     }
 
-    pub(super) fn fill_applied_hot(&mut self) {
-        self.fill_delivery(OperationDelivery::AppliedHot, None, None);
+    pub(super) fn fill_applied_direct(&mut self) {
+        self.fill_delivery(OperationDelivery::AppliedDirect, None, None);
     }
 
     pub(super) fn delivery(&self) -> &OperationDelivery {

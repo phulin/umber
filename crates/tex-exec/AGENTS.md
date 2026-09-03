@@ -59,9 +59,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   expansion, scalar phase, delivery cursor, scanner child, partial direct scan,
   and the completed hot-family operand. An adjacent caller-owned typed cold
   slot owns uncommon leaves without entering the resident command layout.
-  Canonical dispatch installs one branch result, then `dispatch_typed_operation`
-  enters hot execution directly or constructs a borrow-typed
-  `ColdExecutionEpisode`; there is no generic prepare/apply readiness mailbox.
+  Canonical dispatch applies ordinary character, spacing, paragraph-start,
+  grouping, definition, let, and catcode results directly in the already-admitted
+  command context. The outer loop settles `AppliedDirect` without reclassifying
+  or entering `dispatch_typed_operation`. Only a retained cold branch constructs
+  a borrow-typed `ColdExecutionEpisode`; there is no generic prepare/apply
+  readiness mailbox.
   A move-only `OperationFrame` packages the resident episode and cold slot only
   when resource, diagnostic, or exact rollback suspension must outlive the
   call. Do not recreate a nested preflight command, generic operation payload,

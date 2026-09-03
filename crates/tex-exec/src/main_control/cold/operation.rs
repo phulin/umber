@@ -1380,6 +1380,18 @@ pub(in crate::main_control) enum MathShiftPairing {
     ProbeDisplayEnd,
 }
 
+impl<G> ColdOperation<G> {
+    /// Whether this rootless command can be applied before releasing the
+    /// command context which delivered it. These are the ordinary main-loop
+    /// leaves: they neither retain scanner state nor cross a host boundary.
+    pub(in crate::main_control) fn executes_directly(&self) -> bool {
+        matches!(
+            self,
+            Self::Continue | Self::Relax | Self::ParagraphStart | Self::Character { .. }
+        )
+    }
+}
+
 /// A cold operation after its complete attempt-root set has crossed the one
 /// outer promotion boundary. The type contains no attempt-local coordinate.
 pub(in crate::main_control) type PreparedColdCommand<G> = ColdOperation<G>;

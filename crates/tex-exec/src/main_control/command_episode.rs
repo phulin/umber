@@ -22,8 +22,8 @@ pub(super) enum OperationDelivery {
         alignment: Option<AlignmentIdentity>,
         cursor: tex_command::CommandDeliveryCursor,
     },
-    /// Hot application completed in the admitted command context.
-    AppliedHot,
+    /// Ordinary application completed in the admitted command context.
+    AppliedDirect,
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the adjacent typed slot contains the cold operation.
     ResidentCold,
@@ -715,7 +715,6 @@ impl<G> CommandEpisode<G> {
         );
     }
 
-    #[cfg(feature = "profiling")]
     pub(super) fn unavailable<'a>(&self, cold: &'a ColdOperationSlot<G>) -> &'a ColdOperation<G> {
         cold.operation
             .as_ref()
