@@ -244,8 +244,11 @@ impl<'store> RetainedStateGeneration<'store> {
             crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
         );
         let interner = store.epoch().lease()?;
+        let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+            .expect("interner Symbol capacity fits native usize");
         let generation = Generation::<PhysicalGenerationCoordinate>::new();
-        let core = StateCore::new(generation).map_err(|_| SessionEpochError::Retired)?;
+        let core = StateCore::new_with_meaning_capacity(generation, meaning_capacity)
+            .map_err(|_| SessionEpochError::Retired)?;
         let mut universe = Universe::new(interner, core);
         *universe.world_mut() = world;
         drop(universe.release_session_epoch());

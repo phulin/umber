@@ -5478,12 +5478,14 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     fn ensure_symbol_admitted(&mut self, symbol: Symbol) {
-        if self.admitted.state_ref().meaning(symbol).is_err() {
-            self.admitted
-                .state()
-                .admit_symbol(symbol)
-                .expect("session-known symbol fits the current meaning bank");
-        }
+        // Interner admission and dense-state row admission are one command
+        // boundary. The state bank is physically reserved from the same
+        // session capacity, so this direct append/no-op path cannot need a
+        // post-intern hot lookup or capacity probe.
+        self.admitted
+            .state()
+            .admit_symbol(symbol)
+            .expect("session-known symbol fits the current meaning bank");
     }
 
     fn intern_symbol(&mut self, id: Result<SymbolId, crate::interner::InternerError>) -> Symbol {

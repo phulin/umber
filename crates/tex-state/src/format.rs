@@ -1357,8 +1357,14 @@ impl<G> FormatDestination<G> {
             .generation
             .take()
             .ok_or(FormatError::DestinationConsumed)?;
-        let core = StateCore::new_format(generation, decoded.names.len())
-            .map_err(|_| FormatError::AllocationFailed)?;
+        let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+            .expect("interner Symbol capacity fits native usize");
+        let core = StateCore::new_format_with_meaning_capacity(
+            generation,
+            decoded.names.len(),
+            meaning_capacity,
+        )
+        .map_err(|_| FormatError::AllocationFailed)?;
         let mut universe = Universe::new_format_candidate(interner, core);
         drop(bytes);
         let interaction_mode = decode_interaction_mode(decoded.metadata.interaction_mode)?;
@@ -1478,8 +1484,14 @@ pub(crate) fn materialize_retained_format<G>(
     let DetachedFormatImage { bytes, decoded } = image;
     let mut interner = interner;
     prepare_format_interner(&mut interner, &decoded)?;
-    let core = StateCore::new_format(generation, decoded.names.len())
-        .map_err(|_| FormatError::AllocationFailed)?;
+    let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+        .expect("interner Symbol capacity fits native usize");
+    let core = StateCore::new_format_with_meaning_capacity(
+        generation,
+        decoded.names.len(),
+        meaning_capacity,
+    )
+    .map_err(|_| FormatError::AllocationFailed)?;
     let mut universe = Universe::new_format_candidate(interner, core);
     if wants_page_node_semantic_identity {
         if !universe

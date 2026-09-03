@@ -1468,6 +1468,16 @@ impl<G> Universe<G> {
             .state()
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
+        // A session epoch can outlive one revision generation. Admit the
+        // complete existing Symbol prefix before publishing this Universe so
+        // read-only identity getters (including active-character lookup) can
+        // never expose a row that the new dense meaning bank has not created.
+        if let Some(last) = interner.len().checked_sub(1) {
+            let last = u32::try_from(last).expect("interner Symbol rows fit u32");
+            core.state_mut()
+                .admit_symbol(Symbol::from_packed_slot(last))
+                .expect("session Symbol prefix fits the reserved meaning bank");
+        }
         let page_region = PageRegionHistory::default();
         let command_generation_owner = core.generation_owner();
         Self {
@@ -3759,9 +3769,11 @@ pub fn with_universe<R>(
 ) -> Result<R, StateError> {
     let epoch = SessionInternerEpoch::new(budget);
     let interner = epoch.lease().map_err(|_| StateError::ForeignSession)?;
+    let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+        .expect("interner Symbol capacity fits native usize");
     drop(epoch);
     with_generation(|generation| {
-        let core = StateCore::new(generation)?;
+        let core = StateCore::new_with_meaning_capacity(generation, meaning_capacity)?;
         let mut universe = Universe::new(interner, core);
         Ok(use_universe(&mut universe))
     })
@@ -3775,9 +3787,11 @@ pub fn with_universe_for_profile<R>(
 ) -> Result<R, StateError> {
     let epoch = SessionInternerEpoch::new_for_profile(profile);
     let interner = epoch.lease().map_err(|_| StateError::ForeignSession)?;
+    let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+        .expect("interner Symbol capacity fits native usize");
     drop(epoch);
     with_generation(|generation| {
-        let core = StateCore::new(generation)?;
+        let core = StateCore::new_with_meaning_capacity(generation, meaning_capacity)?;
         // The profile selects the physical interner reservation. The command
         // runtime remains at its conservative TeX82 defaults until startup
         // identifies the executable binary; selecting a TeX82 binary must be
@@ -3794,8 +3808,11 @@ pub fn with_universe_in_epoch<R>(
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, SessionEpochError> {
     let interner = epoch.lease()?;
+    let meaning_capacity = usize::try_from(interner.physical_slot_capacity())
+        .expect("interner Symbol capacity fits native usize");
     with_generation(|generation| {
-        let core = StateCore::new(generation).map_err(|_| SessionEpochError::Retired)?;
+        let core = StateCore::new_with_meaning_capacity(generation, meaning_capacity)
+            .map_err(|_| SessionEpochError::Retired)?;
         let mut universe = Universe::new(interner, core);
         Ok(use_universe(&mut universe))
     })

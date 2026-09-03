@@ -62,6 +62,56 @@ fn admitted_meanings_are_direct_dense_slots() {
 }
 
 #[test]
+fn symbol_admission_keeps_meaning_rows_synchronized_without_growth() {
+    let mut names = interner();
+    let first = names.intern("first").expect("first");
+    let second = names.intern("second").expect("second");
+    let mut state = state();
+    let capacity = state.meanings.capacity();
+
+    state.admit_symbol(first.symbol()).expect("admit first");
+    assert_eq!(state.meanings.len(), 1);
+    state.admit_symbol(second.symbol()).expect("admit second");
+    assert_eq!(state.meanings.len(), 2);
+    assert_eq!(state.meanings.capacity(), capacity);
+    assert_eq!(
+        state.meaning(first.symbol()).expect("first meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
+    assert_eq!(
+        state.meaning(second.symbol()).expect("second meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
+}
+
+#[test]
+fn local_meaning_assignment_restores_after_group_unwind() {
+    let mut names = interner();
+    let symbol = names.intern("grouped").expect("symbol");
+    let mut state = state();
+    state.admit_symbol(symbol.symbol()).expect("admit symbol");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+
+    state
+        .assign_meaning(
+            symbol.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Local,
+        )
+        .expect("local meaning");
+    assert_eq!(
+        state.meaning(symbol.symbol()).expect("assigned meaning"),
+        ResolvedMeaning::Static(Meaning::Relax)
+    );
+
+    state.end_group(GroupKind::Simple).expect("group unwind");
+    assert_eq!(
+        state.meaning(symbol.symbol()).expect("restored meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
+}
+
+#[test]
 fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
     crate::generation::with_generation(|mut generation| {
         let definition = generation
@@ -98,6 +148,34 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
         let _ = resolved;
         assert_eq!(definition.semantic_owner_count(), 0);
     });
+}
+
+#[test]
+fn meaning_checkpoint_delta_restores_hot_word_and_cold_metadata_together() {
+    let mut names = interner();
+    let symbol = names.intern("checkpointed").expect("symbol");
+    let mut state = state();
+    state.admit_symbol(symbol.symbol()).expect("admit symbol");
+    let checkpoint = state.journal_cursor().expect("checkpoint");
+
+    state
+        .assign_meaning(
+            symbol.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Global,
+        )
+        .expect("assign meaning");
+    assert_eq!(state.journal().checkpoint_entry_count(), 1);
+    assert_eq!(
+        state.meaning(symbol.symbol()).expect("assigned meaning"),
+        ResolvedMeaning::Static(Meaning::Relax)
+    );
+
+    state.restore(checkpoint).expect("restore checkpoint");
+    assert_eq!(
+        state.meaning(symbol.symbol()).expect("restored meaning"),
+        ResolvedMeaning::Static(Meaning::Undefined)
+    );
 }
 
 #[test]

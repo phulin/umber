@@ -513,10 +513,6 @@ impl<T> BankCell<T> {
         }
     }
 
-    pub(crate) const fn level_zero(value: T) -> Self {
-        Self::new(value, LEVEL_ZERO, 0)
-    }
-
     pub(crate) const fn level_one(value: T) -> Self {
         Self::new(value, LEVEL_ONE, 0)
     }
@@ -533,7 +529,6 @@ pub enum BankError {
 #[derive(Clone)]
 pub(crate) struct DenseBank<T: Clone> {
     cells: Vec<BankCell<T>>,
-    default: T,
 }
 
 impl<T: Clone> DenseBank<T> {
@@ -550,36 +545,7 @@ impl<T: Clone> DenseBank<T> {
                 save_serial: 0,
             },
         );
-        Ok(Self { cells, default })
-    }
-
-    pub(crate) fn growing(default: T) -> Self {
-        Self {
-            cells: Vec::new(),
-            default,
-        }
-    }
-
-    pub(crate) fn format_prefix(len: usize, default: T) -> Result<Self, BankError> {
-        let mut cells = Vec::new();
-        cells
-            .try_reserve_exact(len)
-            .map_err(|_| BankError::AllocationFailed)?;
-        cells.resize(len, BankCell::level_zero(default.clone()));
-        Ok(Self { cells, default })
-    }
-
-    pub(crate) fn admit_through(&mut self, index: u32) -> Result<(), BankError> {
-        let required = index as usize + 1;
-        if required <= self.cells.len() {
-            return Ok(());
-        }
-        self.cells
-            .try_reserve_exact(required - self.cells.len())
-            .map_err(|_| BankError::AllocationFailed)?;
-        self.cells
-            .resize(required, BankCell::level_zero(self.default.clone()));
-        Ok(())
+        Ok(Self { cells })
     }
 
     #[inline(always)]
@@ -587,14 +553,6 @@ impl<T: Clone> DenseBank<T> {
         self.cells
             .get(index as usize)
             .cloned()
-            .ok_or(BankError::IndexOutOfBounds)
-    }
-
-    /// Borrows one direct-indexed row without cloning its stored value.
-    #[inline(always)]
-    pub(crate) fn get_ref(&self, index: u32) -> Result<&BankCell<T>, BankError> {
-        self.cells
-            .get(index as usize)
             .ok_or(BankError::IndexOutOfBounds)
     }
 

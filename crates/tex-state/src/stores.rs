@@ -188,20 +188,29 @@ impl<G> StateCore<G> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
-        Ok(Self {
-            generation: GenerationOwner::new(generation),
-            state: DenseState::new()?,
-        })
+        Self::new_with_meaning_capacity(generation, 65_536)
     }
 
-    pub(crate) fn new_format(
+    pub(crate) fn new_with_meaning_capacity(
         generation: Generation<G>,
-        meaning_slots: usize,
+        meaning_capacity: usize,
     ) -> Result<Self, StateError> {
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            state: DenseState::new_format(meaning_slots)?,
+            state: DenseState::new_with_meaning_capacity(meaning_capacity)?,
+        })
+    }
+
+    pub(crate) fn new_format_with_meaning_capacity(
+        generation: Generation<G>,
+        meaning_slots: usize,
+        meaning_capacity: usize,
+    ) -> Result<Self, StateError> {
+        Ok(Self {
+            generation: GenerationOwner::new(generation),
+            state: DenseState::new_format_with_meaning_capacity(meaning_slots, meaning_capacity)?,
         })
     }
 

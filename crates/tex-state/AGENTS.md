@@ -111,6 +111,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   runtime-only per-cell save serial used by direct checkpoint first-touch.
 - `src/env/banks/tests.rs`: Direct-index, virtual-default, and paged-overflow
   bank tests.
+- `src/env/meaning_bank.rs`: Once-reserved Symbol-indexed hot meaning words
+  with equally indexed cold assignment-level and checkpoint-serial arrays;
+  ordinary resolution reads only the hot values.
+- `src/env/meaning_bank/tests.rs`: Parallel-row storage, direct indexing, and
+  no-reallocation admission tests for the meaning bank.
 - `src/env/group.rs`: Storage-independent group kinds, display frames, and
   mismatch values carried by the ordered journal.
 - `src/env/tests.rs`: Meaning admission, dense/paged registers, INITEX code

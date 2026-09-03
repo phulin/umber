@@ -3,6 +3,8 @@
 #[path = "env/banks.rs"]
 pub mod banks;
 mod durable_boxes;
+#[path = "env/meaning_bank.rs"]
+mod meaning_bank;
 pub use durable_boxes::DurableNodeMetadata;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
@@ -20,6 +22,7 @@ pub(crate) use font_runtime::DerivedFontRuntimeRequest;
 pub(crate) use font_runtime::FontRuntimeCell;
 use font_runtime::{AcceptedFontRuntimeTail, BankCellValue, FontRuntimeBank, PreparedFontRuntime};
 use group::{GroupFrame, GroupKind, GroupMismatch};
+use meaning_bank::MeaningBank;
 
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::ids::FontId;
@@ -38,6 +41,11 @@ mod tests;
 
 const UNICODE_SCALAR_COUNT: u32 = 0x11_0000;
 const MATH_FAMILY_FONT_COUNT: usize = 48;
+/// Capacity used by crate-local state fixtures which do not carry an
+/// executable session interner. Production state cores pass the interner's
+/// physical Symbol capacity explicitly.
+#[cfg(test)]
+const DEFAULT_MEANING_CAPACITY: usize = 65_536;
 
 /// Assignment scope after `\globaldefs` and explicit-prefix resolution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -464,7 +472,10 @@ impl From<BankError> for StateError {
 
 /// All eqtb-equivalent current-value banks for one revision generation.
 pub(crate) struct DenseState<G> {
-    meanings: DenseBank<MeaningWord<G>>,
+    /// Hot meaning words indexed directly by compact session Symbols. The
+    /// assignment level and checkpoint serials live in MeaningBank's cold
+    /// parallel arrays and are never read by ordinary command resolution.
+    meanings: MeaningBank<MeaningWord<G>>,
     counts: RegisterBank<i32>,
     dimensions: RegisterBank<Scaled>,
     token_registers: RegisterBank<Option<TokenListId<G>>>,
@@ -793,7 +804,7 @@ impl<G> DenseState<G> {
                         },
                     };
                     self.meanings
-                        .write(index, BankCell::level_one(meaning))
+                        .write(index, meaning, LEVEL_ONE, 0)
                         .map_err(|_| "format meaning index is out of range")?;
                 }
                 FormatCell::Count(index, value) => self
@@ -916,9 +927,21 @@ impl<G> DenseState<G> {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) fn new() -> Result<Self, StateError> {
+        Self::new_with_meaning_capacity(DEFAULT_MEANING_CAPACITY)
+    }
+
+    /// Constructs a fresh state with once-reserved Symbol-indexed meaning
+    /// storage. Production callers pass the physical session interner
+    /// capacity; the small default exists for crate-local state fixtures.
+    pub(crate) fn new_with_meaning_capacity(meaning_capacity: usize) -> Result<Self, StateError> {
+        Self::new_with_meanings(MeaningBank::new(meaning_capacity, MeaningWord::UNDEFINED)?)
+    }
+
+    fn new_with_meanings(meanings: MeaningBank<MeaningWord<G>>) -> Result<Self, StateError> {
         Ok(Self {
-            meanings: DenseBank::growing(MeaningWord::UNDEFINED),
+            meanings,
             counts: RegisterBank::new(zero_i32)?,
             dimensions: RegisterBank::new(zero_scaled)?,
             token_registers: RegisterBank::new(no_token_list::<G>)?,
@@ -949,16 +972,17 @@ impl<G> DenseState<G> {
         })
     }
 
-    /// Constructs the immutable format prefix at its validated final extent.
-    ///
-    /// A normal session grows the meaning bank as names are interned. A
-    /// detached format already carries its complete dense namespace, so
-    /// growing that vector one admitted symbol at a time would repeatedly
-    /// reallocate and copy the retained prefix.
-    pub(crate) fn new_format(meaning_slots: usize) -> Result<Self, StateError> {
-        let mut state = Self::new()?;
-        state.meanings = DenseBank::format_prefix(meaning_slots, MeaningWord::UNDEFINED)?;
-        Ok(state)
+    /// Constructs a format state with its loaded Symbol prefix and the full
+    /// physical session capacity reserved for future names.
+    pub(crate) fn new_format_with_meaning_capacity(
+        meaning_slots: usize,
+        meaning_capacity: usize,
+    ) -> Result<Self, StateError> {
+        Self::new_with_meanings(MeaningBank::format_prefix(
+            meaning_slots,
+            meaning_capacity,
+            MeaningWord::UNDEFINED,
+        )?)
     }
 
     pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
@@ -1194,7 +1218,7 @@ impl<G> DenseState<G> {
     /// Borrows one admitted meaning row without acquiring its semantic owner.
     #[inline(always)]
     pub(crate) fn meaning_word(&self, symbol: Symbol) -> Result<&MeaningWord<G>, StateError> {
-        Ok(&self.meanings.get_ref(symbol.raw())?.value)
+        Ok(self.meanings.get_ref(symbol.raw())?)
     }
 
     pub(crate) fn assign_meaning(
@@ -1204,10 +1228,7 @@ impl<G> DenseState<G> {
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
         let index = symbol.raw();
-        let before = self.meanings.get_ref(index)?;
-        let before_value = before.value;
-        let before_level = before.level;
-        let before_save_serial = before.save_serial;
+        let (before_value, before_level, before_save_serial) = self.meanings.row(index)?;
         let current_level = self.current_level();
         let after_level = match scope {
             AssignmentScope::Global => LEVEL_ONE,
@@ -1219,7 +1240,6 @@ impl<G> DenseState<G> {
             .then_some(current_level);
         let save_serial = self.journal().save_serial();
         let needs_mutation = self.journal().needs_mutation(before_save_serial, saved_at);
-        *self.meanings.get_mut(index)? = BankCell::new(value, after_level, save_serial);
         if needs_mutation {
             self.journal_mut().record_mutation(Mutation::new(
                 StateCell::Meaning(index),
@@ -1229,6 +1249,8 @@ impl<G> DenseState<G> {
                 saved_at,
             ));
         }
+        self.meanings
+            .write(index, value, after_level, save_serial)?;
         Ok(())
     }
 
@@ -2068,7 +2090,10 @@ impl<G> DenseState<G> {
 
     fn read_cell(&self, cell: StateCell) -> Result<BankCell<StateWord<G>>, StateError> {
         let value = match cell {
-            StateCell::Meaning(index) => self.meanings.get(index)?.map(StateWord::Meaning),
+            StateCell::Meaning(index) => {
+                let (value, level, save_serial) = self.meanings.row(index)?;
+                return Ok(BankCell::new(StateWord::Meaning(value), level, save_serial));
+            }
             StateCell::Count(index) => self.counts.get(index)?.map(StateWord::Integer),
             StateCell::Dimension(index) => self.dimensions.get(index)?.map(StateWord::Dimension),
             StateCell::TokenRegister(index) => {
@@ -2120,9 +2145,9 @@ impl<G> DenseState<G> {
             save_serial,
         } = value;
         match (cell, value) {
-            (StateCell::Meaning(index), StateWord::Meaning(word)) => self
-                .meanings
-                .write(index, BankCell::new(word, level, save_serial))?,
+            (StateCell::Meaning(index), StateWord::Meaning(word)) => {
+                self.meanings.write(index, word, level, save_serial)?
+            }
             (StateCell::Count(index), StateWord::Integer(word)) => self
                 .counts
                 .write(index, BankCell::new(word, level, save_serial))?,
@@ -2189,12 +2214,12 @@ impl<G> DenseState<G> {
         }
 
         match (delta.cell, &mut delta.alternate) {
-            (StateCell::Meaning(index), StateWord::Meaning(value)) => swap_cell(
-                self.meanings.get_mut(index)?,
+            (StateCell::Meaning(index), StateWord::Meaning(value)) => self.meanings.swap(
+                index,
                 value,
                 &mut delta.alternate_level,
                 &mut delta.alternate_save_serial,
-            ),
+            )?,
             (StateCell::Count(index), StateWord::Integer(value)) => swap_cell(
                 self.counts.get_mut(index)?,
                 value,

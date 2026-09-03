@@ -726,6 +726,14 @@ impl Interner {
         self.budget
     }
 
+    /// Returns the once-reserved Symbol-row capacity of this epoch. The
+    /// active budget may be narrowed by an executable profile, but state
+    /// owners reserve from the physical capacity so later profile selection
+    /// cannot require a meaning-table reallocation.
+    pub(crate) const fn physical_slot_capacity(&self) -> u32 {
+        self.physical_budget.slots
+    }
+
     /// Returns the executable profile currently enforcing interner limits.
     #[must_use]
     pub const fn capacity_profile(&self) -> Option<crate::EngineCapacityProfile> {
