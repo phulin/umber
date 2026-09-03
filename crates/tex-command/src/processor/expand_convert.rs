@@ -463,6 +463,31 @@ impl<G> CommandProcessor<'_, '_, G> {
         if matches!(control.phase, Phase::Need)
             && let ResolvedMeaning::Static(meaning) = command.resolved_meaning()
         {
+            if !control.roman
+                && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
+            {
+                let opener = self
+                    .command
+                    .scratch
+                    .pop_number_control()
+                    .map_err(crate::scan_toks::scratch_command_error)?
+                    .opener;
+                self.begin_the_continuation(opener)?;
+                self.command.scratch.set_the_phase(
+                    crate::expansion_work::control::ThePhase::Expression {
+                        target: meaning,
+                        expression: 0,
+                        expression_sign: 1,
+                        term: 0,
+                        term_operator: 0,
+                        term_active: false,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    },
+                )?;
+                return Ok(false);
+            }
             if Self::compact_number_register_target(meaning) {
                 self.command
                     .scratch

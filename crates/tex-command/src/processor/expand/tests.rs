@@ -468,6 +468,59 @@ fn the_integer_expression_lane_preserves_operator_precedence() {
 }
 
 #[test]
+fn number_integer_expression_uses_the_shared_expression_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let numexpr = install_static(
+            universe,
+            "numexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                number,
+                numexpr,
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '+',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '*',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '3',
+                    cat: Catcode::Other,
+                },
+                relax,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn nested_fontname_operands_use_the_shared_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let fontname = install_static(
