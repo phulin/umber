@@ -45,7 +45,7 @@ fn capture(source: &[u8], demand: EngineCompletionDemand) -> DetachedEngineCompl
             {
                 crate::CanonicalStepResult::Completed(step) => {
                     break ledger
-                        .terminal_receipt(&control, step)
+                        .terminal_receipt(&control, universe, step)
                         .expect("canonical terminal step arms its receipt");
                 }
                 crate::CanonicalStepResult::Progress(_)
@@ -83,7 +83,7 @@ fn partial_execution_cannot_detach_or_latch_terminal_state() {
         let artifacts_before = universe.world().committed_artifacts().to_vec();
 
         assert!(matches!(
-            ledger.terminal_receipt(&control, MainControlStep::End),
+            ledger.terminal_receipt(&control, universe, MainControlStep::End),
             Err(EngineCompletionError::TerminalRevisionUnavailable)
         ));
         assert_eq!(universe.world().effect_records(), effects_before);

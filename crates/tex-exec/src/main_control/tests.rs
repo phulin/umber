@@ -6576,7 +6576,7 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
             terminal_text(stores)
         );
         ledger
-            .terminal_receipt(&control, terminal)
+            .terminal_receipt(&control, stores, terminal)
             .expect("fulfilled file enquiries leave terminal completion quiescent");
         (terminal_text(stores), requested)
     })
@@ -7424,7 +7424,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
         assert_eq!(requested, ["main.aux", "main.toc"]);
         assert_eq!(control.pending_resource_site(), None);
         ledger
-            .terminal_receipt(&control, terminal_step.expect("terminal step"))
+            .terminal_receipt(&control, stores, terminal_step.expect("terminal step"))
             .expect("answered probes leave terminal completion quiescent");
     });
 }
@@ -7458,7 +7458,7 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() 
             }
         };
         ledger
-            .terminal_receipt(&control, terminal)
+            .terminal_receipt(&control, stores, terminal)
             .expect("unavailable probe leaves terminal completion quiescent");
     });
 }
@@ -7632,542 +7632,11 @@ fn prefixed_definition_scanner_fuel_abort_releases_its_operation_child() {
 }
 
 #[test]
-fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_command() {
-    for source in [
-        br"\count0=1 A\par\count0=2\end".as_slice(),
-        br"\count0=1\def\finish{A\par}\finish\count0=2\end".as_slice(),
-    ] {
-        crate::test_harness::with_nonstop_plain_universe(|stores| {
-            let mut control = MainControl::tex82_initex(stores);
-            register_cmr10_as(&mut control, stores, "cmr10.tfm");
-            register_source(&mut control, source);
-            let mut ledger = crate::OutputLedger::new();
-            let mut checkpoints = Vec::new();
-            let cancellation = crate::Cancellation::new();
-
-            let committed = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                matches!(committed, crate::CanonicalStepResult::Committed(_)),
-                "paragraph boundary result: {committed:?}"
-            );
-            assert_eq!(stores.count(0).expect("count register"), 1);
-            assert_eq!(
-                checkpoints
-                    .iter()
-                    .filter(|checkpoint| {
-                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
-                    })
-                    .count(),
-                1
-            );
-
-            for _ in 0..32 {
-                if matches!(
-                    crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger,)
-                        .step(&mut checkpoints, &cancellation),
-                    crate::CanonicalStepResult::Completed(_)
-                ) {
-                    break;
-                }
-            }
-            assert_eq!(stores.count(0).expect("count register"), 2);
-            assert_eq!(
-                checkpoints
-                    .iter()
-                    .filter(|checkpoint| {
-                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
-                    })
-                    .count(),
-                1,
-                "one paragraph intent publishes exactly once"
-            );
-        });
-    }
-}
-
-fn checkpoint_boundaries<G>(
-    checkpoints: &[crate::EngineCheckpoint<G>],
-) -> Vec<crate::EngineBoundary> {
-    checkpoints
-        .iter()
-        .map(crate::EngineCheckpoint::boundary)
-        .collect()
-}
-
-fn assert_source_role_checkpoint_schedule(
-    root: SourceRegistration,
-    inputs: Vec<(&'static str, SourceRegistration)>,
-    expected: &[crate::EngineBoundary],
-) {
+fn main_source_paragraph_checkpoint_precedes_the_next_command() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        for (name, source) in inputs {
-            control.capabilities_mut().register_input(name, source);
-        }
-        control
-            .register_root_source(root)
-            .expect("root source registers and opens");
-
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        ledger
-            .commit_job_start(&mut control, stores, &mut checkpoints)
-            .expect("JobStart captures");
-        let cancellation = crate::Cancellation::new();
-        for _ in 0..64 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                !matches!(result, crate::CanonicalStepResult::Failed(_)),
-                "checkpoint-origin job failed: {result:?}"
-            );
-            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
-                break;
-            }
-        }
-
-        assert_eq!(checkpoint_boundaries(&checkpoints), expected);
-    });
-}
-
-#[test]
-fn named_checkpoint_retention_uses_explicit_source_roles() {
-    let document_body = Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten A\par\shipout\vbox{}\end"[..]);
-    assert_source_role_checkpoint_schedule(
-        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::clone(&document_body)),
-        Vec::new(),
-        &[
-            crate::EngineBoundary::JobStart,
-            crate::EngineBoundary::OuterParagraphEnd,
-            crate::EngineBoundary::ShipoutComplete,
-            crate::EngineBoundary::ShipoutComplete,
-        ],
-    );
-
-    let nested_root = || {
-        SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten \input child \end"[..]),
-        )
-    };
-    let nested_body = || Arc::<[u8]>::from(&br"A\par\shipout\vbox{}\endinput"[..]);
-    for (role, expected) in [
-        (
-            tex_command::SourceRole::UserDocumentInclude,
-            &[
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-                crate::EngineBoundary::ShipoutComplete,
-            ][..],
-        ),
-        (
-            tex_command::SourceRole::ProjectPackageClass,
-            &[
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::ShipoutComplete,
-            ][..],
-        ),
-        (
-            tex_command::SourceRole::DistributionPackageClass,
-            &[
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::ShipoutComplete,
-            ][..],
-        ),
-        (
-            tex_command::SourceRole::GeneratedInput,
-            &[
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::ShipoutComplete,
-            ][..],
-        ),
-    ] {
-        assert_source_role_checkpoint_schedule(
-            nested_root(),
-            vec![(
-                "child.tex",
-                SourceRegistration::new(RegisteredSourceKind::Generated, nested_body())
-                    .with_role(role),
-            )],
-            expected,
-        );
-    }
-
-    assert_source_role_checkpoint_schedule(
-        SourceRegistration::new(RegisteredSourceKind::Generated, document_body)
-            .with_role(tex_command::SourceRole::FormatInitialization),
-        Vec::new(),
-        &[crate::EngineBoundary::JobStart],
-    );
-}
-
-#[test]
-fn nested_sources_inherit_package_role_and_package_return_restores_document_policy() {
-    assert_source_role_checkpoint_schedule(
-        SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(&br"\font\ten=cmr10 \ten \input package \end"[..]),
-        ),
-        vec![
-            (
-                "package.tex",
-                SourceRegistration::new(
-                    RegisteredSourceKind::Generated,
-                    Arc::<[u8]>::from(&br"\input helper \endinput"[..]),
-                )
-                .with_role(tex_command::SourceRole::ProjectPackageClass),
-            ),
-            (
-                "helper.tex",
-                SourceRegistration::new(
-                    RegisteredSourceKind::Generated,
-                    Arc::<[u8]>::from(&br"A\par\shipout\vbox{}\endinput"[..]),
-                ),
-            ),
-        ],
-        &[
-            crate::EngineBoundary::JobStart,
-            crate::EngineBoundary::ShipoutComplete,
-        ],
-    );
-
-    assert_source_role_checkpoint_schedule(
-        SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(
-                &br"\font\ten=cmr10 \ten \def\finish{A\par\input package}\finish\shipout\vbox{}\end"[..],
-            ),
-        ),
-        vec![(
-            "package.tex",
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(&br"\endinput"[..]),
-            )
-            .with_role(tex_command::SourceRole::ProjectPackageClass),
-        )],
-        &[
-            crate::EngineBoundary::JobStart,
-            crate::EngineBoundary::OuterParagraphEnd,
-            crate::EngineBoundary::ShipoutComplete,
-            crate::EngineBoundary::ShipoutComplete,
-        ],
-    );
-}
-
-#[test]
-fn nested_shipout_origin_stays_frozen_across_return_and_resource_resume() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        control.capabilities_mut().register_input(
-            "child.tex",
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(&br"\shipout\vbox{}\endinput"[..]),
-            )
-            .with_role(tex_command::SourceRole::ProjectPackageClass),
-        );
-        register_source(
-            &mut control,
-            br"\begingroup\input child \input missing \endgroup\shipout\vbox{}\end",
-        );
-
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        ledger
-            .commit_job_start(&mut control, stores, &mut checkpoints)
-            .expect("JobStart captures");
-        let cancellation = crate::Cancellation::new();
-        let need = loop {
-            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation)
-            {
-                crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => {
-                    break need;
-                }
-                crate::CanonicalStepResult::Progress(_)
-                | crate::CanonicalStepResult::Committed(_) => {}
-                other => panic!("unexpected pre-suspension step: {other:?}"),
-            }
-        };
-        assert_eq!(
-            checkpoint_boundaries(&checkpoints),
-            [crate::EngineBoundary::JobStart]
-        );
-        assert_eq!(control.pending_named_boundaries.len(), 1);
-        assert_eq!(
-            control.pending_named_boundaries.front(),
-            Some(&PendingNamedBoundary {
-                boundary: crate::EngineBoundary::ShipoutComplete,
-                source_role: Some(tex_command::SourceRole::ProjectPackageClass),
-            })
-        );
-        assert_eq!(
-            control.command.current_file_source_id(),
-            control.root_main_source,
-            "resource suspension occurs after nested input retirement returned to root"
-        );
-
-        let name = match &need {
-            ResourceNeed::Input { name, .. } => name.clone(),
-            _ => unreachable!(),
-        };
-        ledger
-            .fulfill(
-                &mut control,
-                &need,
-                crate::ResourceFulfillment::Input {
-                    name,
-                    source: SourceRegistration::new(
-                        RegisteredSourceKind::Generated,
-                        Arc::<[u8]>::from(&b""[..]),
-                    ),
-                },
-            )
-            .expect("missing input fulfillment matches");
-
-        for _ in 0..64 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                !matches!(result, crate::CanonicalStepResult::Failed(_)),
-                "resumed checkpoint-origin job failed: {result:?}"
-            );
-            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
-                break;
-            }
-        }
-        assert_eq!(
-            checkpoint_boundaries(&checkpoints),
-            [
-                crate::EngineBoundary::JobStart,
-                crate::EngineBoundary::ShipoutComplete,
-            ],
-            "the project-package shipout remains filtered across source return and retry; the later root-document shipout is retained"
-        );
-    });
-}
-
-#[test]
-fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, br"\end");
-        control
-            .pending_named_boundaries
-            .push_back(PendingNamedBoundary {
-                boundary: crate::EngineBoundary::OuterParagraphEnd,
-                source_role: Some(tex_command::SourceRole::RootDocument),
-            });
-        control
-            .pending_named_boundaries
-            .push_back(PendingNamedBoundary {
-                boundary: crate::EngineBoundary::ShipoutComplete,
-                source_role: Some(tex_command::SourceRole::RootDocument),
-            });
-
-        control
-            .publish_terminal_named_boundaries(stores)
-            .expect("quiescent terminal boundaries publish");
-
-        assert!(control.pending_named_boundaries.is_empty());
-        assert_eq!(
-            control.take_completed_boundaries(),
-            [
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-            ]
-        );
-        assert_eq!(
-            control
-                .take_checkpoint_eligibilities()
-                .iter()
-                .map(crate::checkpoint::CheckpointEligibility::boundary)
-                .collect::<Vec<_>>(),
-            [
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-            ],
-            "approved document roles retain paragraph and shipout restart boundaries"
-        );
-    });
-}
-
-#[test]
-fn terminal_named_boundary_without_a_live_root_is_not_restartable() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        control
-            .pending_named_boundaries
-            .push_back(PendingNamedBoundary {
-                boundary: crate::EngineBoundary::ShipoutComplete,
-                source_role: Some(tex_command::SourceRole::RootDocument),
-            });
-
-        control
-            .publish_terminal_named_boundaries(stores)
-            .expect("terminal output evidence remains publishable");
-
-        assert!(control.pending_named_boundaries.is_empty());
-        assert_eq!(
-            control.take_completed_boundaries(),
-            [crate::EngineBoundary::ShipoutComplete]
-        );
-        let eligibilities = control.take_checkpoint_eligibilities();
-        assert_eq!(eligibilities.len(), 1);
-        assert_eq!(
-            eligibilities[0].boundary(),
-            crate::EngineBoundary::ShipoutComplete
-        );
-        assert!(!eligibilities[0].is_restartable());
-    });
-}
-
-#[test]
-fn terminal_named_boundary_drain_finishes_pending_page_output_first() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, br"\end");
-        admitted!(stores, |context| {
-            context.record_best_page_break(0, Scaled::from_raw(0), 0);
-            context.record_page_fire_up(0);
-        });
-        control
-            .pending_named_boundaries
-            .push_back(PendingNamedBoundary {
-                boundary: crate::EngineBoundary::ShipoutComplete,
-                source_role: Some(tex_command::SourceRole::RootDocument),
-            });
-
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-            .publish_terminal_boundary_suffix(&mut checkpoints)
-            .expect("terminal page output settles before boundaries");
-
-        assert!(!control.boxes.output_routine_active);
-        assert!(!control.page_region_succession_pending);
-        assert_eq!(
-            stores.world().artifact_commits().len(),
-            1,
-            "the pending page fire-up was consumed before boundary publication"
-        );
-        admitted!(stores, |context| {
-            assert!(context.page_fire_up().is_none());
-            assert!(!context.page_builder_resume_after_output_pending());
-        });
-        assert!(control.pending_named_boundaries.is_empty());
-        assert_eq!(checkpoints.len(), 1);
-        assert_eq!(
-            checkpoints[0].boundary(),
-            crate::EngineBoundary::ShipoutComplete
-        );
-        assert_eq!(
-            checkpoints[0].artifact_prefix_len(),
-            1,
-            "the terminal checkpoint sees the page artifact after output settles"
-        );
-    });
-}
-
-#[test]
-fn terminal_named_boundary_drain_filters_nonretained_source_roles() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        for (boundary, source_role) in [
-            (
-                crate::EngineBoundary::ShipoutComplete,
-                tex_command::SourceRole::ProjectPackageClass,
-            ),
-            (
-                crate::EngineBoundary::OuterParagraphEnd,
-                tex_command::SourceRole::RootDocument,
-            ),
-            (
-                crate::EngineBoundary::ShipoutComplete,
-                tex_command::SourceRole::GeneratedInput,
-            ),
-        ] {
-            control
-                .pending_named_boundaries
-                .push_back(PendingNamedBoundary {
-                    boundary,
-                    source_role: Some(source_role),
-                });
-        }
-
-        control
-            .publish_terminal_named_boundaries(stores)
-            .expect("terminal source-role filter drains every intent");
-
-        assert!(control.pending_named_boundaries.is_empty());
-        assert_eq!(
-            control.take_completed_boundaries(),
-            [crate::EngineBoundary::OuterParagraphEnd]
-        );
-        let eligibilities = control.take_checkpoint_eligibilities();
-        assert_eq!(eligibilities.len(), 1);
-        assert_eq!(
-            eligibilities[0].boundary(),
-            crate::EngineBoundary::OuterParagraphEnd
-        );
-        assert!(!eligibilities[0].is_restartable());
-    });
-}
-
-#[test]
-fn terminal_named_boundary_drain_keeps_uncheckpointable_end_state_as_evidence() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, br"{\end");
-        assert!(matches!(
-            control.advance_episode(stores),
-            Ok(StepResult::Progress(MainControlStep::End))
-        ));
-        assert!(!stores.checkpoint_eligible());
-
-        for boundary in [
-            crate::EngineBoundary::OuterParagraphEnd,
-            crate::EngineBoundary::ShipoutComplete,
-        ] {
-            control
-                .pending_named_boundaries
-                .push_back(PendingNamedBoundary {
-                    boundary,
-                    source_role: Some(tex_command::SourceRole::RootDocument),
-                });
-        }
-        control
-            .publish_terminal_named_boundaries(stores)
-            .expect("terminal evidence drains despite strict checkpoint state");
-
-        assert!(control.pending_named_boundaries.is_empty());
-        assert_eq!(
-            control.take_completed_boundaries(),
-            [
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-            ]
-        );
-        assert!(
-            control.take_checkpoint_eligibilities().is_empty(),
-            "an uncheckpointable terminal state cannot fabricate restart evidence"
-        );
-    });
-}
-
-#[test]
-fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(
-            &mut control,
-            br"\def\finish#1{A\par#1}\finish{\count0=2}\end",
-        );
+        register_source(&mut control, br"\count0=1 A\par\count0=2\end");
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
@@ -8176,13 +7645,9 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
             .step(&mut checkpoints, &cancellation);
         assert!(
             matches!(committed, crate::CanonicalStepResult::Committed(_)),
-            "macro-owned boundary result: {committed:?}"
+            "paragraph boundary result: {committed:?}"
         );
-        assert_eq!(
-            stores.count(0).expect("count register"),
-            2,
-            "the argument remains live and executes before its owner can retire"
-        );
+        assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(
             checkpoints
                 .iter()
@@ -8192,214 +7657,51 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
                 .count(),
             1
         );
-    });
-}
 
-#[test]
-fn named_boundary_queue_waits_for_outer_mode_after_a_macro_argument_starts_a_paragraph() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(
-            &mut control,
-            br"\def\finish#1{A\par#1}\finish{B}\par\count0=2\end",
-        );
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        let cancellation = crate::Cancellation::new();
-
-        for expected in 1..=2 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                matches!(result, crate::CanonicalStepResult::Committed(_)),
-                "delayed paragraph {expected} result: {result:?}"
-            );
-            assert_eq!(control.current_mode(), Mode::Vertical);
-            assert_eq!(stores.count(0).expect("count register"), 0);
-            assert_eq!(
-                checkpoints
-                    .iter()
-                    .filter(|checkpoint| {
-                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
-                    })
-                    .count(),
-                expected,
-            );
+        for _ in 0..32 {
+            if matches!(
+                crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger,)
+                    .step(&mut checkpoints, &cancellation),
+                crate::CanonicalStepResult::Completed(_)
+            ) {
+                break;
+            }
         }
+        assert_eq!(stores.count(0).expect("count register"), 2);
+        assert_eq!(
+            checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                })
+                .count(),
+            1,
+            "one paragraph intent publishes exactly once"
+        );
     });
 }
 
 #[test]
-fn named_boundary_queue_does_not_cross_a_resource_suspension() {
+fn paragraph_with_later_macro_tokens_is_permanently_skipped() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(
-            &mut control,
-            br"\def\finish{A\par\input child}\finish\count0=2\end",
-        );
+        register_source(&mut control, br"\def\finish{A\par\count0=7}\finish\end");
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
-        let need = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-            .step(&mut checkpoints, &cancellation);
-        let need = match need {
-            crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => need,
-            other => panic!("expected input suspension, got {other:?}"),
-        };
+        for _ in 0..32 {
+            if matches!(
+                crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                    .step(&mut checkpoints, &cancellation),
+                crate::CanonicalStepResult::Completed(_)
+            ) {
+                break;
+            }
+        }
+        assert_eq!(stores.count(0).expect("count register"), 7);
         assert!(checkpoints.is_empty());
-        let name = match &need {
-            ResourceNeed::Input { name, .. } => name.clone(),
-            _ => unreachable!(),
-        };
-        ledger
-            .fulfill(
-                &mut control,
-                &need,
-                crate::ResourceFulfillment::Input {
-                    name,
-                    source: SourceRegistration::new(
-                        RegisteredSourceKind::Generated,
-                        Arc::<[u8]>::from(&b""[..]),
-                    ),
-                },
-            )
-            .expect("input fulfillment matches");
-
-        for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            if matches!(result, crate::CanonicalStepResult::Committed(_)) {
-                break;
-            }
-            assert!(
-                !matches!(result, crate::CanonicalStepResult::Failed(_)),
-                "resumed boundary result: {result:?}"
-            );
-        }
-        assert_eq!(stores.count(0).expect("count register"), 0);
-        assert_eq!(
-            checkpoints
-                .iter()
-                .filter(|checkpoint| {
-                    checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
-                })
-                .count(),
-            1
-        );
-    });
-}
-
-#[test]
-fn named_boundary_queue_drains_two_macro_paragraphs_in_order() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(&mut control, br"\def\two{A\par B\par}\two\count0=3\end");
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        let cancellation = crate::Cancellation::new();
-
-        for expected in 1..=2 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                matches!(result, crate::CanonicalStepResult::Committed(_)),
-                "queued paragraph {expected} result: {result:?}"
-            );
-            assert_eq!(stores.count(0).expect("count register"), 0);
-            assert_eq!(
-                checkpoints
-                    .iter()
-                    .filter(|checkpoint| {
-                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
-                    })
-                    .count(),
-                expected,
-            );
-        }
-    });
-}
-
-#[test]
-fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(
-            &mut control,
-            br"\def\toc{A\par}\def\send{\shipout\vbox{\toc}}\send\count0=4\end",
-        );
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        let cancellation = crate::Cancellation::new();
-
-        for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                !matches!(result, crate::CanonicalStepResult::Failed(_)),
-                "shipout boundary result: {result:?}"
-            );
-            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
-                break;
-            }
-        }
-        assert_eq!(
-            stores.count(0).expect("count register"),
-            4,
-            "the runner reaches terminal completion after publishing shipout evidence"
-        );
-        assert_eq!(
-            checkpoint_boundaries(&checkpoints),
-            [crate::EngineBoundary::ShipoutComplete],
-            "the root-document shipout publishes after its macro content unwinds"
-        );
-    });
-}
-
-#[test]
-fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        register_source(
-            &mut control,
-            br"\def\mixed{A\par\shipout\vbox{B\par}}\mixed\count0=5\end",
-        );
-        let mut ledger = crate::OutputLedger::new();
-        let mut checkpoints = Vec::new();
-        let cancellation = crate::Cancellation::new();
-
-        for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
-            assert!(
-                !matches!(result, crate::CanonicalStepResult::Failed(_)),
-                "mixed boundary result: {result:?}"
-            );
-            if matches!(result, crate::CanonicalStepResult::Completed(_)) {
-                break;
-            }
-        }
-        assert_eq!(
-            stores.count(0).expect("count register"),
-            5,
-            "the runner reaches terminal completion after draining both intents"
-        );
-        assert_eq!(
-            checkpoints
-                .iter()
-                .map(crate::EngineCheckpoint::boundary)
-                .collect::<Vec<_>>(),
-            [
-                crate::EngineBoundary::OuterParagraphEnd,
-                crate::EngineBoundary::ShipoutComplete,
-                crate::EngineBoundary::ShipoutComplete,
-            ]
-        );
     });
 }
 
@@ -17712,9 +17014,8 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
     // and the same stop then ejects that residual page exactly once. Use the
     // standard nonstop test host so §82 tests the recovery instead of ending
     // at an exhausted interactive terminal while asking for error advice.
-    // The host-visible ShipoutComplete checkpoint is its own step between the
-    // ejection and the backed-up stop; assert that boundary explicitly rather
-    // than counting it as a second TeX command.
+    // Shipout remains output-ledger evidence and does not create a restart
+    // checkpoint or an extra TeX command.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\hbox{A\end");
@@ -17736,12 +17037,8 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
             }
         }
 
-        assert_eq!(terminal_step, Some((7, MainControlStep::End)));
-        assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1, 1]);
-        assert_eq!(
-            control.take_completed_boundaries(),
-            [crate::EngineBoundary::ShipoutComplete]
-        );
+        assert_eq!(terminal_step, Some((6, MainControlStep::End)));
+        assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1]);
         assert_eq!(stores.world().artifact_commits().len(), 1);
         assert!(
             admitted!(stores, |context| context

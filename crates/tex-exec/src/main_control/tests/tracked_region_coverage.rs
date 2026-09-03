@@ -44,7 +44,7 @@ fn run_complete_job(tracked: bool) -> ParityOutcome {
             effects: stores.world().effect_records().to_vec(),
             artifacts: stores.world().artifact_commits().to_vec(),
             dvi_pages: control.take_prepared_dvi_pages(),
-            boundaries: control.take_completed_boundaries(),
+            boundaries: Vec::new(),
         }
     })
 }
@@ -80,7 +80,7 @@ fn run_missing_font(tracked: bool) -> SuspensionOutcome {
             region_was_published,
             effects: stores.world().effect_records().to_vec(),
             artifacts: stores.world().artifact_commits().to_vec(),
-            boundaries: control.take_completed_boundaries(),
+            boundaries: Vec::new(),
         }
     })
 }

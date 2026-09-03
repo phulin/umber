@@ -43,8 +43,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   typed cold slot, borrow-typed hot/cold execution episodes, and the move-only
   `OperationFrame` constructed only at genuine suspension boundaries.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
-  begin/commit/rollback, resource and diagnostic retry settlement, and ordered
-  semantic/effect/artifact/boundary publication. Its direct-operation mark
+  begin/commit/rollback, resource and diagnostic retry settlement, ordered
+  semantic/effect/artifact publication, and exact-cut main-source paragraph
+  checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
   attempt coordinate remains in `CommandState`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
@@ -119,7 +120,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   reporting, resource preparation, suspension, semantic apply, or rollback;
   nested cold execution carries only the already-known tracking bit.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
-  caller-owned fixed-chunk output ledger for coordinate-only checkpoint
+  caller-owned fixed-chunk output ledger for exact-cut paragraph checkpoint
   publication, exact prior/current settlement, resource fulfillment,
   suspension accounting, cancellation, and borrowed terminal page capture.
 - `src/engine_completion.rs`: handle-free terminal engine capture, aligned
@@ -187,8 +188,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   directed `app_display` list replacement.
 - `src/math/display/tests.rs`: focused display-prototype reuse and
   no-prototype packing coverage.
-- `src/checkpoint.rs` and `src/checkpoint/tests.rs`: command-only named
-  boundaries, editor forks with post-restore root-source registration,
+- `src/checkpoint.rs` and `src/checkpoint/tests.rs`: JobStart and main-source
+  outer-paragraph boundaries, editor forks with post-restore root-source registration,
   move-only aggregate checkpoint restore, budgets, bounded command/mode roots,
   profiling-only aggregate lifecycle probes, and retained token/glue-root
   restoration coverage.

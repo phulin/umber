@@ -128,7 +128,7 @@ impl<G> MainControl<G> {
         applied: &Result<ReplayStep, ExecError>,
         operations: usize,
         max_operations: usize,
-        initial_boundaries: usize,
+        _initial_boundaries: usize,
         initial_effect_pos: tex_state::EffectPos,
         initial_artifacts: usize,
         initial_format_dump: bool,
@@ -168,9 +168,10 @@ impl<G> MainControl<G> {
                 crate::SemanticEpisodeBarrier::Output,
             ));
         }
-        if self.completed_boundaries.len() != initial_boundaries {
-            let boundary = self.completed_boundaries[initial_boundaries];
-            return Some(crate::EpisodeCommitBoundary::NamedCheckpoint(boundary));
+        if self.paragraph_checkpoint_cut {
+            return Some(crate::EpisodeCommitBoundary::NamedCheckpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+            ));
         }
         if stores.world().effect_pos() != initial_effect_pos {
             return Some(crate::EpisodeCommitBoundary::Semantic(
@@ -198,7 +199,7 @@ impl<G> MainControl<G> {
         operations: usize,
         boundary: crate::EpisodeCommitBoundary,
         initial_artifacts: usize,
-        initial_boundaries: usize,
+        _initial_boundaries: usize,
         initial_effect_pos: tex_state::EffectPos,
     ) {
         self.episode_telemetry
@@ -214,12 +215,6 @@ impl<G> MainControl<G> {
         {
             self.episode_telemetry
                 .record_semantic_barrier(crate::SemanticEpisodeBarrier::Output);
-        }
-        if self.completed_boundaries.len() != initial_boundaries
-            && !matches!(boundary, crate::EpisodeCommitBoundary::NamedCheckpoint(_))
-        {
-            self.episode_telemetry
-                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Checkpoint);
         }
         if stores.world().effect_pos() != initial_effect_pos
             && boundary
@@ -574,12 +569,6 @@ impl<G> MainControl<G> {
             }
             self.page_output_observations.clear();
         }
-        self.finish_shipout_publication(
-            output_start.artifact_count,
-            output_start.effect_count,
-            stores,
-            output_start.source_role,
-        );
         self.finish_paragraph_boundary(
             output_start.outer_paragraph_was_active,
             output_start.source_role,
@@ -595,213 +584,23 @@ impl<G> MainControl<G> {
         source_role: Option<tex_command::SourceRole>,
         stores: &mut Universe<G>,
     ) {
-        if outer_paragraph_was_active
+        if !outer_paragraph_was_active {
+            return;
+        }
+        if self.paragraph_checkpoint_demand.is_none() {
+            return;
+        }
+        let root_is_active = source_role == Some(tex_command::SourceRole::RootDocument)
+            && self.command.current_file_source_id() == self.root_main_source;
+        let context = stores
+            .command_context()
+            .expect("paragraph checkpoint admission");
+        if root_is_active
+            && context.execution_group_depth() == 0
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
-            && stores
-                .command_context()
-                .expect("paragraph-boundary admission")
-                .execution_group_depth()
-                == 0
         {
-            self.pending_named_boundaries
-                .push_back(PendingNamedBoundary {
-                    boundary: crate::EngineBoundary::OuterParagraphEnd,
-                    source_role,
-                });
-        }
-    }
-
-    /// Publishes at most one queued named boundary after every command-owned
-    /// continuation has retired. This runs before another delivery, so a
-    /// captured row cannot include effects from the following command.
-    #[inline]
-    pub(super) fn publish_pending_named_boundary(
-        &mut self,
-        stores: &mut Universe<G>,
-    ) -> Result<Option<crate::EngineBoundary>, ExecError> {
-        self.publish_pending_named_boundary_with_terminal_policy::<false>(stores)
-    }
-
-    #[inline]
-    fn publish_pending_named_boundary_with_terminal_policy<const TERMINAL: bool>(
-        &mut self,
-        stores: &mut Universe<G>,
-    ) -> Result<Option<crate::EngineBoundary>, ExecError> {
-        loop {
-            let Some(pending) = self.pending_named_boundaries.front().copied() else {
-                return Ok(None);
-            };
-            if self.has_external_attempt_owner() {
-                return Ok(None);
-            }
-            // A named boundary is only publishable at the state owner's
-            // level-zero admission barrier. Keep the intent queued while a
-            // TeX group or transactional suffix is still live; the next
-            // settlement pass can publish it after that owner unwinds.
-            let checkpoint_eligible = stores.checkpoint_eligible();
-            if !checkpoint_eligible
-                && (!TERMINAL
-                    || stores
-                        .command_context()
-                        .expect("terminal named-boundary admission")
-                        .execution_group_depth()
-                        == 0)
-            {
-                return Ok(None);
-            }
-            if pending.boundary == crate::EngineBoundary::OuterParagraphEnd
-                && !self.modes.restart_checkpoint_is_quiescent()
-            {
-                return Ok(None);
-            }
-            if pending.boundary == crate::EngineBoundary::ShipoutComplete
-                && (self.boxes.output_routine_active
-                    || self.modes.depth() != 1
-                    || (!TERMINAL
-                        && stores
-                            .command_context()
-                            .expect("shipout-boundary admission")
-                            .execution_group_depth()
-                            != 0))
-            {
-                return Ok(None);
-            }
-            let mut diagnostic_effects = DiagnosticEffects::new();
-            let attempt = self.command.begin_attempt_operation();
-            let retirement = {
-                let mut context = stores.command_context().expect("named-boundary admission");
-                let mut host_facts = ExecutorHostFacts {
-                    modes: &self.modes,
-                    pdf_ignore_depth: self.pdf_ignore_depth,
-                    telemetry: &mut self.episode_telemetry,
-                };
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    &mut diagnostic_effects,
-                    &mut context,
-                );
-                processor.retire_exhausted_token_levels_for_named_boundary()
-            };
-            if let Err(error) = retirement {
-                self.command
-                    .rollback_attempt_operation(attempt)
-                    .expect("named-boundary retirement owns its attempt scope");
-                return Err(command_error(error));
-            }
-            self.command
-                .commit_attempt_operation(attempt)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "named-boundary attempt scope",
-                })?;
-            stores
-                .world_mut()
-                .publish_diagnostic_effects(diagnostic_effects);
-            if !self.command.named_boundary_is_quiescent() {
-                return Ok(None);
-            }
-            let published = self
-                .pending_named_boundaries
-                .pop_front()
-                .expect("inspected named-boundary intent remains queued");
-            debug_assert_eq!(published, pending);
-            if !checkpoint_role_is_retained(published.source_role) {
-                continue;
-            }
-            if published.boundary == crate::EngineBoundary::ShipoutComplete {
-                stores
-                    .release_page_suffix_if_rootless(self.modes.retains_page_node_handles())
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "rootless shipout page release",
-                    })?;
-            }
-            // Terminal cleanup may leave a TeX group open after reporting it.
-            // That is a legal end-of-job state, but it is not a checkpoint
-            // state: retain the boundary event without manufacturing a
-            // capture that the strict state owner would reject.
-            if checkpoint_eligible {
-                let eligibility = if self.restartable_root_source_identity().is_some() {
-                    crate::checkpoint::CheckpointEligibility::named(published.boundary)
-                } else {
-                    crate::checkpoint::CheckpointEligibility::evidence_only(published.boundary)
-                };
-                self.completed_checkpoint_eligibilities.push(eligibility);
-            }
-            self.completed_boundaries.push(published.boundary);
-            return Ok(Some(published.boundary));
-        }
-    }
-
-    /// Publishes every named boundary that became quiescent during terminal
-    /// cleanup. Ordinary execution publishes one intent before the following
-    /// delivery; terminal cleanup has no following delivery, so the canonical
-    /// runner must drain the safe suffix before closing its output ledger.
-    pub(crate) fn publish_terminal_named_boundaries(
-        &mut self,
-        stores: &mut Universe<G>,
-    ) -> Result<(), ExecError> {
-        self.finish_terminal_page_output(stores)?;
-        while !self.pending_named_boundaries.is_empty()
-            && self
-                .publish_pending_named_boundary_with_terminal_policy::<true>(stores)?
-                .is_some()
-        {}
-        Ok(())
-    }
-
-    /// Completes output work which was opened by the terminal command before
-    /// the driver may arm its terminal receipt. The ordinary page/output
-    /// owner remains authoritative: each continuation is resumed through the
-    /// same operation driver, and no page or boundary queue is reconstructed
-    /// here.
-    fn finish_terminal_page_output(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
-        loop {
-            let pending = PendingPageOutputFacts::capture(
-                &stores
-                    .command_context()
-                    .expect("terminal page-output admission"),
-            );
-            if !self.boxes.output_routine_active
-                && !self.page_region_succession_pending
-                && !pending.is_pending()
-            {
-                return Ok(());
-            }
-            // Keep the already-committed FIFO out of the ordinary driver's
-            // admission hook while output continuations run. The terminal
-            // order is page/output first, boundaries second; any intent
-            // created by the continuation is appended behind the held FIFO.
-            let held_boundaries = std::mem::take(&mut self.pending_named_boundaries);
-            let stepped = self.advance(stores);
-            let generated_boundaries = std::mem::take(&mut self.pending_named_boundaries);
-            self.pending_named_boundaries = held_boundaries;
-            self.pending_named_boundaries.extend(generated_boundaries);
-            let step = stepped?;
-            if matches!(step, StepResult::Suspended(_)) {
-                return Err(ExecError::MissingToken {
-                    context: "terminal page-output resource",
-                });
-            }
-            let remaining = PendingPageOutputFacts::capture(
-                &stores
-                    .command_context()
-                    .expect("terminal page-output admission"),
-            );
-            if matches!(
-                step,
-                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
-            ) && (self.boxes.output_routine_active
-                || self.page_region_succession_pending
-                || remaining.is_pending())
-            {
-                return Err(ExecError::MissingToken {
-                    context: "terminal page-output continuation",
-                });
-            }
+            self.paragraph_checkpoint_cut = true;
         }
     }
 }
@@ -813,29 +612,6 @@ impl<G> MainControl<G> {
     ) {
         if let Some(buffer) = self.operation_observations.as_mut() {
             buffer.extend(records);
-        }
-    }
-}
-
-impl<G> MainControl<G> {
-    pub(super) fn finish_shipout_publication(
-        &mut self,
-        artifact_count: usize,
-        _effect_count: usize,
-        stores: &mut Universe<G>,
-        source_role: Option<tex_command::SourceRole>,
-    ) {
-        let committed = stores
-            .world()
-            .artifact_commits()
-            .len()
-            .saturating_sub(artifact_count);
-        let intent = PendingNamedBoundary {
-            boundary: crate::EngineBoundary::ShipoutComplete,
-            source_role,
-        };
-        for _ in 0..committed {
-            self.pending_named_boundaries.push_back(intent);
         }
     }
 }
@@ -983,25 +759,6 @@ pub(super) struct ObservationBuffer {
 pub(super) struct OperationReceiptStart {
     pub(super) effect: u64,
     pub(super) artifact: usize,
-}
-
-/// One checkpoint intent frozen at the operation that formed its boundary.
-///
-/// Input retirement may expose an enclosing source before command state is
-/// quiescent enough to publish a checkpoint. Retaining the active external
-/// file decision here prevents that later stack transition from changing the
-/// boundary's origin eligibility.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct PendingNamedBoundary {
-    pub(super) boundary: crate::EngineBoundary,
-    pub(super) source_role: Option<tex_command::SourceRole>,
-}
-
-const fn checkpoint_role_is_retained(role: Option<tex_command::SourceRole>) -> bool {
-    matches!(
-        role,
-        Some(tex_command::SourceRole::RootDocument | tex_command::SourceRole::UserDocumentInclude)
-    )
 }
 
 /// Explicit live-observer boundary for detached shipout geometry.

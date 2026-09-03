@@ -13,9 +13,9 @@ mod tests;
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 10 distinguishes live restart roots from evidence-only named
-/// boundaries whose aggregate state is released immediately after capture.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 10;
+/// Version 11 removes shipout and evidence-only boundary captures. Every
+/// non-JobStart checkpoint is an exact main-source paragraph restart handle.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 11;
 
 /// Schema for the optional complete future-reachable semantic identity.
 ///
@@ -358,47 +358,28 @@ const fn avalanche(mut value: u64) -> u64 {
 pub enum EngineBoundary {
     JobStart,
     OuterParagraphEnd,
-    ShipoutComplete,
 }
 
-/// Move-only proof that named checkpoint evidence may be captured now.
+/// Move-only proof that restart state may be captured now.
 ///
 /// Construction is private to main control: job start contributes its sole
-/// initial receipt, and live execution contributes one after an approved
-/// document-source paragraph or shipout reaches the quiescent publication
-/// barrier. Evidence without an owner-backed root is never restartable.
+/// initial receipt, and live execution contributes one only at the exact
+/// settled cut of a main-source outer paragraph.
 #[derive(Debug)]
 pub(crate) struct CheckpointEligibility {
     boundary: EngineBoundary,
-    restartable: bool,
 }
 
 impl CheckpointEligibility {
     pub(crate) const fn job_start() -> Self {
         Self {
             boundary: EngineBoundary::JobStart,
-            restartable: false,
         }
     }
 
     pub(crate) const fn named(boundary: EngineBoundary) -> Self {
         match boundary {
-            EngineBoundary::OuterParagraphEnd | EngineBoundary::ShipoutComplete => Self {
-                boundary,
-                restartable: true,
-            },
-            EngineBoundary::JobStart => {
-                panic!("JobStart owns its dedicated one-shot eligibility")
-            }
-        }
-    }
-
-    pub(crate) const fn evidence_only(boundary: EngineBoundary) -> Self {
-        match boundary {
-            EngineBoundary::OuterParagraphEnd | EngineBoundary::ShipoutComplete => Self {
-                boundary,
-                restartable: false,
-            },
+            EngineBoundary::OuterParagraphEnd => Self { boundary },
             EngineBoundary::JobStart => {
                 panic!("JobStart owns its dedicated one-shot eligibility")
             }
@@ -407,10 +388,6 @@ impl CheckpointEligibility {
 
     pub(crate) const fn boundary(&self) -> EngineBoundary {
         self.boundary
-    }
-
-    pub(crate) const fn is_restartable(&self) -> bool {
-        self.restartable
     }
 
     /// Validates the state-layer admission barrier carried by this proof.
@@ -427,15 +404,12 @@ impl CheckpointEligibility {
 
 /// One aggregate checkpoint captured in an admitted generation.
 ///
-/// Restartable captures retain every owner root. Evidence-only captures expose
-/// their detached identity and output coordinates, then synchronously release
-/// the aggregate command/runtime rows. Mode roots are installed before a
+/// Captures retain every owner root. Mode roots are installed before a
 /// retained runtime checkpoint truncates any page or durable suffix.
 #[derive(Debug)]
 pub struct EngineCheckpoint<G> {
     schema_version: u32,
     boundary: EngineBoundary,
-    restartable: bool,
     pub(crate) runtime: RuntimeCheckpoint<G>,
     pub(crate) command: CommandSummary<G>,
     pub(crate) modes: ModeCheckpoint,
@@ -477,7 +451,6 @@ pub struct EngineCheckpointRelease<G> {
     released: EngineCheckpoint<G>,
     oldest_runtime: Option<RuntimeCheckpoint<G>>,
     oldest_command: Option<CommandSummary<G>>,
-    unretained: bool,
 }
 
 impl<G> EngineCheckpointRelease<G> {
@@ -490,27 +463,12 @@ impl<G> EngineCheckpointRelease<G> {
                 released,
                 oldest_runtime: Some(oldest.runtime),
                 oldest_command: Some(oldest.command),
-                unretained: false,
             },
             None => Self {
                 released,
                 oldest_runtime: None,
                 oldest_command: None,
-                unretained: false,
             },
-        }
-    }
-
-    pub(crate) fn with_component_floors(
-        released: EngineCheckpoint<G>,
-        oldest_runtime: Option<&EngineCheckpoint<G>>,
-        oldest_command: Option<&EngineCheckpoint<G>>,
-    ) -> Self {
-        Self {
-            released,
-            oldest_runtime: oldest_runtime.map(|checkpoint| checkpoint.runtime.clone()),
-            oldest_command: oldest_command.map(|checkpoint| checkpoint.command.clone()),
-            unretained: true,
         }
     }
 
@@ -534,15 +492,9 @@ impl<G> EngineCheckpointRelease<G> {
         command
             .release_checkpoint_summary(&self.released.command, oldest_command)
             .expect("retained command release was owner-prevalidated");
-        if self.unretained {
-            universe
-                .release_prevalidated_unretained_runtime_checkpoint(&self.released.runtime)
-                .expect("prevalidated unretained runtime release is infallible");
-        } else {
-            universe
-                .release_runtime_checkpoint(&self.released.runtime, oldest_runtime)
-                .expect("prevalidated runtime release is infallible");
-        }
+        universe
+            .release_runtime_checkpoint(&self.released.runtime, oldest_runtime)
+            .expect("prevalidated runtime release is infallible");
     }
 }
 
@@ -712,7 +664,6 @@ impl<G> EngineCheckpoint<G> {
         let eligibility = match boundary {
             EngineBoundary::JobStart => CheckpointEligibility::job_start(),
             EngineBoundary::OuterParagraphEnd => CheckpointEligibility::named(boundary),
-            EngineBoundary::ShipoutComplete => CheckpointEligibility::named(boundary),
         };
         Self::capture_checkpoint_with_identity_demand(
             eligibility,
@@ -739,7 +690,6 @@ impl<G> EngineCheckpoint<G> {
         let eligibility = match boundary {
             EngineBoundary::JobStart => CheckpointEligibility::job_start(),
             EngineBoundary::OuterParagraphEnd => CheckpointEligibility::named(boundary),
-            EngineBoundary::ShipoutComplete => CheckpointEligibility::named(boundary),
         };
         Self::capture_checkpoint(eligibility, command, nest, universe, budget_counters)
     }
@@ -781,7 +731,6 @@ impl<G> EngineCheckpoint<G> {
     ) -> Result<Self, CommandSummaryError> {
         eligibility.validate(universe)?;
         let boundary = eligibility.boundary();
-        let restartable = eligibility.is_restartable();
         let command = command.publish_summary(universe)?;
         let root_anchor = command
             .root_source_anchor()
@@ -804,7 +753,6 @@ impl<G> EngineCheckpoint<G> {
         Ok(Self {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
-            restartable,
             runtime,
             command,
             modes,
@@ -837,11 +785,6 @@ impl<G> EngineCheckpoint<G> {
     #[must_use]
     pub const fn boundary(&self) -> EngineBoundary {
         self.boundary
-    }
-
-    #[must_use]
-    pub const fn is_restartable(&self) -> bool {
-        self.restartable
     }
 
     #[must_use]

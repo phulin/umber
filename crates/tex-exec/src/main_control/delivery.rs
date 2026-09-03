@@ -482,7 +482,7 @@ impl<G> MainControl<G> {
                                 && admission.settled_in_admission
                                 && !admission.pending_page_output.is_pending()
                                 && diagnostic_effects.is_empty()
-                                && self.pending_named_boundaries.is_empty()
+                                && !self.paragraph_checkpoint_cut
                                 && !self.page_region_succession_pending
                                 && context.artifact_commit_count() == output_start.artifact_count
                                 && context.effect_record_count() == output_start.effect_count

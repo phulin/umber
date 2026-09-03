@@ -1039,7 +1039,7 @@ impl<'a, G> EngineSession<'a, G> {
         })?;
         let terminal = self
             .output_ledger
-            .terminal_receipt(&self.control, terminal_step)
+            .terminal_receipt(&self.control, self.stores, terminal_step)
             .map_err(SessionError::EngineCompletion)?;
         // The terminal ledger is armed only after final page/output and named
         // boundary work has settled. PDF navigation warnings are a later
@@ -1346,7 +1346,7 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>(),
-                [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete,]
+                [EngineBoundary::JobStart]
             );
             let telemetry = session.episode_telemetry();
             assert_eq!(
@@ -2154,10 +2154,7 @@ mod tests {
                     .iter()
                     .map(tex_exec::EngineCheckpoint::boundary)
                     .collect::<Vec<_>>();
-                assert_eq!(
-                    boundaries,
-                    [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete,]
-                );
+                assert_eq!(boundaries, [EngineBoundary::JobStart]);
             },
         );
     }

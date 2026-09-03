@@ -56,7 +56,7 @@ fn terminal_effect_text(output: &AcceptedOutput) -> String {
 }
 
 #[test]
-fn cold_execution_publishes_detached_artifact_and_boundary_history() {
+fn cold_execution_keeps_shipout_only_in_output_history() {
     let source = page_source(10);
     let mut session = session(RevisionId::new(1), &source);
     let output = session.cold().expect("cold execution");
@@ -66,13 +66,7 @@ fn cold_execution_publishes_detached_artifact_and_boundary_history() {
         session.history()[0].key().boundary,
         EngineBoundary::JobStart
     );
-    assert!(
-        session
-            .history()
-            .iter()
-            .any(|record| record.key().boundary == EngineBoundary::ShipoutComplete),
-        "approved root-document shipout is restart eligible"
-    );
+    assert_eq!(session.history().len(), 1);
 }
 
 #[test]
@@ -169,7 +163,7 @@ fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
 
 #[test]
 fn environment_journal_budget_rejects_the_first_capacity_growth() {
-    let mut session = session(RevisionId::new(1), "\\count0=1\\end");
+    let mut session = session(RevisionId::new(1), "\\count0=1\\indent\\par\\end");
     let mut candidate = session.start_cold_candidate().expect("candidate");
     candidate.set_execution_budgets(tex_exec::ExecutionBudgets {
         journal_bytes: 0,
@@ -190,7 +184,7 @@ fn environment_journal_budget_rejects_the_first_capacity_growth() {
 }
 
 #[test]
-fn exhausted_fuel_is_not_reported_as_an_invalid_terminal_revision() {
+fn exhausted_fuel_is_not_reported_as_terminal_completion() {
     let error = super::map_terminal_completion_error(
         tex_exec::EngineCompletionError::TerminalRevisionUnavailable,
         17,
@@ -754,15 +748,8 @@ fn source_role_checkpoint_schedule_keeps_restart_and_convergence_deterministic()
         .collect::<Vec<_>>();
     assert_eq!(
         before.iter().map(|key| key.boundary).collect::<Vec<_>>(),
-        [
-            EngineBoundary::JobStart,
-            EngineBoundary::OuterParagraphEnd,
-            EngineBoundary::ShipoutComplete,
-            EngineBoundary::OuterParagraphEnd,
-            EngineBoundary::ShipoutComplete,
-            EngineBoundary::ShipoutComplete,
-        ],
-        "user includes and returned root input retain boundaries while project-package boundaries remain atomic"
+        [EngineBoundary::JobStart],
+        "grouped root paragraphs, includes, packages, and shipouts do not create checkpoints"
     );
 
     let output = session
@@ -1223,7 +1210,7 @@ fn history_budget_keeps_job_start_and_newest_observation() {
     );
     assert_eq!(
         session.history()[1].key().boundary,
-        EngineBoundary::ShipoutComplete
+        EngineBoundary::OuterParagraphEnd
     );
     assert_eq!(
         session.current_retained_checkpoint_count(),

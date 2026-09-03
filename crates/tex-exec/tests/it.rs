@@ -401,7 +401,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
         ("fn settle_preflight_step<", delivery),
         ("fn commit_direct_operation(", settlement),
         ("fn discard_direct_operation(", settlement),
-        ("fn publish_pending_named_boundary(", settlement),
+        ("fn finish_paragraph_boundary(", settlement),
         ("fn effective_tail_facts<G>(", executor_facts),
     ] {
         assert!(owner.contains(authority), "missing owner for {authority}");

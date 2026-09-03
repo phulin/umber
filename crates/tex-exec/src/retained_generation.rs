@@ -419,25 +419,6 @@ impl<G> RetainedCheckpointStore<'_, G> {
         self.boundaries.append_evidence(evidence);
     }
 
-    /// Retains only detached schedule/comparison evidence and schedules the
-    /// transient aggregate capture for owner-local release. A fork defers that
-    /// release until its command candidate settles; the earliest surviving
-    /// restart root remains the journal low-water throughout.
-    pub fn retain_evidence_checkpoint(
-        &mut self,
-        checkpoint: EngineCheckpoint<G>,
-        evidence: RetainedBoundaryEvidence,
-    ) -> Option<crate::EngineCheckpointRelease<G>> {
-        let release = self.boundaries.release_unretained(checkpoint);
-        self.boundaries.append_evidence(evidence);
-        if matches!(self.boundaries.ownership, BoundaryOwnership::Forked { .. }) {
-            self.boundaries.deferred_releases.push(release);
-            None
-        } else {
-            Some(release)
-        }
-    }
-
     /// Releases one restart root during publication-time budget enforcement.
     /// Detached boundary evidence is owned by the incremental layer and is
     /// intentionally unaffected.
@@ -1756,64 +1737,6 @@ impl<G> BoundaryLane<G> {
         ))
     }
 
-    fn release_unretained(
-        &self,
-        checkpoint: EngineCheckpoint<G>,
-    ) -> crate::EngineCheckpointRelease<G> {
-        let (oldest_runtime, oldest_command) = match &self.ownership {
-            BoundaryOwnership::Accepted(accepted) => {
-                let oldest = self.oldest_restart_in(accepted);
-                (oldest, oldest)
-            }
-            BoundaryOwnership::Forked {
-                prefix, current, ..
-            } => (
-                self.oldest_restart_in(current),
-                self.newest_restart_in(prefix)
-                    .or_else(|| self.oldest_restart_in(current)),
-            ),
-        };
-        crate::EngineCheckpointRelease::with_component_floors(
-            checkpoint,
-            oldest_runtime,
-            oldest_command,
-        )
-    }
-
-    fn oldest_restart_in(&self, lane: &VecDeque<BoundarySlotKey>) -> Option<&EngineCheckpoint<G>> {
-        for key in lane {
-            let row = self.slot_by_index(key.slot);
-            debug_assert_eq!(row.generation, key.generation);
-            let cell = row
-                .cell
-                .as_ref()
-                .expect("current-generation boundary row remains live");
-            if let Some(checkpoint) = cell.checkpoint.as_ref()
-                && checkpoint.boundary() != crate::EngineBoundary::JobStart
-            {
-                return Some(checkpoint);
-            }
-        }
-        None
-    }
-
-    fn newest_restart_in(&self, lane: &VecDeque<BoundarySlotKey>) -> Option<&EngineCheckpoint<G>> {
-        for key in lane.iter().rev() {
-            let row = self.slot_by_index(key.slot);
-            debug_assert_eq!(row.generation, key.generation);
-            let cell = row
-                .cell
-                .as_ref()
-                .expect("candidate-prefix boundary row remains live");
-            if let Some(checkpoint) = cell.checkpoint.as_ref()
-                && checkpoint.boundary() != crate::EngineBoundary::JobStart
-            {
-                return Some(checkpoint);
-            }
-        }
-        None
-    }
-
     fn can_begin(&self, key: &RetainedCheckpointKey) -> bool {
         matches!(self.ownership, BoundaryOwnership::Accepted(_)) && self.get(key).is_ok()
     }
@@ -2957,7 +2880,7 @@ mod tests {
                 lane.append_evidence(RetainedBoundaryEvidence::new(
                     1,
                     1,
-                    crate::EngineBoundary::ShipoutComplete,
+                    crate::EngineBoundary::OuterParagraphEnd,
                     ordinal,
                     ordinal as usize,
                     ordinal as usize,
@@ -2966,7 +2889,7 @@ mod tests {
             }
             assert_eq!(lane.visible_len(), 129);
             let (fallback, evidence) = lane
-                .select(Some((1, crate::EngineBoundary::ShipoutComplete, 128)))
+                .select(Some((1, crate::EngineBoundary::OuterParagraphEnd, 128)))
                 .expect("completion evidence falls back to its restart");
             assert_eq!(fallback, job);
             assert_eq!(evidence.boundary(), crate::EngineBoundary::JobStart);
@@ -3004,7 +2927,7 @@ mod tests {
             lane.append_evidence(RetainedBoundaryEvidence::new(
                 3,
                 3,
-                crate::EngineBoundary::ShipoutComplete,
+                crate::EngineBoundary::OuterParagraphEnd,
                 0,
                 0,
                 0,

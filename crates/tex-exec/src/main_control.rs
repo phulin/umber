@@ -4,7 +4,6 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no independent source stack is accepted here.
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
@@ -415,16 +414,15 @@ pub struct MainControl<G> {
     /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
-    completed_boundaries: Vec<crate::EngineBoundary>,
-    /// Move-only restart eligibility produced alongside retained-role outer
-    /// paragraph and shipout evidence.
-    completed_checkpoint_eligibilities: Vec<crate::checkpoint::CheckpointEligibility>,
+    /// Demand is installed by the runner before execution. A paragraph cut
+    /// either consumes it immediately or is permanently skipped.
+    paragraph_checkpoint_demand: Option<bool>,
+    paragraph_checkpoint_cut: bool,
     /// The sole job-start restart capability. Restored controls do not regain
     /// it, and successful initial capture consumes it permanently.
     job_start_eligibility: Option<crate::checkpoint::CheckpointEligibility>,
     /// Ordered named-boundary intents waiting for command-owned scanner,
     /// macro, resource, and structural continuations to become quiescent.
-    pending_named_boundaries: VecDeque<PendingNamedBoundary>,
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
@@ -442,12 +440,8 @@ pub struct MainControl<G> {
     /// committed. Retrying resumes either its exact settled command/cursor or
     /// its fully scanned operation without fetching another diagnostic token.
     pending_diagnostic_operation: Option<PendingDiagnosticOperation<G>>,
-    /// Terminal step armed only by [`crate::CanonicalStepRunner`] after the
-    /// final operation and all named-boundary publication have committed.
-    /// Once armed, ordinary execution cannot continue; output detachment
-    /// consumes the corresponding ledger receipt and closes this state.
-    terminal_revision_step: Option<MainControlStep>,
-    terminal_revision_closed: bool,
+    /// Set exactly when the runner receives End. No later delivery is legal.
+    ended: bool,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -1221,16 +1215,14 @@ impl<G> Default for MainControl<G> {
             immediate_prints: Vec::new(),
             prepared_shipout: None,
             page_region_succession_pending: false,
-            completed_boundaries: Vec::new(),
-            completed_checkpoint_eligibilities: Vec::new(),
+            paragraph_checkpoint_demand: None,
+            paragraph_checkpoint_cut: false,
             job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
-            pending_named_boundaries: VecDeque::new(),
             pending_resource_site: None,
             pending_direct_operation: None,
             pending_resource_operation: None,
             pending_diagnostic_operation: None,
-            terminal_revision_step: None,
-            terminal_revision_closed: false,
+            ended: false,
             fatal: None,
             captured_fatal_origin: None,
             first_causal_context: None,
@@ -1386,20 +1378,8 @@ impl<G> MainControl<G> {
         command
     }
 
-    pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {
-        debug_assert!(matches!(
-            step,
-            MainControlStep::End | MainControlStep::EndOfInput
-        ));
-        debug_assert!(!self.terminal_revision_closed);
-        debug_assert!(self.terminal_revision_step.is_none());
-        self.terminal_revision_step = Some(step);
-    }
-
-    pub(crate) fn terminal_revision_is_quiescent(&self, step: MainControlStep) -> bool {
-        self.terminal_revision_step == Some(step)
-            && !self.terminal_revision_closed
-            && self.command.named_boundary_is_quiescent()
+    pub(crate) fn terminal_is_quiescent(&self, stores: &mut Universe<G>) -> bool {
+        self.command.named_boundary_is_quiescent()
             && !self.has_external_attempt_owner()
             && self.active_alignment.is_none()
             && self.operation_observations.is_none()
@@ -1408,14 +1388,17 @@ impl<G> MainControl<G> {
             && self.prepared_shipout.is_none()
             && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
-            && self.pending_named_boundaries.is_empty()
             && self.pending_resource_site.is_none()
             && self.pending_direct_operation.is_none()
+            && !self.boxes.output_routine_active
+            && !PendingPageOutputFacts::capture(
+                &stores.command_context().expect("terminal owner admission"),
+            )
+            .is_pending()
     }
 
-    pub(crate) fn close_terminal_revision(&mut self, step: MainControlStep) {
-        debug_assert!(self.terminal_revision_is_quiescent(step));
-        self.terminal_revision_closed = true;
+    pub(crate) fn mark_ended(&mut self) {
+        self.ended = true;
     }
 
     /// Replaces the execution-owned memo service between candidate runs.
@@ -1867,9 +1850,6 @@ impl<G> MainControl<G> {
             crate::EngineBoundary::OuterParagraphEnd => {
                 crate::checkpoint::CheckpointEligibility::named(boundary)
             }
-            crate::EngineBoundary::ShipoutComplete => {
-                crate::checkpoint::CheckpointEligibility::named(boundary)
-            }
         };
         self.capture_checkpoint_with_identity_demand(eligibility, stores, budget_counters, false)
     }
@@ -1897,7 +1877,8 @@ impl<G> MainControl<G> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
-        self.pending_named_boundaries.clear();
+        self.paragraph_checkpoint_demand = None;
+        self.paragraph_checkpoint_cut = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
@@ -2585,18 +2566,44 @@ impl<G> MainControl<G> {
         take_prepared_dvi_pages(&mut self.prepared_dvi_pages)
     }
 
-    /// Drains named boundaries that became safe during committed direct
-    /// operations. This is deliberately an event receipt, not a request for
-    /// the host to inspect modes or dispatch source tokens.
-    #[must_use]
-    pub fn take_completed_boundaries(&mut self) -> Vec<crate::EngineBoundary> {
-        std::mem::take(&mut self.completed_boundaries)
+    /// Installs the host's compact paragraph policy before execution.
+    pub(crate) fn set_paragraph_checkpoint_demand(&mut self, identity: Option<bool>) {
+        debug_assert!(!self.paragraph_checkpoint_cut);
+        self.paragraph_checkpoint_demand = identity;
     }
 
-    pub(crate) fn take_checkpoint_eligibilities(
+    pub(crate) fn take_paragraph_checkpoint(
         &mut self,
-    ) -> Vec<crate::checkpoint::CheckpointEligibility> {
-        std::mem::take(&mut self.completed_checkpoint_eligibilities)
+        stores: &Universe<G>,
+    ) -> Option<(crate::checkpoint::CheckpointEligibility, bool)> {
+        if !std::mem::take(&mut self.paragraph_checkpoint_cut) {
+            return None;
+        }
+        let wants_identity = self.paragraph_checkpoint_demand.take()?;
+        let restartable = stores.checkpoint_eligible()
+            && self.command.named_boundary_is_quiescent()
+            && !self.has_external_attempt_owner()
+            && self.active_alignment.is_none()
+            && self.operation_observations.is_none()
+            && self.operation_receipt_start.is_none()
+            && self.suspended_operation_observation.is_none()
+            && self.prepared_shipout.is_none()
+            && !self.page_region_succession_pending
+            && self.immediate_prints.is_empty()
+            && self.pending_resource_site.is_none()
+            && self.pending_direct_operation.is_none()
+            && self.pending_resource_operation.is_none()
+            && self.pending_diagnostic_operation.is_none()
+            && !self.boxes.output_routine_active
+            && self.modes.restart_checkpoint_is_quiescent();
+        restartable.then(|| {
+            (
+                crate::checkpoint::CheckpointEligibility::named(
+                    crate::EngineBoundary::OuterParagraphEnd,
+                ),
+                wants_identity,
+            )
+        })
     }
 
     pub(crate) fn take_job_start_eligibility(
@@ -3301,17 +3308,13 @@ impl<G> MainControl<G> {
         mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
-        if self.publish_pending_named_boundary(stores)?.is_some() {
-            return Ok(StepResult::Progress(ReplayStep::Continue));
-        }
-        let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
         let initial_artifacts = stores.world().artifact_commits().len();
+        let initial_boundaries = 0;
         let initial_format_dump = self.dumped_format.is_some();
         let initial_diagnostic = self.first_causal_context.is_some();
         let initial_error_count = stores.world().error_channel().error_count();
         let mut operations = 0_usize;
-        let mut last_step = ReplayStep::Continue;
         let mut direct_attempt_recorded = false;
         let mut command_episode = CommandEpisode::default();
         let mut cold_operation = ColdOperationSlot::default();
@@ -3331,19 +3334,6 @@ impl<G> MainControl<G> {
 
         loop {
             let mut host_preparation = OperationPreparation::new();
-            if operations != 0
-                && let Some(boundary) = self.publish_pending_named_boundary(stores)?
-            {
-                self.record_direct_episode_commit(
-                    stores,
-                    operations,
-                    crate::EpisodeCommitBoundary::NamedCheckpoint(boundary),
-                    initial_artifacts,
-                    initial_boundaries,
-                    initial_effect_pos,
-                );
-                return Ok(StepResult::Progress(last_step));
-            }
             // Private revisions require every scanner-time immutable
             // allocation to belong to one fixed-size operation suffix. The
             // scope therefore opens before delivery preflight, while a
@@ -4132,7 +4122,6 @@ impl<G> MainControl<G> {
                 return Err(error);
             }
             self.commit_direct_operation(stores, operation_mark);
-            last_step = step;
             let tracked_result = tracked_mark.map(|mark| {
                 stores
                     .finish_dependency_region(mark)
@@ -4188,7 +4177,7 @@ impl<G> MainControl<G> {
     /// creates a fresh processor borrow and resumes that continuation without
     /// redelivering the command.
     pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
-        if self.terminal_revision_step.is_some() {
+        if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
         if !self.pure_memo_initialized {
@@ -4215,7 +4204,7 @@ impl<G> MainControl<G> {
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
     pub fn advance_episode(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
-        if self.terminal_revision_step.is_some() {
+        if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
         if !self.pure_memo_initialized {
@@ -4248,7 +4237,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<TrackedStepResult, ExecError> {
-        if self.terminal_revision_step.is_some() {
+        if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
         if !self.pure_memo_initialized {
@@ -6399,7 +6388,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
-        if self.terminal_revision_step.is_some() {
+        if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
         if !self.pure_memo_initialized {
@@ -7471,12 +7460,6 @@ impl<G> MainControl<G> {
         );
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_shipout_publication(
-                output_start.artifact_count,
-                output_start.effect_count,
-                stores,
-                output_start.source_role,
-            );
             self.finish_paragraph_boundary(
                 output_start.outer_paragraph_was_active,
                 output_start.source_role,
@@ -8205,12 +8188,6 @@ impl<G> MainControl<G> {
         }
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_shipout_publication(
-                output_start.artifact_count,
-                output_start.effect_count,
-                stores,
-                output_start.source_role,
-            );
             self.finish_paragraph_boundary(
                 output_start.outer_paragraph_was_active,
                 output_start.source_role,

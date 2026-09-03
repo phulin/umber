@@ -5,8 +5,8 @@ use tex_state::Universe;
 use tex_state::fork_arena::{CheckpointMark, ChunkPool, ForkArena};
 
 use crate::{
-    Cancellation, CheckpointSink, ExecError, ExecutionBudgetCounters, MainControl, MainControlStep,
-    ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
+    Cancellation, CheckpointSink, EngineBoundary, ExecError, ExecutionBudgetCounters, MainControl,
+    MainControlStep, ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
     canonical_font_resource_path,
 };
 
@@ -220,11 +220,12 @@ impl OutputLedger {
     pub fn terminal_receipt<G>(
         &self,
         control: &MainControl<G>,
+        universe: &mut Universe<G>,
         step: MainControlStep,
     ) -> Result<TerminalRevisionReceipt, crate::EngineCompletionError> {
         if self.terminal_closed
             || self.terminal_step != Some(step)
-            || !control.terminal_revision_is_quiescent(step)
+            || !control.terminal_is_quiescent(universe)
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }
@@ -245,7 +246,6 @@ impl OutputLedger {
         if self.terminal_closed
             || self.terminal_step != Some(receipt.step)
             || self.suspension_serial != receipt.suspension_serial
-            || !control.terminal_revision_is_quiescent(receipt.step)
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }
@@ -277,7 +277,7 @@ impl OutputLedger {
         if self.terminal_closed
             || self.terminal_step != Some(receipt.step)
             || self.suspension_serial != receipt.suspension_serial
-            || !control.terminal_revision_is_quiescent(receipt.step)
+            || !control.terminal_is_quiescent(universe)
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }
@@ -322,7 +322,6 @@ impl OutputLedger {
             pdf,
         )?;
         self.terminal_closed = true;
-        control.close_terminal_revision(receipt.step);
         Ok(completion)
     }
 
@@ -371,10 +370,15 @@ impl OutputLedger {
         if std::mem::replace(&mut self.job_start_committed, true) {
             return Ok(false);
         }
+        if !sink.wants_checkpoint(EngineBoundary::JobStart) {
+            let _ = control.take_job_start_eligibility();
+            return Ok(true);
+        }
         let eligibility = control
             .take_job_start_eligibility()
             .ok_or(CommandSummaryError::AttemptSuspended)?;
-        self.publish(control, universe, sink, vec![eligibility])?;
+        let wants_identity = sink.wants_reachable_state_identity(EngineBoundary::JobStart);
+        self.publish(control, universe, sink, Some((eligibility, wants_identity)))?;
         Ok(true)
     }
 
@@ -446,20 +450,16 @@ impl OutputLedger {
         control: &mut MainControl<G>,
         universe: &mut Universe<G>,
         sink: &mut dyn CheckpointSink<G>,
-        eligibilities: Vec<crate::checkpoint::CheckpointEligibility>,
+        checkpoint: Option<(crate::checkpoint::CheckpointEligibility, bool)>,
     ) -> Result<(), CommandSummaryError> {
         self.collect_prepared_pages(control);
-        for eligibility in eligibilities {
-            let boundary = eligibility.boundary();
-            if !sink.wants_checkpoint(boundary) {
-                continue;
-            }
+        if let Some((eligibility, wants_identity)) = checkpoint {
             let counters = ExecutionBudgetCounters::default();
             let mut checkpoint = control.capture_checkpoint_with_identity_demand(
                 eligibility,
                 universe,
                 counters,
-                sink.wants_reachable_state_identity(boundary),
+                wants_identity,
             )?;
             checkpoint.set_output_ledger(self.checkpoint());
             sink.checkpoint(checkpoint, universe);
@@ -512,26 +512,6 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         }
     }
 
-    /// Publishes the quiescent named-boundary suffix left by terminal cleanup.
-    ///
-    /// A terminal format capture may first discard unread command-only input
-    /// or macro replay levels. Its outer owner then calls this method before
-    /// asking the ledger for the terminal receipt, so every newly quiescent
-    /// boundary is checkpointed in canonical order.
-    pub fn publish_terminal_boundary_suffix(
-        &mut self,
-        sink: &mut dyn CheckpointSink<G>,
-    ) -> Result<(), CanonicalStepFailure> {
-        self.control
-            .publish_terminal_named_boundaries(self.universe)
-            .map_err(CanonicalStepFailure::Execution)?;
-        let _boundaries = self.control.take_completed_boundaries();
-        let eligibilities = self.control.take_checkpoint_eligibilities();
-        self.ledger
-            .publish(self.control, self.universe, sink, eligibilities)
-            .map_err(CanonicalStepFailure::Checkpoint)
-    }
-
     /// Advances a complete-job session through TeX82 §81's `jump_out`.
     ///
     /// Diagnostic-oriented callers use [`Self::step`] so a captured fatal
@@ -548,7 +528,7 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
             CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error)) => {
                 if let Some(fatal) = error.as_fatal() {
                     let step = self.control.succumb(fatal);
-                    self.control.arm_terminal_revision(step);
+                    self.control.mark_ended();
                     self.ledger.terminal_step = Some(step);
                     CanonicalStepResult::Completed(step)
                 } else {
@@ -581,6 +561,11 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
                 ExecError::ExecutionCancelled,
             ));
         }
+        let wants_paragraph = sink.wants_checkpoint(EngineBoundary::OuterParagraphEnd);
+        self.control.set_paragraph_checkpoint_demand(
+            wants_paragraph
+                .then(|| sink.wants_reachable_state_identity(EngineBoundary::OuterParagraphEnd)),
+        );
         let result = match observer {
             Some(observer) => self.control.advance_with_observer(self.universe, observer),
             None => self.control.advance_episode(self.universe),
@@ -594,31 +579,24 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
                 return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
             }
         };
-        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput)
-            && let Err(error) = self
-                .control
-                .publish_terminal_named_boundaries(self.universe)
-        {
-            return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
-        }
-        let boundaries = self.control.take_completed_boundaries().into_boxed_slice();
-        let eligibilities = self.control.take_checkpoint_eligibilities();
+        let checkpoint = self.control.take_paragraph_checkpoint(self.universe);
+        let committed = checkpoint.is_some();
         if let Err(error) = self
             .ledger
-            .publish(self.control, self.universe, sink, eligibilities)
+            .publish(self.control, self.universe, sink, checkpoint)
         {
             self.control
                 .record_external_episode_barrier(SemanticEpisodeBarrier::Checkpoint);
             return CanonicalStepResult::Failed(CanonicalStepFailure::Checkpoint(error));
         }
         if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-            self.control.arm_terminal_revision(step);
+            self.control.mark_ended();
             self.ledger.terminal_step = Some(step);
             CanonicalStepResult::Completed(step)
-        } else if boundaries.is_empty() {
-            CanonicalStepResult::Progress(step)
-        } else {
+        } else if committed {
             CanonicalStepResult::Committed(step)
+        } else {
+            CanonicalStepResult::Progress(step)
         }
     }
 }

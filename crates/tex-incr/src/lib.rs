@@ -1523,14 +1523,6 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             self.pending_release = Some(checkpoint.release_unretained());
             return;
         }
-        if !checkpoint.is_restartable() {
-            self.state.checkpoint_keys.push(None);
-            self.state.checkpoint_retentions.push(None);
-            self.pending_release = self
-                .retained
-                .retain_evidence_checkpoint(checkpoint, evidence);
-            return;
-        }
         self.state.observe_shared_owners(retention);
         self.state.checkpoint_metadata_bytes = self
             .state
@@ -1863,16 +1855,16 @@ fn execute_plan_inner<G>(
                     let format_dump = control
                         .take_format_dump(universe)
                         .map_err(SessionError::FormatDump)?;
-                    CanonicalStepRunner::new(control, universe, ledger)
-                        .publish_terminal_boundary_suffix(&mut sink)
-                        .map_err(map_step_failure)?;
-                    let terminal = ledger.terminal_receipt(control, step).map_err(|error| {
-                        map_terminal_completion_error(
-                            error,
-                            control.fuel_burned(),
-                            control.fuel_limit(),
-                        )
-                    })?;
+                    let terminal =
+                        ledger
+                            .terminal_receipt(control, universe, step)
+                            .map_err(|error| {
+                                map_terminal_completion_error(
+                                    error,
+                                    control.fuel_burned(),
+                                    control.fuel_limit(),
+                                )
+                            })?;
                     let completion = ledger.close_revision(
                         control,
                         universe,
