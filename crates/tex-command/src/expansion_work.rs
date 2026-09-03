@@ -677,11 +677,41 @@ impl<G> ExpansionWork<G> {
                 writer,
                 cursor: crate::scanner_kernel::ScannerCursor::default(),
                 phase: SynchronousExpandedPhase::NeedOpening,
+                kind: SynchronousExpandedKind::Expanded,
             }))
         {
             self.driver
                 .pop_continuation()
                 .expect("failed expanded-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Starts the raw balanced child used by `\unexpanded` while an expanded
+    /// collector is active. The child writes directly into its parent's
+    /// attempt buffer, so completion only retires the control and never
+    /// creates a second inserted input level.
+    pub(crate) fn push_unexpanded_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+                opener,
+                attempt_opening,
+                writer,
+                cursor: crate::scanner_kernel::ScannerCursor::default(),
+                phase: SynchronousExpandedPhase::NeedOpening,
+                kind: SynchronousExpandedKind::Unexpanded,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed unexpanded-control push restores driver depth");
             return Err(error);
         }
         Ok(())

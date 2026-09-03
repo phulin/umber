@@ -138,6 +138,125 @@ fn expanded_collects_a_balanced_body_in_the_shared_control_lane() {
 }
 
 #[test]
+fn expanded_body_uses_the_shared_lane_for_nested_the() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                the,
+                count,
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
+fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let unexpanded = install_static(
+            universe,
+            "unexpanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded),
+        );
+        let definition = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                })],
+            )
+            .expect("nested definition");
+        let symbol = universe.intern("nested").expect("nested name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("nested meaning");
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                unexpanded,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(symbol.symbol()),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "unexpanded child must splice through the existing driver"
+        );
+    });
+}
+
+#[test]
 fn deeply_nested_the_requests_use_the_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

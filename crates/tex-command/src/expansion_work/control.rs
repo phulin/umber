@@ -176,6 +176,12 @@ pub(crate) enum SynchronousExpandedPhase {
     Collecting,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousExpandedKind {
+    Expanded,
+    Unexpanded,
+}
+
 /// Copy-small state for one synchronous `\expanded` token collector.
 ///
 /// The output buffer belongs to the enclosing command attempt.  Keeping its
@@ -188,6 +194,7 @@ pub(crate) struct SynchronousExpandedControl {
     pub(crate) writer: AttemptTokenBufferId,
     pub(crate) cursor: ScannerCursor,
     pub(crate) phase: SynchronousExpandedPhase,
+    pub(crate) kind: SynchronousExpandedKind,
 }
 
 /// Compact synchronous `\csname` state. The accumulated spelling lives in

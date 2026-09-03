@@ -1077,6 +1077,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
+    /// Starts the raw balanced child of an active `\expanded` collector.
+    /// Its destination is the parent's already-open token buffer, so the
+    /// child can retire without copying or installing an intermediate list.
+    pub(super) fn begin_unexpanded_continuation(
+        &mut self,
+        opener: OriginId,
+        writer: crate::attempt::AttemptTokenBufferId,
+    ) -> Result<(), CommandError> {
+        let attempt_opening = self.command.attempt.arena().mark();
+        self.command
+            .scratch
+            .push_unexpanded_control(opener, attempt_opening, writer)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
     /// Appends one settled unexpandable token to the active `\expanded`
     /// body.  Balance is updated from the literal spelling, as required by
     /// `scan_toks`; the closing delimiter is consumed rather than stored.
@@ -1121,6 +1136,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         }
         let control = control.expect("closing expanded word retires its control");
+        if control.kind == crate::expansion_work::control::SynchronousExpandedKind::Unexpanded {
+            return Ok(true);
+        }
         let list = self
             .command
             .attempt

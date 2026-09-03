@@ -1139,6 +1139,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                         );
                     }
                     crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
+                        if control.kind
+                            == crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
+                        {
+                            let _ = self.append_expanded_word(&command)?;
+                            fetch = true;
+                            continue;
+                        }
+                        if matches!(
+                            action,
+                            ExpandedCommandAction::Expand(ExpansionDispatch::Macro)
+                        ) && command
+                            .command_word()
+                            .flags()
+                            .contains(tex_state::meaning::MeaningFlags::PROTECTED)
+                        {
+                            // e-TeX's expanded collector suppresses protected
+                            // macros for this delivery while retaining their
+                            // original spelling in the resulting token list.
+                            command.suppress_expandable();
+                            let _ = self.append_expanded_word(&command)?;
+                            fetch = true;
+                            continue;
+                        }
                         if matches!(
                             action,
                             ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
@@ -1160,6 +1183,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             )) = action
             {
                 self.begin_expanded_continuation(command.origin())?;
+                fetch = true;
+                continue;
+            }
+
+            // Within an expanded collector, `\unexpanded` consumes a raw
+            // balanced child and splices its words into the parent's writer.
+            // Keeping that child in the same control lane avoids the legacy
+            // collector's recursive scan and preserves expandable spellings.
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::Unexpanded,
+            )) = action
+                && let Some(control) = expanded_control
+                && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
+            {
+                self.begin_unexpanded_continuation(command.origin(), control.writer)?;
                 fetch = true;
                 continue;
             }
