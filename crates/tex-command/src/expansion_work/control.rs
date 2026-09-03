@@ -171,6 +171,31 @@ impl<G> Clone for SynchronousExpandAfterControl<G> {
     }
 }
 
+/// Compact phases for `\if`/`\ifcat`'s two expanded operands. The awaiting
+/// states temporarily hide the parent while a nested scanner consumes its
+/// own expanded-token requests.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousIfComparePhase {
+    NeedFirst,
+    AwaitFirst,
+    NeedSecond {
+        character: u32,
+        category: Option<tex_state::token::Catcode>,
+    },
+    AwaitSecond {
+        character: u32,
+        category: Option<tex_state::token::Catcode>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousIfCompareControl {
+    pub(crate) condition: crate::processor::status::ConditionId,
+    pub(crate) kind: crate::conditionals::ConditionalKind,
+    pub(crate) inverted: bool,
+    pub(crate) phase: SynchronousIfComparePhase,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -218,9 +243,11 @@ pub(crate) enum ExpansionControl<G> {
     CsName(SynchronousCsNameControl),
     IfCsName(SynchronousIfCsNameControl),
     ExpandAfterSync(SynchronousExpandAfterControl<G>),
+    IfCompare(SynchronousIfCompareControl),
     Primitive(PrimitiveControl<G>),
 }
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
+    assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
 };

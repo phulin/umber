@@ -418,6 +418,69 @@ impl ConditionStack {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Begins an iterative `\if` or `\ifcat` comparison. The condition frame
+    /// is installed before the first expanded operand so nested predicates
+    /// inherit the same evaluating-limit semantics as TeX82 part 28.
+    pub(super) fn begin_if_compare_continuation(
+        &mut self,
+        kind: ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        if !matches!(kind, ConditionalKind::If | ConditionalKind::IfCat) {
+            return Err(CommandError::input_invariant());
+        }
+        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+        let condition = self
+            .command
+            .conditions
+            .push_with_inversion(kind, source_line, inverted);
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or_else(CommandError::input_invariant)?;
+        self.trace_conditional_enter(&frame);
+        self.observe_condition("push", &frame, None);
+        if let Err(error) = self
+            .command
+            .scratch
+            .push_if_compare_control(condition, kind, inverted)
+            .map_err(crate::scan_toks::scratch_command_error)
+        {
+            let _ = self.command.conditions.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Completes one compact `\if`/`\ifcat` comparison after the second
+    /// operand has settled in the delivery loop. Only the two scalar facts
+    /// required by the predicate cross this boundary.
+    pub(super) fn complete_if_compare_continuation(
+        &mut self,
+        second: crate::command::HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_if_compare_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let crate::expansion_work::control::SynchronousIfComparePhase::NeedSecond {
+            character,
+            category,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let result = match control.kind {
+            ConditionalKind::If => character == second.conditional_character_code(),
+            ConditionalKind::IfCat => category == second.conditional_category_code(),
+            _ => return Err(CommandError::input_invariant()),
+        };
+        self.complete_boolean(control.condition, result ^ control.inverted)
+    }
+
     /// Begins an iterative `\ifcsname` predicate in the shared expansion
     /// control lane. The conditional frame is established before any name
     /// character is requested, matching TeX's evaluating-limit semantics.
@@ -753,6 +816,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
             }
             return self.begin_ifcsname_continuation(true);
+        }
+        if matches!(_kind, ConditionalKind::If | ConditionalKind::IfCat) {
+            if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
+                && self.state.int_param(IntParam::TRACING_IFS) <= 0
+            {
+                self.print_unless_command_trace(
+                    crate::processor::expand_render::PrintCommand::from_current(&next),
+                );
+            }
+            return self.begin_if_compare_continuation(_kind, true);
         }
         if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
             && self.state.int_param(IntParam::TRACING_IFS) <= 0

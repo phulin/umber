@@ -1124,6 +1124,63 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            // `\if` and `\ifcat` each request two expanded operands. Keep
+            // only their compact scalar projection in the control lane; an
+            // operand that is itself expandable is allowed to run normally
+            // and returns here when its result settles.
+            let if_compare_control = self
+                .command
+                .scratch
+                .top_if_compare_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = if_compare_control {
+                match control.phase {
+                    crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst => {
+                        if matches!(action, ExpandedCommandAction::Return) {
+                            self.command
+                                .scratch
+                                .save_if_compare_first(
+                                    command.conditional_character_code(),
+                                    (control.kind == crate::conditionals::ConditionalKind::IfCat)
+                                        .then(|| command.conditional_category_code())
+                                        .flatten(),
+                                )
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                    crate::expansion_work::control::SynchronousIfComparePhase::NeedSecond {
+                        ..
+                    } => {
+                        if matches!(action, ExpandedCommandAction::Return) {
+                            self.complete_if_compare_continuation(command)?;
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                    crate::expansion_work::control::SynchronousIfComparePhase::AwaitFirst
+                    | crate::expansion_work::control::SynchronousIfComparePhase::AwaitSecond {
+                        ..
+                    } => {}
+                }
+            }
+
+            // The comparison controls are entered from the hot loop rather
+            // than through the legacy scalar conditional evaluator. Keeping
+            // this cutover here leaves that evaluator available to cold
+            // callers while every ordinary delivery stays on one loop.
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::If | ExpandablePrimitive::IfCat),
+            )) = action
+            {
+                let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
+                    .ok_or_else(CommandError::input_invariant)?;
+                self.begin_if_compare_continuation(kind, false)?;
+                fetch = true;
+                continue;
+            }
+
             // A `\the` scalar child may cross an immutable resource barrier
             // (for example while resolving a font/register operand).  Its
             // control has already been removed before entering the scalar
@@ -1323,6 +1380,40 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if expandafter_should_await {
                         self.await_expandafter_nested()?;
                     }
+                    let if_compare_was_awaiting = self
+                        .command
+                        .scratch
+                        .top_if_compare_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfComparePhase::
+                                    AwaitFirst
+                                    | crate::expansion_work::control::SynchronousIfComparePhase::
+                                        AwaitSecond { .. }
+                            )
+                        });
+                    let if_compare_should_await = self
+                        .command
+                        .scratch
+                        .top_if_compare_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfComparePhase::
+                                    NeedFirst
+                                    | crate::expansion_work::control::SynchronousIfComparePhase::
+                                        NeedSecond { .. }
+                            )
+                        });
+                    if if_compare_should_await {
+                        self.command
+                            .scratch
+                            .await_if_compare_operand()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                    }
                     let mut command_parked = false;
                     let failure = match self.expand_classified_occupied(
                         &mut command,
@@ -1334,6 +1425,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         Ok(()) => {
                             if expandafter_should_await || expandafter_was_awaiting {
                                 self.resume_expandafter_second()?;
+                            }
+                            if if_compare_should_await || if_compare_was_awaiting {
+                                self.command
+                                    .scratch
+                                    .resume_if_compare_operand()
+                                    .map_err(crate::scan_toks::scratch_command_error)?;
                             }
                             // Some expandable commands consume themselves
                             // without putting a command back on input. In an

@@ -778,6 +778,133 @@ impl<G> ExpansionWork<G> {
         Ok(control)
     }
 
+    /// Starts the compact two-operand `\if`/`\ifcat` comparison control.
+    pub(crate) fn push_if_compare_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::IfCompare(SynchronousIfCompareControl {
+                condition,
+                kind,
+                inverted,
+                phase: SynchronousIfComparePhase::NeedFirst,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed if-compare push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Returns the active top compact `\if`/`\ifcat` comparison control.
+    pub(crate) fn top_if_compare_control(
+        &self,
+    ) -> Result<Option<SynchronousIfCompareControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::IfCompare(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Advances the compact comparison control after its first operand has
+    /// settled. No command-sized value crosses this mutation boundary.
+    pub(crate) fn save_if_compare_first(
+        &mut self,
+        character: u32,
+        category: Option<tex_state::token::Catcode>,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfCompare(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousIfComparePhase::NeedFirst {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        control.phase = SynchronousIfComparePhase::NeedSecond {
+            character,
+            category,
+        };
+        Ok(())
+    }
+
+    /// Hides the comparison parent while one operand's nested scanner invokes
+    /// expanded-token requests.
+    pub(crate) fn await_if_compare_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfCompare(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfComparePhase::NeedFirst => SynchronousIfComparePhase::AwaitFirst,
+            SynchronousIfComparePhase::NeedSecond {
+                character,
+                category,
+            } => SynchronousIfComparePhase::AwaitSecond {
+                character,
+                category,
+            },
+            SynchronousIfComparePhase::AwaitFirst
+            | SynchronousIfComparePhase::AwaitSecond { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    /// Restores the comparison's operand phase once the nested primitive
+    /// scanner has returned to the driver.
+    pub(crate) fn resume_if_compare_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfCompare(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfComparePhase::AwaitFirst => SynchronousIfComparePhase::NeedFirst,
+            SynchronousIfComparePhase::AwaitSecond {
+                character,
+                category,
+            } => SynchronousIfComparePhase::NeedSecond {
+                character,
+                category,
+            },
+            SynchronousIfComparePhase::NeedFirst | SynchronousIfComparePhase::NeedSecond { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    /// Retires the completed compact comparison control.
+    pub(crate) fn pop_if_compare_control(
+        &mut self,
+    ) -> Result<SynchronousIfCompareControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::IfCompare(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if !matches!(control.phase, SynchronousIfComparePhase::NeedSecond { .. }) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Opens a name mark even when a synchronous driver has no parked cold
     /// root. A zero root serial is reserved for that rootless hot episode;
     /// parked resumptions continue to use their real active-root serial.

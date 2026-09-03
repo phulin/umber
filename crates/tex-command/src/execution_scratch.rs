@@ -1446,6 +1446,46 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_expandafter_control()
     }
 
+    pub(crate) fn push_if_compare_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_if_compare_control(condition, kind, inverted)
+    }
+
+    pub(crate) fn top_if_compare_control(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::SynchronousIfCompareControl>, ScratchError>
+    {
+        self.expansion_work.top_if_compare_control()
+    }
+
+    pub(crate) fn save_if_compare_first(
+        &mut self,
+        character: u32,
+        category: Option<tex_state::token::Catcode>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .save_if_compare_first(character, category)
+    }
+
+    pub(crate) fn await_if_compare_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.await_if_compare_operand()
+    }
+
+    pub(crate) fn resume_if_compare_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.resume_if_compare_operand()
+    }
+
+    pub(crate) fn pop_if_compare_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousIfCompareControl, ScratchError> {
+        self.expansion_work.pop_if_compare_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()

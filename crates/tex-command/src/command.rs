@@ -682,6 +682,50 @@ impl<G> HotCommand<G> {
         })
     }
 
+    /// Returns the active character recovered by TeX82 §506 after `\noexpand`
+    /// has replaced its effective command with frozen `\relax`.
+    pub(crate) fn no_expand_active_character(&self) -> Option<char> {
+        if !self
+            .token
+            .site
+            .delivery_flags
+            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
+        {
+            return None;
+        }
+        match self.token.word.semantic_token() {
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => Some(ch),
+            _ => None,
+        }
+    }
+
+    /// TeX82 part 28's character-code projection for an `\if` operand.
+    pub(crate) fn conditional_character_code(self) -> u32 {
+        if let Some(ch) = self.no_expand_active_character()
+            && (ch as u32) <= u32::from(u8::MAX)
+        {
+            return ch as u32;
+        }
+        match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
+            Meaning::CharToken { ch, .. } if (ch as u32) <= u32::from(u8::MAX) => ch as u32,
+            _ => 256,
+        }
+    }
+
+    /// TeX82 part 28's category-code projection for an `\ifcat` operand.
+    pub(crate) fn conditional_category_code(self) -> Option<Catcode> {
+        if self.no_expand_active_character().is_some() {
+            return Some(Catcode::Active);
+        }
+        match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
+            Meaning::CharToken { cat, .. } => Some(cat),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn control_sequence(&self) -> Option<Symbol> {
         self.token.site.control_sequence
     }

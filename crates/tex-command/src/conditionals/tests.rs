@@ -237,6 +237,58 @@ fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
 }
 
 #[test]
+fn if_and_ifcat_operands_stay_in_the_shared_delivery_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let if_test = install(universe, "if", ExpandablePrimitive::If);
+        let if_cat = install(universe, "ifcat", ExpandablePrimitive::IfCat);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_test,
+                other('a'),
+                other('a'),
+                other('T'),
+                otherwise,
+                other('F'),
+                fi,
+                if_cat,
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Letter,
+                },
+                other('N'),
+                otherwise,
+                other('Y'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(next_character(&mut processor), 'T');
+        assert_eq!(next_character(&mut processor), 'N');
+        assert_expanded_end(&mut processor);
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn ifx_compares_raw_operands_without_expanding_them() {
     crate::test_harness::with_universe(|universe| {
         let if_x = install(universe, "ifx", ExpandablePrimitive::IfX);
