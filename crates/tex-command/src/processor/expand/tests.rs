@@ -127,6 +127,11 @@ fn deeply_nested_the_requests_use_the_control_lane() {
             assert_eq!(settled.meaning(), Meaning::Relax);
             drop(processor);
             assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert_eq!(
+                command.scratch.recursive_delivery_entries_with_control(),
+                0,
+                "nested the must not re-enter expanded delivery while a control is live"
+            );
         }
     });
 }
@@ -155,6 +160,11 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
         crate::test_harness::push(&mut command, input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "4X");
         assert_eq!(command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            command.scratch.recursive_delivery_entries_with_control(),
+            0,
+            "nested number must return through the compact control lane"
+        );
     });
 }
 

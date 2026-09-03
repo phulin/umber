@@ -458,6 +458,13 @@ pub(crate) struct ExpansionWorkCounters {
     pub(crate) completed_roots: u64,
     pub(crate) aborted_roots: u64,
     pub(crate) stale_key_rejections: u64,
+    /// Number of re-entries into expanded delivery observed while a caller
+    /// already owned an expanded-delivery invocation.  The counter is an
+    /// architectural guard: migrated controls must return to the existing
+    /// loop, while legacy cold scanners may still be measured during the
+    /// transition.
+    pub(crate) recursive_delivery_entries: u64,
+    pub(crate) recursive_delivery_entries_with_control: u64,
 }
 
 #[derive(Debug)]
@@ -502,6 +509,26 @@ impl<G> Default for ExpansionWork<G> {
 }
 
 impl<G> ExpansionWork<G> {
+    /// Records an expanded-delivery entry against the one driver owner.  A
+    /// nonzero active depth means that a scanner re-entered delivery instead
+    /// of yielding a typed request; keeping this check beside the owner makes
+    /// the migration guard independent of any particular primitive.
+    pub(crate) fn note_delivery_entry(&mut self, active_depth: u32) {
+        if active_depth == 0 {
+            return;
+        }
+        self.counters.recursive_delivery_entries = self
+            .counters
+            .recursive_delivery_entries
+            .saturating_add(1);
+        if self.driver.continuation_depth != 0 {
+            self.counters.recursive_delivery_entries_with_control = self
+                .counters
+                .recursive_delivery_entries_with_control
+                .saturating_add(1);
+        }
+    }
+
     /// Pushes a synchronous `\the` continuation into the same generation
     /// owned control lane used by cold expansion suspension.  The control is
     /// intentionally not a second mailbox: its position is the canonical

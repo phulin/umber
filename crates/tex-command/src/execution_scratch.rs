@@ -1070,6 +1070,10 @@ pub(crate) struct ExecutionScratchTransientMark {
 }
 
 impl<G> ExecutionScratch<G> {
+    pub(crate) fn note_delivery_entry(&mut self, active_depth: u32) {
+        self.expansion_work.note_delivery_entry(active_depth);
+    }
+
     pub(crate) fn expression_stack_len(&self) -> usize {
         self.expression_frames.len()
     }
@@ -1567,6 +1571,18 @@ impl<G> ExecutionScratch<G> {
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recursive_delivery_entries(&self) -> u64 {
+        self.expansion_work.counters().recursive_delivery_entries
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recursive_delivery_entries_with_control(&self) -> u64 {
+        self.expansion_work
+            .counters()
+            .recursive_delivery_entries_with_control
     }
 
     pub(crate) fn cancel_expansion(

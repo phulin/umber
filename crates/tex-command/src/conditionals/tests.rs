@@ -392,6 +392,19 @@ fn deeply_nested_ifnum_operands_use_the_shared_control_lane() {
             }
         }
         assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(
+            processor
+                .command
+                .scratch
+                .recursive_delivery_entries_with_control(),
+            0,
+            "nested ifnum operands must not re-enter the delivery loop"
+        );
+        assert_eq!(
+            processor.command.scratch.recursive_delivery_entries(),
+            0,
+            "the compact ifnum test has no nested delivery call at all"
+        );
     });
 }
 

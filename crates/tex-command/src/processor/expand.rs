@@ -858,6 +858,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
+        self.command.scratch.note_delivery_entry(depth);
         let Some(active_depth) = depth.checked_add(1) else {
             return self.fail_hot_expanded_delivery(
                 destination,
