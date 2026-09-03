@@ -67,8 +67,9 @@ native entries, corruption recovery, and the browser portability boundary.
 
 `texlive_release_selection.md` proposes immutable minimal annual TeX Live
 package mirrors on `assets.umber.ink`, platform-cache ownership, lazy and
-complete-distribution caching, existing generated-format cache binding, and
-multi-release pdfTeX parity without compiling each historical engine.
+complete-distribution caching, output-scoped classic and HTML font acquisition,
+existing generated-format cache binding, and multi-release pdfTeX parity
+without compiling each historical engine.
 
 `target/arxiv_census/` contains generated machine-readable captures for the
 recent arXiv sample. It is build output, not checked-in documentation; its

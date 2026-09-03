@@ -108,9 +108,14 @@ struct TexliveReleaseSpec {
     base_url: &'static str,
     tlpdb_bytes: u64,
     tlpdb_sha512: [u8; 64],
+    font_catalog: Option<FontCatalogSpec>,
     format_clock: TexClock,
 }
 ```
+
+`FontCatalogSpec` carries the existing catalogue schema, URL, byte length, and
+cryptographic digest. Its records carry the existing object, program, mapping,
+provenance, and license identities rather than defining replacements for them.
 
 The TLPDB length and SHA-512 are acquisition pins, not a second inventory.
 They authenticate the downloaded database whose package records in turn name
@@ -119,10 +124,11 @@ clock used when constructing the standard formats for that release; it feeds
 the existing format-cache identity.
 
 The table validates unique years, concrete distribution names, HTTPS URLs
-under the production origin, complete SHA-512 values, and one compiled-in
-default. The browser projection is generated from or calls through the same
-Rust authority. Static product policy stays in typed source code; it does not
-gain a JSON policy manifest.
+under the production origin, complete SHA-512 values, optional authenticated
+font-catalogue specifications, and one compiled-in default. The browser
+projection is generated from or calls through the same Rust authority. Static
+product policy stays in typed source code; it does not gain a JSON policy
+manifest.
 
 The initial command-line surface remains compatible with the earlier design:
 
@@ -172,6 +178,12 @@ The TeX Live mirror contains no Web2C `.fmt` files. Official Umber builds may
 publish their existing versioned `latex` and `pdflatex` format images under a
 separate companion prefix on the same origin, as described below. Those images
 are Umber release artifacts, not mirrored TeX Live bytes.
+
+Likewise, the mirror contains upstream TFM, VF, map, ENC, Type 1, TrueType, and
+OpenType files exactly where their package archives place them. A separately
+pinned first-party font catalogue may add typed legacy mappings, WOFF2
+transports, and license records for supported HTML selections. It does not
+replace or rewrite the mirrored font files.
 
 Publication is a bounded copy-and-verify operation, not distribution
 preprocessing:
@@ -316,6 +328,143 @@ that projection has a bounded typed implementation. Umber must not silently
 invoke `tlmgr`, `fmtutil`, `updmap`, or package scripts from a downloaded
 archive.
 
+## Font acquisition and output closures
+
+Fonts use the existing cross-output contract in
+[Cross-output font system contract](cross_output_fonts.md). The TeX Live
+package resolver is a first-party host adapter for that contract; it does not
+add another font identity, layout policy, or engine lookup path.
+
+### Classic TeX font resources
+
+Classic font resources are ordinary members of the minimal annual mirror:
+
+- TFM files provide execution and `ClassicTfmExact` layout metrics;
+- VF files and their local TFM dependencies provide reached PDF virtual-font
+  composition;
+- generated effective map configuration selects map entries in deterministic
+  order;
+- ENC files provide PDF code-to-glyph-name encodings;
+- Type 1, TrueType, and OpenType programs provide reached PDF embedding
+  leaves; and
+- AFM files remain tooling or map-generation inputs rather than runtime layout
+  authority.
+
+The derived distribution index maps each typed `FileRequestKey` to its exact
+TLPDB package and member. TFM, VF, map, ENC, AFM, and outline-program kinds
+remain distinct even if their transport adapter ultimately selects a package
+archive. The archive is downloaded and verified once; extracted member bytes
+retain their own typed content identities before VFS admission.
+
+Acquisition follows the requested output closure:
+
+| Output | Font acquisition from the annual mirror                                                                                                                                                                              |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DVI    | Acquire reached TFMs needed for execution; do not fetch VF, outline, encoding, map, or PK programs solely for the external DVI consumer.                                                                             |
+| PDF    | After execution, acquire the complete reached VF/local-TFM/map/ENC/program closure, preferring an exact mapped outline and using an already supplied exact PK leaf only where the existing PDF policy permits it.    |
+| HTML   | Acquire the execution/layout authority, then use an exact first-party or client mapping and browser font object as described below; do not fetch the PDF embedding closure merely because the engine mode is pdfTeX. |
+| Mixed  | Acquire the deduplicated union of the requested rows and retain one recorded layout authority for every font.                                                                                                        |
+
+This means a DVI-only use of `cmr10` normally downloads its TFM-containing
+package but not its Type 1 program. A PDF run downloads the Type 1 or SFNT
+package only if the reached map and VF closure selects it. Package dependency
+records remain transport advice and do not broaden these semantic closures.
+
+TeX Live does not generally distribute every generated PK instance. Umber does
+not run Metafont as an implicit network side effect. A missing outline with no
+exact supplied PK object is a typed output-resource failure; an application
+may satisfy the existing `PkFontRequestKey` through an explicit private or
+local provider.
+
+### OpenType selection and HTML companions
+
+A TLPDB path is not an OpenType font selection policy. Umber must not infer a
+`FontRequestKey` result from a filename, family name, PostScript name, or the
+first vaguely matching SFNT in a package. Explicit OpenType and mapped legacy
+HTML selections therefore come from an authenticated font catalogue.
+
+The annual release policy may pin a first-party catalogue under the same
+immutable distribution prefix:
+
+```text
+texlive/texlive-20250308/
+  umber/font-catalog-v<schema>.bin
+  umber/objects/sha256-<digest>
+```
+
+The catalogue reuses the existing canonical font and legacy-mapping request,
+program, instance, mapping, provenance, and license identities. It maps
+complete `FontRequestKey` and `LegacyFontMappingRequestKey` values to:
+
+- the exact object identity and expected canonical `FontProgramIdentity`;
+- a face index and allowed variations/features;
+- for a legacy mapping, the exact annual TFM content identity and complete
+  code-to-Unicode mapping;
+- one or more explicit transport sources: a WOFF2 browser companion and,
+  where supported, an eligible mirrored OTF/TTF package member identified by
+  exact package and member;
+- the layout and fontdimen-synthesis policy versions; and
+- identity-linked provenance, license text, and affirmative redistribution and
+  embedding permission.
+
+The catalogue and its non-TeX-Live objects are generated Umber companion
+artifacts, not part of the byte-for-byte package mirror. Each has a
+cryptographic acquisition pin in the release policy. Existing object, program,
+instance, mapping, and license identities remain authoritative after download.
+The catalogue never claims that an OTF/TTF and WOFF2 are equivalent merely
+because their names match; Rust decodes both and verifies the declared program
+identity.
+
+The currently implemented HTML font records carry one WOFF2 transport. Adding
+an SFNT package-member alternative is an additive catalogue-schema extension,
+not a new font-selection identity: the complete request still selects one
+program and instance, while host container capabilities choose among declared
+transport objects that must decode to that program. Old WOFF2-only records
+remain valid for browser use.
+
+Publication uploads WOFF2, provenance, and license objects before the
+catalogue, fetches all of them through the public origin, and runs the existing
+font catalogue audit before enabling the pin. Updating a mapping or transport
+creates a new catalogue identity and immutable object; published catalogue
+bytes are never overwritten.
+
+For `ClassicTfmExact`, HTML keeps TFM geometry and may paint with a catalogue
+WOFF2 only when the exact TFM-keyed mapping covers every used code and permits
+embedding. For `OpenTypePreferred`, the mapping selects the OpenType program
+before layout and that same program determines shaping, metrics, and HTML
+painting. A missing mapping follows the already selected fallback policy or
+returns a typed capability failure; it never triggers an operating-system font
+or visual substitution.
+
+The initial first-party catalogue remains deliberately curated rather than
+attempting to expose every TeX Live font in HTML. It should incorporate the
+existing CMU Serif Roman and STIX Two Math records and grow additively through
+reviewed exact mappings. Package-mirrored classic DVI and PDF coverage is not
+limited by this HTML catalogue.
+
+Native consumers may use the mirrored OTF/TTF member directly. Browser
+consumers use a pinned WOFF2 companion when the existing WASM container policy
+requires it; Umber does not convert OTF/TTF to WOFF2 during a compilation.
+
+### Font caching and complete-cache behavior
+
+Upstream font-containing package archives use the same durable package cache
+as other TeX Live inputs. Extracted TFM, VF, ENC, map, and program members are
+evictable derived blobs. First-party WOFF2, mapping, catalogue, provenance, and
+license objects use separate verified blob namespaces keyed by their existing
+identities. Decoded font programs and sized instances retain their existing
+session and artifact lifetimes; the distribution cache does not persist
+process-local parser state.
+
+`umber texlive cache YEAR` downloads every eligible font-containing runtime
+archive included by the complete Umber profile and every object in that
+release's first-party font catalogue. Its completion receipt covers the font
+catalogue identity and all referenced object identities. An offline DVI/PDF
+run can therefore extract arbitrary mirrored classic font members, and an
+offline HTML run can use every advertised first-party selection. Private fonts
+and application-supplied mappings are never copied into the shared
+distribution cache or completeness receipt.
+
 ## LaTeX and pdfLaTeX format storage
 
 Umber's existing `.fmt` versioning, validation, and cache remain the sole
@@ -378,6 +527,7 @@ includes:
 
 - all eligible package runfiles needed for TeX, LaTeX, pdfTeX, fonts, maps,
   encodings, virtual fonts, and supported bibliography workflows;
+- every object advertised by the release's first-party font catalogue;
 - every required locally generated configuration projection; and
 - the standard Umber `latex` and `pdflatex` format images.
 
@@ -441,7 +591,8 @@ does not need a per-file gateway or a second distribution representation.
 Browser persistent storage may extract and cache members in IndexedDB rather
 than using the native blob envelope. It must enforce the same archive and
 member validation before passing responses to the existing WASM resource
-protocol.
+protocol. First-party font-catalogue and WOFF2 companion objects use the same
+origin and the existing typed font-response validation.
 
 ## Trust, limits, and mirror policy
 
@@ -451,6 +602,9 @@ compiled production-origin policy protect selection, while the digest chain
 detects corrupt or substituted content. Retaining the upstream detached TLPDB
 signature makes publication independently auditable, but runtime signature
 verification does not replace the shipped annual pin.
+Font-catalogue, WOFF2, mapping, provenance, license, and published-format
+artifacts have independent cryptographic acquisition pins; their existing
+semantic decoders and identities remain the final admission boundary.
 
 Production acquisition does not fail over to mutable upstream mirrors. A
 missing hosted archive is a publication defect and fails closed; it never
@@ -503,8 +657,9 @@ are reported as unavailable and never treated as a pass.
 Routine `cargo test --tests` uses synthetic TLPDBs and archives and performs no
 network access. It covers year selection, TLPDB and archive validation,
 duplicate-path precedence, safe extraction, cache separation and sharing,
-generated configurations, offline completeness, format isolation, and exact
-native/browser member parity.
+generated configurations, classic output-specific font closures, exact
+TFM-keyed HTML mapping, WOFF2/program equivalence, license rejection, offline
+completeness, format isolation, and exact native/browser member parity.
 
 ## Migration from packed hosted snapshots
 
@@ -518,16 +673,18 @@ runtime surface:
 3. Reuse `BlobStore` for TLPDB, archive, and extracted-member namespaces.
 4. Build and verify one minimal annual package mirror on `assets.umber.ink`.
 5. Implement deterministic language and font-map configuration projections.
-6. Feed the TLPDB-based distribution identity into the existing format cache
+6. Project the existing curated font and mapping records into one pinned annual
+   companion catalogue and integrate it with the package resolver.
+7. Feed the TLPDB-based distribution identity into the existing format cache
    and prepared-format provider.
-7. Publish pinned standard formats through the existing format identity and
+8. Publish pinned standard formats through the existing format identity and
    validate download-to-cache admission.
-8. Add `--texlive`, on-demand `run` and `watch`, and the `umber texlive`
+9. Add `--texlive`, on-demand `run` and `watch`, and the `umber texlive`
    maintenance commands.
-9. Prove 2020 and the newest published release through native, browser,
-   offline, format, and parity gates.
-10. Publish and enable the intervening annual mirrors and scheduled matrix.
-11. Retire the self-hosted per-file production pin and publication pipeline
+10. Prove 2020 and the newest published release through native, browser,
+    offline, format, and parity gates.
+11. Publish and enable the intervening annual mirrors and scheduled matrix.
+12. Retire the self-hosted per-file production pin and publication pipeline
     only after no supported resource kind depends on it.
 
 The existing `--distribution` local/hosted-root escape hatch may survive one
@@ -548,6 +705,11 @@ retired.
   configuration, and standard `latex`/`pdflatex` formats usable offline.
 - Hosted TLPDB and package archives are byte-for-byte upstream files; no
   project-hosted per-file distribution or central preprocessing is needed.
+- Classic font resources resolve lazily from exact mirrored package members,
+  and each requested output acquires only its defined font closure.
+- HTML mappings and WOFF2 companions use the existing typed font identities,
+  exact TFM binding, and affirmative license records without limiting broader
+  classic DVI/PDF coverage.
 - Existing `.fmt` versioning and validation remain the only format authority,
   with reuse bound to the selected TLPDB identity.
 - Equal archives and member bytes can be shared across releases without
