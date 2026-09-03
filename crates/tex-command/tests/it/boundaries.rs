@@ -157,8 +157,13 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(!expansion.contains("fn raw_destination_loop("));
     assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
-    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
-    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
+    assert!(!expansion.contains("fn command_delivery_entry("));
+    for entry in ["raw_next,", "expanded_next,", "main_character_run,"] {
+        assert!(
+            expansion.contains(entry),
+            "delivery must expose the concrete {entry} loop"
+        );
+    }
     assert!(!input_history.contains("fn advance_resident_row_into("));
     assert!(!input_stack.contains("fn deliver_top_into("));
     for retired in [
@@ -175,10 +180,10 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     }
     assert!(expansion.contains("(HotCommand::empty(), true)"));
     let delivery_entry = expansion
-        .split("fn command_delivery_entry(")
+        .split("(@body $processor:ident")
         .nth(1)
-        .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
-        .expect("locate singular delivery entry");
+        .and_then(|tail| tail.split("$name:ident,").next())
+        .expect("locate generated delivery-loop body");
     for forbidden in [
         ".recording",
         ".interval",
@@ -460,7 +465,7 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     assert!(outer.contains("self.command.scanner.clear_for_recovery();"));
     assert_eq!(
         expansion
-            .matches("self.check_outer_validity_entry(")
+            .matches("processor.check_outer_validity_entry(")
             .count(),
         1,
         "the singular destination loop must own cold recovery"
@@ -522,7 +527,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(!history.contains("pop_resident_project"));
     assert!(expansion.contains("command.write_resolved_delivery("));
     assert!(!history.contains("self.retire_input_top("));
-    assert!(expansion.contains("self.check_outer_validity_entry(&mut rich)"));
+    assert!(expansion.contains("processor.check_outer_validity_entry(&mut rich)"));
 }
 
 #[test]
@@ -580,7 +585,7 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
+fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
@@ -601,7 +606,7 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     assert!(!expansion.contains("fn raw_destination_loop("));
     assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
-    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
+    assert!(!expansion.contains("fn command_delivery_entry("));
     for deleted in ["DeliveryMode", "DeliveryPolicy", "ExpandedDeliveryPolicy"] {
         assert!(
             !format!("{expansion}\n{policies}").contains(deleted),
@@ -611,10 +616,10 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     assert!(!expansion.contains("fn raw_delivery_driver("));
     assert!(!expansion.contains("fn expanded_delivery_driver("));
     let delivery_entry = expansion
-        .split("pub(super) fn command_delivery_entry(")
+        .split("(@body $processor:ident")
         .nth(1)
-        .and_then(|tail| tail.split("fn finish_expanded_delivery(").next())
-        .expect("locate singular command-delivery entry");
+        .and_then(|tail| tail.split("$name:ident,").next())
+        .expect("locate generated command-delivery body");
     assert!(!delivery_entry.contains("DeliveryErrorSlot"));
     assert!(!delivery_entry.contains("DeliveryFailed"));
     assert!(delivery_entry.contains("break 'delivery DeliveryStatus::Command"));
@@ -625,31 +630,47 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
     assert!(!input_history.contains("take_ready_replay_completion"));
     assert!(!command_state.contains("pending_replay_completions"));
     assert!(!command_state.contains("replay_completions.iter()"));
-    for (policy_axis, variants) in [
-        ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
-        (
-            "ExpandedObservationPolicy",
-            &["Commit", "RawOnly", "DeferIfExpanded"][..],
-        ),
-        (
-            "FirstCommandPolicy",
-            &["Raw", "Ordinary", "MainLoopCharacter"][..],
-        ),
-        (
-            "AlignmentInterceptionPolicy",
-            &["Scalar", "Surface", "None"][..],
-        ),
+    for slow_entry in [
+        "raw_next_with_replay_completion,",
+        "protected_expanded_next_with_replay_completion,",
+        "tex_alignment_lookahead_next,",
+        "resumed_expanded_next,",
+        "alignment_expanded_next,",
     ] {
         assert!(
-            policies.contains(&format!("enum {policy_axis}")),
-            "concrete delivery entries must select the {policy_axis} semantic axis explicitly"
+            expansion.contains(slow_entry),
+            "rare delivery semantics require the dedicated {slow_entry} entry"
         );
-        for variant in variants {
-            assert!(
-                policies.contains(&format!("    {variant},")),
-                "{policy_axis} must retain its {variant} policy"
-            );
-        }
+    }
+    assert!(
+        expansion
+            .matches("attributes = [cold, inline(never)]")
+            .count()
+            >= 5,
+        "rare delivery entries must stay out of line"
+    );
+    let generated_signature = expansion
+        .split("pub(super) fn $name(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split(") -> Result<DeliveryStatus, CommandError>")
+                .next()
+        })
+        .expect("locate generated delivery signature");
+    for retired_policy_parameter in [
+        "expanded_fetch:",
+        "protected_macros:",
+        "undefined:",
+        "observation:",
+        "first_command:",
+        "replay_completion:",
+        "alignment_interception:",
+        "character_run: Option",
+    ] {
+        assert!(
+            !generated_signature.contains(retired_policy_parameter),
+            "hot entry must not receive runtime policy {retired_policy_parameter}"
+        );
     }
     assert!(
         !policies.contains("ControlSequenceCreation"),
@@ -693,7 +714,7 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         expansion
             .contains("self.expand_classified_into(destination, dispatch, report_trace, false)")
     );
-    assert!(expansion.contains("match self.expand_classified_occupied("));
+    assert!(expansion.contains("match processor.expand_classified_occupied("));
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
         "an already-classified delivery must not wrap its dispatch for handoff"

@@ -137,7 +137,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
                     state,
                 );
                 assert!(resolution.meaning_lookup());
-                let meaning = self.command.command_word().resolved_meaning();
+                let meaning = self.command.resolved_meaning();
                 let semantic = match (index, &meaning) {
                     (0, ResolvedMeaning::Static(Meaning::Undefined)) => 1,
                     (

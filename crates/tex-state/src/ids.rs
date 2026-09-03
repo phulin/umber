@@ -80,6 +80,13 @@ macro_rules! semantic_id {
                 Self::new(raw)
             }
 
+            /// Creates a test-only identity with an explicit runtime owner.
+            #[cfg(feature = "testing")]
+            #[must_use]
+            pub fn testing_from_words(words: [u32; 4]) -> Option<Self> {
+                crate::identity::HandleIdentity::from_words(words).map(Self)
+            }
+
             /// Returns the dense store slot used by semantic DTOs and packed words.
             #[must_use]
             pub const fn raw(self) -> u32 {

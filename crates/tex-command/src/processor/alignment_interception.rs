@@ -8,12 +8,8 @@ use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
 use crate::{AlignmentDelivery, AlignmentDeliveryEvent};
 
+use super::CommandProcessor;
 use super::alignment::CELL_ALIGN_STATE;
-use super::expand::{ExpandedFetch, ProtectedMacroHandling, UndefinedHandling};
-use super::{
-    AlignmentInterceptionPolicy, CommandProcessor, ExpandedObservationPolicy, FirstCommandPolicy,
-    ReplayCompletionPolicy,
-};
 
 impl<G> CommandProcessor<'_, '_, G> {
     /// Delivers one expanded command, separating an intercepted alignment
@@ -82,26 +78,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         main_loop_active: bool,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let fetch = if main_loop_active {
-            ExpandedFetch::XToken
+        let delivery = if main_loop_active {
+            self.alignment_main_loop_next(destination)?
         } else {
-            ExpandedFetch::GetXToken
+            self.alignment_expanded_next(destination)?
         };
-        let delivery = self.command_delivery_entry(
-            fetch,
-            ProtectedMacroHandling::Expand,
-            UndefinedHandling::Diagnose,
-            ExpandedObservationPolicy::Commit,
-            if main_loop_active {
-                FirstCommandPolicy::MainLoopCharacter
-            } else {
-                FirstCommandPolicy::Ordinary
-            },
-            ReplayCompletionPolicy::Surface,
-            AlignmentInterceptionPolicy::Surface,
-            None,
-            destination,
-        )?;
         Ok(delivery)
     }
     /// Hands an intercepted delimiter from `end_template` main control back

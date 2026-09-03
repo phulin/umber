@@ -7,9 +7,11 @@ use crate::token::Catcode;
 
 /// Opaque fixed-width operand word used by the hot command boundary.
 ///
-/// The command class decides whether these bits are a packed static meaning,
-/// a font id, or an admitted macro-definition coordinate. Safe constructors
-/// prevent a caller from manufacturing the latter coordinate.
+/// The command class decides whether these bits are a packed static meaning or
+/// an admitted macro-definition coordinate. Font commands retain their opaque
+/// runtime identity at the command owner because it cannot be compressed to a
+/// dense slot without losing its namespace and generation. Safe constructors
+/// prevent a caller from manufacturing a definition coordinate.
 #[repr(transparent)]
 pub struct CommandOperandWord<G> {
     raw: u64,
@@ -62,12 +64,6 @@ impl<G> CommandOperandWord<G> {
 
     #[doc(hidden)]
     #[must_use]
-    pub const fn font(font: FontId) -> Self {
-        Self::scalar(font.raw() as u64)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
     pub const fn scalar_value(self) -> u64 {
         self.raw
     }
@@ -78,12 +74,6 @@ impl<G> CommandOperandWord<G> {
         DefinitionRef::from_runtime_word(
             core::num::NonZeroU64::new(self.raw).expect("definition operand is nonzero"),
         )
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn font_value(self) -> FontId {
-        FontId::new(self.raw as u32)
     }
 }
 

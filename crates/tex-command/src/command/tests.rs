@@ -158,6 +158,23 @@ fn packed_input_resolution_materializes_only_at_execution() {
 }
 
 #[test]
+fn compact_font_command_preserves_opaque_runtime_identity() {
+    let font = tex_state::ids::FontId::testing_from_words([0x5a17_0042, 7, 11, 23])
+        .expect("valid branded font identity");
+    let mut rich = CurrentCommand::<()>::empty();
+    rich.meaning = ResolvedMeaning::Static(Meaning::Font(font));
+
+    let hot = HotCommand::from_current(rich);
+
+    assert_eq!(hot.command_word().class(), CommandClass::Font);
+    assert_eq!(
+        hot.materialize().meaning(),
+        ResolvedMeaning::Static(Meaning::Font(font)),
+        "materialization must not reconstruct a FontId from its dense slot"
+    );
+}
+
+#[test]
 fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
     crate::test_harness::with_universe(|universe| {
         let symbol = universe.intern("directslot").expect("intern");

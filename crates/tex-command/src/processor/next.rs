@@ -12,7 +12,6 @@ use crate::command::CurrentCommand;
 use crate::error::CommandError;
 
 use super::CommandProcessor;
-use super::{AlignmentInterceptionPolicy, ReplayCompletionPolicy};
 
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
@@ -34,17 +33,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.command_delivery_entry(
-            super::expand::ExpandedFetch::GetXToken,
-            super::expand::ProtectedMacroHandling::Expand,
-            super::expand::UndefinedHandling::Diagnose,
-            super::ExpandedObservationPolicy::RawOnly,
-            super::FirstCommandPolicy::Raw,
-            ReplayCompletionPolicy::Consume,
-            AlignmentInterceptionPolicy::Scalar,
-            None,
-            destination,
-        )?;
+        let delivery = self.raw_next(destination)?;
         debug_assert!(matches!(
             delivery,
             super::DeliveryStatus::End | super::DeliveryStatus::Command
@@ -75,17 +64,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.command_delivery_entry(
-            super::expand::ExpandedFetch::GetXToken,
-            super::expand::ProtectedMacroHandling::Expand,
-            super::expand::UndefinedHandling::Diagnose,
-            super::ExpandedObservationPolicy::RawOnly,
-            super::FirstCommandPolicy::Raw,
-            ReplayCompletionPolicy::Surface,
-            AlignmentInterceptionPolicy::None,
-            None,
-            destination,
-        )?;
+        let delivery = self.raw_next_with_replay_completion(destination)?;
         debug_assert!(matches!(
             delivery,
             super::DeliveryStatus::End
@@ -156,17 +135,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
-        let delivery = self.command_delivery_entry(
-            super::expand::ExpandedFetch::GetXToken,
-            super::expand::ProtectedMacroHandling::Expand,
-            super::expand::UndefinedHandling::Diagnose,
-            super::ExpandedObservationPolicy::RawOnly,
-            super::FirstCommandPolicy::Raw,
-            ReplayCompletionPolicy::Consume,
-            AlignmentInterceptionPolicy::Scalar,
-            None,
-            destination,
-        );
+        let delivery = self.raw_next(destination);
         self.create_source_control_sequences = false;
         let delivery = delivery?;
         debug_assert!(matches!(
