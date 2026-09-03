@@ -956,18 +956,23 @@ impl<G> crate::CommandState<G> {
             return Ok(0);
         };
         let position = row.header.frame.position();
+        if position >= row.header.frame.limit() {
+            return Ok(0);
+        }
+        let frame_remaining = (row.header.frame.limit() - position) as usize;
         let available = fuel.remaining().min(u64::from(u32::MAX)) as usize;
         if available == 0 {
             fuel.charge()?;
             unreachable!("zero remaining fuel must fail")
         }
+        let mut body_run = false;
         let (consumed, argument_source) = match &mut row.storage {
             super::ResidentTokenStorage::MacroBody(body) => {
                 let mut append_error = None;
-                let consumed = body.body.with_contiguous_span(position as usize, |span| {
+                let consumed = body.body.with_contiguous_span(|span| {
                     let count = span
                         .iter()
-                        .take(available)
+                        .take(available.min(frame_remaining))
                         .take_while(|word| plain_macro_scan_word(word.get()))
                         .count();
                     if count != 0
@@ -986,10 +991,7 @@ impl<G> crate::CommandState<G> {
                 }
                 let consumed = consumed.unwrap_or(0);
                 if consumed != 0 {
-                    let boundary = body.body.advance_current_run(consumed);
-                    if boundary {
-                        body.body.advance_chunk_cold();
-                    }
+                    body_run = true;
                 }
                 (consumed, false)
             }
@@ -1019,6 +1021,18 @@ impl<G> crate::CommandState<G> {
             .frame
             .advance_resident_run(consumed)
             .ok_or_else(crate::CommandError::input_invariant)?;
+        if body_run {
+            let super::ResidentTokenStorage::MacroBody(body) = &mut row.storage else {
+                return Err(crate::CommandError::input_invariant());
+            };
+            let boundary = body
+                .body
+                .advance_current_run(consumed)
+                .ok_or_else(crate::CommandError::input_invariant)?;
+            if boundary && row.header.frame.position() < row.header.frame.limit() {
+                body.body.advance_chunk_cold(row.header.frame.position());
+            }
+        }
         fuel.charge_run(consumed)?;
         #[cfg(feature = "profiling")]
         fuel.record_raw_run(
@@ -1046,9 +1060,9 @@ impl<G> crate::CommandState<G> {
                     .macro_kernel_counters
                     .body_words
                     .saturating_add(u64::from(consumed));
-                self.macro_kernel_counters.body_cursor_advances = self
+                self.macro_kernel_counters.body_frame_advances = self
                     .macro_kernel_counters
-                    .body_cursor_advances
+                    .body_frame_advances
                     .saturating_add(1);
             }
         }

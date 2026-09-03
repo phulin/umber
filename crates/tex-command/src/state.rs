@@ -182,7 +182,9 @@ pub struct CommandState<G> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct MacroKernelCounters {
     pub(crate) body_words: u64,
-    pub(crate) body_cursor_advances: u64,
+    /// Authoritative packed-frame position updates. The resident body only
+    /// advances its physical cache and has no second logical update to count.
+    pub(crate) body_frame_advances: u64,
     pub(crate) body_parameter_pushes: u64,
     pub(crate) body_command_writes: u64,
     pub(crate) argument_words: u64,
@@ -1308,8 +1310,9 @@ impl<G> CommandState<G> {
         self.macro_kernel_counters = MacroKernelCounters::default();
     }
 
-    /// Returns body `(words, advances, parameter pushes, command writes)` and
-    /// argument `(words, advances, command writes)` for the singular kernel.
+    /// Returns body `(words, frame advances, parameter pushes, command
+    /// writes)` and argument `(words, advances, command writes)` for the
+    /// singular kernel.
     #[doc(hidden)]
     #[cfg(test)]
     #[must_use]
@@ -1317,7 +1320,7 @@ impl<G> CommandState<G> {
         let counters = self.macro_kernel_counters;
         (
             counters.body_words,
-            counters.body_cursor_advances,
+            counters.body_frame_advances,
             counters.body_parameter_pushes,
             counters.body_command_writes,
             counters.argument_words,

@@ -57,7 +57,7 @@ fn run_in_universe<G>(universe: &mut Universe<G>, words: usize) {
             let (word, boundary) =
                 black_box(body.read_current_word(expected_position as u32)).expect("resident word");
             if boundary {
-                body.advance_chunk_cold();
+                body.advance_chunk_cold(expected_position as u32 + 1);
             }
             checksum = checksum.wrapping_add(u64::from(word.raw()));
         }

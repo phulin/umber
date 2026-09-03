@@ -1733,7 +1733,7 @@ fn resident_body_admitted_cursor_reads_directly_and_rebuilds_after_rollback() {
                 .expect("admitted direct word");
             assert_eq!(word, expected);
             if boundary {
-                body.advance_chunk_cold();
+                body.advance_chunk_cold(position as u32 + 1);
             }
         }
         let (word, boundary) = body
@@ -1741,7 +1741,7 @@ fn resident_body_admitted_cursor_reads_directly_and_rebuilds_after_rollback() {
             .expect("word before physical boundary");
         assert_eq!(word, replacement[checkpoint]);
         assert!(boundary);
-        body.advance_chunk_cold();
+        body.advance_chunk_cold(checkpoint as u32 + 1);
 
         body.restore_position(checkpoint as u32);
         let (word, boundary) = body
@@ -1749,7 +1749,7 @@ fn resident_body_admitted_cursor_reads_directly_and_rebuilds_after_rollback() {
             .expect("replayed direct word");
         assert_eq!(word, replacement[checkpoint]);
         assert!(boundary);
-        body.advance_chunk_cold();
+        body.advance_chunk_cold(checkpoint as u32 + 1);
         let (word, _) = body
             .read_current_word((checkpoint + 1) as u32)
             .expect("word after physical boundary");
@@ -1802,7 +1802,7 @@ fn resident_body_direct_cursor_handles_edge_lengths_and_starts() {
                     assert_eq!(word, expected);
                     if boundary {
                         boundaries += 1;
-                        body.advance_chunk_cold();
+                        body.advance_chunk_cold(position as u32 + 1);
                     }
                 }
                 assert_eq!(boundaries, expected_boundaries);

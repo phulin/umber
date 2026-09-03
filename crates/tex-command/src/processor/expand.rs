@@ -119,10 +119,11 @@ fn next_word_from_current_frame(
 
 /// Reads one word from an admitted macro replacement cursor.
 ///
-/// The hot path checks the logical frame bound, indexes the retained
-/// immutable chunk, and advances the body/frame scalars. A physical crossing
-/// is reported by the body and settled by its cold directory transition only
-/// after the final word of the current chunk.
+/// The hot path checks the packed frame bound, loads the retained physical
+/// slot, advances the frame's sole logical position, and then advances the
+/// body's physical cache. A physical crossing is settled by its cold
+/// directory transition only after the frame confirms that replacement words
+/// remain.
 #[inline(always)]
 fn next_macro_body_word_from_current_frame<G>(
     frame: &mut PackedInputFrame,
@@ -132,10 +133,11 @@ fn next_macro_body_word_from_current_frame<G>(
     if position >= frame.limit() {
         return None;
     }
-    let (word, boundary) = body.body.read_current_word(position)?;
+    let word = body.body.load_current_word()?;
     debug_assert_eq!(frame.advance_resident(), position);
-    if boundary {
-        body.body.advance_chunk_cold();
+    let boundary = body.body.advance_current_word();
+    if boundary && frame.position() < frame.limit() {
+        body.body.advance_chunk_cold(frame.position());
     }
     Some(CurrentFrameWord {
         word,
@@ -515,9 +517,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .macro_kernel_counters
                     .body_words
                     .saturating_add(1);
-                command_state.macro_kernel_counters.body_cursor_advances = command_state
+                command_state.macro_kernel_counters.body_frame_advances = command_state
                     .macro_kernel_counters
-                    .body_cursor_advances
+                    .body_frame_advances
                     .saturating_add(1);
             }
             ResidentStorageKind::MacroArgument => {
