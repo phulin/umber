@@ -139,10 +139,6 @@ artifact, CLI, format, retry, diagnostic, checkpoint, rollback, and incremental
 contracts that survive the runtime-storage rewrite and records the deleted
 ownership-era compatibility assertions.
 
-`writeback/` records concise issue-scoped authority notes required by command
-conformance work; each note names the governing TeX82 section and the adopted
-semantic boundary, not temporary implementation plans.
-
 `tex82_property_catalogue.md` defines the pinned 1,380-module TeX82 inventory, explicit disposition and executable-property schemas, reviewed shard contract, and hermetic completeness gate.
 
 `pdftex_extension_property_catalogue.md` defines the separate pinned pdfTeX

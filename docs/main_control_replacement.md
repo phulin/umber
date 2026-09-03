@@ -33,8 +33,8 @@ clock live is diagnostic only and cannot establish work-vector or artifact
 identity. TeX82 §241 initializes `\time`, `\day`, `\month`, and `\year` from
 the host before input begins, and the loaded LaTeX format expands those values
 from its `everyjob` hook. The corrected machine-readable authority and the
-negative control that exposed the missing clock pin are recorded in
-[`umber2-awgc.5.3.8-authority.json`](writeback/umber2-awgc.5.3.8-authority.json).
+negative control that exposed the missing clock pin are recorded in Beads
+issue `umber2-awgc.5.3.8`.
 
 The final target is:
 
@@ -484,12 +484,12 @@ argument replay, and expansion. All four rows require exactly zero allocation,
 requested bytes, `Arc` and weak retains, weak upgrades, weak-index work, exact
 comparisons, and content hashes. The structural gate passes. The immutable
 12,000,000-fuel arXiv prefix retains exact fuel and frame-step coordinates;
-under the versioned direct-prefix contract in
-[`umber2-awgc.12`](writeback/umber2-awgc.12.md), its four secondary counters
+under the versioned direct-prefix contract in Beads issue `umber2-awgc.12`, its
+four secondary counters
 carry attributed deltas for aggregate replay that no longer occurs after the
 accepted transaction cutover. The final audit, current guarded receipt, and
-exact vectors are published in
-[`umber2-awgc.3.4`](writeback/umber2-awgc.3.4.md). Promotion requires that
+exact vectors are published in Beads issue `umber2-awgc.3.4`. Promotion
+requires that
 evidence together with the clean exhaustive semantic tracer; neither channel
 substitutes for the other.
 
@@ -817,10 +817,8 @@ exhaustive, and its episode histogram preserves every length from zero through
 the canonical 256-operation bound. The production feature resolution contains
 none of its counters, scopes, allocator wrapper, fields, or calls.
 
-The immutable integrated comparison authority is
-[`umber2-awgc.1.3`](writeback/umber2-awgc.1.3.md), with the complete schema-1
-census in
-[`umber2-awgc.1.3-census.json`](writeback/umber2-awgc.1.3-census.json). It
+The immutable integrated comparison authority and its complete schema-1 census
+are recorded in Beads issue `umber2-awgc.1.3`. It
 fixes the exact 12,000,000-fuel structural/profile boundary, the separate
 100,000,000-fuel production wall/RSS authority, the disjoint zero-loss CPU
 attribution, and the owner-specific promotion budget for every later child.
@@ -845,7 +843,7 @@ attributes every increase as well as every decrease to the changed endpoint
 mix. A focused resource-retry control must prove that the new transaction adds
 no work unrelated to the retained prefix. Restoring aggregate replay or
 synthetically charging eliminated work is forbidden. The decision and first
-exact receipt are [`umber2-awgc.12`](writeback/umber2-awgc.12.md).
+exact receipt are recorded in Beads issue `umber2-awgc.12`.
 
 The same optimized profile, CPU affinity policy, source, format, distribution,
 offline cache, environment, and guards are used for before/after measurements.

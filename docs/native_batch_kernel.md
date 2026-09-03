@@ -1,7 +1,6 @@
 # Native Batch-Kernel Ceiling
 
-The final deletion audit in
-[`writeback/umber2-64v2.16.md`](writeback/umber2-64v2.16.md) establishes that
+The final deletion audit in Beads issue `umber2-64v2.16` establishes that
 the measurements in this document cover the closed sixteen-control workload,
 not all supported-profile semantics. The benchmark's temporary whole-job
 scalar comparison adapter and runtime selector have now been deleted. Its

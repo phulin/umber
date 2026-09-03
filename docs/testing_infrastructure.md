@@ -43,7 +43,7 @@ use one closed Git directory per case. Each directory owns its named `.tex`
 source, every exact local support input, and each applicable
 `expected.<channel>` output. The one-time layout commands retired after the
 closed tree became authoritative; their final plan/digest receipt is preserved
-in [the retirement writeback](writeback/umber2-vgjr.18.3.md). Ordinary fixture
+in Beads issue `umber2-vgjr.18.3`. Ordinary fixture
 publication still commits through recoverable authority backups and
 case-directory swaps. The pre-commit phase includes every authority move, case
 install, and final installed-layout byte revalidation; any failure there

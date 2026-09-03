@@ -177,7 +177,7 @@ and 46 source paths.
 
 ## 6. Remove obsolete `tex-state` façades
 
-**Status:** implemented under the workspace-internal API policy; see [`umber2-vgjr.8.4`](writeback/umber2-vgjr.8.4.md).
+**Status:** implemented under the workspace-internal API policy; see Beads issue `umber2-vgjr.8.4`.
 
 **Affected code.** `crates/tex-state/src/universe.rs`, `src/stores.rs`, exports/UI tests, and small command/executor call sites.
 

@@ -165,7 +165,7 @@ and guidance are excluded. Focused executor, incremental, command-semantic,
 source-audit, exact DVI, text-channel, resource-retry, Story-locator, and
 snapshot gates passed under 512 MiB; the full routine suite passed under 1 GiB;
 and the uncapped six-job quality gate passed all four checks. The issue-scoped
-receipt is [the Program 1 writeback](writeback/umber2-vgjr.1.4.md).
+receipt is recorded in Beads issue `umber2-vgjr.1.4`.
 
 ## 2. One oracle evidence, finalization, and comparison pipeline
 
@@ -225,7 +225,7 @@ historical deletion is credited. Further deletion would weaken independent
 schema/report/performance evidence or collapse the deliberately separate
 engine-observation, wire-schema, and host-comparison boundaries, so it requires
 a new contract decision. The retained-source inventory and exact accounting
-are recorded in [the reconciliation writeback](writeback/umber2-vgjr.20.md).
+are recorded in Beads issue `umber2-vgjr.20`.
 
 ## 3. One resource identity, admission, acquisition, and publication lifecycle
 
@@ -306,8 +306,7 @@ and accepts the measured 668-line authored-Rust reduction as Program 3's final
 result. No further reduction is carried for this program, and no moved,
 generated, historical, fixture, documentation, binary, or compatibility-gated
 lines are credited. The complete retained-authority audit and independently
-reproduced accounting are recorded in
-[the reconciliation writeback](writeback/umber2-vgjr.22.md).
+reproduced accounting are recorded in Beads issue `umber2-vgjr.22`.
 
 **Dependencies.** The contract precedes program 13's browser orchestration and program 17's VFS contraction. Do not wait for API retirement to begin the canonical internal lifecycle.
 
@@ -541,7 +540,7 @@ and the lockfile add six; documentation and guidance add 68 and delete 26.
 The complete commit-arithmetic total is therefore 6,723 additions and 10,227
 deletions, a 3,504-line net reduction. No generated source, fixture, lockfile
 resolution, or binary asset is credited as deletion. The exact category and
-verification receipt is [the Program 6 writeback](writeback/umber2-vgjr.6.md).
+verification receipt is recorded in Beads issue `umber2-vgjr.6`.
 
 ## 7. One canonical HTML producer and JavaScript receiver
 
@@ -686,9 +685,8 @@ were removed without a deprecation adapter. `Universe` is the state-facing
 API; the `stores` module remains private and its `Stores` aggregate is retained
 only as rollback-coupled implementation data. `CommandContext` and
 `InputOpenContext` remain the intentional restricted capabilities. The exact
-disposition and closeout evidence are recorded in
-[`umber2-vgjr.8`](writeback/umber2-vgjr.8.md) and
-[`umber2-vgjr.8.4`](writeback/umber2-vgjr.8.4.md).
+disposition and closeout evidence are recorded in Beads issues
+`umber2-vgjr.8` and `umber2-vgjr.8.4`.
 
 Across the four implementation commits, authored Rust totals 1,412 additions
 and 3,248 deletions, a net reduction of 1,836 lines. Documentation and guidance
@@ -842,7 +840,7 @@ proof/test growth as Program 10's final result. Authored Rust growth is 704
 lines. No shortfall or unimplemented deletion is carried forward, and no moved,
 generated, declarative, documentation, or total-line change is credited. The
 retained-authority audit, exact category accounting, and verification are
-recorded in [the reconciliation writeback](writeback/umber2-vgjr.25.md).
+recorded in Beads issue `umber2-vgjr.25`.
 
 **Allocation-budget repair.** Follow-up `umber2-vgjr.27` restores Program 10's
 unchanged layout-allocation ceilings by storing breakpoint trace data in the
@@ -851,8 +849,7 @@ conversion buffers across the postorder schedule, and representing an empty
 observation replay without allocated sequence storage. The sole
 `ParagraphTape`, detached math transaction, shared metric authority, benchmark
 budgets, and Program 10 accounting remain unchanged. The bounded profile and
-exact capped measurements are recorded in
-[the allocation repair writeback](writeback/umber2-vgjr.27.md).
+exact capped measurements are recorded in Beads issue `umber2-vgjr.27`.
 
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
@@ -988,7 +985,7 @@ Node, browser, or package-validation failure occurred.
 800--1,200-line production forecast at the measured result rather than
 crediting output DTOs, compatibility aliases, generated source, documentation,
 or binary fixtures. Its complete retained-source inventory and compatibility
-rationale are recorded in [the issue writeback](writeback/umber2-vgjr.11.4.md).
+rationale are recorded in Beads issue `umber2-vgjr.11.4`.
 The only additional independently justified duplicate was native SFNT storage:
 commit `a5df75c73` makes the transport and decoded views share one allocation for
 OTF, TTF, TTC, and OTC containers, while WOFF2 correctly retains distinct
@@ -1014,7 +1011,7 @@ check, Biome, all 89 authored Node tests, release package through `wasm-opt`,
 the built-package Node consumer, and `npm pack --dry-run` passed. Firefox and
 Chrome were absent, so their browser-only checks were unavailable and are not
 reported as passes. The final exact-tree repository quality result is recorded
-in [the program closeout](writeback/umber2-vgjr.11.md).
+in Beads issue `umber2-vgjr.11`.
 
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
@@ -1086,7 +1083,7 @@ original 500--900-line authored-reduction forecast and accepts the measured
 declarative fixture, generated schema, generated lockfile, moved, historical,
 documentation, binary, or total-line change is credited as authored reduction.
 The retained-authority audit, category accounting, and verification are
-recorded in [the reconciliation writeback](writeback/umber2-vgjr.23.md).
+recorded in Beads issue `umber2-vgjr.23`.
 
 Exact implementation tree `1aceb8ae8e5bd6b3f8fbf2a9a3a8fd2b961d128a`
 passed the combined fixture-consumer selection and all 33 fixturegen tests
@@ -1278,7 +1275,7 @@ ChromeDriver were also absent, so no browser execution is reported. The
 standalone publisher lock refresh remains the separately owned `umber2-ss53`
 follow-up and was restored after the passing publisher gate. The exact
 authority, compatibility, accounting, and verification receipt is recorded in
-[the program closeout](writeback/umber2-vgjr.13.md).
+Beads issue `umber2-vgjr.13`.
 
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
@@ -1341,7 +1338,7 @@ accepts the measured 409-line production and 4,412-line test reductions as the
 final Program 14 result. No shortfall or unimplemented deletion is carried
 forward, and no moved, generated, declarative, fixture, documentation, or total
 line count is credited. The audit and independently reproduced accounting are
-recorded in [the reconciliation writeback](writeback/umber2-vgjr.24.md).
+recorded in Beads issue `umber2-vgjr.24`.
 
 Exact implementation tree `8c7c496916454ed6df47e628d1692e817a20e510`
 passed the focused bibliography suite under `MemoryMax=512M`, the complete
@@ -1566,8 +1563,8 @@ comparison, affected benchmark, snapshot, scripted-fuzz, full native, and
 quality gates pass under the closeout protocol. The unchanged foreign-host
 width timing baseline and current layout-allocation ceilings remain explicitly
 red and owned by `umber2-9508` and `umber2-dtis`; neither baseline was rewritten.
-The exact command and accounting receipt is recorded in
-[the Program 18 closeout](writeback/umber2-vgjr.18.md).
+The exact command and accounting receipt is recorded in Beads issue
+`umber2-vgjr.18`.
 
 ## Final portfolio reconciliation
 
@@ -1602,8 +1599,8 @@ mainline commits, including independently tracked repairs and work outside the
 18 programs. Program credit remains the non-overlapping issue-scoped
 accounting in the sections above.
 
-The final acceptance receipt is
-[the portfolio closeout](writeback/umber2-vgjr.md). It records the child audit,
+The final acceptance receipt is recorded in Beads issue `umber2-vgjr`. It
+records the child audit,
 superseding safety protocol, exact capped proof and allocation measurements,
 full native result, and repository quality result.
 

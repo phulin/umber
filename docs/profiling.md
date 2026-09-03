@@ -263,10 +263,8 @@ scanner-token, and write-expansion census. Publication derives token-frame
 steps from the exhaustive raw-owner vector rather than storing a parallel hot
 counter.
 
-The pinned integrated authority for later HotCore work is
-[`writeback/umber2-awgc.1.3.md`](writeback/umber2-awgc.1.3.md), with its exact
-machine-readable baseline in
-[`writeback/umber2-awgc.1.3-census.json`](writeback/umber2-awgc.1.3-census.json).
+The pinned integrated authority and exact machine-readable baseline for later
+HotCore work are recorded in Beads issue `umber2-awgc.1.3`.
 A successor repeats the exact 12,000,000-fuel work/output identity and reports
 the complete schema rather than comparing selected favorable counters. CPU
 attribution assigns each sample's complete weight to one nearest recognized
@@ -837,8 +835,7 @@ under the same raw-frame limit can increase that field while expanded
 deliveries or meaning lookups decrease. Such an increase is acceptable only
 when the exact raw-frame position is unchanged, the semantic gates are exact,
 and a focused transaction control attributes the redistribution while proving
-that direct retry adds no unrelated work. See
-[`umber2-awgc.12`](writeback/umber2-awgc.12.md).
+that direct retry adds no unrelated work. See Beads issue `umber2-awgc.12`.
 
 Exact profiling controls exercise 256 macro invocations and 64 macro expansions
 inside deferred write text. Their respective vectors are
@@ -949,7 +946,7 @@ census. The 67,973 calls and 7,902,964 bytes were heterogeneous: format
 logical-row validation, distribution selection and parsing, control-sequence
 string tables, line-breaking routes, and font-store maps were the material
 owners. The complete thresholded ownership table and the rounded weighted-cycle
-ancestry are recorded in `docs/writeback/umber2-7asg.md`; unrelated owners
+ancestry are recorded in Beads issue `umber2-7asg`; unrelated owners
 remain separate work rather than being hidden by a container substitution.
 
 Line-breaking was the largest coherent runtime-owned value-copy family. Active

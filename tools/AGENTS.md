@@ -32,7 +32,7 @@ ambient TeX installation's font metrics.
 The completed `fixturegen --migrate-layout` and `--migrate-pdf-layout`
 compatibility commands retired under `umber2-vgjr.18.3`. Their source-tree
 caller audit, final current-tree report identities, and explicit compatibility
-decision are preserved in [the retirement writeback](../docs/writeback/umber2-vgjr.18.3.md).
+decision are preserved in that Beads issue.
 The closed fixture directories are now the only layout authority; do not add a
 second one-time registry for an already completed migration.
 

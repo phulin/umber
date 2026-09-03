@@ -737,7 +737,7 @@ The JSON row remains authoritative for full preconditions, stimuli, observations
 ## Documentation citations
 
 - **Citation:** `docs/alignment_brace_semantics.md:146`; **Claim and evidence:** Alignment recovery matrix cites `main_control/tests.rs` for exact TeX inputs and diagnostic/delivery assertions.; **Owner and disposition:** Closed: the cited same-path cases are active.
-- **Citation:** `docs/writeback/umber2-e51h.4.md:23`; **Claim and evidence:** TeX82 §§532--536 cites three `job/tests.rs` banner, clock, channel-order, and one-shot cases.; **Owner and disposition:** Closed: the cited same-path cases are active.
+- **Citation:** Beads issue `umber2-e51h.4`; **Claim and evidence:** TeX82 §§532--536 cites three `job/tests.rs` banner, clock, channel-order, and one-shot cases.; **Owner and disposition:** Closed: the cited same-path cases are active.
 - **Citation:** `docs/code_reduction_architecture_review.md:83`; **Claim and evidence:** Discovery citation records the formerly disabled targets/files/helpers and stale citations.; **Owner and disposition:** Closed as historical inventory; this ledger records the completed migration.
 
 ## Handoff
