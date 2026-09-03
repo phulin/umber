@@ -2,6 +2,16 @@ use std::{collections::BTreeSet, fs};
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 
+fn count_outer_validity_entry_calls(source: &str) -> usize {
+    [
+        "self.check_outer_validity_entry(&mut rich)",
+        "processor.check_outer_validity_entry(&mut rich)",
+    ]
+    .into_iter()
+    .map(|call| source.matches(call).count())
+    .sum()
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn crate_production_dependencies_match_the_command_boundary_allowlist() {
@@ -474,9 +484,7 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     assert!(outer.contains("self.back_input(command.copy_for_backup())?;"));
     assert!(outer.contains("self.command.clear_scanner_for_recovery();"));
     assert_eq!(
-        expansion
-            .matches("processor.check_outer_validity_entry(")
-            .count(),
+        count_outer_validity_entry_calls(&expansion),
         1,
         "the singular destination loop must own cold recovery"
     );
@@ -537,7 +545,11 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(!history.contains("pop_resident_project"));
     assert!(expansion.contains("command.write_resolved_delivery("));
     assert!(!history.contains("self.retire_input_top("));
-    assert!(expansion.contains("processor.check_outer_validity_entry(&mut rich)"));
+    assert_eq!(
+        count_outer_validity_entry_calls(&expansion),
+        1,
+        "outer validity must remain one direct call from the destination loop"
+    );
 }
 
 #[test]
