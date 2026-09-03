@@ -762,7 +762,7 @@ fn nested_macro_argument_consumes_plain_body_words_as_one_span() {
 }
 
 #[test]
-fn nested_macro_argument_consumes_replayed_argument_without_a_command_handoff() {
+fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
     crate::test_harness::with_universe(|universe| {
         let inner = install_macro(universe, "inner_argument_span", &[Token::Param(1)]);
         let definition = universe
@@ -822,9 +822,10 @@ fn nested_macro_argument_consumes_replayed_argument_without_a_command_handoff() 
         let (_, _, _, _, argument_words, argument_advances, argument_writes) =
             processor.command.profile_macro_kernel_counters();
         assert!(argument_words >= 3);
-        assert!(
-            argument_writes < argument_words,
-            "words={argument_words} advances={argument_advances} writes={argument_writes}"
+        assert_eq!(argument_advances, argument_words);
+        assert_eq!(
+            argument_writes, argument_words,
+            "the tiny frame reader counts loaded argument words, not the cold exhaustion probe"
         );
     });
 }

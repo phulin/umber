@@ -268,7 +268,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         "the owning input row must dispatch directly without a universal top carrier"
     );
     for branch in [
-        "InputLevel::Source(source) =>",
+        "InputLevel::Source(_source) =>",
         "InputLevel::Resident(row) =>",
     ] {
         assert_eq!(
@@ -303,14 +303,37 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert_eq!(
-        resident_front
-            .matches("break 'frame resolution.literal_catcode();")
-            .count(),
-        1
-    );
+    assert!(resident_front.contains("break 'frame literal_catcode;"));
     assert!(resident_front.contains("resolution.literal_catcode()"));
-    assert!(resident_front.contains("argument.advance_delivery(position, &command_state.scratch)"));
+    assert!(resident_front.contains("argument.advance_delivery("));
+    assert!(resident_front.contains("next_word_from_current_frame("));
+    let frame_read = expansion
+        .split("fn next_word_from_current_frame(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Which of TeX82").next())
+        .expect("locate tiny current-frame read");
+    for cold_transition in [
+        "advance_character_run",
+        "finish_resident_exhaustion",
+        "push_resident_parameter_cursor",
+        "acquire_source_line",
+        "finish_exhausted_source",
+        "report_recoverable",
+        "retire_input_top",
+    ] {
+        assert!(
+            !frame_read.contains(cold_transition),
+            "tiny current-frame read must not contain {cold_transition}"
+        );
+        assert!(
+            !resident_front.contains(cold_transition),
+            "generated hot loop must leave {cold_transition} to transition_input_frame"
+        );
+    }
+    assert!(frame_read.contains("frame.position()"));
+    assert!(frame_read.contains("frame.limit()"));
+    assert!(frame_read.contains("load(position)?"));
+    assert!(frame_read.contains("frame.advance_resident()"));
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")
         .nth(1)
@@ -352,7 +375,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         "canonical command delivery must not carry source-name creation policy"
     );
     assert!(!expansion.contains("self.next_command_into("));
-    assert!(expansion.contains("settle_resident_cold_transition"));
+    assert!(expansion.contains("fn transition_input_frame("));
     assert!(!expansion.contains("self.expanded_destination_loop("));
     assert!(!expansion.contains("fn expanded_delivery_loop("));
     assert!(!expansion.contains("delivery_state_machine::<"));
@@ -486,7 +509,7 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     assert_eq!(
         count_outer_validity_entry_calls(&expansion),
         1,
-        "the singular destination loop must own cold recovery"
+        "the singular cold settlement helper must own recovery"
     );
 }
 
@@ -1169,7 +1192,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         expansion
             .matches("roots.alignment.account_literal_brace(")
             .count(),
-        1
+        1,
+        "resident words and out-of-line source tokenization share the one alignment authority"
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment
