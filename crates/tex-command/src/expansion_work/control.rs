@@ -352,6 +352,18 @@ pub(crate) enum SynchronousNumberPhase {
         value: i64,
         seen_digit: bool,
     },
+    RegisterIndex {
+        target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    RegisterIndexAwait {
+        target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

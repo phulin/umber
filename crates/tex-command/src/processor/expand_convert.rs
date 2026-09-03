@@ -454,6 +454,138 @@ impl<G> CommandProcessor<'_, '_, G> {
             this.push_rendered_text(&text, control.opener);
             Ok(())
         };
+
+        // A register primitive is itself the first operand token of
+        // `scan_int`; only its selector remains to be consumed.  Keep that
+        // selector in the same compact number record instead of falling back
+        // to `scan_something_internal`, whose legacy selector scanner would
+        // re-enter expanded delivery for a macro-valued index.
+        if matches!(control.phase, Phase::Need)
+            && let ResolvedMeaning::Static(meaning) = command.resolved_meaning()
+        {
+            if Self::compact_number_register_target(meaning) {
+                self.command
+                    .scratch
+                    .set_number_phase(Phase::RegisterIndex {
+                        target: meaning,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                return Ok(false);
+            }
+            if let Some(value) = self.scan_the_direct_value(meaning)?
+                && let Some(value) = Self::number_from_internal_value(&value)
+            {
+                let _ = self
+                    .command
+                    .scratch
+                    .pop_number_control()
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+                let text = if control.roman {
+                    roman_numeral(value)
+                } else {
+                    value.to_string()
+                };
+                self.push_rendered_text(&text, control.opener);
+                return Ok(true);
+            }
+        }
+
+        if let Phase::RegisterIndex {
+            target,
+            negative,
+            value,
+            seen_digit,
+        } = control.phase
+        {
+            let finish_register =
+                |this: &mut Self,
+                 control: crate::expansion_work::control::SynchronousNumberControl,
+                 target: Meaning,
+                 value: i64,
+                 negative: bool|
+                 -> Result<(), CommandError> {
+                    let value = if negative {
+                        value.saturating_neg()
+                    } else {
+                        value
+                    };
+                    let limit = if this.command.profile().capabilities().supports_etex() {
+                        32_767
+                    } else {
+                        i64::from(u8::MAX)
+                    };
+                    let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
+                    let internal = this.scan_the_register_value(target, index)?;
+                    let number = Self::number_from_internal_value(&internal).unwrap_or(0);
+                    let _ = this
+                        .command
+                        .scratch
+                        .pop_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    let text = if control.roman {
+                        roman_numeral(number)
+                    } else {
+                        number.to_string()
+                    };
+                    this.push_rendered_text(&text, control.opener);
+                    Ok(())
+                };
+            match character {
+                _ if is_space && !seen_digit => {
+                    self.command
+                        .scratch
+                        .set_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative,
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(false);
+                }
+                Some('+') | Some('-') if !seen_digit => {
+                    self.command
+                        .scratch
+                        .set_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(false);
+                }
+                Some(digit) if digit.is_ascii_digit() => {
+                    let value = value
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(i64::from(digit as u8 - b'0')))
+                        .unwrap_or(i64::from(i32::MAX))
+                        .min(i64::from(i32::MAX));
+                    self.command
+                        .scratch
+                        .set_number_phase(Phase::RegisterIndex {
+                            target,
+                            negative,
+                            value,
+                            seen_digit: true,
+                        })?;
+                    return Ok(false);
+                }
+                _ if !seen_digit => {
+                    self.back_input(command.materialize())?;
+                    self.missing_number_error()?;
+                    finish_register(self, control, target, 0, false)?;
+                    return Ok(true);
+                }
+                _ => {
+                    if !is_space {
+                        self.back_input(command.materialize())?;
+                    }
+                    finish_register(self, control, target, value, negative)?;
+                    return Ok(true);
+                }
+            }
+        }
         match control.phase {
             Phase::Need => {
                 if is_space {
@@ -481,6 +613,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(true)
             }
             Phase::Await { .. } => Err(CommandError::input_invariant()),
+            Phase::RegisterIndex { .. } => Err(CommandError::input_invariant()),
+            Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
             Phase::Accumulating {
                 negative,
                 value,
@@ -506,6 +640,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(true)
             }
+        }
+    }
+
+    fn compact_number_register_target(meaning: Meaning) -> bool {
+        matches!(
+            meaning,
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Count
+                    | UnexpandablePrimitive::Dimen
+                    | UnexpandablePrimitive::Skip
+                    | UnexpandablePrimitive::Muskip
+                    | UnexpandablePrimitive::Toks
+            )
+        )
+    }
+
+    fn number_from_internal_value(value: &crate::InternalValue) -> Option<i32> {
+        match value {
+            crate::InternalValue::Integer(value) => Some(*value),
+            crate::InternalValue::Dimension(value) => Some(value.raw()),
+            crate::InternalValue::Glue(value) | crate::InternalValue::MuGlue(value) => {
+                Some(value.width.raw())
+            }
+            crate::InternalValue::Font(_) | crate::InternalValue::Tokens { .. } => None,
         }
     }
 

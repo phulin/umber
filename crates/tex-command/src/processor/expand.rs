@@ -1240,6 +1240,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ) && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
+                        | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndexAwait {
+                            ..
+                        }
                 ) {
                     let _complete = self.advance_number_continuation(command)?;
                     fetch = true;
@@ -1737,11 +1740,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .is_some_and(|control| {
                             matches!(
                                 control.phase,
-                                crate::expansion_work::control::SynchronousNumberPhase::Need
-                                    | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
+                            crate::expansion_work::control::SynchronousNumberPhase::Need
+                                | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
                                         ..
                                     }
-                            )
+                                | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndex {
+                                    ..
+                                }
+                        )
                         });
                     if if_compare_should_await {
                         self.command

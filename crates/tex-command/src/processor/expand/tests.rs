@@ -169,6 +169,41 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
 }
 
 #[test]
+fn number_register_operands_use_the_shared_index_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                number,
+                count,
+                Token::Char {
+                    ch: '0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

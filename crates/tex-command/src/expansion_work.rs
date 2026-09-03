@@ -1375,6 +1375,20 @@ impl<G> ExpansionWork<G> {
                 value,
                 seen_digit,
             },
+            SynchronousNumberPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousNumberPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousNumberPhase::RegisterIndexAwait { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             SynchronousNumberPhase::Await { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
             }
@@ -1398,7 +1412,20 @@ impl<G> ExpansionWork<G> {
                 value,
                 seen_digit,
             },
-            SynchronousNumberPhase::Need | SynchronousNumberPhase::Accumulating { .. } => {
+            SynchronousNumberPhase::RegisterIndexAwait {
+                target,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousNumberPhase::RegisterIndex {
+                target,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousNumberPhase::Need
+            | SynchronousNumberPhase::Accumulating { .. }
+            | SynchronousNumberPhase::RegisterIndex { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
             }
         };
@@ -1413,7 +1440,10 @@ impl<G> ExpansionWork<G> {
         };
         if !matches!(
             control.phase,
-            SynchronousNumberPhase::Need | SynchronousNumberPhase::Accumulating { .. }
+            SynchronousNumberPhase::Need
+                | SynchronousNumberPhase::Accumulating { .. }
+                | SynchronousNumberPhase::RegisterIndex { .. }
+                | SynchronousNumberPhase::RegisterIndexAwait { .. }
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
