@@ -568,6 +568,29 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
+    /// Starts the hot `\expandafter` protocol. The control carries only the
+    /// opener provenance and a compact first-command slot; the second command
+    /// stays in the expanded-delivery loop until its expansion settles.
+    pub(crate) fn push_expandafter_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::ExpandAfterSync(
+            SynchronousExpandAfterControl {
+                opener,
+                saved_first: None,
+                phase: SynchronousExpandAfterPhase::NeedFirst,
+            },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed expandafter-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Returns the active top `\the` opener, if the synchronous continuation
     /// at the top of the control lane is one.  Looking at the lane's top slot
     /// avoids a parallel stack of continuation pointers.
@@ -656,6 +679,102 @@ impl<G> ExpansionWork<G> {
         let _ = self.controls.take_top(id)?;
         self.names.truncate(control.name.offset)?;
         self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
+    /// Returns the active top hot `\expandafter` control.
+    pub(crate) fn top_expandafter_control(
+        &self,
+    ) -> Result<Option<SynchronousExpandAfterControl<G>>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::ExpandAfterSync(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Stores the first `\expandafter` operand in place and advances the
+    /// control to its second-operand phase. The top-row borrow ends before
+    /// the next delivery instruction is selected.
+    pub(crate) fn save_expandafter_first(
+        &mut self,
+        first: crate::command::HotCommand<G>,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::ExpandAfterSync(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousExpandAfterPhase::NeedFirst || control.saved_first.is_some()
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        control.saved_first = Some(first);
+        // The compact first operand now acquires a lane-owned logical
+        // lifetime. Count that ownership edge alongside cold command-slot
+        // moves; no rich command copy is involved.
+        crate::command::record_expansion_command_move_in();
+        control.phase = SynchronousExpandAfterPhase::NeedSecond;
+        Ok(())
+    }
+
+    /// Marks a second-operand primitive while one of its scanners is using
+    /// the expanded-token request lane. The parent control remains parked but
+    /// is ignored by nested delivery until that scanner returns.
+    pub(crate) fn await_expandafter_nested(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::ExpandAfterSync(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousExpandAfterPhase::NeedSecond || control.saved_first.is_none()
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        control.phase = SynchronousExpandAfterPhase::AwaitNested;
+        Ok(())
+    }
+
+    /// Re-enables the parent `\expandafter` after its nested primitive scanner
+    /// has returned. The scanner's result, if any, is then consumed by the
+    /// normal top-control branch of the delivery loop.
+    pub(crate) fn resume_expandafter_second(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::ExpandAfterSync(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        if control.phase != SynchronousExpandAfterPhase::AwaitNested
+            || control.saved_first.is_none()
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        control.phase = SynchronousExpandAfterPhase::NeedSecond;
+        Ok(())
+    }
+
+    /// Retires one completed hot `\expandafter` control and returns its
+    /// compact first operand. Retiring before backup ensures the replay path
+    /// cannot accidentally interpret the parent control as a nested operand.
+    pub(crate) fn pop_expandafter_control(
+        &mut self,
+    ) -> Result<SynchronousExpandAfterControl<G>, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::ExpandAfterSync(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if control.phase != SynchronousExpandAfterPhase::NeedSecond || control.saved_first.is_none()
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        crate::command::record_expansion_command_move_out();
         Ok(control)
     }
 

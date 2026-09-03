@@ -3,6 +3,7 @@
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
+use crate::command::HotCommand;
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
     TokenBehavior,
@@ -26,6 +27,7 @@ pub(crate) struct PendingExpandAfter<G> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 enum PendingExpandAfterDestination {
     ExpandingSecond,
 }
@@ -69,6 +71,86 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(crate::scan_toks::scratch_command_error)?;
         }
         Ok(())
+    }
+
+    /// Completes a hot `\expandafter` after its second command has settled on
+    /// an unexpandable token. Both operands remain compact until this true
+    /// backup/replay boundary, where the existing semantic input machinery
+    /// receives the materialized commands.
+    pub(super) fn complete_expandafter_continuation(
+        &mut self,
+        second: HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_expandafter_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let first = control
+            .saved_first
+            .ok_or_else(CommandError::input_invariant)?;
+        self.back_input(second.materialize())?;
+        self.replay_expandafter_first(first.materialize())
+    }
+
+    /// Completes a hot `\expandafter` whose second expandable command
+    /// consumed itself without producing a token (an undefined command, an
+    /// empty macro, or a conditional). The saved first token is replayed
+    /// immediately; the next input token is not accidentally consumed as the
+    /// second operand.
+    pub(super) fn complete_expandafter_without_second(&mut self) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_expandafter_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let first = control
+            .saved_first
+            .ok_or_else(CommandError::input_invariant)?;
+        self.replay_expandafter_first(first.materialize())
+    }
+
+    /// Returns whether the top hot control is waiting for the settled second
+    /// operand. This keeps the expanded loop's post-dispatch decision typed;
+    /// it never peeks into a rich pending command.
+    pub(super) fn expandafter_second_pending(&self) -> Result<bool, CommandError> {
+        self.command
+            .scratch
+            .top_expandafter_control()
+            .map(|control| {
+                control.is_some_and(|control| {
+                    control.phase
+                        == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond
+                })
+            })
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn expandafter_awaiting_nested(&self) -> Result<bool, CommandError> {
+        self.command
+            .scratch
+            .top_expandafter_control()
+            .map(|control| {
+                control.is_some_and(|control| {
+                    control.phase
+                        == crate::expansion_work::control::SynchronousExpandAfterPhase::AwaitNested
+                })
+            })
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn await_expandafter_nested(&mut self) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .await_expandafter_nested()
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn resume_expandafter_second(&mut self) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .resume_expandafter_second()
+            .map_err(crate::scan_toks::scratch_command_error)
     }
 
     /// Completes the active hot `\csname`, or performs TeX82's missing
@@ -156,6 +238,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// up) the second token, then put the first token above the resulting
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
+    #[allow(dead_code)]
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
         let pending = if self
             .scanner_resume

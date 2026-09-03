@@ -1093,6 +1093,37 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             let action = classify_hot_command(&command);
 
+            // `\expandafter` owns two raw operands but only the second one is
+            // expanded. Its compact control intercepts the first command and
+            // then lets every nested expansion continue through this same
+            // delivery loop. Once that second stream settles on a returned
+            // command, backup/replay is performed at the semantic boundary.
+            let expandafter_control = self
+                .command
+                .scratch
+                .top_expandafter_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = expandafter_control {
+                match control.phase {
+                    crate::expansion_work::control::SynchronousExpandAfterPhase::NeedFirst => {
+                        self.command
+                            .scratch
+                            .save_expandafter_first(command)
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        fetch = true;
+                        continue;
+                    }
+                    crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond => {
+                        if matches!(action, ExpandedCommandAction::Return) {
+                            self.complete_expandafter_continuation(command)?;
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                    crate::expansion_work::control::SynchronousExpandAfterPhase::AwaitNested => {}
+                }
+            }
+
             // A `\the` scalar child may cross an immutable resource barrier
             // (for example while resolving a font/register operand).  Its
             // control has already been removed before entering the scalar
@@ -1273,6 +1304,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedCommandAction::Expand(dispatch) => {
                     delivery_expanded = true;
                     let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
+                    let macro_input_before = (dispatch == ExpansionDispatch::Macro)
+                        .then(|| self.command.top_input_level_identity());
+                    let expandafter_was_awaiting = self.expandafter_awaiting_nested()?;
+                    let expandafter_should_await = self.expandafter_second_pending()?
+                        && !matches!(
+                            dispatch,
+                            ExpansionDispatch::Macro
+                                | ExpansionDispatch::Undefined
+                                | ExpansionDispatch::Primitive(
+                                    ExpandablePrimitive::EndTemplate
+                                        | ExpandablePrimitive::ExpandAfter
+                                        | ExpandablePrimitive::CsName
+                                        | ExpandablePrimitive::IfCsName
+                                        | ExpandablePrimitive::The
+                                )
+                        );
+                    if expandafter_should_await {
+                        self.await_expandafter_nested()?;
+                    }
                     let mut command_parked = false;
                     let failure = match self.expand_classified_occupied(
                         &mut command,
@@ -1282,6 +1332,47 @@ impl<G> CommandProcessor<'_, '_, G> {
                         &mut command_parked,
                     ) {
                         Ok(()) => {
+                            if expandafter_should_await || expandafter_was_awaiting {
+                                self.resume_expandafter_second()?;
+                            }
+                            // Some expandable commands consume themselves
+                            // without putting a command back on input. In an
+                            // `\expandafter` second-operand phase, replay the
+                            // saved first token now instead of consuming an
+                            // unrelated third token as the second result.
+                            let no_output = match dispatch {
+                                ExpansionDispatch::Undefined => true,
+                                ExpansionDispatch::Primitive(primitive)
+                                    if crate::conditionals::ConditionalKind::from_primitive(
+                                        primitive,
+                                    )
+                                    .is_some_and(|kind| {
+                                        kind != crate::conditionals::ConditionalKind::IfCsName
+                                    }) =>
+                                {
+                                    true
+                                }
+                                ExpansionDispatch::Primitive(
+                                    ExpandablePrimitive::Else
+                                    | ExpandablePrimitive::Or
+                                    | ExpandablePrimitive::Fi,
+                                )
+                                | ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => true,
+                                ExpansionDispatch::Macro => {
+                                    let input_changed = macro_input_before.flatten()
+                                        != self.command.top_input_level_identity();
+                                    !(input_changed
+                                        && self.command.input.levels.last().is_some_and(|level| {
+                                            level
+                                                .macro_body()
+                                                .is_some_and(|body| !body.body.is_empty())
+                                        }))
+                                }
+                                _ => false,
+                            };
+                            if no_output && self.expandafter_second_pending()? {
+                                self.complete_expandafter_without_second()?;
+                            }
                             fetch = true;
                             continue;
                         }
@@ -3515,9 +3606,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpansionDispatch::Primitive(ExpandablePrimitive::NoExpand) => {
                     self.expand_noexpand()
                 }
-                ExpansionDispatch::Primitive(ExpandablePrimitive::ExpandAfter) => {
-                    self.expand_expandafter()
-                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::ExpandAfter) => self
+                    .command
+                    .scratch
+                    .push_expandafter_control(command.origin())
+                    .map_err(crate::scan_toks::scratch_command_error),
                 ExpansionDispatch::Primitive(ExpandablePrimitive::CsName) => {
                     self.begin_csname_continuation(command.origin())
                 }

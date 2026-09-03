@@ -1,5 +1,6 @@
 //! Compact typed control vocabulary for parked expansion work.
 
+use crate::command::HotCommand;
 use crate::execution_scratch::ScannerFrameKey;
 use tex_state::token::OriginId;
 
@@ -142,6 +143,34 @@ pub(crate) struct SynchronousIfCsNameControl {
     pub(crate) previous_in_csname: bool,
 }
 
+/// Phase of the hot `\expandafter` operand protocol.
+///
+/// The first token is deliberately retained as a compact [`HotCommand`]
+/// instead of a `CurrentCommand`.  The second token remains the live command
+/// in the one expanded-delivery loop until it settles; this lets nested
+/// expandable primitives return to the same loop without a Rust call frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousExpandAfterPhase {
+    NeedFirst,
+    NeedSecond,
+    AwaitNested,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousExpandAfterControl<G> {
+    pub(crate) opener: OriginId,
+    pub(crate) saved_first: Option<HotCommand<G>>,
+    pub(crate) phase: SynchronousExpandAfterPhase,
+}
+
+impl<G> Copy for SynchronousExpandAfterControl<G> {}
+
+impl<G> Clone for SynchronousExpandAfterControl<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -188,5 +217,10 @@ pub(crate) enum ExpansionControl<G> {
     The(TheControl),
     CsName(SynchronousCsNameControl),
     IfCsName(SynchronousIfCsNameControl),
+    ExpandAfterSync(SynchronousExpandAfterControl<G>),
     Primitive(PrimitiveControl<G>),
 }
+
+const _: () = {
+    assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
+};

@@ -52,6 +52,7 @@ enum ContinuationKind {
     Scanner,
     Scalar,
     Expansion,
+    #[allow(dead_code)]
     ExpandAfter,
     PdfStringCompare,
     AlignmentPreamble,
@@ -71,6 +72,7 @@ impl<G> ScannerFrameKey<G> {
         self.kind == ContinuationKind::Scalar
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_expandafter(&self) -> bool {
         self.kind == ContinuationKind::ExpandAfter
     }
@@ -146,6 +148,7 @@ pub(crate) enum ContinuationFrame<G> {
     Scanner(crate::scan_toks::PendingScanToks<G>),
     Scalar(crate::scanners::PendingScalarFrame<G>),
     Expansion(crate::ExpansionWorkKey<G>),
+    #[allow(dead_code)]
     ExpandAfter(crate::processor::expand_structural::PendingExpandAfter<G>),
     PdfStringCompare(crate::processor::expand_pdf_string::PendingPdfStringCompare<G>),
     AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
@@ -1359,6 +1362,13 @@ impl<G> ExecutionScratch<G> {
             .push_ifcsname_control(condition, inverted, previous_in_csname)
     }
 
+    pub(crate) fn push_expandafter_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_expandafter_control(opener)
+    }
+
     /// Reads the top synchronous `\the` continuation without creating a
     /// command-sized carrier.
     pub(crate) fn top_the_control(
@@ -1405,6 +1415,37 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_ifcsname_control()
     }
 
+    pub(crate) fn top_expandafter_control(
+        &self,
+    ) -> Result<
+        Option<crate::expansion_work::control::SynchronousExpandAfterControl<G>>,
+        ScratchError,
+    > {
+        self.expansion_work.top_expandafter_control()
+    }
+
+    pub(crate) fn save_expandafter_first(
+        &mut self,
+        first: crate::command::HotCommand<G>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.save_expandafter_first(first)
+    }
+
+    pub(crate) fn await_expandafter_nested(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.await_expandafter_nested()
+    }
+
+    pub(crate) fn resume_expandafter_second(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.resume_expandafter_second()
+    }
+
+    pub(crate) fn pop_expandafter_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousExpandAfterControl<G>, ScratchError>
+    {
+        self.expansion_work.pop_expandafter_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
@@ -1417,6 +1458,7 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.cancel_suspension(key)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn store_expandafter_frame(
         &mut self,
         pending: crate::processor::expand_structural::PendingExpandAfter<G>,
@@ -1429,6 +1471,7 @@ impl<G> ExecutionScratch<G> {
             })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn take_expandafter_frame(
         &mut self,
         key: ScannerFrameKey<G>,

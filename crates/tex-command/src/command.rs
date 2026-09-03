@@ -246,7 +246,7 @@ pub(crate) struct HotToken {
 }
 
 /// Sole compact command owner inside raw and expanded delivery loops.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub(crate) struct HotCommand<G> {
     token: HotToken,
     command: CommandWord<G>,
@@ -276,6 +276,19 @@ impl<G> core::hash::Hash for HotCommand<G> {
         self.command.operand.scalar_value().hash(state);
         self.font.hash(state);
     }
+}
+
+// `HotCommand` contains only compact coordinates and the manually
+// copyable `CommandWord`; its generation parameter brands opaque definition
+// capabilities but is not itself a runtime field. Keep the copy contract
+// independent of whether the generation marker happens to implement `Copy`.
+impl<G> Copy for HotCommand<G> {}
+
+impl<G> Clone for HotCommand<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 }
 
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
