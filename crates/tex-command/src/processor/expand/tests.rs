@@ -316,6 +316,39 @@ fn expanded_body_detokenizes_children_into_the_parent_buffer() {
 }
 
 #[test]
+fn expanded_missing_opening_brace_uses_balanced_recovery() {
+    crate::test_harness::with_universe(|universe| {
+        let expanded = install_static(
+            universe,
+            "expanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expanded,
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
 fn deeply_nested_the_requests_use_the_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

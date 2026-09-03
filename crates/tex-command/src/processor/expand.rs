@@ -1128,15 +1128,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             fetch = true;
                             continue;
                         }
-                        // The compact path handles the ordinary valid
-                        // `\expanded{...}` grammar.  Keep malformed opening
-                        // recovery on the reviewed legacy scanner until its
-                        // diagnostic/status phase has a typed destination.
-                        return self.fail_expanded_delivery(
-                            destination,
-                            depth,
-                            CommandError::input_invariant(),
-                        );
+                        // §403's recovery backs the rejected command up,
+                        // installs the synthetic opening brace in alignment
+                        // state, and then continues this same collector.
+                        self.recover_expanded_opening(command)?;
+                        fetch = true;
+                        continue;
                     }
                     crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
                         if matches!(

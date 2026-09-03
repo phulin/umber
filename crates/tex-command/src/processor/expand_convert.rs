@@ -1107,6 +1107,39 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    /// Applies TeX82 §403's missing-left-brace recovery to an expanded
+    /// collector. The rejected command is backed up as the first body token;
+    /// the synthetic opening brace exists only in alignment and cursor state,
+    /// so no second input owner is needed.
+    pub(super) fn recover_expanded_opening(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let command = command.materialize();
+        let deferred = {
+            let mut report = self.state.print_err("Missing { inserted");
+            report.help(&[
+                "A left brace was mandatory here, so I've put one in.",
+                "You might want to delete and/or insert some corrections",
+                "so that I will find a matching right brace soon.",
+                "(If you're confused by all this, try typing `I}' now.)",
+            ]);
+            report.defer()
+        };
+        self.back_input(command)?;
+        let context = self.command.output_open_context(self.state);
+        let mut report = self.state.resume_error_report(deferred);
+        report.context(context);
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
+        self.command.record_alignment_phase();
+        self.command.alignment.align_state += 1;
+        self.command
+            .scratch
+            .begin_expanded_body()
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
     /// Appends one settled unexpandable token to the active `\expanded`
     /// body.  Balance is updated from the literal spelling, as required by
     /// `scan_toks`; the closing delimiter is consumed rather than stored.
