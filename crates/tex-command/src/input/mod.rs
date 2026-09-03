@@ -13,6 +13,7 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
+pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
     InputStack, InputStackContextCoordinate, InputStackMark, ResidentSourceAdvance,
     ResidentSourceCharacterRun, ResidentSourceTop, observed_retirement_reason,

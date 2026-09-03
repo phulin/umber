@@ -37,6 +37,151 @@ pub(crate) fn append_character_with_fuel<G>(
     )
 }
 
+/// Result of admitting one borrowed source-character prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CharacterRunAppend {
+    pub(crate) count: u32,
+    pub(crate) continue_run: bool,
+}
+
+/// Preflights and appends one borrowed ordinary source run.
+///
+/// Font and pending-run compatibility are read once for the prefix.  The
+/// source bytes remain borrowed throughout admission; only the existing
+/// `PendingHRun` vector receives semantic characters. The processor charges
+/// fuel once for the admitted prefix after this callback returns.
+pub(crate) fn append_character_run_with_fuel<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    run: tex_command::BorrowedSourceCharacterRun<'_>,
+    _etex_extended: bool,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<CharacterRunAppend, ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
+    let mode = nest.current_mode();
+    fix_hyphen_language_with_fuel(nest, stores, diagnostic_effects, mode, fuel)?;
+
+    let font = stores.current_font();
+    let font_is_ltr_shaping = stores.font_is_left_to_right_shaping(font);
+    let false_boundary = stores.font_false_boundary_char(font);
+    let first = run
+        .character(0)
+        .expect("a borrowed source run has at least one byte");
+    let first_script = tex_fonts::character_script(first);
+    let pending_incompatible = nest.current_list().pending_hchars().is_some_and(|pending| {
+        let pending_font = pending.source[0].font;
+        let pending_ltr = pending_font != font && is_ltr_shaping_font(stores, pending_font);
+        (font_is_ltr_shaping || pending_ltr)
+            && (pending_font != font || !scripts_compatible(pending.script, first_script))
+    });
+    if pending_incompatible {
+        flush_pending_hchar_run_with_fuel(
+            nest,
+            stores,
+            diagnostic_effects,
+            mode == Mode::Horizontal,
+            false,
+            fuel,
+        )?;
+    }
+
+    let mut candidate = 0_usize;
+    let mut continue_run = true;
+    let mut pending_script = nest
+        .current_list()
+        .pending_hchars()
+        .map(|pending| pending.script);
+    for index in 0..run.bytes().len() {
+        let ch = run
+            .character(index)
+            .expect("borrowed run index remains within its bytes");
+        let script = tex_fonts::character_script(ch);
+        if index != 0
+            && font_is_ltr_shaping
+            && pending_script.is_some_and(|pending| {
+                is_supported_script(pending)
+                    && is_supported_script(script)
+                    && is_strong_script(script)
+                    && !scripts_compatible(pending, script)
+            })
+        {
+            continue_run = false;
+            break;
+        }
+        let code = font_code(ch).ok();
+        let is_false_boundary = code.is_some_and(|code| false_boundary == Some(code));
+        let has_metrics = stores.font_character_metrics(font, ch).is_some();
+        if !has_metrics && !is_false_boundary {
+            continue_run = false;
+            break;
+        }
+        candidate += 1;
+        if is_false_boundary && !has_metrics {
+            continue_run = false;
+            break;
+        }
+        if pending_script.is_none()
+            || (font_is_ltr_shaping && is_supported_script(script) && is_strong_script(script))
+        {
+            pending_script = Some(script);
+        }
+    }
+    if candidate == 0 {
+        if run.bytes().is_empty() || fuel.remaining() != 0 {
+            return Ok(CharacterRunAppend {
+                count: 0,
+                continue_run: false,
+            });
+        }
+        fuel.charge().map_err(ExecError::Command)?;
+    }
+
+    let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
+    let accepted = candidate.min(available);
+    if accepted == 0 {
+        fuel.charge().map_err(ExecError::Command)?;
+    }
+    let accepted_u32 = u32::try_from(accepted).expect("source run length fits packed u32");
+    let mut pending_script = nest
+        .current_list()
+        .pending_hchars()
+        .map(|pending| pending.script);
+    let mut list = nest.current_list_mutation();
+    list.append_pending_hchars(font, accepted, |index| {
+        let ch = run
+            .character(index)
+            .expect("accepted run index remains within its bytes");
+        let script = tex_fonts::character_script(ch);
+        let script_option = pending_script.and_then(|pending| {
+            (font_is_ltr_shaping
+                && is_supported_script(pending)
+                && is_supported_script(script)
+                && is_strong_script(script))
+            .then_some(script)
+        });
+        if pending_script.is_none() || script_option.is_some() {
+            pending_script = Some(script);
+        }
+        (ch, run.origin(index), script_option)
+    });
+    let mut space_factor_recorded = false;
+    for index in 0..accepted {
+        let ch = run
+            .character(index)
+            .expect("accepted run index remains within its bytes");
+        let space_factor = next_space_factor(list.space_factor(), stores, ch);
+        list.set_space_factor_batched(space_factor, &mut space_factor_recorded);
+    }
+    Ok(CharacterRunAppend {
+        count: accepted_u32,
+        continue_run: continue_run && accepted == candidate,
+    })
+}
+
 /// Appends an ordinary space from main control after horizontal
 /// mode has been selected by TeX82 §1095.
 pub(crate) fn append_space_with_fuel<G>(

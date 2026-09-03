@@ -184,13 +184,14 @@ impl CommandFuel {
         Ok(())
     }
 
-    /// Number of immediately chargeable command transitions.
-    pub(crate) const fn remaining(&self) -> u64 {
+    /// Number of command transitions still available to a bounded operation.
+    #[must_use]
+    pub const fn remaining(&self) -> u64 {
         self.remaining
     }
 
     /// Charges one already-classified contiguous run.
-    pub(crate) fn charge_run(&mut self, count: u32) -> Result<(), crate::CommandError> {
+    pub fn charge_run(&mut self, count: u32) -> Result<(), crate::CommandError> {
         if u64::from(count) > self.remaining {
             return Err(self.exhausted_error());
         }

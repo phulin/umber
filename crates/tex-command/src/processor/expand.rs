@@ -6,9 +6,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
-    InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
-    SourceNameClass, TokenBehavior,
+    BorrowedSourceCharacterRun, InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary,
+    ResidentSourceAdvance, ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage,
+    SourceLocation, SourceNameClass, TokenBehavior,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -2350,7 +2350,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn main_character_run(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'fuel mut crate::CommandFuel,
+            &'effects mut tex_state::diagnostic::DiagnosticEffects,
+            char,
+            tex_state::token::OriginId,
+        ) -> bool,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
@@ -3594,11 +3600,134 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn main_loop_character_run_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'fuel mut crate::CommandFuel,
+            &'effects mut tex_state::diagnostic::DiagnosticEffects,
+            char,
+            tex_state::token::OriginId,
+        ) -> bool,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         debug_assert!(!self.is_observed());
         self.main_character_run(destination, consume)
+    }
+
+    /// Tries one borrowed ordinary source prefix without crossing a scalar
+    /// delivery boundary.  `None` leaves the caller to the scalar oracle;
+    /// `Some` reports the run's continuation bit after the source cursor and
+    /// fuel ledger have committed exactly once.
+    pub fn try_main_loop_borrowed_character_run<F>(
+        &mut self,
+        admit: &mut F,
+    ) -> Result<Option<bool>, CommandError>
+    where
+        F: for<'state, 'admission, 'run> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'state mut crate::CommandFuel,
+            &'state mut tex_state::diagnostic::DiagnosticEffects,
+            BorrowedSourceCharacterRun<'run>,
+        ) -> crate::CharacterRunAdmission,
+    {
+        debug_assert!(!self.is_observed());
+        let Some(resident_index) = self.command.roots.input.levels.top.checked_sub(1) else {
+            return Ok(None);
+        };
+        if !matches!(
+            self.command.roots.input.levels.rows.get(resident_index),
+            Some(InputLevel::Source(_))
+        ) || !self.command.delivery_mode.allows_character_run()
+        {
+            return Ok(None);
+        }
+
+        let mut catcodes = [false; 128];
+        for (code, eligible) in catcodes.iter_mut().enumerate() {
+            *eligible = matches!(
+                self.state.catcode(char::from(code as u8)),
+                Catcode::Letter | Catcode::Other
+            );
+        }
+        let result =
+            self.advance_source_borrowed_character_run(resident_index, &catcodes, admit)?;
+        let Some((count, continue_run)) = result else {
+            return Ok(None);
+        };
+        debug_assert!(count != 0);
+        self.invalidate_delivery_freshness();
+        Ok(Some(continue_run))
+    }
+
+    fn advance_source_borrowed_character_run<F>(
+        &mut self,
+        resident_index: usize,
+        catcodes: &[bool; 128],
+        admit: &mut F,
+    ) -> Result<Option<(u32, bool)>, CommandError>
+    where
+        F: for<'state, 'admission, 'run> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'state mut crate::CommandFuel,
+            &'state mut tex_state::diagnostic::DiagnosticEffects,
+            BorrowedSourceCharacterRun<'run>,
+        ) -> crate::CharacterRunAdmission,
+    {
+        let profile = self.command.profile();
+        let command_state = &mut *self.command;
+        let state = &mut *self.state;
+        let fuel = &mut *self.fuel;
+        let diagnostic_effects = &mut *self.diagnostic_effects;
+        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let slot = command_state
+            .roots
+            .input
+            .levels
+            .source_slots
+            .resident_value_mut(source.slot.0.slot);
+        let mut top = ResidentSourceTop { source, slot };
+        let Some(mut run) = top
+            .borrow_character_run(profile, catcodes)
+            .map_err(|()| CommandError::input_invariant())?
+        else {
+            return Ok(None);
+        };
+        let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
+        if available == 0 {
+            return Err(fuel.charge().expect_err("zero remaining fuel is exhausted"));
+        }
+        if run.bytes().len() > available {
+            run = run.limit_to(available);
+        }
+        let run_len = run.bytes().len();
+        let admission = admit(state, fuel, diagnostic_effects, run);
+        let count =
+            usize::try_from(admission.count()).map_err(|_| CommandError::input_invariant())?;
+        if count > run_len {
+            return Err(CommandError::input_invariant());
+        }
+        if count == 0 {
+            return Ok(None);
+        }
+        let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
+        fuel.charge_run(count)?;
+        top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
+            .map_err(|()| CommandError::input_invariant())?;
+        let line = top
+            .slot
+            .cursor
+            .line
+            .as_ref()
+            .expect("a committed source run retains its line");
+        command_state.last_diagnostic_location = Some(SourceLocation::new(
+            line.physical.source,
+            line.cursor.byte_cursor.saturating_sub(1),
+        ));
+        #[cfg(feature = "profiling")]
+        fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
+        Ok(Some((count, admission.continue_run())))
     }
 
     #[cold]
@@ -3832,7 +3961,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn advance_source_character_run(
         &mut self,
         resident_index: usize,
-        consume: &mut super::MainLoopCharacterConsumer<'_, G>,
+        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
+            &'state mut tex_state::CommandContext<'admission, G>,
+            &'fuel mut crate::CommandFuel,
+            &'effects mut tex_state::diagnostic::DiagnosticEffects,
+            char,
+            tex_state::token::OriginId,
+        ) -> bool,
     ) -> Result<Option<u32>, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;

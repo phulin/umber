@@ -91,16 +91,34 @@ pub enum DeliveryStatus {
     AlignmentClosingBrace,
 }
 
-/// Borrowed sink for one admitted TeX82 §1038 ordinary-character run.
-pub type MainLoopCharacterConsumer<'a, G> =
-    dyn for<'state, 'admission, 'fuel, 'effects> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'fuel mut crate::CommandFuel,
-            &'effects mut tex_state::diagnostic::DiagnosticEffects,
-            char,
-            tex_state::token::OriginId,
-        ) -> bool
-        + 'a;
+/// Admission result for one borrowed ordinary source-character prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CharacterRunAdmission {
+    count: u32,
+    continue_run: bool,
+}
+
+impl CharacterRunAdmission {
+    /// Reports how many borrowed characters were appended and whether the
+    /// next source character may remain on the ordinary run path.
+    #[must_use]
+    pub const fn new(count: u32, continue_run: bool) -> Self {
+        Self {
+            count,
+            continue_run,
+        }
+    }
+
+    #[must_use]
+    pub const fn count(self) -> u32 {
+        self.count
+    }
+
+    #[must_use]
+    pub const fn continue_run(self) -> bool {
+        self.continue_run
+    }
+}
 
 pub(crate) use status::{ScannerState, ScannerStatus};
 

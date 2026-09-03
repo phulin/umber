@@ -38,7 +38,7 @@ impl LogicalPositionAllocator {
 pub struct SourcePos(u64);
 
 /// Opaque capability for allocation-free origins within one registered input.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RegisteredSource {
     start: SourcePos,
     byte_len: u64,

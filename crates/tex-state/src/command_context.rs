@@ -3133,6 +3133,38 @@ impl<'a, G> CommandContext<'a, G> {
             .register_without_line_starts(source, descriptor)
     }
 
+    /// Registers one immutable source and returns the allocation-free origin
+    /// capability for its complete byte range.  Source delivery retains this
+    /// copy on the resident row so ordinary characters do not have to resolve
+    /// the source-map index again for every origin.
+    pub fn register_source_capability(
+        &mut self,
+        source: crate::input::SourceId,
+        descriptor: crate::source_map::SourceDescriptor,
+    ) -> Result<crate::source_map::RegisteredSource, crate::source_map::SourceMapError> {
+        let byte_len = descriptor.byte_len();
+        let start = self
+            .resident
+            .sources
+            .register_without_line_starts(source, descriptor)?;
+        Ok(crate::source_map::RegisteredSource::new(start, byte_len))
+    }
+
+    /// Resolves an origin through an already-retained source registration.
+    /// Unlike [`Self::source_token_origin`], this never consults the aggregate
+    /// source map and is therefore suitable for a borrowed ordinary run.
+    #[must_use]
+    pub fn source_token_origin_from_capability(
+        &self,
+        registration: crate::source_map::RegisteredSource,
+        start: u64,
+        end: u64,
+    ) -> crate::token::OriginId {
+        registration
+            .direct_origin(start, end)
+            .unwrap_or(crate::token::OriginId::UNKNOWN)
+    }
+
     #[must_use]
     pub fn source_token_origin(
         &self,

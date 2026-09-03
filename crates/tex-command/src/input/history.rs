@@ -136,6 +136,8 @@ impl SourceOwnerTransition {
             }
             (Self::Backing(replacement), false) => {
                 slot.cursor.backing = replacement;
+                slot.cursor.backing_registered = false;
+                slot.cursor.backing_capability = None;
                 slot.cursor.release_execution_owners();
                 None
             }
@@ -165,10 +167,213 @@ pub(crate) enum ResidentSourceCharacterRun<E> {
     Failed { count: u32, error: E },
 }
 
+/// A borrowed ordinary prefix of the currently loaded source line.
+///
+/// The line backing and source-map capability remain owned by the resident
+/// source slot.  This value is only a short-lived admission contract: the
+/// executor may inspect the bytes and origins, then the processor commits the
+/// source cursor once for the accepted prefix.
+#[derive(Clone, Debug)]
+pub struct BorrowedSourceCharacterRun<'a> {
+    bytes: &'a [u8],
+    mode: crate::CharacterMode,
+    source: tex_state::SourceId,
+    byte_start: u64,
+    capability: Option<tex_state::source_map::RegisteredSource>,
+    fuel_limited: bool,
+}
+
+impl BorrowedSourceCharacterRun<'_> {
+    /// The borrowed physical bytes eligible for ordinary character admission.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    /// The source identity of the current line.
+    #[must_use]
+    pub const fn source(&self) -> tex_state::SourceId {
+        self.source
+    }
+
+    /// The source-relative byte offset of the first borrowed byte.
+    #[must_use]
+    pub const fn byte_start(&self) -> u64 {
+        self.byte_start
+    }
+
+    /// Whether the prefix was capped by the command-fuel budget.
+    #[must_use]
+    pub const fn fuel_limited(&self) -> bool {
+        self.fuel_limited
+    }
+
+    pub(crate) fn limit_to(self, count: usize) -> Self {
+        Self {
+            bytes: &self.bytes[..count],
+            fuel_limited: true,
+            ..self
+        }
+    }
+
+    /// Converts one eligible byte into its semantic command character.
+    #[must_use]
+    pub fn character(&self, index: usize) -> Option<char> {
+        self.bytes.get(index).map(|byte| {
+            let code = match self.mode {
+                crate::CharacterMode::EightBitExact | crate::CharacterMode::UnicodeExtended => {
+                    crate::CharacterCode::from_byte(*byte)
+                }
+            };
+            crate::profile::token_character(code)
+        })
+    }
+
+    /// Returns the direct origin for one borrowed byte without a source-map
+    /// lookup.  Registration failure intentionally degrades to unknown, as it
+    /// does for the scalar source tokenizer.
+    #[must_use]
+    pub fn origin(&self, index: usize) -> tex_state::token::OriginId {
+        let Some(offset) = self.byte_start.checked_add(index as u64) else {
+            return tex_state::token::OriginId::UNKNOWN;
+        };
+        self.capability
+            .and_then(|capability| capability.direct_origin(offset, offset.saturating_add(1)))
+            .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+    }
+}
+
+const SWAR_HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+const SWAR_ONE_BYTES: u64 = 0x0101_0101_0101_0101;
+
+#[inline(always)]
+fn first_false_lane(flags: u64) -> usize {
+    let high = flags.wrapping_sub(SWAR_ONE_BYTES) & !flags & SWAR_HIGH_BITS;
+    if high == 0 {
+        8
+    } else {
+        (high.trailing_zeros() / 8) as usize
+    }
+}
+
+#[inline(always)]
+fn ordinary_ascii_prefix(bytes: &[u8], catcodes: &[bool; 128]) -> usize {
+    let mut offset = 0_usize;
+    while bytes.len().saturating_sub(offset) >= 8 {
+        let word = u64::from_le_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("eight-byte SWAR window"),
+        );
+        let high = word & SWAR_HIGH_BITS;
+        if high != 0 {
+            return offset + (high.trailing_zeros() / 8) as usize;
+        }
+        let mut flags = 0_u64;
+        for lane in 0..8 {
+            if catcodes[bytes[offset + lane] as usize] {
+                flags |= 1_u64 << (lane * 8);
+            }
+        }
+        let eligible = flags
+            | (flags << 1)
+            | (flags << 2)
+            | (flags << 3)
+            | (flags << 4)
+            | (flags << 5)
+            | (flags << 6)
+            | (flags << 7);
+        let lane = first_false_lane(eligible);
+        if lane != 8 {
+            return offset + lane;
+        }
+        offset += 8;
+    }
+    while let Some(&byte) = bytes.get(offset) {
+        if !byte.is_ascii() || !catcodes[byte as usize] {
+            break;
+        }
+        offset += 1;
+    }
+    offset
+}
+
 impl<G> ResidentSourceTop<'_, G> {
     #[inline(always)]
     pub(crate) fn force_eof(&self, requested: bool) -> bool {
         requested && self.slot.name_class == super::SourceNameClass::File
+    }
+
+    /// Borrows the maximal ASCII letter/other prefix from the loaded line.
+    ///
+    /// Catcodes are supplied by the processor's generation-valid flat table;
+    /// the source row is never queried through `SourceMap` while this prefix
+    /// is admitted.  Non-ASCII bytes and every non-ordinary catcode remain at
+    /// the exact first scalar boundary.
+    #[inline(always)]
+    pub(crate) fn borrow_character_run<'a>(
+        &'a mut self,
+        profile: crate::CommandProfile,
+        catcodes: &[bool; 128],
+    ) -> Result<Option<BorrowedSourceCharacterRun<'a>>, ()> {
+        record_source_lex_slot_borrow();
+        let Some(line) = self.slot.cursor.line.as_ref() else {
+            return Ok(None);
+        };
+        let start = line.cursor.byte_cursor;
+        if start >= line.retained_end {
+            return Ok(None);
+        }
+        let backing = self.slot.cursor.current_backing();
+        let start_index = usize::try_from(start).map_err(|_| ())?;
+        let limit_index = usize::try_from(line.retained_end).map_err(|_| ())?;
+        let bytes = backing.bytes.get(start_index..limit_index).ok_or(())?;
+        let capability = if self.slot.cursor.line_backing.is_some() {
+            self.slot.cursor.line_backing_capability
+        } else {
+            self.slot.cursor.backing_capability
+        };
+        if capability.is_none() {
+            return Ok(None);
+        }
+        let count = ordinary_ascii_prefix(bytes, catcodes);
+        if count == 0 {
+            return Ok(None);
+        }
+        Ok(Some(BorrowedSourceCharacterRun {
+            bytes: &bytes[..count],
+            mode: profile.character_mode(),
+            source: line.physical.source,
+            byte_start: start,
+            capability,
+            fuel_limited: false,
+        }))
+    }
+
+    /// Marks exactly the admitted prefix in both source cursors.
+    #[inline(always)]
+    pub(crate) fn commit_character_run(&mut self, count: usize) -> Result<(), ()> {
+        let count = u32::try_from(count).map_err(|_| ())?;
+        if count == 0 {
+            return Ok(());
+        }
+        let line = self.slot.cursor.line.as_mut().ok_or(())?;
+        line.cursor.byte_cursor = line
+            .cursor
+            .byte_cursor
+            .checked_add(u64::from(count))
+            .ok_or(())?;
+        line.cursor.scalar_cursor = line
+            .cursor
+            .scalar_cursor
+            .checked_add(u64::from(count))
+            .ok_or(())?;
+        line.cursor.lexer_state = super::LexerState::MidLine;
+        self.source
+            .frame
+            .advance_resident_run(count)
+            .map(|_| ())
+            .ok_or(())
     }
 
     /// Lends the current line's ordinary single-byte prefix without entering
@@ -771,6 +976,8 @@ impl<G> InputStack<G> {
             slot.cursor
                 .backing
                 .clone_from(replacement.as_ref().expect("replacement was prepared"));
+            slot.cursor.backing_registered = false;
+            slot.cursor.backing_capability = None;
             slot.cursor.rehome_offsets(offsets);
             slot.occupied_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
             root_slot = Some(SourceSlotKey(handle));

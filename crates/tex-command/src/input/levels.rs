@@ -817,6 +817,7 @@ pub(crate) enum SourceLevelExecutionState<G> {
         slot: SourceSlotKey,
         backing: RegisteredSource,
         backing_registered: bool,
+        backing_capability: Option<tex_state::source_map::RegisteredSource>,
     },
 }
 
@@ -827,14 +828,41 @@ impl<G> SourceLevelExecutionState<G> {
         accepted: &[u8],
         replacement: &RegisteredSource,
     ) {
-        let (state_slot, backing) = match self {
-            Self::Backing { slot, backing, .. } | Self::PhysicalBacking { slot, backing, .. } => {
-                (*slot, backing)
+        match self {
+            Self::Cursor {
+                slot: state_slot,
+                cursor,
+                ..
             }
-            Self::Cursor { .. } | Self::EveryEof { .. } => return,
-        };
-        if state_slot == slot && backing.is_editor_backing(accepted) {
-            backing.clone_from(replacement);
+            | Self::EveryEof {
+                slot: state_slot,
+                cursor,
+                ..
+            } if *state_slot == slot => {
+                cursor.clear_backing_capability();
+            }
+            Self::Backing {
+                slot: state_slot,
+                cursor,
+                backing,
+                ..
+            } if *state_slot == slot && backing.is_editor_backing(accepted) => {
+                backing.clone_from(replacement);
+                cursor.clear_backing_capability();
+            }
+            Self::PhysicalBacking {
+                slot: state_slot,
+                backing,
+                backing_capability,
+                ..
+            } if *state_slot == slot && backing.is_editor_backing(accepted) => {
+                backing.clone_from(replacement);
+                *backing_capability = None;
+            }
+            Self::Cursor { .. }
+            | Self::EveryEof { .. }
+            | Self::Backing { .. }
+            | Self::PhysicalBacking { .. } => {}
         }
     }
 
@@ -878,11 +906,16 @@ impl<G> SourceLevelExecutionState<G> {
         slot: &mut SourceSlot<G>,
         replacement: RegisteredSource,
     ) -> Self {
+        let cursor = slot.cursor.take_execution_state();
         let backing = std::mem::replace(&mut slot.cursor.backing, replacement);
+        slot.cursor.backing_registered = false;
+        slot.cursor.backing_capability = None;
+        slot.cursor.line_backing_registered = false;
+        slot.cursor.line_backing_capability = None;
         Self::Backing {
             slot: source.slot,
             position: source.frame.position(),
-            cursor: slot.cursor.take_execution_state(),
+            cursor,
             backing,
             name_class: slot.name_class,
         }
@@ -895,10 +928,12 @@ impl<G> SourceLevelExecutionState<G> {
     ) -> Self {
         let backing = std::mem::replace(&mut slot.cursor.backing, replacement);
         let backing_registered = std::mem::replace(&mut slot.cursor.backing_registered, false);
+        let backing_capability = slot.cursor.backing_capability.take();
         Self::PhysicalBacking {
             slot: source.slot,
             backing,
             backing_registered,
+            backing_capability,
         }
     }
 }
@@ -1039,10 +1074,12 @@ impl<G> SourceLevel<G> {
                 slot,
                 backing,
                 backing_registered,
+                backing_capability,
             } => {
                 assert_eq!(self.slot, *slot, "source inverse names the live slot");
                 std::mem::swap(&mut owner.cursor.backing, backing);
                 std::mem::swap(&mut owner.cursor.backing_registered, backing_registered);
+                std::mem::swap(&mut owner.cursor.backing_capability, backing_capability);
             }
         }
     }

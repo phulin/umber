@@ -551,6 +551,7 @@ impl SourceCursor {
         // may substitute backing, and only for the line already loaded.
         self.line_backing = None;
         self.line_backing_registered = false;
+        self.line_backing_capability = None;
         let len = u64::try_from(self.backing.bytes.len()).expect("registration checked length");
         let acquired = std::mem::take(&mut self.pending_acquired_line);
         if self.next_physical_offset >= len && !acquired {
@@ -702,12 +703,14 @@ impl SourceCursor {
         });
         self.line_backing = Some(backing);
         self.line_backing_registered = false;
+        self.line_backing_capability = None;
     }
 
     pub(crate) fn finish_line(&mut self) {
         self.line = None;
         self.line_backing = None;
         self.line_backing_registered = false;
+        self.line_backing_capability = None;
     }
 
     /// Installs e-TeX §53a's context-only sentinel record at pseudo EOF.
@@ -741,6 +744,7 @@ impl SourceCursor {
         });
         self.line_backing = None;
         self.line_backing_registered = false;
+        self.line_backing_capability = None;
         self.end_after_line = true;
     }
 }

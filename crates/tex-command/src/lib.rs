@@ -111,12 +111,12 @@ pub use host::{
     LastNodeItem, PdfImageResource,
 };
 pub use input::{
-    CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,
-    InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
-    RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceFramingPolicy,
-    SourceLocation, SourceNameClass, SourceProvenance, SourceRange, SourceRegistration,
-    SourceRegistrationError, SourceRole, SourceScalarRange, SourceStepQueries, SourceToken,
-    SourceTokenizationStep,
+    BorrowedSourceCharacterRun, CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries,
+    ControlSequenceName, InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange,
+    PhysicalLine, RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind,
+    SourceFramingPolicy, SourceLocation, SourceNameClass, SourceProvenance, SourceRange,
+    SourceRegistration, SourceRegistrationError, SourceRole, SourceScalarRange, SourceStepQueries,
+    SourceToken, SourceTokenizationStep,
 };
 #[cfg(feature = "profiling")]
 pub use input::{
@@ -139,11 +139,11 @@ pub use observation::{
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble,
-    AlignmentRequest, AlignmentRequestResult, CommandDeliveryCursor, CommandProcessor,
-    DeliveryStatus, FinishedAlignmentCell, PreparedAlignmentCellTemplates, PrintCommand,
-    append_character_command_text, append_command_token_text, append_print_cmd_chr_text,
-    append_print_esc_text, character_command_text, command_token_text, print_cmd_chr_text,
-    print_esc_text,
+    AlignmentRequest, AlignmentRequestResult, CharacterRunAdmission, CommandDeliveryCursor,
+    CommandProcessor, DeliveryStatus, FinishedAlignmentCell, PreparedAlignmentCellTemplates,
+    PrintCommand, append_character_command_text, append_command_token_text,
+    append_print_cmd_chr_text, append_print_esc_text, character_command_text, command_token_text,
+    print_cmd_chr_text, print_esc_text,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

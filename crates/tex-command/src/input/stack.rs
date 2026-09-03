@@ -903,29 +903,29 @@ fn register_pending_source_backings<G>(
 ) {
     #[cfg(test)]
     record_source_registration_check();
-    if !cursor.backing_registered {
+    if !cursor.backing_registered || cursor.backing_capability.is_none() {
         #[cfg(test)]
         record_source_registration_call();
-        if state
-            .register_source(cursor.backing.id, cursor.backing.source_descriptor())
-            .is_ok()
-        {
-            cursor.backing_registered = true;
-        }
+        let _ = state
+            .register_source_capability(cursor.backing.id, cursor.backing.source_descriptor())
+            .map(|capability| {
+                cursor.backing_capability = Some(capability);
+                cursor.backing_registered = true;
+            });
     }
     #[cfg(test)]
     record_source_registration_check();
-    if !cursor.line_backing_registered
+    if (!cursor.line_backing_registered || cursor.line_backing_capability.is_none())
         && let Some(backing) = cursor.line_backing.as_ref()
     {
         #[cfg(test)]
         record_source_registration_call();
-        if state
-            .register_source(backing.id, backing.source_descriptor())
-            .is_ok()
-        {
-            cursor.line_backing_registered = true;
-        }
+        let _ = state
+            .register_source_capability(backing.id, backing.source_descriptor())
+            .map(|capability| {
+                cursor.line_backing_capability = Some(capability);
+                cursor.line_backing_registered = true;
+            });
     }
 }
 

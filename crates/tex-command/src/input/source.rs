@@ -631,6 +631,8 @@ pub(crate) struct SourceCursor {
     /// registration payload. This avoids retaining and releasing the
     /// Arc-backed descriptor for every token after the first one.
     pub(crate) backing_registered: bool,
+    /// Copy-only source-map capability retained with the backing registration.
+    pub(crate) backing_capability: Option<tex_state::source_map::RegisteredSource>,
     /// Backing for the loaded line alone, when it is not the physical one.
     ///
     /// TeX82 §363's `firm_up_the_line` moves a line typed at the terminal
@@ -644,6 +646,7 @@ pub(crate) struct SourceCursor {
     pub(crate) line_backing: Option<RegisteredSource>,
     /// Whether the current replacement-line backing has been registered.
     pub(crate) line_backing_registered: bool,
+    pub(crate) line_backing_capability: Option<tex_state::source_map::RegisteredSource>,
     /// This level's backing is one line tex.web §483 already acquired.
     ///
     /// §483 loads that line whether or not it has any characters: `limit:=
@@ -667,8 +670,10 @@ pub(crate) struct SourceCursor {
 #[derive(Debug)]
 pub(crate) struct SourceCursorExecutionState {
     backing_registered: bool,
+    backing_capability: Option<tex_state::source_map::RegisteredSource>,
     line_backing: Option<RegisteredSource>,
     line_backing_registered: bool,
+    line_backing_capability: Option<tex_state::source_map::RegisteredSource>,
     pending_acquired_line: bool,
     next_physical_offset: u64,
     next_line_number: u64,
@@ -712,8 +717,10 @@ impl SourceCursor {
         Self {
             backing,
             backing_registered: false,
+            backing_capability: None,
             line_backing: None,
             line_backing_registered: false,
+            line_backing_capability: None,
             pending_acquired_line: false,
             next_physical_offset: 0,
             next_line_number: 1,
@@ -733,8 +740,10 @@ impl SourceCursor {
     pub(crate) fn take_execution_state(&mut self) -> SourceCursorExecutionState {
         SourceCursorExecutionState {
             backing_registered: self.backing_registered,
+            backing_capability: self.backing_capability,
             line_backing: self.line_backing.take(),
             line_backing_registered: self.line_backing_registered,
+            line_backing_capability: self.line_backing_capability,
             pending_acquired_line: self.pending_acquired_line,
             next_physical_offset: self.next_physical_offset,
             next_line_number: self.next_line_number,
@@ -753,14 +762,21 @@ impl SourceCursor {
     pub(crate) fn release_execution_owners(&mut self) {
         self.line_backing = None;
         self.line = None;
+        self.line_backing_registered = false;
+        self.line_backing_capability = None;
     }
 
     pub(crate) fn swap_execution_state(&mut self, state: &mut SourceCursorExecutionState) {
         std::mem::swap(&mut self.backing_registered, &mut state.backing_registered);
+        std::mem::swap(&mut self.backing_capability, &mut state.backing_capability);
         std::mem::swap(&mut self.line_backing, &mut state.line_backing);
         std::mem::swap(
             &mut self.line_backing_registered,
             &mut state.line_backing_registered,
+        );
+        std::mem::swap(
+            &mut self.line_backing_capability,
+            &mut state.line_backing_capability,
         );
         std::mem::swap(
             &mut self.pending_acquired_line,
@@ -786,6 +802,10 @@ impl SourceCursor {
 }
 
 impl SourceCursorExecutionState {
+    pub(crate) fn clear_backing_capability(&mut self) {
+        self.backing_capability = None;
+    }
+
     pub(crate) fn rehome_offsets(&mut self, map: SourceOffsetMap) {
         self.next_physical_offset = map.map(self.next_physical_offset);
         if self.line_backing.is_none()

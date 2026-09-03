@@ -176,6 +176,48 @@ impl<G> MainControl<G> {
                         diagnostic_effects,
                         context,
                     );
+                    let mut run_error = None;
+                    let borrowed = processor.try_main_loop_borrowed_character_run(
+                        &mut |context, fuel, diagnostic_effects, run| {
+                            match crate::box_runtime::append_character_run_with_fuel(
+                                &mut self.modes,
+                                context,
+                                diagnostic_effects,
+                                run,
+                                etex_extended,
+                                fuel,
+                            ) {
+                                Ok(admitted) => tex_command::CharacterRunAdmission::new(
+                                    admitted.count,
+                                    admitted.continue_run,
+                                ),
+                                Err(error) => {
+                                    run_error = Some(error);
+                                    tex_command::CharacterRunAdmission::new(0, false)
+                                }
+                            }
+                        },
+                    );
+                    if let Some(error) = run_error {
+                        frame.error = Some(error);
+                        return PreflightReadiness::Failed;
+                    }
+                    match borrowed {
+                        Ok(Some(continues)) => {
+                            self.main_loop_active = continues;
+                            host_preparation.fill_applied_direct();
+                            return PreflightReadiness::Ready;
+                        }
+                        Ok(None) => {
+                            // No source prefix was admitted. The generic
+                            // callback below remains the scalar oracle for
+                            // resident rows and all source boundaries.
+                        }
+                        Err(error) => {
+                            frame.error = Some(command_error(error));
+                            return PreflightReadiness::Failed;
+                        }
+                    }
                     let mut count = 0_usize;
                     let mut continues = true;
                     let mut apply_error = None;
@@ -217,7 +259,7 @@ impl<G> MainControl<G> {
                         }
                         Ok(tex_command::DeliveryStatus::CharacterRunBoundary) => {
                             // The resolved raw tail remains in `frame.command`; the
-                            // ordinary processor below performs §1038's `x_token`.
+                            // ordinary processor below performs §1038's x_token.
                         }
                         Ok(tex_command::DeliveryStatus::CharacterRun) => {}
                         Ok(_) => unreachable!(
