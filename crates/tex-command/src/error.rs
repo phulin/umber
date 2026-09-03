@@ -157,6 +157,12 @@ impl From<tex_state::print::JumpOut> for CommandError {
     }
 }
 
+impl From<crate::execution_scratch::ScratchError> for CommandError {
+    fn from(error: crate::execution_scratch::ScratchError) -> Self {
+        crate::scan_toks::scratch_command_error(error)
+    }
+}
+
 impl CommandError {
     /// Constructs [`CommandError::InputInvariant`], capturing the Rust
     /// call site that raised it so a canonical divergence names its true

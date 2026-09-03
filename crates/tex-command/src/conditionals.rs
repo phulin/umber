@@ -15,6 +15,7 @@ use crate::processor::status::{
 };
 use crate::scanners::RestrictedIntegerClass;
 use crate::{CommandError, CommandState};
+use crate::command::HotCommand;
 
 use crate::observation::{
     CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
@@ -481,6 +482,426 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.complete_boolean(control.condition, result ^ control.inverted)
     }
 
+    /// Begins the compact hot protocol for a numeric conditional.  Literal
+    /// integer operands are consumed by the delivery loop itself; richer
+    /// internal quantities still use the existing scalar continuation path.
+    pub(super) fn begin_if_number_continuation(
+        &mut self,
+        kind: ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        if !matches!(
+            kind,
+            ConditionalKind::IfNum
+                | ConditionalKind::IfDim
+                | ConditionalKind::IfOdd
+                | ConditionalKind::IfCase
+        ) {
+            return Err(CommandError::input_invariant());
+        }
+        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+        let condition = self
+            .command
+            .conditions
+            .push_with_inversion(kind, source_line, inverted);
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or_else(CommandError::input_invariant)?;
+        self.trace_conditional_enter(&frame);
+        self.observe_condition("push", &frame, None);
+        if let Err(error) = self
+            .command
+            .scratch
+            .push_if_number_control(condition, kind, inverted)
+            .map_err(crate::scan_toks::scratch_command_error)
+        {
+            let _ = self.command.conditions.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Consumes one settled command in the hot integer protocol.  The
+    /// command is materialized only for an actual backup/recovery boundary;
+    /// character digits and relation symbols stay in the compact command
+    /// representation.  This covers the high-frequency literal path and
+    /// keeps nested expandable operands on the shared delivery stack.
+    pub(super) fn advance_if_number_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<IfNumberAdvance, CommandError> {
+        use crate::expansion_work::control::SynchronousIfNumberPhase as Phase;
+        let control = self
+            .command
+            .scratch
+            .top_if_number_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let character = command.character_token();
+        let category = command.character_catcode();
+        let is_space = category == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|ch| ch.is_ascii_digit())
+            .map(|ch| i64::from(ch as u8 - b'0'));
+        let relation = character.and_then(|ch| match ch {
+            '<' => Some(IfRelation::Less),
+            '=' => Some(IfRelation::Equal),
+            '>' => Some(IfRelation::Greater),
+            _ => None,
+        });
+
+        // `\ifodd` and `\ifcase` consume one integer and have no relation
+        // token.  They share the same compact accumulator so nested unary
+        // conditionals take the exact same iterative route as `\ifnum`.
+        if matches!(control.kind, ConditionalKind::IfOdd | ConditionalKind::IfCase) {
+            return self.advance_if_number_unary(
+                control,
+                command,
+                character,
+                is_space,
+                digit,
+            );
+        }
+
+        let saturating_digit = |value: i64, radix: i64, digit: i64| {
+            value
+                .checked_mul(radix)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let signed = |value: i64, negative: bool| {
+            let value = value.min(i64::from(i32::MAX));
+            if negative {
+                -(value.min(i64::from(i32::MAX)))
+            } else {
+                value
+            }
+        };
+
+        match control.phase {
+            Phase::NeedLeft => {
+                if is_space {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if character == Some('+') || character == Some('-') {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative: character == Some('-'),
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative: false,
+                        value: digit,
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                // Match scan_int's vacuous recovery: restore the offending
+                // command so the relation scanner sees it after `0`.
+                self.back_input(command.materialize())?;
+                self.report_missing_number_for_hot_conditional()?;
+                self.command.scratch.set_if_number_phase(Phase::NeedRelation {
+                    left: 0,
+                })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::AwaitLeft { .. } | Phase::AwaitRelation { .. } => {
+                Err(CommandError::input_invariant())
+            }
+            Phase::Left {
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative,
+                        value: saturating_digit(value, 10, digit),
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                let left = i32::try_from(signed(value, negative)).unwrap_or_else(|_| {
+                    if negative { i32::MIN } else { i32::MAX }
+                });
+                if is_space {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::NeedRelation { left })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(relation) = relation {
+                    self.command.scratch.set_if_number_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::NeedRelation { left: 0 })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_relation_for_hot_conditional()?;
+                self.command.scratch.set_if_number_phase(Phase::Right {
+                    left,
+                    relation: IfRelation::Equal,
+                    negative: false,
+                    value: 0,
+                    seen_digit: false,
+                })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::NeedRelation { left } => {
+                if is_space {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(relation) = relation {
+                    self.command.scratch.set_if_number_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_relation_for_hot_conditional()?;
+                self.command.scratch.set_if_number_phase(Phase::Right {
+                    left,
+                    relation: IfRelation::Equal,
+                    negative: false,
+                    value: 0,
+                    seen_digit: false,
+                })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::AwaitRight { .. } => Err(CommandError::input_invariant()),
+            Phase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command.scratch.set_if_number_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative: character == Some('-'),
+                        value,
+                        seen_digit,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_number_phase(Phase::Right {
+                        left,
+                        relation,
+                        negative,
+                        value: saturating_digit(value, 10, digit),
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                    self.complete_if_number_values(left, relation, 0)?;
+                } else if !is_space {
+                    self.back_input(command.materialize())?;
+                    self.complete_if_number_values(left, relation, signed(value, negative))?;
+                } else {
+                    self.complete_if_number_values(left, relation, signed(value, negative))?;
+                }
+                Ok(IfNumberAdvance::Complete)
+            }
+        }
+    }
+
+    fn advance_if_number_unary(
+        &mut self,
+        control: crate::expansion_work::control::SynchronousIfNumberControl,
+        command: HotCommand<G>,
+        character: Option<char>,
+        is_space: bool,
+        digit: Option<i64>,
+    ) -> Result<IfNumberAdvance, CommandError> {
+        use crate::expansion_work::control::SynchronousIfNumberPhase as Phase;
+        let saturating_digit = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let signed = |value: i64, negative: bool| {
+            let value = value.min(i64::from(i32::MAX));
+            if negative { -value } else { value }
+        };
+        let finish = |this: &mut Self,
+                      value: i64,
+                      negative: bool,
+                      control: crate::expansion_work::control::SynchronousIfNumberControl|
+         -> Result<(), CommandError> {
+            let value = signed(value, negative);
+            let value = i32::try_from(value).unwrap_or_else(|_| {
+                if value.is_negative() { i32::MIN } else { i32::MAX }
+            });
+            let _ = this
+                .command
+                .scratch
+                .pop_if_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if control.kind == ConditionalKind::IfCase {
+                this.complete_ifcase(control.condition, value)
+            } else {
+                this.complete_boolean(control.condition, ((value & 1) != 0) ^ control.inverted)
+            }
+        };
+
+        match control.phase {
+            Phase::NeedLeft => {
+                if is_space {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if character == Some('+') || character == Some('-') {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative: character == Some('-'),
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative: false,
+                        value: digit,
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                self.back_input(command.materialize())?;
+                self.report_missing_number_for_hot_conditional()?;
+                finish(self, 0, false, control)?;
+                Ok(IfNumberAdvance::Complete)
+            }
+            Phase::Left {
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if let Some(digit) = digit {
+                    self.command.scratch.set_if_number_phase(Phase::Left {
+                        negative,
+                        value: saturating_digit(value, digit),
+                        seen_digit: true,
+                    })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                    finish(self, 0, negative, control)?;
+                } else {
+                    if !is_space {
+                        self.back_input(command.materialize())?;
+                    }
+                    finish(self, value, negative, control)?;
+                }
+                Ok(IfNumberAdvance::Complete)
+            }
+            Phase::AwaitLeft { .. }
+            | Phase::AwaitRelation { .. }
+            | Phase::NeedRelation { .. }
+            | Phase::AwaitRight { .. }
+            | Phase::Right { .. } => Err(CommandError::input_invariant()),
+        }
+    }
+
+    fn complete_if_number_values(
+        &mut self,
+        left: i32,
+        relation: IfRelation,
+        right: i64,
+    ) -> Result<(), CommandError> {
+        let control = self
+            .command
+            .scratch
+            .pop_if_number_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        let right = i32::try_from(right).unwrap_or_else(|_| {
+            if right.is_negative() { i32::MIN } else { i32::MAX }
+        });
+        self.complete_boolean(
+            control.condition,
+            relation.compare(left, right) ^ control.inverted,
+        )
+    }
+
+    fn report_missing_number_for_hot_conditional(&mut self) -> Result<(), CommandError> {
+        self.observe_diagnostic_lifecycle(
+            crate::DiagnosticClass::RecoverableError,
+            "error",
+            "missing-number",
+            Vec::new(),
+        );
+        let context = self.command.output_open_context(self.state);
+        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
+            return Ok(());
+        }
+        let mut report = self.state.print_err("Missing number, treated as zero");
+        report
+            .help(&[
+                "A number should have been here; I inserted `0'.",
+                "(If you can't figure out why I needed to see a number,",
+                "look up `weird error' in the index to The TeXbook.)",
+            ])
+            .context(context);
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)
+    }
+
+    fn report_missing_relation_for_hot_conditional(&mut self) -> Result<(), CommandError> {
+        let kind = self
+            .command
+            .scratch
+            .top_if_number_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?
+            .kind;
+        let name = crate::processor::expand_render::print_esc_text(self.state, kind.canonical_name());
+        let context = self.command.output_open_context(self.state);
+        let message = format!("Missing = inserted for {name}");
+        let mut report = self.state.print_err(&message);
+        report
+            .help(&["I was expecting to see `<', `=', or `>'. Didn't."])
+            .context(context);
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)
+    }
+
     /// Begins an iterative `\ifcsname` predicate in the shared expansion
     /// control lane. The conditional frame is established before any name
     /// character is requested, matching TeX's evaluating-limit semantics.
@@ -636,6 +1057,13 @@ pub(crate) enum IfRelation {
     Less,
     Equal,
     Greater,
+}
+
+/// Result of one compact numeric operand instruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum IfNumberAdvance {
+    Continue,
+    Complete,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -817,7 +1245,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return self.begin_ifcsname_continuation(true);
         }
-        if matches!(_kind, ConditionalKind::If | ConditionalKind::IfCat) {
+        if matches!(
+            _kind,
+            ConditionalKind::If
+                | ConditionalKind::IfCat
+                | ConditionalKind::IfNum
+                | ConditionalKind::IfOdd
+                | ConditionalKind::IfCase
+        ) {
             if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
                 && self.state.int_param(IntParam::TRACING_IFS) <= 0
             {
@@ -825,7 +1260,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     crate::processor::expand_render::PrintCommand::from_current(&next),
                 );
             }
-            return self.begin_if_compare_continuation(_kind, true);
+            return if matches!(_kind, ConditionalKind::If | ConditionalKind::IfCat) {
+                self.begin_if_compare_continuation(_kind, true)
+            } else {
+                self.begin_if_number_continuation(_kind, true)
+            };
         }
         if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
             && self.state.int_param(IntParam::TRACING_IFS) <= 0

@@ -905,6 +905,177 @@ impl<G> ExpansionWork<G> {
         Ok(control)
     }
 
+    /// Starts the compact numeric/dimension comparison protocol.
+    pub(crate) fn push_if_number_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::IfNumber(
+            SynchronousIfNumberControl {
+                condition,
+                kind,
+                inverted,
+                phase: SynchronousIfNumberPhase::NeedLeft,
+            },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed if-number-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Returns the active compact numeric/dimension comparison.
+    pub(crate) fn top_if_number_control(
+        &self,
+    ) -> Result<Option<SynchronousIfNumberControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::IfNumber(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Mutates the numeric/dimension comparison phase in place.  All payloads
+    /// are scalar, so no command-sized owner is copied through the control
+    /// lane while an operand is being expanded.
+    pub(crate) fn set_if_number_phase(
+        &mut self,
+        phase: SynchronousIfNumberPhase,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfNumber(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = phase;
+        Ok(())
+    }
+
+    /// Hides a numeric operand parent while a nested expandable command is
+    /// being interpreted by the same delivery loop.
+    pub(crate) fn await_if_number_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfNumber(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfNumberPhase::NeedLeft => SynchronousIfNumberPhase::AwaitLeft {
+                negative: false,
+                value: 0,
+                seen_digit: false,
+            },
+            SynchronousIfNumberPhase::Left {
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::AwaitLeft {
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfNumberPhase::NeedRelation { left } => {
+                SynchronousIfNumberPhase::AwaitRelation { left }
+            }
+            SynchronousIfNumberPhase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::AwaitRight {
+                left,
+                relation,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfNumberPhase::AwaitLeft { .. }
+            | SynchronousIfNumberPhase::AwaitRelation { .. }
+            | SynchronousIfNumberPhase::AwaitRight { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    /// Restores a numeric operand phase after its nested expansion settled.
+    pub(crate) fn resume_if_number_operand(&mut self) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::IfNumber(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = match control.phase {
+            SynchronousIfNumberPhase::AwaitLeft {
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::Left {
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfNumberPhase::AwaitRelation { left } => {
+                SynchronousIfNumberPhase::NeedRelation { left }
+            }
+            SynchronousIfNumberPhase::AwaitRight {
+                left,
+                relation,
+                negative,
+                value,
+                seen_digit,
+            } => SynchronousIfNumberPhase::Right {
+                left,
+                relation,
+                negative,
+                value,
+                seen_digit,
+            },
+            SynchronousIfNumberPhase::NeedLeft
+            | SynchronousIfNumberPhase::Left { .. }
+            | SynchronousIfNumberPhase::NeedRelation { .. }
+            | SynchronousIfNumberPhase::Right { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+        };
+        Ok(())
+    }
+
+    /// Retires one completed numeric/dimension comparison control.
+    pub(crate) fn pop_if_number_control(
+        &mut self,
+    ) -> Result<SynchronousIfNumberControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::IfNumber(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        if !matches!(
+            control.phase,
+            SynchronousIfNumberPhase::NeedRelation { .. }
+                | SynchronousIfNumberPhase::Right { .. }
+                // Unary `\ifodd`/`\ifcase` complete as soon as their
+                // accumulator sees the first terminator, while the binary
+                // protocol reaches `Right` first.
+                | SynchronousIfNumberPhase::Left { .. }
+        ) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
+    }
+
     /// Opens a name mark even when a synchronous driver has no parked cold
     /// root. A zero root serial is reserved for that rootless hot episode;
     /// parked resumptions continue to use their real active-root serial.

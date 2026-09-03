@@ -682,6 +682,13 @@ impl<G> HotCommand<G> {
         })
     }
 
+    /// Returns the category attached to a compact character command.  Scalar
+    /// and conditional hot lanes use this projection without materializing a
+    /// `CurrentCommand` for each digit or relation token.
+    pub(crate) fn character_catcode(&self) -> Option<Catcode> {
+        self.command.character_catcode()
+    }
+
     /// Returns the active character recovered by TeX82 §506 after `\noexpand`
     /// has replaced its effective command with frozen `\relax`.
     pub(crate) fn no_expand_active_character(&self) -> Option<char> {

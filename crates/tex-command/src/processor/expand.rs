@@ -1166,17 +1166,60 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
+            // Numeric and dimension conditionals consume their common
+            // literal form directly from the hot command.  Expandable
+            // operands remain ordinary delivery actions and return to this
+            // compact phase instead of retaining a scalar scanner frame on
+            // the Rust stack.
+            let if_number_control = self
+                .command
+                .scratch
+                .top_if_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if let Some(control) = if_number_control {
+                if matches!(
+                    action,
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                ) && !matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft { .. }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
+                            ..
+                        }
+                ) {
+                    match self.advance_if_number_continuation(command)? {
+                        crate::conditionals::IfNumberAdvance::Continue
+                        | crate::conditionals::IfNumberAdvance::Complete => {
+                            fetch = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // The comparison controls are entered from the hot loop rather
             // than through the legacy scalar conditional evaluator. Keeping
             // this cutover here leaves that evaluator available to cold
             // callers while every ordinary delivery stays on one loop.
             if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::If | ExpandablePrimitive::IfCat),
+                primitive
+                    @ (ExpandablePrimitive::If
+                        | ExpandablePrimitive::IfCat
+                        | ExpandablePrimitive::IfNum
+                        | ExpandablePrimitive::IfOdd
+                        | ExpandablePrimitive::IfCase),
             )) = action
             {
                 let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
                     .ok_or_else(CommandError::input_invariant)?;
-                self.begin_if_compare_continuation(kind, false)?;
+                if matches!(kind, crate::conditionals::ConditionalKind::If | crate::conditionals::ConditionalKind::IfCat) {
+                    self.begin_if_compare_continuation(kind, false)?;
+                } else {
+                    self.begin_if_number_continuation(kind, false)?;
+                }
                 fetch = true;
                 continue;
             }
@@ -1408,10 +1451,55 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         NeedSecond { .. }
                             )
                         });
+                    let if_number_was_awaiting = self
+                        .command
+                        .scratch
+                        .top_if_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft {
+                                    ..
+                                }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
+                                        ..
+                                    }
+                            )
+                        });
+                    let if_number_should_await = self
+                        .command
+                        .scratch
+                        .top_if_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .is_some_and(|control| {
+                            matches!(
+                                control.phase,
+                                crate::expansion_work::control::SynchronousIfNumberPhase::NeedLeft
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::Left {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::NeedRelation {
+                                        ..
+                                    }
+                                    | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
+                                        ..
+                                    }
+                            )
+                        });
                     if if_compare_should_await {
                         self.command
                             .scratch
                             .await_if_compare_operand()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                    }
+                    if if_number_should_await {
+                        self.command
+                            .scratch
+                            .await_if_number_operand()
                             .map_err(crate::scan_toks::scratch_command_error)?;
                     }
                     let mut command_parked = false;
@@ -1430,6 +1518,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 self.command
                                     .scratch
                                     .resume_if_compare_operand()
+                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            }
+                            if if_number_should_await || if_number_was_awaiting {
+                                self.command
+                                    .scratch
+                                    .resume_if_number_operand()
                                     .map_err(crate::scan_toks::scratch_command_error)?;
                             }
                             // Some expandable commands consume themselves

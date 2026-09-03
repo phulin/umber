@@ -196,6 +196,60 @@ pub(crate) struct SynchronousIfCompareControl {
     pub(crate) phase: SynchronousIfComparePhase,
 }
 
+/// The compact operand state for an `\ifnum`/`\ifdim` comparison.
+///
+/// The common case (a character constant or a value emitted by another
+/// expandable primitive) needs only a saturating accumulator.  Awaiting
+/// phases hide this parent while a nested expandable command is being
+/// delivered, exactly as the character-comparison control does.  Rich
+/// scanner state remains in the cold scalar continuation lane when a token is
+/// not part of this hot literal protocol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousIfNumberPhase {
+    NeedLeft,
+    AwaitLeft {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    AwaitRelation {
+        left: i32,
+    },
+    Left {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    NeedRelation {
+        left: i32,
+    },
+    AwaitRight {
+        left: i32,
+        relation: crate::conditionals::IfRelation,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    Right {
+        left: i32,
+        relation: crate::conditionals::IfRelation,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+}
+
+/// Compact hot conditional control for numeric/dimension comparisons.  The
+/// opener is represented by the condition identity; no `CurrentCommand` or
+/// scanner-owned allocation crosses the delivery loop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousIfNumberControl {
+    pub(crate) condition: crate::processor::status::ConditionId,
+    pub(crate) kind: crate::conditionals::ConditionalKind,
+    pub(crate) inverted: bool,
+    pub(crate) phase: SynchronousIfNumberPhase,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum UnlessPhase<G> {
     NeedConditional,
@@ -244,10 +298,12 @@ pub(crate) enum ExpansionControl<G> {
     IfCsName(SynchronousIfCsNameControl),
     ExpandAfterSync(SynchronousExpandAfterControl<G>),
     IfCompare(SynchronousIfCompareControl),
+    IfNumber(SynchronousIfNumberControl),
     Primitive(PrimitiveControl<G>),
 }
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
+    assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
 };

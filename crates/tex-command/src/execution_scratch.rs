@@ -1486,6 +1486,46 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_compare_control()
     }
 
+    pub(crate) fn push_if_number_control(
+        &mut self,
+        condition: crate::processor::status::ConditionId,
+        kind: crate::conditionals::ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_if_number_control(condition, kind, inverted)
+    }
+
+    pub(crate) fn top_if_number_control(
+        &self,
+    ) -> Result<
+        Option<crate::expansion_work::control::SynchronousIfNumberControl>,
+        ScratchError,
+    > {
+        self.expansion_work.top_if_number_control()
+    }
+
+    pub(crate) fn set_if_number_phase(
+        &mut self,
+        phase: crate::expansion_work::control::SynchronousIfNumberPhase,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.set_if_number_phase(phase)
+    }
+
+    pub(crate) fn await_if_number_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.await_if_number_operand()
+    }
+
+    pub(crate) fn resume_if_number_operand(&mut self) -> Result<(), ScratchError> {
+        self.expansion_work.resume_if_number_operand()
+    }
+
+    pub(crate) fn pop_if_number_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousIfNumberControl, ScratchError> {
+        self.expansion_work.pop_if_number_control()
+    }
+
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
