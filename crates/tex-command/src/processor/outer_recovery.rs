@@ -145,7 +145,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             matches!(status, ScannerStatus::Aligning(_))
                 && self.command.alignment.active_alignment.is_some();
         if !retains_aligning_until_preamble_completion {
-            self.command.scanner.clear_for_recovery();
+            self.command.clear_scanner_for_recovery();
         }
         let observed_tokens = std::iter::once(first_token)
             .chain(second_token)

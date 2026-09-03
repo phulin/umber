@@ -86,6 +86,7 @@ impl<G> CommandState<G> {
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;
+        self.synchronize_delivery_mode_roots();
     }
 
     fn checkpoint_rollback_coordinates(
@@ -265,6 +266,7 @@ impl<G> CommandState<G> {
             .arena_mut()
             .truncate(restore.attempt)
             .expect("prevalidated command candidate attempt mark");
+        self.synchronize_delivery_mode_roots();
     }
 
     /// Consumes the sole physical command owner and opens its prevalidated
@@ -284,6 +286,7 @@ impl<G> CommandState<G> {
         self.conditions.frames.reject_checkpoint_candidate();
         self.input.levels.reject_checkpoint_candidate();
         self.timeline.reject_checkpoint_candidate(&mut self.roots);
+        self.synchronize_delivery_mode_roots();
     }
 
     #[doc(hidden)]
@@ -451,6 +454,7 @@ impl<G> CommandState<G> {
             .arena_mut()
             .truncate(restore.attempt)
             .expect("prepared command restore validated its attempt mark");
+        self.synchronize_delivery_mode_roots();
         Ok(())
     }
 

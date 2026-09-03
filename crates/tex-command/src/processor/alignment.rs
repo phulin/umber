@@ -452,21 +452,30 @@ impl<G> crate::CommandState<G> {
         literal_catcode: Option<Catcode>,
     ) {
         let mut hot = crate::command::HotCommand::from_current_ref(command);
-        self.roots
-            .alignment
-            .classify_hot_delivery(&mut self.timeline, &mut hot, literal_catcode);
+        if !self.roots.alignment.account_literal_brace(
+            &mut self.timeline,
+            &mut hot,
+            literal_catcode,
+        ) {
+            self.roots.alignment.classify_delimiter(&mut hot);
+        }
         *command = hot.materialize();
     }
 }
 
 impl<G> AlignmentDeliveryState<G> {
+    /// Literal braces are the only ordinary deliveries which mutate
+    /// `align_state`, so they alone first-touch its rollback scalar. Delimiter
+    /// interception is intentionally separate and cold. `align_state` is
+    /// TeX's global brace counter even without an active alignment, so this
+    /// accounting stays on the ordinary path.
     #[inline(always)]
-    pub(crate) fn classify_hot_delivery(
+    pub(crate) fn account_literal_brace(
         &mut self,
         timeline: &mut crate::snapshot::CommandTimeline<G>,
         command: &mut crate::command::HotCommand<G>,
         literal_catcode: Option<Catcode>,
-    ) {
+    ) -> bool {
         let adjustment = match literal_catcode {
             Some(Catcode::BeginGroup) => {
                 timeline.record_delivery_align_state(self.align_state);
@@ -478,6 +487,15 @@ impl<G> AlignmentDeliveryState<G> {
                 self.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
+            _ => return false,
+        };
+        command.set_alignment_adjustment(adjustment);
+        true
+    }
+
+    /// Performs active-alignment delimiter interception in slow settlement.
+    pub(crate) fn classify_delimiter(&mut self, command: &mut crate::command::HotCommand<G>) {
+        let adjustment = match () {
             _ if self.active_cell.is_some()
                 && self.align_state == CELL_ALIGN_STATE
                 && command.command_word().character_catcode() == Some(Catcode::AlignmentTab) =>

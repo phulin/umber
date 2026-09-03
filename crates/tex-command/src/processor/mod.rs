@@ -3,6 +3,7 @@
 pub(crate) mod alignment;
 mod alignment_interception;
 mod backup;
+pub(crate) mod delivery_mode;
 mod end_input;
 pub(crate) mod expand;
 mod expand_convert;
@@ -212,6 +213,12 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// source-tokenization step. Canonical token and command delivery never
     /// inspect it.
     create_source_control_sequences: bool,
+}
+
+impl<G> Drop for CommandProcessor<'_, '_, G> {
+    fn drop(&mut self) {
+        self.command.delivery_mode.end_episode();
+    }
 }
 
 /// Opaque observation-order cursor retained when executor preflight suspends
@@ -622,6 +629,10 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
         command.observe_tracked_dependencies(state);
+        command.delivery_mode.begin_episode(
+            observer.is_some(),
+            state.int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS) > 1,
+        );
         Self {
             command,
             state,
@@ -711,6 +722,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     #[must_use]
     pub fn with_observer(mut self, observer: &'episode mut dyn CommandObserver) -> Self {
         self.observer = Some(observer);
+        self.command.delivery_mode.set_observing(true);
         self
     }
 

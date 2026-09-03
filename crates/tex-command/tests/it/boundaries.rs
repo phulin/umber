@@ -200,8 +200,13 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert_eq!(delivery_entry.matches("destination.as_mut()").count(), 0);
     assert!(!expansion.contains(".advance_resident_row_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
-    assert!(delivery_entry.contains("roots.alignment.classify_hot_delivery("));
+    assert!(delivery_entry.contains("roots.alignment.account_literal_brace("));
     assert!(delivery_entry.contains("resolution.literal_catcode()"));
+    assert_eq!(
+        delivery_entry.matches("requires_slow_settlement()").count(),
+        1,
+        "ordinary delivery has one exceptional-mode branch"
+    );
     assert!(input_history.contains("true"));
     assert!(!input_history.contains("fn advance_resident_top_into("));
     assert!(!levels.contains("let frame = self.frame;"));
@@ -288,7 +293,12 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert_eq!(resident_front.matches("break 'frame outer;").count(), 1);
+    assert_eq!(
+        resident_front
+            .matches("break 'frame resolution.literal_catcode();")
+            .count(),
+        1
+    );
     assert!(resident_front.contains("resolution.literal_catcode()"));
     assert!(resident_front.contains("argument.advance_delivery(position, &command_state.scratch)"));
     let macro_argument_cursor = levels
@@ -462,7 +472,7 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
         "only outer-command and runaway-EOF entry points may install recovery"
     );
     assert!(outer.contains("self.back_input(command.copy_for_backup())?;"));
-    assert!(outer.contains("self.command.scanner.clear_for_recovery();"));
+    assert!(outer.contains("self.command.clear_scanner_for_recovery();"));
     assert_eq!(
         expansion
             .matches("processor.check_outer_validity_entry(")
@@ -607,7 +617,9 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
     assert!(!expansion.contains("fn command_delivery_entry("));
-    for deleted in ["DeliveryMode", "DeliveryPolicy", "ExpandedDeliveryPolicy"] {
+    assert!(policies.contains("mod delivery_mode;"));
+    assert!(expansion.contains("delivery_mode.requires_slow_settlement()"));
+    for deleted in ["DeliveryPolicy", "ExpandedDeliveryPolicy"] {
         assert!(
             !format!("{expansion}\n{policies}").contains(deleted),
             "generic delivery shell {deleted} must stay deleted"
@@ -1138,17 +1150,18 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
             .count(),
         1
     );
-    assert_eq!(alignment.matches("fn classify_hot_delivery(").count(), 1);
+    assert_eq!(alignment.matches("fn account_literal_brace(").count(), 1);
+    assert_eq!(alignment.matches("fn classify_delimiter(").count(), 1);
     assert_eq!(next.matches(".classify_alignment_delivery(").count(), 0);
     assert_eq!(
         expansion
-            .matches("roots.alignment.classify_hot_delivery(")
+            .matches("roots.alignment.account_literal_brace(")
             .count(),
         1
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment
-        .split("fn classify_hot_delivery(")
+        .split("fn account_literal_brace(")
         .nth(1)
         .and_then(|tail| tail.split("/// Applies TeX82 §1127").next())
         .expect("locate the singular alignment delivery classifier");

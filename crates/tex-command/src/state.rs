@@ -18,6 +18,7 @@ use crate::input::{
 use crate::input::{
     PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
 };
+use crate::processor::delivery_mode::DeliveryMode;
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
     AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, PreparedAlignmentCellTemplates,
@@ -153,6 +154,10 @@ pub struct CommandState<G> {
     /// in-process resource suspension and is consumed only by commit or
     /// rollback; named checkpoints require this field to be empty.
     pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
+    /// Singular exceptional-delivery authority. Rich scanner/alignment values
+    /// retain cold-path context but are not polled by resident input; bounded
+    /// processor episodes directly install and clear their temporary bits.
+    pub(crate) delivery_mode: DeliveryMode,
     /// Assertion-bearing proof that ordinary input bypasses out-parameter
     /// interception. Shipping builds contain neither the counters nor updates.
     #[cfg(test)]
@@ -415,6 +420,7 @@ impl<G> Default for CommandState<G> {
             attempt: crate::CommandAttempt::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
+            delivery_mode: DeliveryMode::default(),
             #[cfg(test)]
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
             #[cfg(test)]
@@ -1779,6 +1785,18 @@ impl<G> CommandState<G> {
         self.named_token_list_pushes.push((level, reason, tokens));
     }
 
+    /// Reinstalls persistent exceptional-delivery bits after a root-level
+    /// checkpoint transition. Episode and per-token bits remain owned by the
+    /// active processor and are never reconstructed here.
+    pub(crate) fn synchronize_delivery_mode_roots(&mut self) {
+        self.delivery_mode.set_scanner_active(!matches!(
+            self.scanner.status(),
+            crate::processor::ScannerStatus::Normal
+        ));
+        self.delivery_mode
+            .set_alignment_active(self.alignment.active_alignment.is_some());
+    }
+
     /// Applies an executor-owned structural alignment request.
     ///
     /// This is the only lifecycle entry point required by `tex-exec`.  It has
@@ -1843,6 +1861,7 @@ impl<G> CommandState<G> {
     pub fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
         self.record_alignment_phase();
         self.alignment.begin_alignment(alignment);
+        self.delivery_mode.set_alignment_active(true);
     }
 
     /// Re-enters the preamble sentinel while scanning another alignment column.
@@ -2060,7 +2079,11 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         self.record_alignment_phase();
-        self.alignment.suspend_alignment(alignment)
+        let result = self.alignment.suspend_alignment(alignment);
+        if result.is_ok() {
+            self.delivery_mode.set_alignment_active(false);
+        }
+        result
     }
 
     /// Restores the exact outer raw-delivery context after a nested alignment.
@@ -2069,7 +2092,11 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         self.record_alignment_phase();
-        self.alignment.resume_alignment(alignment)
+        let result = self.alignment.resume_alignment(alignment);
+        if result.is_ok() {
+            self.delivery_mode.set_alignment_active(true);
+        }
+        result
     }
 
     /// Finishes an alignment delivery context after all of its cells retire.
@@ -2078,7 +2105,11 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         self.record_alignment_phase();
-        self.alignment.finish_alignment(alignment)
+        let result = self.alignment.finish_alignment(alignment);
+        if result.is_ok() {
+            self.delivery_mode.set_alignment_active(false);
+        }
+        result
     }
 
     /// Creates a fresh command job with an immutable semantic profile.

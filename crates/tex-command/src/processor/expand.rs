@@ -30,7 +30,7 @@ enum ResidentColdOutcome {
     Retry,
     End,
     ReplayCompleted(crate::CommandReplayEpisode),
-    SyntheticCommand(bool),
+    SyntheticCommand,
 }
 
 /// Which of TeX82 §380's two expanded-fetch procedures is driving delivery.
@@ -840,15 +840,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         );
                         #[cfg(feature = "profiling")]
                         self.fuel.record_raw_delivery(
-                            !matches!(
-                                self.command.scanner.status(),
-                                crate::processor::ScannerStatus::Normal
-                            ),
+                            self.command.delivery_mode.scanner_active(),
                             _resolution.meaning_lookup(),
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
                         self.readmit_delivery_stamp(command.delivery_stamp());
-                        Ok(ResidentColdOutcome::SyntheticCommand(false))
+                        Ok(ResidentColdOutcome::SyntheticCommand)
                     }
                 }
             }
@@ -856,6 +853,38 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(ResidentColdOutcome::ReplayCompleted(episode))
             }
         }
+    }
+}
+
+impl<G> CommandProcessor<'_, '_, G> {
+    /// Settles the semantic conditions represented by the authoritative
+    /// delivery-mode word without widening the generated ordinary loops.
+    #[cold]
+    #[inline(never)]
+    fn settle_exceptional_delivery(
+        &mut self,
+        command: &mut HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let mode = self.command.delivery_mode;
+        if mode.suppresses_next() {
+            command.suppress_expandable();
+        }
+        if mode.scanner_active() && mode.outer() {
+            let mut rich = command.materialize();
+            self.check_outer_validity_entry(&mut rich)?;
+            *command = HotCommand::from_current(rich);
+        } else if mode.alignment_active()
+            && matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::None
+            )
+        {
+            self.command.roots.alignment.classify_delimiter(command);
+        }
+        if mode.observing() {
+            self.observe_resident_command(&command.materialize());
+        }
+        Ok(())
     }
 }
 
@@ -919,7 +948,7 @@ macro_rules! define_delivery_loop {
                     }
                     charge_raw = false;
                 }
-                let outer = {
+                let literal_catcode = {
                     macro_rules! resident_boundary {
                         ($d frame:lifetime, $d boundary:expr) => {{
                             let settled = match processor.settle_resident_cold_transition(
@@ -944,9 +973,7 @@ macro_rules! define_delivery_loop {
                                     }
                                     continue 'delivery;
                                 }
-                                ResidentColdOutcome::SyntheticCommand(outer) => {
-                                    break $d frame outer;
-                                }
+                                ResidentColdOutcome::SyntheticCommand => break $d frame None,
                             }
                         }};
                     }
@@ -964,6 +991,7 @@ macro_rules! define_delivery_loop {
                         };
                     }
                     'frame: {
+                        let delivery_mode = processor.command.delivery_mode;
                         let command_state = &mut *processor.command;
                         let state = &mut *processor.state;
                         let _fuel = &mut *processor.fuel;
@@ -1041,10 +1069,7 @@ macro_rules! define_delivery_loop {
                                     let position = top.slot.cursor.next_physical_offset;
                                     let active_source = top.source.frame.source_context();
                                     if let Some(consume) = character_run.as_deref_mut()
-                                        && matches!(
-                                            command_state.roots.scanner.status(),
-                                            crate::processor::ScannerStatus::Normal
-                                        )
+                                        && delivery_mode.allows_character_run()
                                     {
                                         let run = match top.advance_character_run(
                                             state,
@@ -1533,10 +1558,7 @@ macro_rules! define_delivery_loop {
                             }
                         };
                         if let Some(consume) = character_run.as_deref_mut()
-                            && matches!(
-                                command_state.roots.scanner.status(),
-                                crate::processor::ScannerStatus::Normal
-                            )
+                            && delivery_mode.allows_character_run()
                             && let tex_state::token::Token::Char {
                                 ch,
                                 cat:
@@ -1626,47 +1648,34 @@ macro_rules! define_delivery_loop {
                                     .meaning_lookups
                                     .saturating_add(u64::from(resolution.meaning_lookup()));
                         }
-                        let scanner_active = !matches!(
-                            command_state.roots.scanner.status(),
-                            crate::processor::ScannerStatus::Normal
-                        );
-                        if command.suppresses_expandable_control_sequence() {
-                            command.suppress_expandable();
-                        }
                         #[cfg(feature = "profiling")]
                         _fuel.record_raw_delivery(
-                            scanner_active,
+                            delivery_mode.scanner_active(),
                             resolution.meaning_lookup(),
                             raw_delivery_kind,
                         );
-                        let outer = if command.is_outer() && scanner_active {
-                            true
-                        } else {
-                            command_state.roots.alignment.classify_hot_delivery(
-                                &mut command_state.timeline,
-                                &mut command,
-                                resolution.literal_catcode(),
-                            );
-                            false
-                        };
-                        break 'frame outer;
+                        break 'frame resolution.literal_catcode();
                     }
                 };
+                processor.command.delivery_mode.begin_token(
+                    command.suppresses_expandable_control_sequence(),
+                    command.is_outer(),
+                );
+                processor.command.roots.alignment.account_literal_brace(
+                    &mut processor.command.timeline,
+                    &mut command,
+                    literal_catcode,
+                );
                 processor.next_delivery_sequence = processor.next_delivery_sequence.wrapping_add(1);
                 if command.is_direct_source_delivery() {
                     processor.readmit_delivery_stamp(command.delivery_stamp());
                 } else {
                     processor.publish_resident_delivery();
                 }
-                if outer {
-                    let mut rich = command.materialize();
-                    if let Err(failure) = processor.check_outer_validity_entry(&mut rich) {
-                        return processor.fail_expanded_delivery(destination, depth, failure);
-                    }
-                    command = HotCommand::from_current(rich);
-                }
-                if processor.is_observed() {
-                    processor.observe_resident_command(&command.materialize());
+                if processor.command.delivery_mode.requires_slow_settlement()
+                    && let Err(failure) = processor.settle_exceptional_delivery(&mut command)
+                {
+                    return processor.fail_expanded_delivery(destination, depth, failure);
                 }
                 if character_run.is_some() {
                     break 'delivery DeliveryStatus::CharacterRunBoundary;
@@ -2363,13 +2372,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpansionDispatch::Primitive(primitive)
                 if primitive != ExpandablePrimitive::EndTemplate
         ) || dispatch == ExpansionDispatch::Undefined;
-        if report_trace
-            && traceable
-            && self
-                .state
-                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
-                > 1
-        {
+        if report_trace && traceable && self.command.delivery_mode.tracing() {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         let mut suspended_resume = None;
