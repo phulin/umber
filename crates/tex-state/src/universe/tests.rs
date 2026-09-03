@@ -350,14 +350,11 @@ fn rejected_checkpoint_loan_invalidates_candidate_coordinates_before_retry() {
             universe
                 .assign_count(index, i32::from(index), AssignmentScope::Global)
                 .expect("baseline dense row");
-            universe
-                .begin_group(GroupKind::Simple, u32::from(index))
-                .expect("baseline save segment");
         }
         let checkpoint = universe.runtime_checkpoint().expect("early checkpoint");
         for index in 0..16 {
             universe
-                .assign_count(index, -i32::from(index), AssignmentScope::Local)
+                .assign_count(index, -i32::from(index), AssignmentScope::Global)
                 .expect("accepted suffix");
             let _ = universe.publish_page_nodes(&[Node::Penalty(-i32::from(index))]);
         }
@@ -425,7 +422,7 @@ fn runtime_checkpoint_fork_resets_newer_retained_page_bound() {
             .fork_runtime_checkpoint(&checkpoint)
             .expect("older checkpoint fork");
         fork.runtime_checkpoint()
-            .expect("forked retained bound addresses its truncated page arena");
+            .expect("candidate checkpoint stays in the current lineage");
         universe.reject_checkpoint_candidate(&mut fork);
     })
     .expect("universe allocation");
@@ -1391,6 +1388,38 @@ fn nested_shipout_engine_usage_accept_and_reject_restore_exact_membership() {
             before_accept.strings + 1,
             "accepted membership remains visible after the transaction mark settles"
         );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn restore_checkpoint_inside_a_group_is_rejected_before_mutation() {
+    with_universe(budget(), |universe| {
+        universe
+            .assign_count(0, 10, AssignmentScope::Global)
+            .expect("baseline count");
+        let state_checkpoint = universe.state_checkpoint().expect("state checkpoint");
+        let runtime_checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+
+        universe
+            .begin_group(GroupKind::Simple, 1)
+            .expect("open group");
+        universe
+            .assign_count(0, 20, AssignmentScope::Local)
+            .expect("local count");
+
+        assert_eq!(
+            universe.restore_state_checkpoint(&state_checkpoint),
+            Err(UniverseError::State(StateError::CheckpointIneligible))
+        );
+        assert_eq!(
+            universe.restore_runtime_checkpoint_with_roots(&runtime_checkpoint, || {}),
+            Err(UniverseError::State(StateError::CheckpointIneligible))
+        );
+        assert_eq!(universe.count(0).expect("local count remains"), 20);
+
+        universe.end_group(GroupKind::Simple).expect("close group");
+        assert_eq!(universe.count(0).expect("restored count"), 10);
     })
     .expect("universe allocation");
 }

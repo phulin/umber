@@ -1810,6 +1810,9 @@ impl<G> MainControl<G> {
         if self.has_external_attempt_owner() {
             return Err(tex_command::CommandSummaryError::AttemptSuspended);
         }
+        if !stores.checkpoint_eligible() {
+            return Err(tex_command::CommandSummaryError::CheckpointIneligible);
+        }
         let eligibility = self
             .take_job_start_eligibility()
             .ok_or(tex_command::CommandSummaryError::AttemptSuspended)?;
@@ -1836,6 +1839,9 @@ impl<G> MainControl<G> {
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         if self.has_external_attempt_owner() {
             return Err(tex_command::CommandSummaryError::AttemptSuspended);
+        }
+        if !stores.checkpoint_eligible() {
+            return Err(tex_command::CommandSummaryError::CheckpointIneligible);
         }
         crate::EngineCheckpoint::capture_checkpoint_with_identity_demand(
             eligibility,

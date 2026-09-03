@@ -489,6 +489,18 @@ impl DurableBoxState {
         }
     }
 
+    /// Reports whether this auxiliary state lane is at the level-zero
+    /// checkpoint boundary. Durable-box group saves and operation transfers
+    /// have the same admission rule as dense eqtb saves: a checkpoint never
+    /// captures an open group or a live transactional suffix.
+    pub(crate) fn checkpoint_eligible(&self) -> bool {
+        self.groups.is_empty()
+            && self.retained_groups.is_empty()
+            && self.active_operations.is_empty()
+            && self.operation_entries.is_empty()
+            && self.transfer_loans.is_empty()
+    }
+
     fn cell(&self, index: u16) -> Option<&DurableBoxCell> {
         if index <= u8::MAX.into() {
             Some(&self.dense[index as usize])

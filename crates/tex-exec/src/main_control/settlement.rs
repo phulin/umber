@@ -626,6 +626,13 @@ impl<G> MainControl<G> {
             if self.has_external_attempt_owner() {
                 return Ok(None);
             }
+            // A named boundary is only publishable at the state owner's
+            // level-zero admission barrier. Keep the intent queued while a
+            // TeX group or transactional suffix is still live; the next
+            // settlement pass can publish it after that owner unwinds.
+            if !stores.checkpoint_eligible() {
+                return Ok(None);
+            }
             if pending.boundary == crate::EngineBoundary::OuterParagraphEnd
                 && !self.modes.restart_checkpoint_is_quiescent()
             {

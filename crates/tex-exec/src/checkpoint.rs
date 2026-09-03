@@ -412,6 +412,17 @@ impl CheckpointEligibility {
     pub(crate) const fn is_restartable(&self) -> bool {
         self.restartable
     }
+
+    /// Validates the state-layer admission barrier carried by this proof.
+    /// Checkpoint eligibility is deliberately checked here as well as at the
+    /// state owner so every engine capture path fails before publishing any
+    /// command, mode, page, or payload roots.
+    pub(crate) fn validate<G>(&self, universe: &Universe<G>) -> Result<(), CommandSummaryError> {
+        universe
+            .checkpoint_eligible()
+            .then_some(())
+            .ok_or(CommandSummaryError::CheckpointIneligible)
+    }
 }
 
 /// One aggregate checkpoint captured in an admitted generation.
@@ -768,6 +779,7 @@ impl<G> EngineCheckpoint<G> {
         budget_counters: crate::ExecutionBudgetCounters,
         wants_reachable_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
+        eligibility.validate(universe)?;
         let boundary = eligibility.boundary();
         let restartable = eligibility.is_restartable();
         let command = command.publish_summary(universe)?;

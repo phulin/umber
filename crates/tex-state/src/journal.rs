@@ -36,8 +36,6 @@ const SAVE_CHUNK_SLOTS: usize = 64;
 /// A stable logical cursor in one generation's checkpoint history.
 pub struct JournalCursor<G> {
     owner: u64,
-    group_id: u64,
-    group_entry_position: u32,
     checkpoint: CheckpointMark<DenseJournalLane>,
     checkpoint_entries: u32,
     group_depth: u32,
@@ -66,8 +64,6 @@ impl<G> core::fmt::Debug for JournalCursor<G> {
 impl<G> PartialEq for JournalCursor<G> {
     fn eq(&self, other: &Self) -> bool {
         self.owner == other.owner
-            && self.group_id == other.group_id
-            && self.group_entry_position == other.group_entry_position
             && self.checkpoint_entries == other.checkpoint_entries
             && self.group_depth == other.group_depth
             && self.save_stack == other.save_stack
@@ -80,8 +76,6 @@ impl<G> Eq for JournalCursor<G> {}
 impl<G> JournalCursor<G> {
     const fn new(
         owner: u64,
-        group_id: u64,
-        group_entry_position: u32,
         checkpoint: CheckpointMark<DenseJournalLane>,
         checkpoint_entries: u32,
         group_depth: u32,
@@ -89,8 +83,6 @@ impl<G> JournalCursor<G> {
     ) -> Self {
         Self {
             owner,
-            group_id,
-            group_entry_position,
             checkpoint,
             checkpoint_entries,
             group_depth,
@@ -105,14 +97,6 @@ impl<G> JournalCursor<G> {
             save_position,
             ..self
         }
-    }
-
-    const fn group_id(self) -> u64 {
-        self.group_id
-    }
-
-    const fn group_entry_position(self) -> u32 {
-        self.group_entry_position
     }
 
     const fn checkpoint_mark(self) -> CheckpointMark<DenseJournalLane> {
@@ -135,6 +119,9 @@ pub struct StateOperation<G> {
     transaction_position: usize,
     group_depth: usize,
     save_stack: SaveStackProjection,
+    save_position: u32,
+    group_entries: usize,
+    group_sparse_start: Option<usize>,
     durable_box: Option<crate::env::DurableBoxOperation>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
@@ -150,11 +137,17 @@ impl<G> StateOperation<G> {
         position: usize,
         group_depth: usize,
         save_stack: SaveStackProjection,
+        save_position: u32,
+        group_entries: usize,
+        group_sparse_start: Option<usize>,
     ) -> Self {
         Self {
             transaction_position: position,
             group_depth,
             save_stack,
+            save_position,
+            group_entries,
+            group_sparse_start,
             durable_box: None,
             _brand: PhantomData,
         }
@@ -170,6 +163,18 @@ impl<G> StateOperation<G> {
 
     pub(crate) const fn save_stack(&self) -> SaveStackProjection {
         self.save_stack
+    }
+
+    pub(crate) const fn save_position(&self) -> u32 {
+        self.save_position
+    }
+
+    pub(crate) const fn group_entries(&self) -> usize {
+        self.group_entries
+    }
+
+    pub(crate) const fn group_sparse_start(&self) -> Option<usize> {
+        self.group_sparse_start
     }
 
     pub(crate) fn attach_durable_box(&mut self, operation: crate::env::DurableBoxOperation) {
@@ -277,12 +282,10 @@ impl<G> core::fmt::Debug for JournalEntry<G> {
     }
 }
 
-/// Scalar active-group metadata.  All saved values live in the shared chunk
+/// Scalar active-group metadata. All saved values live in the shared chunk
 /// sequence, never in a group-owned `Vec`.
 #[derive(Clone, Copy)]
 struct GroupMark {
-    id: u64,
-    parent: u64,
     frame: GroupFrame,
     /// Absolute slot of the fixed group-enter marker.
     start: usize,
@@ -290,20 +293,6 @@ struct GroupMark {
     entries: usize,
     /// First sparse-array mutation in this segment.  Keeping this boundary
     /// lets one reverse walk produce TeX's dense-then-sparse restoration order.
-    sparse_start: Option<usize>,
-    checkpoint_pinned: bool,
-}
-
-/// Metadata for one closed group whose inverse records remain reachable from
-/// a checkpoint lineage.  Records are stored in `retained_sequence` at the
-/// direct range `[start, start + entries)`.
-#[derive(Clone, Copy)]
-struct RetainedGroup {
-    id: u64,
-    parent: u64,
-    frame: GroupFrame,
-    start: usize,
-    entries: usize,
     sparse_start: Option<usize>,
 }
 
@@ -404,33 +393,6 @@ impl<G> SaveSequence<G> {
         }
         self.len = target;
     }
-
-    fn swap_entries(&mut self, left: usize, right: usize) {
-        if left == right {
-            return;
-        }
-        let left_chunk = left / SAVE_CHUNK_SLOTS;
-        let left_slot = left % SAVE_CHUNK_SLOTS;
-        let right_chunk = right / SAVE_CHUNK_SLOTS;
-        let right_slot = right % SAVE_CHUNK_SLOTS;
-        if left_chunk == right_chunk {
-            self.chunks[left_chunk].entries.swap(left_slot, right_slot);
-            return;
-        }
-        if left_chunk < right_chunk {
-            let (before, after) = self.chunks.split_at_mut(right_chunk);
-            core::mem::swap(
-                &mut before[left_chunk].entries[left_slot],
-                &mut after[0].entries[right_slot],
-            );
-        } else {
-            let (before, after) = self.chunks.split_at_mut(left_chunk);
-            core::mem::swap(
-                &mut after[0].entries[left_slot],
-                &mut before[right_chunk].entries[right_slot],
-            );
-        }
-    }
 }
 
 enum DenseJournalLane {}
@@ -443,37 +405,16 @@ pub(crate) struct CheckpointDelta<G> {
     pub(crate) alternate_save_serial: u64,
 }
 
-/// Accepted journal material temporarily detached while the current
-/// candidate owns the live dense state.  The detached group sequences move as
-/// whole chunk owners; no per-record owner is manufactured.
+/// Accepted checkpoint material temporarily detached while the current
+/// candidate owns the live dense state. The group journal is deliberately not
+/// part of this owner: accepted checkpoints are captured at level zero with an
+/// empty group journal, and candidate group records are dropped wholesale on
+/// rejection.
 pub(crate) struct AcceptedJournalTail<G> {
     prior_checkpoint_entries: usize,
-    groups: AcceptedGroupTail<G>,
-}
-
-enum AcceptedGroupTail<G> {
-    Root {
-        accepted_retained_groups: usize,
-        accepted_retained_entries: usize,
-        next_group_id: u64,
-        save_stack: SaveStackProjection,
-        save_position: u32,
-    },
-    Arbitrary {
-        next_group_id: u64,
-        active_groups: Vec<GroupMark>,
-        retained_groups: Vec<RetainedGroup>,
-        active_sequence: SaveSequence<G>,
-        retained_sequence: SaveSequence<G>,
-        save_stack: SaveStackProjection,
-        save_position: u32,
-    },
-}
-
-impl<G> AcceptedJournalTail<G> {
-    pub(crate) fn is_root_candidate(&self) -> bool {
-        matches!(self.groups, AcceptedGroupTail::Root { .. })
-    }
+    save_stack: SaveStackProjection,
+    save_position: u32,
+    _brand: PhantomData<fn() -> G>,
 }
 
 /// Allocation-free projection of the state-owned part of TeX's save stack.
@@ -490,7 +431,6 @@ pub(crate) struct SaveStackProjection {
 
 pub(crate) enum RestoredGroups {
     Truncate(usize),
-    Replace(Vec<GroupFrame>),
 }
 
 impl SaveStackProjection {
@@ -524,11 +464,6 @@ pub(crate) struct SaveJournal<G> {
     /// save-record address space.
     active_sequence: SaveSequence<G>,
     active_groups: Vec<GroupMark>,
-    /// Closed checkpoint-pinned groups retain their records in fixed chunks so
-    /// an in-group cursor can be restored after the live branch exits.
-    retained_sequence: SaveSequence<G>,
-    retained_groups: Vec<RetainedGroup>,
-    next_group_id: u64,
     checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
     checkpoint_arena: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
     checkpoint_entries: usize,
@@ -582,9 +517,6 @@ impl<G> SaveJournal<G> {
             owner,
             active_sequence: SaveSequence::default(),
             active_groups: Vec::new(),
-            retained_sequence: SaveSequence::default(),
-            retained_groups: Vec::new(),
-            next_group_id: 0,
             checkpoint_pool,
             checkpoint_arena: ForkArena::new(),
             checkpoint_entries: 0,
@@ -610,33 +542,53 @@ impl<G> SaveJournal<G> {
         }
     }
 
-    #[must_use]
-    pub(crate) fn checkpoint_cursor(&mut self, group_depth: usize) -> JournalCursor<G> {
-        let group_depth = u32::try_from(group_depth).expect("group depth fits u32");
-        for group in &mut self.active_groups {
-            group.checkpoint_pinned = true;
+    /// Captures the dense checkpoint lane at a quiescent level-zero boundary.
+    ///
+    /// The ordinary TeX group journal is candidate-local and must be empty at
+    /// this boundary. Keeping this check here (at the lowest state entry)
+    /// prevents a caller from accidentally reintroducing an active-group scan
+    /// or retaining group records for editor rollback.
+    pub(crate) fn checkpoint_cursor(
+        &mut self,
+        group_depth: usize,
+    ) -> Result<JournalCursor<G>, crate::StateError> {
+        if group_depth != 0
+            || !self.active_groups.is_empty()
+            || self.active_sequence.len != 0
+            || self.transaction_depth != 0
+            || !self.transaction_entries.is_empty()
+        {
+            return Err(crate::StateError::CheckpointIneligible);
         }
-        let (group_id, group_entry_position) = self.active_groups.last().map_or((0, 0), |group| {
-            (
-                group.id,
-                u32::try_from(group.entries).expect("group save segment exceeds u32 entries"),
-            )
-        });
+        let group_depth =
+            u32::try_from(group_depth).map_err(|_| crate::StateError::CheckpointEpochExhausted)?;
+        // Check epoch exhaustion before sealing the arena so an error leaves
+        // every owner untouched.
+        let next_serial = self
+            .save_serial
+            .checked_add(1)
+            .ok_or(crate::StateError::CheckpointEpochExhausted)?;
         let cursor = JournalCursor::new(
             self.owner,
-            group_id,
-            group_entry_position,
             self.checkpoint_arena
                 .seal_boundary(&mut self.checkpoint_pool)
                 .and_then(|boundary| self.checkpoint_arena.checkpoint_mark(boundary))
-                .expect("dense checkpoint journal seals its sole active tail"),
+                .map_err(|_| crate::StateError::InvalidCursor)?,
             u32::try_from(self.checkpoint_entries).expect("checkpoint journal exceeds u32 entries"),
             group_depth,
             self.save_stack,
         )
         .with_save_position(self.save_position);
-        self.advance_save_serial();
-        cursor
+        self.save_serial = next_serial;
+        Ok(cursor)
+    }
+
+    #[must_use]
+    pub(crate) fn checkpoint_eligible(&self) -> bool {
+        self.active_groups.is_empty()
+            && self.active_sequence.len == 0
+            && self.transaction_depth == 0
+            && self.transaction_entries.is_empty()
     }
 
     pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
@@ -682,16 +634,17 @@ impl<G> SaveJournal<G> {
                 .checked_add(1)
                 .and_then(|position| u32::try_from(position).ok())
                 .expect("group save stack exceeds u32 entries");
-            self.save_stack
-                .push(&JournalEntry::Mutation(mutation.clone()), position);
+            let entry = JournalEntry::Mutation(mutation);
+            self.save_stack.push(&entry, position);
             if self.transaction_depth != 0 {
+                let JournalEntry::Mutation(mutation) = &entry else {
+                    unreachable!("group save entry is a mutation")
+                };
                 self.transaction_entries.push(mutation.clone());
             }
             #[cfg(feature = "profiling")]
             self.record_profile_group_append();
-            let grew = self
-                .active_sequence
-                .append(JournalEntry::Mutation(mutation));
+            let grew = self.active_sequence.append(entry);
             #[cfg(feature = "profiling")]
             if grew {
                 self.record_profile_growth(
@@ -747,6 +700,16 @@ impl<G> SaveJournal<G> {
         self.save_stack
     }
 
+    pub(crate) const fn current_save_position(&self) -> u32 {
+        self.save_position
+    }
+
+    pub(crate) fn current_group_save_metadata(&self) -> (usize, Option<usize>) {
+        self.active_groups
+            .last()
+            .map_or((0, None), |group| (group.entries, group.sparse_start))
+    }
+
     pub(crate) fn take_sparse_scratch(&mut self) -> Vec<Mutation<G>> {
         std::mem::take(&mut self.sparse_scratch)
     }
@@ -784,6 +747,9 @@ impl<G> SaveJournal<G> {
         &mut self,
         group_depth: usize,
         save_stack: SaveStackProjection,
+        save_position: u32,
+        group_entries: usize,
+        group_sparse_start: Option<usize>,
     ) -> bool {
         if self.active_groups.len() < group_depth {
             return false;
@@ -792,9 +758,21 @@ impl<G> SaveJournal<G> {
             let group = self.active_groups.pop().expect("group suffix is nonempty");
             self.active_sequence.truncate(group.start);
         }
+        let save_position = usize::try_from(save_position).ok();
+        let Some(save_position) = save_position else {
+            return false;
+        };
+        if save_position > self.active_sequence.len {
+            return false;
+        }
+        self.active_sequence.truncate(save_position);
+        if let Some(group) = self.active_groups.last_mut() {
+            group.entries = group_entries;
+            group.sparse_start = group_sparse_start;
+        }
         self.save_stack = save_stack;
         self.save_position =
-            u32::try_from(self.active_sequence.len).expect("group save stack exceeds u32 entries");
+            u32::try_from(save_position).expect("group save stack position fits u32");
         self.refresh_group_capacity_bytes();
         true
     }
@@ -829,19 +807,11 @@ impl<G> SaveJournal<G> {
             );
         }
         self.active_sequence.append(JournalEntry::GroupEnter(frame));
-        self.next_group_id = self
-            .next_group_id
-            .checked_add(1)
-            .expect("group segment identity space exhausted");
-        let parent = self.active_groups.last().map_or(0, |group| group.id);
         self.active_groups.push(GroupMark {
-            id: self.next_group_id,
-            parent,
             frame,
             start: marker,
             entries: 0,
             sparse_start: None,
-            checkpoint_pinned: false,
         });
         self.save_stack.push(
             &JournalEntry::<G>::GroupEnter(frame),
@@ -855,63 +825,23 @@ impl<G> SaveJournal<G> {
     }
 
     /// Closes a group from a direct caller that did not already walk its
-    /// records.  Production `Env` uses `record_group_exit_with_records` so a
-    /// pinned segment is captured during its one reverse restoration walk.
+    /// records. This helper is test-only; production `Env` restores records
+    /// first and then calls the same scalar transition.
     #[cfg(test)]
     pub(crate) fn record_group_exit(&mut self, frame: GroupFrame) {
-        let mark = *self
-            .active_groups
-            .last()
-            .expect("group exit has a save segment");
-        let retained = if mark.checkpoint_pinned {
-            self.collect_active_group_records(mark)
-        } else {
-            Vec::new()
-        };
-        self.record_group_exit_with_records(frame, retained);
+        self.record_group_exit_with_records(frame);
     }
 
     /// Finishes one group after the environment has already consumed its
-    /// records in reverse. `retained_records` is in original journal order;
-    /// moving that temporary vector into fixed chunks avoids a second journal
-    /// walk while retaining a checkpoint-visible closed group.
-    pub(crate) fn record_group_exit_with_records(
-        &mut self,
-        frame: GroupFrame,
-        retained_records: Vec<Mutation<G>>,
-    ) {
+    /// records in reverse. Group history is always candidate-local, so the
+    /// active suffix is truncated and no record is copied or retained.
+    pub(crate) fn record_group_exit_with_records(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_exit();
         let mark = self
             .active_groups
             .pop()
             .expect("group exit has a save segment");
-        // A checkpoint candidate may rehome the physical journal start while
-        // the direct journal test (and a caller retaining the original
-        // semantic frame) still supplies the pre-rehome value.  Group kind,
-        // level, lineage, and diagnostic scalars remain identical.
-        let pinned = mark.checkpoint_pinned;
-        if pinned {
-            let retained_start = self.retained_sequence.len;
-            let mut sparse_start = None;
-            for mutation in retained_records {
-                let index = self.retained_sequence.len;
-                let cell = mutation.cell();
-                self.retained_sequence
-                    .append(JournalEntry::Mutation(mutation));
-                if sparse_start.is_none() && is_extended_register_cell(cell) {
-                    sparse_start = Some(index);
-                }
-            }
-            self.retained_groups.push(RetainedGroup {
-                id: mark.id,
-                parent: mark.parent,
-                frame: mark.frame,
-                start: retained_start,
-                entries: self.retained_sequence.len.saturating_sub(retained_start),
-                sparse_start,
-            });
-        }
         // The marker and all records belonging to the ending group are a
         // suffix of the active sequence.  Child records have already been
         // truncated at their own exits.
@@ -994,13 +924,6 @@ impl<G> SaveJournal<G> {
             .and_then(|group| group.sparse_start)
     }
 
-    pub(crate) fn group_checkpoint_pinned(&self, frame: GroupFrame) -> bool {
-        self.active_groups
-            .last()
-            .filter(|group| group.frame == frame)
-            .is_some_and(|group| group.checkpoint_pinned)
-    }
-
     #[cfg(test)]
     pub(crate) fn visit_checkpoint_prefix(
         &self,
@@ -1041,13 +964,23 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&mut CheckpointDelta<G>),
     ) {
-        self.checkpoint_arena
-            .visit_accepted_checkpoint_suffix_mut_reverse(
-                &mut self.checkpoint_pool,
-                cursor.checkpoint_mark(),
-                visit,
-            )
-            .expect("validated dense checkpoint suffix rewinds in place");
+        if self.checkpoint_fork {
+            self.checkpoint_arena
+                .visit_current_checkpoint_suffix_mut_reverse(
+                    &mut self.checkpoint_pool,
+                    cursor.checkpoint_mark(),
+                    visit,
+                )
+                .expect("validated dense candidate checkpoint suffix rewinds in place");
+        } else {
+            self.checkpoint_arena
+                .visit_accepted_checkpoint_suffix_mut_reverse(
+                    &mut self.checkpoint_pool,
+                    cursor.checkpoint_mark(),
+                    visit,
+                )
+                .expect("validated dense checkpoint suffix rewinds in place");
+        }
     }
 
     pub(crate) fn visit_current_suffix_mut_reverse(
@@ -1084,104 +1017,65 @@ impl<G> SaveJournal<G> {
             .is_ok()
     }
 
-    /// Moves the accepted checkpoint suffix out of the live checkpoint lane
-    /// and switches dense/group state to `cursor` without copying the accepted
-    /// group sequence.
+    /// Detaches the accepted checkpoint-delta suffix and starts a candidate at
+    /// a level-zero boundary. The ordinary group journal remains one mutable
+    /// candidate-local sequence; it is never forked or retained.
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         cursor: JournalCursor<G>,
-    ) -> AcceptedJournalTail<G> {
-        assert!(self.validate_cursor(cursor));
-        assert!(!self.checkpoint_fork);
+    ) -> Result<AcceptedJournalTail<G>, crate::StateError> {
+        if !self.validate_cursor(cursor) || self.checkpoint_fork {
+            return Err(crate::StateError::InvalidCursor);
+        }
+        if cursor.group_depth() != 0
+            || !self.active_groups.is_empty()
+            || self.active_sequence.len != 0
+        {
+            return Err(crate::StateError::CheckpointIneligible);
+        }
+        if !self
+            .checkpoint_arena
+            .can_begin_checkpoint_candidate(cursor.checkpoint_mark())
+        {
+            return Err(crate::StateError::InvalidCursor);
+        }
+        // Candidate setup advances once for the new interval and settlement
+        // advances once again when that interval is accepted or rejected.
+        // Reserve both epochs before detaching the accepted arena so an
+        // exhausted serial cannot leave a half-forked journal behind.
+        let candidate_serial = self
+            .save_serial
+            .checked_add(1)
+            .ok_or(crate::StateError::CheckpointEpochExhausted)?;
+        candidate_serial
+            .checked_add(1)
+            .ok_or(crate::StateError::CheckpointEpochExhausted)?;
         let prior_checkpoint_entries = self.checkpoint_entries;
         self.checkpoint_arena
             .begin_checkpoint_candidate(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-            .expect("validated dense checkpoint begins its sole fork");
+            .map_err(|_| crate::StateError::InvalidCursor)?;
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.checkpoint_fork = true;
-        self.advance_save_serial();
-
-        let save_stack = self.save_stack;
-        let save_position = self.save_position;
-        self.save_stack = cursor.save_stack;
-        self.save_position = cursor.save_position;
-        let root = cursor.group_depth() == 0 && self.active_groups.is_empty();
-        let groups = if root {
-            AcceptedGroupTail::Root {
-                accepted_retained_groups: self.retained_groups.len(),
-                accepted_retained_entries: self.retained_sequence.len,
-                next_group_id: self.next_group_id,
-                save_stack,
-                save_position,
-            }
-        } else {
-            let (target_sequence, target_groups) = if cursor.group_depth() == 0 {
-                (SaveSequence::default(), Vec::new())
-            } else {
-                self.capture_target_path(cursor)
-            };
-            let accepted_active_groups = std::mem::take(&mut self.active_groups);
-            let accepted_retained_groups = std::mem::take(&mut self.retained_groups);
-            let active_sequence = std::mem::take(&mut self.active_sequence);
-            let retained_sequence = std::mem::take(&mut self.retained_sequence);
-            self.active_groups = target_groups;
-            self.active_sequence = target_sequence;
-            self.retained_groups = Vec::new();
-            self.retained_sequence = SaveSequence::default();
-            AcceptedGroupTail::Arbitrary {
-                next_group_id: self.next_group_id,
-                active_groups: accepted_active_groups,
-                retained_groups: accepted_retained_groups,
-                active_sequence,
-                retained_sequence,
-                save_stack,
-                save_position,
-            }
-        };
-        self.refresh_group_capacity_bytes();
-        AcceptedJournalTail {
+        let tail = AcceptedJournalTail {
             prior_checkpoint_entries,
-            groups,
-        }
+            save_stack: self.save_stack,
+            save_position: self.save_position,
+            _brand: PhantomData,
+        };
+        self.save_stack = SaveStackProjection::default();
+        self.save_position = 0;
+        self.save_serial = candidate_serial;
+        self.refresh_group_capacity_bytes();
+        Ok(tail)
     }
 
     /// Restores the accepted group/journal topology after the candidate lane
     /// has already been destructively returned to its empty root.
     pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedJournalTail<G>) {
-        match tail.groups {
-            AcceptedGroupTail::Root {
-                accepted_retained_groups,
-                accepted_retained_entries,
-                next_group_id,
-                save_stack,
-                save_position,
-            } => {
-                self.active_sequence.truncate(0);
-                self.active_groups.clear();
-                self.retained_groups.truncate(accepted_retained_groups);
-                self.retained_sequence.truncate(accepted_retained_entries);
-                self.next_group_id = next_group_id;
-                self.save_stack = save_stack;
-                self.save_position = save_position;
-            }
-            AcceptedGroupTail::Arbitrary {
-                next_group_id,
-                active_groups,
-                retained_groups,
-                active_sequence,
-                retained_sequence,
-                save_stack,
-                save_position,
-            } => {
-                self.active_groups = active_groups;
-                self.retained_groups = retained_groups;
-                self.active_sequence = active_sequence;
-                self.retained_sequence = retained_sequence;
-                self.next_group_id = next_group_id;
-                self.save_stack = save_stack;
-                self.save_position = save_position;
-            }
-        }
+        self.active_sequence.truncate(0);
+        self.active_groups.clear();
+        self.save_stack = tail.save_stack;
+        self.save_position = tail.save_position;
         self.checkpoint_entries = tail.prior_checkpoint_entries;
         let boundary = self
             .checkpoint_arena
@@ -1196,18 +1090,25 @@ impl<G> SaveJournal<G> {
         self.advance_save_serial();
     }
 
-    pub(crate) fn accept_checkpoint_candidate(&mut self) {
-        assert!(self.checkpoint_fork);
+    pub(crate) fn accept_checkpoint_candidate(&mut self) -> Result<(), crate::StateError> {
+        if !self.checkpoint_fork
+            || !self.active_groups.is_empty()
+            || self.active_sequence.len != 0
+            || self.transaction_depth != 0
+        {
+            return Err(crate::StateError::CheckpointIneligible);
+        }
         let boundary = self
             .checkpoint_arena
             .seal_boundary(&mut self.checkpoint_pool)
-            .expect("dense acceptance seals its current suffix");
+            .map_err(|_| crate::StateError::InvalidCursor)?;
         self.checkpoint_arena
             .accept_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
-            .expect("dense acceptance drops its detached prior suffix");
+            .map_err(|_| crate::StateError::InvalidCursor)?;
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_fork = false;
         self.advance_save_serial();
+        Ok(())
     }
 
     pub(crate) fn truncate_checkpoint(&mut self, cursor: JournalCursor<G>) {
@@ -1215,9 +1116,15 @@ impl<G> SaveJournal<G> {
             cursor.owner, self.owner,
             "journal cursor belongs to another state"
         );
-        self.checkpoint_arena
-            .restore_accepted_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-            .expect("validated dense checkpoint suffix truncates atomically");
+        if self.checkpoint_fork {
+            self.checkpoint_arena
+                .restore_current_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
+                .expect("validated dense candidate suffix truncates atomically");
+        } else {
+            self.checkpoint_arena
+                .restore_accepted_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
+                .expect("validated dense checkpoint suffix truncates atomically");
+        }
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.advance_save_serial();
@@ -1250,116 +1157,37 @@ impl<G> SaveJournal<G> {
         {
             return false;
         }
-        if cursor.group_id() == 0 {
-            return cursor.group_depth() == 0 && cursor.group_entry_position() == 0;
-        }
-        if cursor.group_depth() as usize <= self.active_groups.len() {
-            let group = &self.active_groups[cursor.group_depth() as usize - 1];
-            if group.id == cursor.group_id()
-                && cursor.group_entry_position() as usize <= group.entries
-            {
-                return true;
-            }
-        }
-        let Some(group) = self.group_metadata(cursor.group_id()) else {
-            return false;
-        };
-        if cursor.group_entry_position() as usize > group.entries() {
-            return false;
-        }
-        let mut depth = 0_u32;
-        let mut id = cursor.group_id();
-        while id != 0 {
-            let Some(group) = self.group_metadata(id) else {
-                return false;
-            };
-            depth = depth.saturating_add(1);
-            id = group.parent();
-        }
-        depth == cursor.group_depth()
+        cursor.group_depth() == 0
+            && cursor.save_position == 0
+            && self.active_groups.is_empty()
+            && self.active_sequence.len == 0
+            && self.transaction_depth == 0
+            && self.transaction_entries.is_empty()
     }
 
     pub(crate) fn restore_group_cursor(&mut self, cursor: JournalCursor<G>) -> RestoredGroups {
-        let target_ids = self.target_group_ids(cursor);
-        let current_ids: Vec<u64> = self.active_groups.iter().map(|group| group.id).collect();
-        let common = current_ids
-            .iter()
-            .copied()
-            .zip(target_ids.iter().copied())
-            .take_while(|(active, target)| active == target)
-            .count();
-        if common == target_ids.len() {
-            while self.active_groups.len() > target_ids.len() {
-                let group = self.active_groups.pop().expect("active group suffix");
-                if group.checkpoint_pinned {
-                    self.retain_active_group(group);
-                }
-                self.active_sequence.truncate(group.start);
-            }
-            if let Some(group) = self.active_groups.last_mut() {
-                let target_entries = cursor.group_entry_position() as usize;
-                self.active_sequence
-                    .truncate(group.start.saturating_add(1).saturating_add(target_entries));
-                group.entries = target_entries;
-                group.sparse_start = group
-                    .sparse_start
-                    .filter(|start| *start < self.active_sequence.len);
-            } else {
-                self.active_sequence.truncate(0);
-            }
-            self.save_stack = cursor.save_stack;
-            self.save_position = cursor.save_position;
-            self.refresh_group_capacity_bytes();
-            return RestoredGroups::Truncate(target_ids.len());
-        }
-
-        let (target_sequence, target_groups) = if target_ids.is_empty() {
-            (SaveSequence::default(), Vec::new())
-        } else {
-            self.capture_target_path(cursor)
-        };
-        while let Some(group) = self.active_groups.pop() {
-            if group.checkpoint_pinned {
-                self.retain_active_group(group);
-            }
-        }
+        debug_assert!(self.validate_cursor(cursor));
         self.active_sequence.truncate(0);
-        self.remove_retained_groups(&target_ids);
-        self.retained_groups
-            .retain(|group| !target_ids.contains(&group.id));
-        self.active_sequence = target_sequence;
-        self.active_groups = target_groups;
+        self.active_groups.clear();
         self.save_stack = cursor.save_stack;
         self.save_position = cursor.save_position;
         self.refresh_group_capacity_bytes();
-        RestoredGroups::Replace(self.active_groups.iter().map(|group| group.frame).collect())
-    }
-
-    pub(crate) fn active_group_frames(&self) -> impl Iterator<Item = GroupFrame> + '_ {
-        self.active_groups.iter().map(|group| group.frame)
+        RestoredGroups::Truncate(0)
     }
 
     pub(crate) fn group_save_len(&self) -> usize {
-        self.active_sequence
-            .len
-            .saturating_add(self.retained_sequence.len)
-            .saturating_add(self.retained_groups.len())
+        self.active_sequence.len
     }
 
     #[cfg(feature = "profiling")]
     fn group_mutation_len(&self) -> usize {
-        self.active_groups
-            .iter()
-            .map(|group| group.entries)
-            .chain(self.retained_groups.iter().map(|group| group.entries))
-            .sum()
+        self.active_groups.iter().map(|group| group.entries).sum()
     }
 
     #[cfg(feature = "profiling")]
     fn group_mutation_capacity(&self) -> usize {
         self.active_sequence
             .capacity_slots()
-            .saturating_add(self.retained_sequence.capacity_slots())
             .saturating_add(self.sparse_scratch.capacity())
     }
 
@@ -1378,16 +1206,10 @@ impl<G> SaveJournal<G> {
     fn group_capacity_bytes_census(&self) -> usize {
         self.active_sequence
             .capacity_bytes
-            .saturating_add(self.retained_sequence.capacity_bytes)
             .saturating_add(
                 self.active_groups
                     .capacity()
                     .saturating_mul(core::mem::size_of::<GroupMark>()),
-            )
-            .saturating_add(
-                self.retained_groups
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<RetainedGroup>()),
             )
             .saturating_add(
                 self.sparse_scratch
@@ -1400,16 +1222,10 @@ impl<G> SaveJournal<G> {
         self.group_capacity_bytes = self
             .active_sequence
             .capacity_bytes
-            .saturating_add(self.retained_sequence.capacity_bytes)
             .saturating_add(
                 self.active_groups
                     .capacity()
                     .saturating_mul(core::mem::size_of::<GroupMark>()),
-            )
-            .saturating_add(
-                self.retained_groups
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<RetainedGroup>()),
             )
             .saturating_add(
                 self.sparse_scratch
@@ -1420,182 +1236,6 @@ impl<G> SaveJournal<G> {
 
     fn refresh_checkpoint_capacity_bytes(&mut self) {
         self.checkpoint_capacity_bytes = self.checkpoint_pool.allocated_heap_bytes();
-    }
-
-    #[cfg(test)]
-    fn collect_active_group_records(&self, group: GroupMark) -> Vec<Mutation<G>> {
-        let mut records = Vec::with_capacity(group.entries);
-        for index in group.start.saturating_add(1)..self.active_sequence.len {
-            let Some(JournalEntry::Mutation(mutation)) = self.active_sequence.entry(index) else {
-                continue;
-            };
-            if mutation.saved_at() == Some(group.frame.level()) {
-                records.push(mutation.clone());
-            }
-        }
-        records
-    }
-
-    fn retain_active_group(&mut self, group: GroupMark) {
-        let retained_start = self.retained_sequence.len;
-        let mut sparse_start = None;
-        for index in group.start.saturating_add(1)..self.active_sequence.len {
-            let Some(JournalEntry::Mutation(mutation)) = self.active_sequence.entry(index) else {
-                continue;
-            };
-            if mutation.saved_at() != Some(group.frame.level()) {
-                continue;
-            }
-            let retained_index = self.retained_sequence.len;
-            self.retained_sequence
-                .append(JournalEntry::Mutation(mutation.clone()));
-            if sparse_start.is_none() && is_extended_register_cell(mutation.cell()) {
-                sparse_start = Some(retained_index);
-            }
-        }
-        self.retained_groups.push(RetainedGroup {
-            id: group.id,
-            parent: group.parent,
-            frame: group.frame,
-            start: retained_start,
-            entries: self.retained_sequence.len.saturating_sub(retained_start),
-            sparse_start,
-        });
-    }
-
-    fn remove_retained_groups(&mut self, target_ids: &[u64]) {
-        let mut destination = 0;
-        for index in 0..self.retained_groups.len() {
-            let group = self.retained_groups[index];
-            if target_ids.contains(&group.id) {
-                continue;
-            }
-            for offset in 0..group.entries {
-                self.retained_sequence
-                    .swap_entries(group.start.saturating_add(offset), destination);
-                destination = destination.saturating_add(1);
-            }
-            self.retained_groups[index] = RetainedGroup {
-                start: destination.saturating_sub(group.entries),
-                sparse_start: group.sparse_start.map(|sparse| {
-                    destination
-                        .saturating_sub(group.entries)
-                        .saturating_add(sparse.saturating_sub(group.start))
-                }),
-                ..group
-            };
-        }
-        self.retained_sequence.truncate(destination);
-    }
-
-    fn active_group(&self, id: u64) -> Option<GroupMark> {
-        self.active_groups
-            .iter()
-            .find(|group| group.id == id)
-            .copied()
-    }
-
-    fn retained_group(&self, id: u64) -> Option<RetainedGroup> {
-        self.retained_groups
-            .iter()
-            .find(|group| group.id == id)
-            .copied()
-    }
-
-    fn group_metadata(&self, id: u64) -> Option<GroupMetadata> {
-        self.active_group(id)
-            .map(GroupMetadata::Active)
-            .or_else(|| self.retained_group(id).map(GroupMetadata::Retained))
-    }
-
-    fn target_group_ids(&self, cursor: JournalCursor<G>) -> Vec<u64> {
-        let mut ids = Vec::with_capacity(cursor.group_depth() as usize);
-        let mut id = cursor.group_id();
-        while id != 0 {
-            ids.push(id);
-            id = self
-                .group_metadata(id)
-                .expect("validated group cursor")
-                .parent();
-        }
-        ids.reverse();
-        ids
-    }
-
-    fn capture_target_path(&self, cursor: JournalCursor<G>) -> (SaveSequence<G>, Vec<GroupMark>) {
-        let ids = self.target_group_ids(cursor);
-        let mut sequence = SaveSequence::default();
-        let mut groups = Vec::with_capacity(ids.len());
-        for id in ids {
-            let source = self
-                .group_metadata(id)
-                .expect("validated target group remains in journal history");
-            let old_frame = source.frame();
-            let marker = sequence.len;
-            let frame = old_frame.with_journal_start(
-                u32::try_from(marker.saturating_add(1)).expect("group save stack exceeds u32"),
-            );
-            sequence.append(JournalEntry::GroupEnter(frame));
-            let limit = if id == cursor.group_id() {
-                cursor.group_entry_position() as usize
-            } else {
-                source.entries()
-            };
-            let mut entries = 0;
-            let mut sparse_start = None;
-            match source {
-                GroupMetadata::Active(group) => {
-                    for index in group.start.saturating_add(1)..self.active_sequence.len {
-                        let Some(JournalEntry::Mutation(mutation)) =
-                            self.active_sequence.entry(index)
-                        else {
-                            continue;
-                        };
-                        if mutation.saved_at() != Some(old_frame.level()) || entries >= limit {
-                            continue;
-                        }
-                        let destination = sequence.len;
-                        sequence.append(JournalEntry::Mutation(mutation.clone()));
-                        if sparse_start.is_none() && is_extended_register_cell(mutation.cell()) {
-                            sparse_start = Some(destination);
-                        }
-                        entries += 1;
-                    }
-                }
-                GroupMetadata::Retained(group) => {
-                    let source_sparse_start = group.sparse_start;
-                    for index in group.start..group.start.saturating_add(group.entries) {
-                        let Some(JournalEntry::Mutation(mutation)) =
-                            self.retained_sequence.entry(index)
-                        else {
-                            continue;
-                        };
-                        if entries >= limit {
-                            break;
-                        }
-                        let destination = sequence.len;
-                        sequence.append(JournalEntry::Mutation(mutation.clone()));
-                        if sparse_start.is_none()
-                            && (source_sparse_start == Some(index)
-                                || is_extended_register_cell(mutation.cell()))
-                        {
-                            sparse_start = Some(destination);
-                        }
-                        entries += 1;
-                    }
-                }
-            }
-            groups.push(GroupMark {
-                id,
-                parent: source.parent(),
-                frame,
-                start: marker,
-                entries,
-                sparse_start,
-                checkpoint_pinned: true,
-            });
-        }
-        (sequence, groups)
     }
 
     fn advance_save_serial(&mut self) {
@@ -1658,35 +1298,6 @@ impl<G> SaveJournal<G> {
     #[cfg(feature = "profiling")]
     fn record_profile_peak(&mut self) {
         self.profile.peak_entries = self.profile.peak_entries.max(self.retained_len());
-    }
-}
-
-#[derive(Clone, Copy)]
-enum GroupMetadata {
-    Active(GroupMark),
-    Retained(RetainedGroup),
-}
-
-impl GroupMetadata {
-    const fn parent(self) -> u64 {
-        match self {
-            Self::Active(group) => group.parent,
-            Self::Retained(group) => group.parent,
-        }
-    }
-
-    const fn frame(self) -> GroupFrame {
-        match self {
-            Self::Active(group) => group.frame,
-            Self::Retained(group) => group.frame,
-        }
-    }
-
-    const fn entries(self) -> usize {
-        match self {
-            Self::Active(group) => group.entries,
-            Self::Retained(group) => group.entries,
-        }
     }
 }
 

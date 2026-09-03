@@ -3,6 +3,7 @@ use super::{
     FreshParameterInstallation, FreshParameterProfile, GroupRestorationCell,
     GroupRestorationOutcome, GroupRestorationValue,
 };
+use crate::StateError;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::GroupKind;
 use crate::font::PdfFontCode;
@@ -116,7 +117,7 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .admit_symbol(selector.symbol())
             .expect("admit selector");
-        let before = state.journal_cursor();
+        let before = state.journal_cursor().expect("root checkpoint");
 
         state
             .assign_meaning(
@@ -144,7 +145,7 @@ fn repeated_dense_writes_construct_only_the_first_checkpoint_inverse() {
     const OWNER: usize = 14;
 
     let mut state = state();
-    let warm = state.journal_cursor();
+    let warm = state.journal_cursor().expect("root checkpoint");
     state
         .assign_count(7, 1, AssignmentScope::Global)
         .expect("warm checkpoint storage");
@@ -185,12 +186,37 @@ fn repeated_dense_writes_construct_only_the_first_checkpoint_inverse() {
 }
 
 #[test]
+fn checkpoint_delta_records_each_distinct_first_touch_without_scanning_the_bank() {
+    let mut state = state();
+    let _ = state.journal_cursor().expect("root checkpoint");
+
+    for count in [1_usize, 64, 65] {
+        let before = state.journal().checkpoint_entry_count();
+        for index in 0..count {
+            state
+                .assign_count(
+                    u16::try_from(index).expect("test register index fits"),
+                    i32::try_from(count + index).expect("test value fits"),
+                    AssignmentScope::Global,
+                )
+                .expect("distinct dense assignment");
+        }
+        assert_eq!(
+            state.journal().checkpoint_entry_count() - before,
+            count,
+            "one checkpoint inverse per distinct first touch ({count} cells)"
+        );
+        let _ = state.journal_cursor().expect("root checkpoint");
+    }
+}
+
+#[test]
 fn checkpoint_values_rewind_and_redo_without_consuming_the_accepted_delta() {
     let mut state = state();
     state
         .assign_count(0, 1, AssignmentScope::Global)
         .expect("base assignment");
-    let checkpoint = state.journal_cursor();
+    let checkpoint = state.journal_cursor().expect("root checkpoint");
     state
         .assign_count(0, 2, AssignmentScope::Global)
         .expect("first accepted assignment");
@@ -218,11 +244,11 @@ fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() 
     state
         .assign_count(0, 1, AssignmentScope::Global)
         .expect("base assignment");
-    let early = state.journal_cursor();
+    let early = state.journal_cursor().expect("root checkpoint");
     state
         .assign_count(0, 2, AssignmentScope::Global)
         .expect("accepted assignment");
-    let discarded_sibling = state.journal_cursor();
+    let discarded_sibling = state.journal_cursor().expect("root checkpoint");
     let dense = state.checkpoint_cursor();
 
     let accepted = state
@@ -231,12 +257,14 @@ fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() 
     state
         .assign_count(0, 10, AssignmentScope::Global)
         .expect("first candidate assignment");
-    state.accept_checkpoint_candidate(accepted);
+    state
+        .accept_checkpoint_candidate(accepted)
+        .expect("accept candidate");
     assert_eq!(state.count(0).expect("accepted count"), 10);
     assert!(state.validate_restore(early).is_ok());
     assert!(state.validate_restore(discarded_sibling).is_err());
 
-    let surviving_sibling = state.journal_cursor();
+    let surviving_sibling = state.journal_cursor().expect("root checkpoint");
     state
         .assign_count(0, 11, AssignmentScope::Global)
         .expect("later accepted assignment");
@@ -259,7 +287,9 @@ fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() 
     state
         .assign_count(0, 30, AssignmentScope::Global)
         .expect("replacement assignment");
-    state.accept_checkpoint_candidate(accepted);
+    state
+        .accept_checkpoint_candidate(accepted)
+        .expect("accept candidate");
     assert_eq!(state.count(0).expect("replacement count"), 30);
     assert!(state.validate_restore(early).is_ok());
     assert!(state.validate_restore(surviving_sibling).is_err());
@@ -267,24 +297,30 @@ fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() 
 }
 
 #[test]
-fn checkpoint_inside_a_group_restores_the_group_save_cursor_without_copying_it() {
+fn checkpoint_inside_a_group_is_rejected_without_disturbing_group_saves() {
     let mut state = state();
     state
         .assign_count(0, 1, AssignmentScope::Global)
         .expect("base assignment");
+    let before = state.journal_cursor().expect("root checkpoint");
     state.begin_group(GroupKind::Simple, 1).expect("group");
     state
         .assign_count(0, 2, AssignmentScope::Local)
         .expect("local assignment");
-    let checkpoint = state.journal_cursor();
+    assert_eq!(
+        state.journal_cursor(),
+        Err(StateError::CheckpointIneligible),
+        "group-local checkpoint admission is rejected at the state boundary"
+    );
+    assert_eq!(
+        state.restore(before),
+        Err(StateError::CheckpointIneligible),
+        "restore admission is rejected while the group journal is live"
+    );
+    assert_eq!(state.count(0).expect("count remains local"), 2);
     state.end_group(GroupKind::Simple).expect("first close");
     assert_eq!(state.count(0).expect("count"), 1);
-
-    state.restore(checkpoint).expect("restore inside group");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.count(0).expect("count"), 2);
-    state.end_group(GroupKind::Simple).expect("restored close");
-    assert_eq!(state.count(0).expect("count"), 1);
+    assert_eq!(state.group_depth(), 0);
 }
 
 #[test]
@@ -370,98 +406,63 @@ fn group_unwind_visits_only_its_direct_segment() {
 }
 
 #[test]
-fn checkpoint_candidate_rejects_after_rehoming_closed_group_segments() {
+fn checkpoint_candidate_rejection_drops_candidate_group_records() {
     let mut state = state();
     state
         .assign_count(0, 1, AssignmentScope::Global)
         .expect("base value");
     state
-        .begin_group(GroupKind::Simple, 1)
-        .expect("outer group");
-    state
-        .assign_count(0, 2, AssignmentScope::Local)
-        .expect("outer value");
-    state
-        .begin_group(GroupKind::Simple, 2)
-        .expect("inner group");
-    state
-        .assign_count(0, 3, AssignmentScope::Local)
-        .expect("inner value");
-    let cursor = state.journal_cursor();
+        .assign_count(0, 2, AssignmentScope::Global)
+        .expect("accepted value");
+    let cursor = state.journal_cursor().expect("root checkpoint");
     let dense = state.checkpoint_cursor();
-
-    state.end_group(GroupKind::Simple).expect("close inner");
-    state.end_group(GroupKind::Simple).expect("close outer");
-    assert_eq!(state.group_depth(), 0);
-    assert_eq!(state.count(0).expect("closed value"), 1);
 
     let accepted = state
         .begin_checkpoint_candidate(cursor, dense)
-        .expect("rehome cursor groups");
-    assert_eq!(state.group_depth(), 2);
-    assert_eq!(state.count(0).expect("candidate value"), 3);
+        .expect("root candidate");
     state
-        .assign_count(0, 4, AssignmentScope::Global)
-        .expect("candidate global");
+        .begin_group(GroupKind::Simple, 1)
+        .expect("candidate group");
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("candidate local");
+    assert_eq!(state.group_depth(), 1);
     state
         .reject_checkpoint_candidate(cursor, dense, accepted)
         .expect("reject candidate");
     assert_eq!(state.group_depth(), 0);
-    assert_eq!(state.count(0).expect("rejected value"), 1);
-
-    state.restore(cursor).expect("restore closed-group cursor");
-    assert_eq!(state.group_depth(), 2);
-    assert_eq!(state.count(0).expect("restored value"), 3);
-    state.end_group(GroupKind::Simple).expect("restore inner");
-    state.end_group(GroupKind::Simple).expect("restore outer");
-    assert_eq!(state.count(0).expect("final value"), 1);
+    assert_eq!(state.count(0).expect("rejected value"), 2);
 }
 
 #[test]
-fn checkpoint_candidate_rejects_with_open_group_suffix() {
+fn checkpoint_candidate_rejection_restores_the_accepted_root() {
     let mut state = state();
     state
         .assign_count(0, 1, AssignmentScope::Global)
         .expect("base value");
     state
-        .begin_group(GroupKind::Simple, 1)
-        .expect("outer group");
-    state
-        .assign_count(0, 2, AssignmentScope::Local)
-        .expect("outer value");
-    let cursor = state.journal_cursor();
-    state
-        .begin_group(GroupKind::Simple, 2)
-        .expect("inner group");
-    state
-        .assign_count(0, 3, AssignmentScope::Local)
-        .expect("inner value");
+        .assign_count(0, 2, AssignmentScope::Global)
+        .expect("accepted value");
+    let cursor = state.journal_cursor().expect("root checkpoint");
     let dense = state.checkpoint_cursor();
-
     let accepted = state
         .begin_checkpoint_candidate(cursor, dense)
-        .expect("rewind to outer cursor");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.count(0).expect("candidate value"), 2);
+        .expect("root candidate");
     state
-        .begin_group(GroupKind::Simple, 3)
-        .expect("candidate inner group");
+        .begin_group(GroupKind::Simple, 1)
+        .expect("candidate group");
     state
         .assign_count(0, 4, AssignmentScope::Local)
         .expect("candidate value");
     state
         .reject_checkpoint_candidate(cursor, dense, accepted)
         .expect("reject candidate");
-    assert_eq!(state.group_depth(), 2);
-    assert_eq!(state.count(0).expect("rejected value"), 3);
-
-    state.end_group(GroupKind::Simple).expect("original inner");
-    state.end_group(GroupKind::Simple).expect("original outer");
-    assert_eq!(state.count(0).expect("final value"), 1);
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.count(0).expect("rejected value"), 2);
 }
 
 #[test]
-fn restoring_closed_groups_does_not_duplicate_retained_sequence_ranges() {
+fn checkpoint_admission_rejects_each_nested_group_depth() {
     let mut state = state();
     state
         .begin_group(GroupKind::Simple, 1)
@@ -469,28 +470,26 @@ fn restoring_closed_groups_does_not_duplicate_retained_sequence_ranges() {
     state
         .assign_count(0, 1, AssignmentScope::Local)
         .expect("outer value");
-    let outer = state.journal_cursor();
+    assert_eq!(
+        state.journal_cursor(),
+        Err(StateError::CheckpointIneligible)
+    );
     state
         .begin_group(GroupKind::Simple, 2)
         .expect("inner group");
     state
         .assign_count(1, 2, AssignmentScope::Local)
         .expect("inner value");
-    let inner = state.journal_cursor();
+    assert_eq!(
+        state.journal_cursor(),
+        Err(StateError::CheckpointIneligible)
+    );
     state.end_group(GroupKind::Simple).expect("close inner");
     state.end_group(GroupKind::Simple).expect("close outer");
-    let before_restore = state.journal().group_save_len();
-    assert!(before_restore >= 2);
-
-    state.restore(inner).expect("restore closed inner group");
-    assert_eq!(state.group_depth(), 2);
-    assert_eq!(state.journal().group_save_len(), 4);
-    assert_eq!(state.count(0).expect("outer value"), 1);
-    assert_eq!(state.count(1).expect("inner value"), 2);
-
-    state.restore(outer).expect("restore outer cursor");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.journal().group_save_len(), 4);
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.journal().group_save_len(), 0);
+    assert_eq!(state.count(0).expect("outer value"), 0);
+    assert_eq!(state.count(1).expect("inner value"), 0);
 }
 
 #[test]
@@ -526,7 +525,10 @@ fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
         4,
         "the command-owned one-word push is newer than the tied state record"
     );
-    let checkpoint = state.journal_cursor();
+    assert_eq!(
+        state.journal_cursor(),
+        Err(StateError::CheckpointIneligible)
+    );
 
     state
         .assign_dimension(0, Scaled::from_raw(1), AssignmentScope::Local)
@@ -535,11 +537,6 @@ fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
         state.checked_save_stack_words(1, Some(aftergroup_position), false),
         5,
         "the later state record supersedes aftergroup ordering"
-    );
-    state.restore(checkpoint).expect("projection rollback");
-    assert_eq!(
-        state.checked_save_stack_words(1, Some(aftergroup_position), false),
-        4
     );
 
     state.end_group(GroupKind::Simple).expect("group closes");
@@ -743,7 +740,7 @@ fn local_after_global_restores_the_global_value() {
 }
 
 #[test]
-fn journal_cursor_restores_group_exit_and_assignment_exactly() {
+fn journal_cursor_rejects_group_exit_and_assignment_capture() {
     let mut state = state();
     state
         .assign_dimension(0, Scaled::from_raw(5), AssignmentScope::Global)
@@ -752,18 +749,13 @@ fn journal_cursor_restores_group_exit_and_assignment_exactly() {
     state
         .assign_dimension(0, Scaled::from_raw(7), AssignmentScope::Local)
         .expect("local");
-    let inside = state.journal_cursor();
+    assert_eq!(
+        state.journal_cursor(),
+        Err(StateError::CheckpointIneligible)
+    );
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(5));
-    assert_ne!(
-        state.journal().retained_len(),
-        0,
-        "the live checkpoint pins this group"
-    );
-
-    state.restore(inside).expect("restore inside group");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(7));
+    assert_eq!(state.journal().group_save_len(), 0);
 }
 
 #[test]
@@ -780,16 +772,76 @@ fn closed_group_saves_pop_when_no_checkpoint_or_operation_pins_them() {
 }
 
 #[test]
-fn rollback_to_pre_group_cursor_removes_group_and_writes() {
+fn restore_to_pre_group_cursor_rejects_live_group() {
     let mut state = state();
-    let before = state.journal_cursor();
+    let before = state.journal_cursor().expect("root checkpoint");
     state.begin_group(GroupKind::Simple, 1).expect("group");
     state
         .assign_count(0, 9, AssignmentScope::Local)
         .expect("local");
-    state.restore(before).expect("restore");
-    assert_eq!(state.group_depth(), 0);
-    assert_eq!(state.count(0).expect("read"), 0);
+    assert_eq!(state.restore(before), Err(StateError::CheckpointIneligible));
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(0).expect("live local"), 9);
+    state.end_group(GroupKind::Simple).expect("end group");
+    assert_eq!(state.count(0).expect("restored"), 0);
+}
+
+#[test]
+fn state_operation_rollback_truncates_preexisting_group_suffix_exactly() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base");
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("outer group");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("outer local");
+
+    let operation = state.begin_state_transaction();
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("operation local");
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("nested group");
+    state
+        .assign_count(0, 4, AssignmentScope::Local)
+        .expect("nested local");
+
+    state
+        .rollback_state_transaction(&operation)
+        .expect("rollback operation");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(0).expect("rolled back count"), 2);
+    assert_eq!(state.journal().group_save_len(), 2);
+    state.end_group(GroupKind::Simple).expect("outer end");
+    assert_eq!(state.count(0).expect("restored count"), 1);
+}
+
+#[test]
+fn state_operation_rollback_preserves_checkpoint_first_touch_stamp() {
+    let mut state = state();
+    let _ = state.journal_cursor().expect("root checkpoint");
+    let operation = state.begin_state_transaction();
+    state
+        .assign_count(0, 9, AssignmentScope::Global)
+        .expect("operation write");
+    assert_eq!(state.journal().checkpoint_entry_count(), 1);
+
+    state
+        .rollback_state_transaction(&operation)
+        .expect("rollback operation");
+    let entries = state.journal().checkpoint_entry_count();
+    state
+        .assign_count(0, 10, AssignmentScope::Global)
+        .expect("post-rollback write");
+    assert_eq!(
+        state.journal().checkpoint_entry_count(),
+        entries,
+        "the surviving checkpoint delta prevents a duplicate first touch"
+    );
 }
 
 #[test]
@@ -944,7 +996,7 @@ fn font_runtime_growth_pdf_codes_and_ligatures_rollback_exactly() {
     state
         .prepare_pdf_font_code_table(font, PdfFontCode::Ef, [1000; 256])
         .expect("prepare PDF code table");
-    let before = state.journal_cursor();
+    let before = state.journal_cursor().expect("root checkpoint");
     state.begin_group(GroupKind::Simple, 1).expect("group");
     state
         .assign_font_dimen(font, 3, Scaled::from_raw(30), AssignmentScope::Local)
@@ -964,7 +1016,13 @@ fn font_runtime_growth_pdf_codes_and_ligatures_rollback_exactly() {
     );
     assert!(state.pdf_font_ligatures_disabled(font).expect("ligatures"));
 
-    state.restore(before).expect("restore checkpoint");
+    assert_eq!(
+        state.restore(before),
+        Err(StateError::CheckpointIneligible),
+        "checkpoint restore is rejected while the font group is open"
+    );
+    assert_eq!(state.group_depth(), 1);
+    state.end_group(GroupKind::Simple).expect("end group");
     assert_eq!(state.font_parameter_count(font).expect("count"), 1);
     assert_eq!(
         state
@@ -978,7 +1036,7 @@ fn font_runtime_growth_pdf_codes_and_ligatures_rollback_exactly() {
 #[test]
 fn foreign_checkpoint_rejection_does_not_mutate_font_runtime() {
     let font = FontId::new(0);
-    let foreign = state().journal_cursor();
+    let foreign = state().journal_cursor().expect("root checkpoint");
     let mut state = state_with_font(&[Scaled::from_raw(10)]);
     state
         .assign_font_hyphen_char(font, 99, AssignmentScope::Global)

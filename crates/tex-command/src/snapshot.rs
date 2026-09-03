@@ -1221,6 +1221,7 @@ pub enum CommandSummaryError {
     AttemptSuspended,
     TimelineCapacity,
     GenerationUnavailable,
+    CheckpointIneligible,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -1244,6 +1245,9 @@ impl fmt::Display for CommandSummaryError {
             Self::AttemptSuspended => "the command attempt is owned by a suspension",
             Self::TimelineCapacity => "the command checkpoint timeline is full",
             Self::GenerationUnavailable => "the command generation is unavailable",
+            Self::CheckpointIneligible => {
+                "the state checkpoint boundary is inside a TeX group or transaction"
+            }
         })
     }
 }

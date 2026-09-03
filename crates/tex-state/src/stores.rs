@@ -247,11 +247,11 @@ impl<G> StateCore<G> {
         if !self.generation.generation().validates_cursor(generation) {
             return Err(StateError::InvalidCursor);
         }
+        let dense = self.state.begin_checkpoint_candidate(journal, dense)?;
         let generation_tail = self
             .generation
             .generation_mut()
             .begin_checkpoint_candidate(generation);
-        let dense = self.state.begin_checkpoint_candidate(journal, dense)?;
         Ok(AcceptedStateCoreTail {
             dense,
             generation: generation_tail,
@@ -274,7 +274,9 @@ impl<G> StateCore<G> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedStateCoreTail<G>) {
-        self.state.accept_checkpoint_candidate(tail.dense);
+        self.state
+            .accept_checkpoint_candidate(tail.dense)
+            .expect("validated state candidate is at a quiescent checkpoint boundary");
         self.generation
             .generation_mut()
             .accept_checkpoint_candidate(tail.generation);

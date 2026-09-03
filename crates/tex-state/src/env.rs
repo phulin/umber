@@ -444,6 +444,11 @@ pub enum StateError {
     ForeignSession,
     InvalidCursor,
     CellKindMismatch,
+    /// A checkpoint was requested while TeX grouping or a state transaction
+    /// still owns save records. Checkpoints are admitted only at level zero.
+    CheckpointIneligible,
+    /// The monotonic per-cell checkpoint epoch cannot be advanced further.
+    CheckpointEpochExhausted,
     GroupDepthExhausted,
     GroupLineageExhausted,
     GroupMismatch(GroupMismatch),
@@ -490,7 +495,6 @@ pub(crate) struct DenseState<G> {
 pub(crate) struct AcceptedDenseStateTail<G> {
     journal: AcceptedJournalTail<G>,
     font_runtime: AcceptedFontRuntimeTail,
-    groups: Vec<GroupFrame>,
     next_group_lineage: u64,
 }
 
@@ -1636,10 +1640,17 @@ impl<G> DenseState<G> {
         )
     }
 
-    #[must_use]
-    pub(crate) fn journal_cursor(&mut self) -> JournalCursor<G> {
+    #[must_use = "handle the checkpoint admission result"]
+    pub(crate) fn journal_cursor(&mut self) -> Result<JournalCursor<G>, StateError> {
         let group_depth = self.groups.len();
         self.journal_mut().checkpoint_cursor(group_depth)
+    }
+
+    /// Reports whether this dense state is at the only legal checkpoint
+    /// boundary: TeX group depth zero, no group-save records, and no pending
+    /// operation undo records.
+    pub(crate) fn checkpoint_eligible(&self) -> bool {
+        self.groups.is_empty() && self.journal().checkpoint_eligible()
     }
 
     #[must_use]
@@ -1748,14 +1759,8 @@ impl<G> DenseState<G> {
             .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
         let start = frame.journal_start as usize;
         let sparse_marker = self.journal().group_sparse_start(frame);
-        let pinned = self.journal().group_checkpoint_pinned(frame);
         let mut sparse = self.journal_mut().take_sparse_scratch();
         sparse.clear();
-        let mut retained = if pinned {
-            Vec::with_capacity(restoration_count)
-        } else {
-            Vec::new()
-        };
         // A single direct reverse walk is enough for both ordinary dense saves
         // and e-TeX sparse saves.  Sparse records are deferred in a small
         // caller-owned scratch vector so the dense records above the
@@ -1767,9 +1772,6 @@ impl<G> DenseState<G> {
                     continue;
                 };
                 if saved.saved_at() == Some(frame.level) {
-                    if pinned {
-                        retained.push(saved.clone());
-                    }
                     if sparse_marker.is_some_and(|marker| {
                         index >= marker && is_extended_register_cell(saved.cell())
                     }) {
@@ -1799,9 +1801,7 @@ impl<G> DenseState<G> {
         self.journal_mut().return_sparse_scratch(sparse);
         replay?;
         self.groups.pop();
-        retained.reverse();
-        self.journal_mut()
-            .record_group_exit_with_records(frame, retained);
+        self.journal_mut().record_group_exit_with_records(frame);
         Ok(GroupRestorationReceipt { frame, entries })
     }
 
@@ -1866,10 +1866,8 @@ impl<G> DenseState<G> {
             self.swap_checkpoint_delta(delta)
                 .expect("validated dense checkpoint value swaps in place");
         });
-        match journal.restore_group_cursor(cursor) {
-            RestoredGroups::Truncate(len) => self.groups.truncate(len),
-            RestoredGroups::Replace(groups) => self.groups = groups,
-        }
+        let RestoredGroups::Truncate(len) = journal.restore_group_cursor(cursor);
+        self.groups.truncate(len);
         journal.truncate_checkpoint(cursor);
         self.journal = Some(journal);
         Ok(())
@@ -1882,6 +1880,9 @@ impl<G> DenseState<G> {
         cursor: JournalCursor<G>,
         dense_cursor: DenseStateCursor,
     ) -> Result<AcceptedDenseStateTail<G>, StateError> {
+        if !self.checkpoint_eligible() {
+            return Err(StateError::CheckpointIneligible);
+        }
         self.validate_restore(cursor)?;
         if !self.validate_checkpoint_cursor(dense_cursor) {
             return Err(StateError::InvalidCursor);
@@ -1894,16 +1895,8 @@ impl<G> DenseState<G> {
             self.swap_checkpoint_delta(delta)
                 .expect("validated accepted dense value swaps in place");
         });
-        let journal_tail = journal.begin_checkpoint_candidate(cursor);
-        let accepted_groups = if journal_tail.is_root_candidate() {
-            Vec::new()
-        } else {
-            std::mem::take(&mut self.groups)
-        };
+        let journal_tail = journal.begin_checkpoint_candidate(cursor)?;
         let accepted_next_group_lineage = self.next_group_lineage;
-        if !journal_tail.is_root_candidate() {
-            self.groups = journal.active_group_frames().collect::<Vec<GroupFrame>>();
-        }
         let font_runtime = self
             .font_runtime
             .begin_checkpoint_candidate(dense_cursor.font_runtime_rows as usize);
@@ -1911,7 +1904,6 @@ impl<G> DenseState<G> {
         Ok(AcceptedDenseStateTail {
             journal: journal_tail,
             font_runtime,
-            groups: accepted_groups,
             next_group_lineage: accepted_next_group_lineage,
         })
     }
@@ -1940,23 +1932,39 @@ impl<G> DenseState<G> {
             self.swap_checkpoint_delta(delta)
                 .expect("validated accepted dense value redoes in place");
         });
+        // Candidate grouping is intentionally not part of the accepted tail.
+        // Abandoning a candidate therefore drops every open candidate group as
+        // one scalar-owned suffix before the accepted delta is restored.
+        self.groups.clear();
         journal.reject_checkpoint_candidate(tail.journal);
-        self.groups = tail.groups;
         self.next_group_lineage = tail.next_group_lineage;
         self.journal = Some(journal);
         Ok(())
     }
 
-    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedDenseStateTail<G>) {
-        self.journal_mut().accept_checkpoint_candidate();
+    pub(crate) fn accept_checkpoint_candidate(
+        &mut self,
+        tail: AcceptedDenseStateTail<G>,
+    ) -> Result<(), StateError> {
+        self.journal_mut().accept_checkpoint_candidate()?;
         drop(tail);
+        Ok(())
     }
 
     pub(crate) fn begin_state_transaction(&mut self) -> StateOperation<G> {
         let group_depth = self.groups.len();
         let save_stack = self.journal().current_save_stack();
+        let save_position = self.journal().current_save_position();
+        let (group_entries, group_sparse_start) = self.journal().current_group_save_metadata();
         let position = self.journal_mut().begin_transaction();
-        StateOperation::transaction(position, group_depth, save_stack)
+        StateOperation::transaction(
+            position,
+            group_depth,
+            save_stack,
+            save_position,
+            group_entries,
+            group_sparse_start,
+        )
     }
 
     pub(crate) fn commit_state_transaction(&mut self, position: usize) {
@@ -1974,19 +1982,23 @@ impl<G> DenseState<G> {
                 .journal()
                 .transaction_entry(index)
                 .expect("transaction suffix length remains stable");
+            // The checkpoint lane is independent of this operation lane. If
+            // the operation's first write also created a checkpoint delta,
+            // restoring the old value must retain the current interval serial
+            // or the next write would look like a second first touch.
+            let save_serial = self.journal().save_serial();
             self.write_cell(
                 mutation.cell(),
-                BankCell::new(
-                    mutation.before,
-                    mutation.before_level,
-                    mutation.before_save_serial,
-                ),
+                BankCell::new(mutation.before, mutation.before_level, save_serial),
             )?;
         }
-        if !self
-            .journal_mut()
-            .rollback_group_suffix(operation.group_depth(), operation.save_stack())
-        {
+        if !self.journal_mut().rollback_group_suffix(
+            operation.group_depth(),
+            operation.save_stack(),
+            operation.save_position(),
+            operation.group_entries(),
+            operation.group_sparse_start(),
+        ) {
             return Err(StateError::InvalidCursor);
         }
         self.groups.truncate(operation.group_depth());
@@ -2279,6 +2291,9 @@ impl<G> DenseState<G> {
     }
 
     pub(crate) fn validate_restore(&self, cursor: JournalCursor<G>) -> Result<(), StateError> {
+        if !self.checkpoint_eligible() {
+            return Err(StateError::CheckpointIneligible);
+        }
         if !self.journal().validate_cursor(cursor) {
             return Err(StateError::InvalidCursor);
         }

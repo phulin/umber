@@ -6,7 +6,7 @@ use tex_state::env::AssignmentScope;
 use tex_state::interner::InternerBudget;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TokenWord};
-use tex_state::{ReachabilityStore, World};
+use tex_state::{GroupKind, ReachabilityStore, World};
 
 use super::{
     CheckpointEligibility, CheckpointOwnerFamily, CheckpointRestoreError, EngineBoundary,
@@ -166,6 +166,33 @@ fn ordinary_and_requested_capture_never_traverse_mode_payload_for_identity() {
             0,
             "missing component roots fail closed without a payload traversal"
         );
+    });
+}
+
+#[test]
+fn engine_checkpoint_rejects_an_open_tex_group_before_publishing_roots() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        universe
+            .begin_group(GroupKind::Simple, 1)
+            .expect("open test group");
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        assert!(
+            matches!(
+                EngineCheckpoint::capture_checkpoint(
+                    CheckpointEligibility::named(EngineBoundary::OuterParagraphEnd),
+                    &mut command,
+                    &mut modes,
+                    universe,
+                    ExecutionBudgetCounters::default(),
+                ),
+                Err(tex_command::CommandSummaryError::CheckpointIneligible)
+            ),
+            "capture fails before publishing command or page roots"
+        );
+        universe
+            .end_group(GroupKind::Simple)
+            .expect("close test group");
     });
 }
 

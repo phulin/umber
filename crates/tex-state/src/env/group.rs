@@ -96,16 +96,6 @@ impl GroupFrame {
     pub(crate) const fn level(self) -> u32 {
         self.level
     }
-
-    /// Rehomes the physical save-journal start when a retained checkpoint
-    /// lineage is reconstructed into the live journal.  The semantic group
-    /// identity and all diagnostic scalars remain unchanged.
-    pub(crate) const fn with_journal_start(self, journal_start: u32) -> Self {
-        Self {
-            journal_start,
-            ..self
-        }
-    }
 }
 
 impl GroupKind {

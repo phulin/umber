@@ -1555,7 +1555,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[inline(always)]
     pub fn box_register(&self, index: u16) -> Option<DurableNodeMetadata> {
-        if index == u8::MAX.into() {
+        if index == u16::from(u8::MAX) {
             let root = self.page.output_box();
             if !root.is_empty() {
                 return Some(DurableNodeMetadata::from_page_root(
@@ -1571,7 +1571,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         index: u16,
     ) -> Result<(), crate::NodePromotionError> {
-        if index != u8::MAX.into() {
+        if index != u16::from(u8::MAX) {
             return Ok(());
         }
         let root = self.page.output_box();
@@ -1666,7 +1666,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         value: PageListId,
     ) -> Result<(), crate::NodePromotionError> {
-        debug_assert!(self.durable_boxes.metadata(u8::MAX.into()).is_none());
+        debug_assert!(self.durable_boxes.metadata(u16::from(u8::MAX)).is_none());
         self.page
             .install_output_box(&self.page_nodes, value)
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
@@ -1695,7 +1695,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// The durable owner stays in eqtb and the shared recursive walker builds
     /// TeX's independent page-lifetime copy.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+        if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
             self.promote_output_box_if_needed(index)
                 .expect("output-box copy promotion");
         }
@@ -1705,7 +1705,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
-        if index == u8::MAX.into() {
+        if index == u16::from(u8::MAX) {
             let root = self.page.take_output_box();
             if !root.is_empty() {
                 #[cfg(feature = "profiling")]
@@ -1719,7 +1719,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn clear_box_preserving_level(&mut self, index: u16) {
-        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+        if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
             self.page.clear_output_box();
             return;
         }
@@ -1984,7 +1984,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
-        if index == u8::MAX.into() {
+        if index == u16::from(u8::MAX) {
             let root = self.page.output_box();
             if !root.is_empty() {
                 let list = self.page_nodes.list(root).ok()?;
@@ -2054,7 +2054,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
-        if index == u8::MAX.into() {
+        if index == u16::from(u8::MAX) {
             let root = self.page.output_box();
             if !root.is_empty() {
                 let list = self.page_nodes.list(root).ok()?;
@@ -2084,7 +2084,7 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn box_margin_kern(&self, index: u16, side: crate::node::MarginKernSide) -> Option<Scaled> {
-        if index == u8::MAX.into() && !self.page.output_box().is_empty() {
+        if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
             return self.page_output_box_margin_kern(side);
         }
         let owner = self.durable_boxes.value(index)?;

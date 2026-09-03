@@ -1080,6 +1080,13 @@ impl<G> Universe<G> {
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
     ) -> Result<Self, UniverseError> {
+        // A candidate already owns the only mutable current lineage. Capturing
+        // another checkpoint in that lineage is valid, but forking it would
+        // manufacture a third owner and cannot be represented by the two-view
+        // checkpoint journal.
+        if self.checkpoint_candidate.is_some() || !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         let mark = checkpoint.state.mark();
         if !self
             .command_retained
@@ -2693,7 +2700,10 @@ impl<G> Universe<G> {
     }
 
     pub fn journal_cursor(&mut self) -> Result<JournalCursor<G>, UniverseError> {
-        Ok(self.live_state_mut()?.journal_cursor())
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
+        Ok(self.live_state_mut()?.journal_cursor()?)
     }
 
     pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
@@ -2745,6 +2755,9 @@ impl<G> Universe<G> {
     /// with no page-handle carrier records only the generation's conservative
     /// retained page bound; incidental rootless allocation is not history.
     pub fn state_checkpoint(&mut self) -> Result<StateCheckpoint<G>, UniverseError> {
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         let boundary = self
             .page_region
             .nodes_mut()
@@ -2762,9 +2775,15 @@ impl<G> Universe<G> {
         &mut self,
         page: NodeCheckpointMark,
     ) -> Result<StateCheckpoint<G>, UniverseError> {
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        if !core.state().checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         let owner = core.checkpoint_generation_owner();
-        let journal = core.state_mut().journal_cursor();
+        let journal = core.state_mut().journal_cursor()?;
         let dense = core.state().checkpoint_cursor();
         Ok(GenerationCheckpoint::new(
             owner,
@@ -2833,6 +2852,9 @@ impl<G> Universe<G> {
         external_page_roots: bool,
         wants_reachable_state_identity: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         if !(external_page_roots || self.page_region.builder().retains_page_node_handles()) {
             self.release_unretained_page_suffix()?;
         }
@@ -3116,6 +3138,12 @@ impl<G> Universe<G> {
         transfer_external_roots: impl FnOnce(),
         generation_fork: bool,
     ) -> Result<(), UniverseError> {
+        if self.core.is_none() {
+            return Err(UniverseError::Retired);
+        }
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
         if !(if generation_fork {
             self.command_retained
                 .world
@@ -3434,6 +3462,20 @@ impl<G> Universe<G> {
             .map(StateCore::state)
     }
 
+    /// Reports whether a checkpoint may be admitted without retaining an open
+    /// TeX group, group-save record, operation undo journal, or candidate
+    /// lineage. All state-facing checkpoint entry points use this same barrier
+    /// before sealing any page or coarse-owner suffix.
+    #[must_use]
+    pub fn checkpoint_eligible(&self) -> bool {
+        self.restore_owner.is_none()
+            && self
+                .core
+                .as_ref()
+                .is_some_and(|core| core.state().checkpoint_eligible())
+            && self.durable_boxes.checkpoint_eligible()
+    }
+
     /// Retires the session epoch and revision generation together. The
     /// aggregate remains only as a typed retired shell which rejects reuse.
     pub fn retire(&mut self) -> Result<UniverseRetirement, UniverseError> {
@@ -3599,6 +3641,9 @@ impl<G> RestoreTarget<CheckpointGenerationOwner<G>, StateCheckpointMark<G>> for 
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
         if !core.owns_generation(owner.generation()) || self.restore_owner.is_some() {
             return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
         }
         core.state().validate_restore(*mark.journal())?;
         if !core.state().validate_checkpoint_cursor(*mark.input()) {
