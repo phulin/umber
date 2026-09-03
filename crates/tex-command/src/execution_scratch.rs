@@ -1581,6 +1581,13 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.push_number_control(opener, roman)
     }
 
+    pub(crate) fn push_pdf_uniform_deviate_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_uniform_deviate_control(opener)
+    }
+
     pub(crate) fn top_number_control(
         &self,
     ) -> Result<Option<crate::expansion_work::control::SynchronousNumberControl>, ScratchError>

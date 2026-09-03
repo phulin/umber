@@ -1535,10 +1535,30 @@ impl<G> ExpansionWork<G> {
         opener: tex_state::token::OriginId,
         roman: bool,
     ) -> Result<(), ScratchError> {
+        let purpose = if roman {
+            SynchronousNumberPurpose::Roman
+        } else {
+            SynchronousNumberPurpose::Decimal
+        };
+        self.push_number_purpose_control(opener, purpose)
+    }
+
+    pub(crate) fn push_pdf_uniform_deviate_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfUniformDeviate)
+    }
+
+    fn push_number_purpose_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        purpose: SynchronousNumberPurpose,
+    ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
         if let Err(error) = self.push_control(ExpansionControl::Number(SynchronousNumberControl {
             opener,
-            roman,
+            purpose,
             phase: SynchronousNumberPhase::Need,
         })) {
             self.driver

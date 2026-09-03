@@ -445,8 +445,19 @@ pub(crate) enum SynchronousNumberPhase {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SynchronousNumberControl {
     pub(crate) opener: OriginId,
-    pub(crate) roman: bool,
+    pub(crate) purpose: SynchronousNumberPurpose,
     pub(crate) phase: SynchronousNumberPhase,
+}
+
+/// The scalar integer consumer shared by ordinary number conversions and
+/// integer-valued pdfTeX enquiries.  Keeping the operation selector beside
+/// the accumulator means a nested enquiry resumes in the delivery lane after
+/// its operand rather than re-entering a scanner-owned delivery call.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousNumberPurpose {
+    Decimal,
+    Roman,
+    PdfUniformDeviate,
 }
 
 /// Compact operand state for `\fontname`.

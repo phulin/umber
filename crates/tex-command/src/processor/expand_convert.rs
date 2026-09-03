@@ -716,6 +716,33 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    pub(super) fn begin_pdf_uniform_deviate_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_uniform_deviate_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    fn finish_number_output(
+        &mut self,
+        control: crate::expansion_work::control::SynchronousNumberControl,
+        value: i32,
+    ) {
+        use crate::expansion_work::control::SynchronousNumberPurpose;
+
+        let text = match control.purpose {
+            SynchronousNumberPurpose::Decimal => value.to_string(),
+            SynchronousNumberPurpose::Roman => roman_numeral(value),
+            SynchronousNumberPurpose::PdfUniformDeviate => {
+                self.state.pdf_uniform_deviate(value).to_string()
+            }
+        };
+        self.push_rendered_text(&text, control.opener);
+    }
+
     /// Consumes one settled character of a hot number conversion.  A nested
     /// expandable operand never enters another delivery function: it returns
     /// as the next command to this compact accumulator.
@@ -761,12 +788,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .pop_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            let text = if control.roman {
-                roman_numeral(value)
-            } else {
-                value.to_string()
-            };
-            this.push_rendered_text(&text, control.opener);
+            this.finish_number_output(control, value);
             Ok(())
         };
 
@@ -778,7 +800,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if matches!(control.phase, Phase::Need)
             && let ResolvedMeaning::Static(meaning) = command.resolved_meaning()
         {
-            if !control.roman
+            if control.purpose != crate::expansion_work::control::SynchronousNumberPurpose::Roman
                 && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
             {
                 let opener = self
@@ -803,7 +825,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )?;
                 return Ok(false);
             }
-            if !control.roman
+            if control.purpose != crate::expansion_work::control::SynchronousNumberPurpose::Roman
                 && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr)
             {
                 let opener = self
@@ -852,12 +874,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .pop_number_control()
                     .map_err(crate::scan_toks::scratch_command_error)?;
-                let text = if control.roman {
-                    roman_numeral(value)
-                } else {
-                    value.to_string()
-                };
-                self.push_rendered_text(&text, control.opener);
+                self.finish_number_output(control, value);
                 return Ok(true);
             }
         }
@@ -894,12 +911,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .pop_number_control()
                         .map_err(crate::scan_toks::scratch_command_error)?;
-                    let text = if control.roman {
-                        roman_numeral(number)
-                    } else {
-                        number.to_string()
-                    };
-                    this.push_rendered_text(&text, control.opener);
+                    this.finish_number_output(control, number);
                     Ok(())
                 };
             match character {

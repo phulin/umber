@@ -542,6 +542,64 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
 }
 
 #[test]
+fn nested_pdf_uniform_deviates_use_the_shared_integer_lane() {
+    crate::test_harness::with_universe(|universe| {
+        let uniform = install_static(
+            universe,
+            "pdfuniformdeviate",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        for depth in [1_024, 10_240] {
+            let mut input = Vec::with_capacity(depth + 2);
+            input.extend(std::iter::repeat_n(uniform, depth));
+            input.push(Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            });
+            input.push(relax);
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let settled = processor
+                .get_x_token()
+                .expect("nested pdf uniform delivery")
+                .expect("terminal command");
+            assert!(matches!(
+                settled.meaning(),
+                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch: '0', .. })
+            ));
+            assert_eq!(
+                processor
+                    .get_x_token()
+                    .expect("terminal command after pdf uniform delivery")
+                    .expect("relax command")
+                    .meaning(),
+                Meaning::Relax
+            );
+            drop(processor);
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert_eq!(
+                command.scratch.recursive_delivery_entries_with_control(),
+                0,
+                "nested pdf uniform operands must not re-enter delivery while a control is live"
+            );
+        }
+    });
+}
+
+#[test]
 fn number_register_operands_use_the_shared_index_lane() {
     crate::test_harness::with_universe(|universe| {
         let number = install_static(
