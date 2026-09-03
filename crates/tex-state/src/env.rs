@@ -1741,70 +1741,67 @@ impl<G> DenseState<G> {
         }
 
         let end = self.journal().len();
-        let restoration_count = (frame.journal_start as usize..end)
-            .filter(|&index| {
-                matches!(
-                    self.journal().entry(index),
-                    JournalEntry::Mutation(saved) if saved.saved_at() == Some(frame.level)
-                )
-            })
-            .count();
+        let restoration_count = self.journal().group_entry_count(frame);
         let mut entries = Vec::new();
         entries
             .try_reserve_exact(restoration_count)
             .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
         let start = frame.journal_start as usize;
-        let first_extended = (start..end).find(|&index| {
-            matches!(
-                self.journal().entry(index),
-                JournalEntry::Mutation(saved)
-                    if saved.saved_at() == Some(frame.level)
-                        && is_extended_register_cell(saved.cell())
-            )
-        });
-        if let Some(marker) = first_extended {
-            // e-TeX [53a] pushes one `restore_sa` marker at the first sparse
-            // save. Dense eqtb saves made later sit above that marker and
-            // restore first; reaching the marker restores the whole sparse
-            // chain in reverse sparse-save order; older dense saves follow.
-            for index in (marker..end).rev() {
-                let JournalEntry::Mutation(saved) = self.journal().entry(index) else {
-                    continue;
-                };
-                if saved.saved_at() == Some(frame.level) && !is_extended_register_cell(saved.cell())
-                {
-                    self.restore_group_mutation(saved, &mut entries)?;
-                }
-            }
-            for index in (marker..end).rev() {
-                let JournalEntry::Mutation(saved) = self.journal().entry(index) else {
-                    continue;
-                };
-                if saved.saved_at() == Some(frame.level) && is_extended_register_cell(saved.cell())
-                {
-                    self.restore_group_mutation(saved, &mut entries)?;
-                }
-            }
-            for index in (start..marker).rev() {
-                let JournalEntry::Mutation(saved) = self.journal().entry(index) else {
-                    continue;
-                };
-                if saved.saved_at() == Some(frame.level) {
-                    self.restore_group_mutation(saved, &mut entries)?;
-                }
-            }
+        let sparse_marker = self.journal().group_sparse_start(frame);
+        let pinned = self.journal().group_checkpoint_pinned(frame);
+        let mut sparse = self.journal_mut().take_sparse_scratch();
+        sparse.clear();
+        let mut retained = if pinned {
+            Vec::with_capacity(restoration_count)
         } else {
+            Vec::new()
+        };
+        // A single direct reverse walk is enough for both ordinary dense saves
+        // and e-TeX sparse saves.  Sparse records are deferred in a small
+        // caller-owned scratch vector so the dense records above the
+        // `restore_sa` boundary retain TeX's ordering without revisiting the
+        // journal range.
+        let replay = (|| -> Result<(), StateError> {
             for index in (start..end).rev() {
                 let JournalEntry::Mutation(saved) = self.journal().entry(index) else {
                     continue;
                 };
                 if saved.saved_at() == Some(frame.level) {
-                    self.restore_group_mutation(saved, &mut entries)?;
+                    if pinned {
+                        retained.push(saved.clone());
+                    }
+                    if sparse_marker.is_some_and(|marker| {
+                        index >= marker && is_extended_register_cell(saved.cell())
+                    }) {
+                        sparse.push(saved);
+                    } else {
+                        self.restore_group_mutation(saved, &mut entries)?;
+                    }
+                }
+                // The first sparse save is TeX's `restore_sa` boundary.  Once the
+                // reverse walk reaches it, replay the deferred sparse chain before
+                // continuing into older dense saves (which may include
+                // `\tracingrestores` itself).
+                if sparse_marker == Some(index) {
+                    for saved in sparse.drain(..) {
+                        self.restore_group_mutation(saved, &mut entries)?;
+                    }
                 }
             }
-        }
+            // A malformed/stale marker should not strand deferred records.  In
+            // valid state this is empty because the boundary flush above is part
+            // of the same direct reverse walk.
+            for saved in sparse.drain(..) {
+                self.restore_group_mutation(saved, &mut entries)?;
+            }
+            Ok(())
+        })();
+        self.journal_mut().return_sparse_scratch(sparse);
+        replay?;
         self.groups.pop();
-        self.journal_mut().record_group_exit(frame);
+        retained.reverse();
+        self.journal_mut()
+            .record_group_exit_with_records(frame, retained);
         Ok(GroupRestorationReceipt { frame, entries })
     }
 

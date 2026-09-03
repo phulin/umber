@@ -317,6 +317,183 @@ fn repeated_local_writes_restore_the_first_prior_value() {
 }
 
 #[test]
+fn group_unwind_visits_only_its_direct_segment() {
+    let mut state = state();
+
+    state.begin_group(GroupKind::Simple, 1).expect("depth one");
+    state
+        .assign_count(0, 1, AssignmentScope::Local)
+        .expect("one local save");
+    let visits = state.journal().group_entry_visits();
+    state.end_group(GroupKind::Simple).expect("depth one end");
+    assert_eq!(state.journal().group_entry_visits() - visits, 1);
+
+    for depth in 0..64 {
+        state
+            .begin_group(GroupKind::Simple, depth + 2)
+            .expect("nested group");
+    }
+    for index in 1..=64 {
+        state
+            .assign_count(index, i32::from(index), AssignmentScope::Local)
+            .expect("nested local save");
+    }
+    let visits = state.journal().group_entry_visits();
+    state.end_group(GroupKind::Simple).expect("depth 64 end");
+    assert_eq!(state.journal().group_entry_visits() - visits, 64);
+    for _ in 0..63 {
+        let visits = state.journal().group_entry_visits();
+        state
+            .end_group(GroupKind::Simple)
+            .expect("empty parent end");
+        assert_eq!(state.journal().group_entry_visits() - visits, 0);
+    }
+
+    for depth in 0..512 {
+        state
+            .begin_group(GroupKind::Simple, depth + 100)
+            .expect("deep empty parent");
+    }
+    state
+        .assign_count(65, 65, AssignmentScope::Local)
+        .expect("deep local save");
+    let visits = state.journal().group_entry_visits();
+    state
+        .end_group(GroupKind::Simple)
+        .expect("deepest group end");
+    assert_eq!(state.journal().group_entry_visits() - visits, 1);
+    for _ in 0..511 {
+        let visits = state.journal().group_entry_visits();
+        state.end_group(GroupKind::Simple).expect("deep empty end");
+        assert_eq!(state.journal().group_entry_visits() - visits, 0);
+    }
+}
+
+#[test]
+fn checkpoint_candidate_rejects_after_rehoming_closed_group_segments() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base value");
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("outer group");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("outer value");
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("inner group");
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("inner value");
+    let cursor = state.journal_cursor();
+    let dense = state.checkpoint_cursor();
+
+    state.end_group(GroupKind::Simple).expect("close inner");
+    state.end_group(GroupKind::Simple).expect("close outer");
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.count(0).expect("closed value"), 1);
+
+    let accepted = state
+        .begin_checkpoint_candidate(cursor, dense)
+        .expect("rehome cursor groups");
+    assert_eq!(state.group_depth(), 2);
+    assert_eq!(state.count(0).expect("candidate value"), 3);
+    state
+        .assign_count(0, 4, AssignmentScope::Global)
+        .expect("candidate global");
+    state
+        .reject_checkpoint_candidate(cursor, dense, accepted)
+        .expect("reject candidate");
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.count(0).expect("rejected value"), 1);
+
+    state.restore(cursor).expect("restore closed-group cursor");
+    assert_eq!(state.group_depth(), 2);
+    assert_eq!(state.count(0).expect("restored value"), 3);
+    state.end_group(GroupKind::Simple).expect("restore inner");
+    state.end_group(GroupKind::Simple).expect("restore outer");
+    assert_eq!(state.count(0).expect("final value"), 1);
+}
+
+#[test]
+fn checkpoint_candidate_rejects_with_open_group_suffix() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base value");
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("outer group");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("outer value");
+    let cursor = state.journal_cursor();
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("inner group");
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("inner value");
+    let dense = state.checkpoint_cursor();
+
+    let accepted = state
+        .begin_checkpoint_candidate(cursor, dense)
+        .expect("rewind to outer cursor");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.count(0).expect("candidate value"), 2);
+    state
+        .begin_group(GroupKind::Simple, 3)
+        .expect("candidate inner group");
+    state
+        .assign_count(0, 4, AssignmentScope::Local)
+        .expect("candidate value");
+    state
+        .reject_checkpoint_candidate(cursor, dense, accepted)
+        .expect("reject candidate");
+    assert_eq!(state.group_depth(), 2);
+    assert_eq!(state.count(0).expect("rejected value"), 3);
+
+    state.end_group(GroupKind::Simple).expect("original inner");
+    state.end_group(GroupKind::Simple).expect("original outer");
+    assert_eq!(state.count(0).expect("final value"), 1);
+}
+
+#[test]
+fn restoring_closed_groups_does_not_duplicate_retained_sequence_ranges() {
+    let mut state = state();
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("outer group");
+    state
+        .assign_count(0, 1, AssignmentScope::Local)
+        .expect("outer value");
+    let outer = state.journal_cursor();
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("inner group");
+    state
+        .assign_count(1, 2, AssignmentScope::Local)
+        .expect("inner value");
+    let inner = state.journal_cursor();
+    state.end_group(GroupKind::Simple).expect("close inner");
+    state.end_group(GroupKind::Simple).expect("close outer");
+    let before_restore = state.journal().group_save_len();
+    assert!(before_restore >= 2);
+
+    state.restore(inner).expect("restore closed inner group");
+    assert_eq!(state.group_depth(), 2);
+    assert_eq!(state.journal().group_save_len(), 4);
+    assert_eq!(state.count(0).expect("outer value"), 1);
+    assert_eq!(state.count(1).expect("inner value"), 2);
+
+    state.restore(outer).expect("restore outer cursor");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.journal().group_save_len(), 4);
+}
+
+#[test]
 fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
     // TeX82 §§273/275--276 samples before each boundary, restore, and
     // aftergroup push. The command owner supplies aftergroup words and their
