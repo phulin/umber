@@ -35,6 +35,7 @@ The project uses Beads (`bd`) for issue tracking and durable project memory.
 - Limit `rg` output aggressively.
 - For `wait` and `write_stdin`, use a timeout of at least 10 minutes. For
   `wait_agent`, use at least 30 minutes.
+- Codex: Spawn independent subagents with `fork_turns: "none"`.
 - Combine adjacent commands when practical, such as committing only after
   tests pass.
 - For canonical-command (`umber2-johp`) semantic or DVI divergence work, first
@@ -58,7 +59,7 @@ The project uses Beads (`bd`) for issue tracking and durable project memory.
   `default-members` covers every host-testable workspace crate, and
   `default_members_cover_every_host_testable_crate` enforces that coverage.
   `umber-wasm` is the sole omission and declares its separate tier.
-- Direct `cargo build` output to a log file.
+- Direct `cargo build` and `cargo check` output to a log file.
 - Use `scripts/check-and-test.sh` when the native test suite and
   formatting/clippy gate should run concurrently. Clippy uses
   `target/clippy`, so it does not lock the test build.
