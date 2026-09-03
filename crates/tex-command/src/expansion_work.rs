@@ -677,6 +677,7 @@ impl<G> ExpansionWork<G> {
                 cursor: crate::scanner_kernel::ScannerCursor::default(),
                 phase: SynchronousExpandedPhase::NeedOpening,
                 kind: SynchronousExpandedKind::Expanded,
+                left: None,
             }))
         {
             self.driver
@@ -706,6 +707,7 @@ impl<G> ExpansionWork<G> {
                 cursor: crate::scanner_kernel::ScannerCursor::default(),
                 phase: SynchronousExpandedPhase::NeedOpening,
                 kind: SynchronousExpandedKind::Unexpanded,
+                left: None,
             }))
         {
             self.driver
@@ -735,11 +737,54 @@ impl<G> ExpansionWork<G> {
                 cursor: crate::scanner_kernel::ScannerCursor::default(),
                 phase: SynchronousExpandedPhase::NeedOpening,
                 kind: SynchronousExpandedKind::Detokenize,
+                left: None,
             }))
         {
             self.driver
                 .pop_continuation()
                 .expect("failed detokenize-control push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Starts one pdfTeX expanded-string collector. The collector shares the
+    /// balanced-text cursor and attempt-owned token buffer with `\expanded`,
+    /// but its completed buffer is projected by the primitive-specific
+    /// renderer instead of being replayed as source tokens.
+    pub(crate) fn push_pdf_string_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        kind: SynchronousExpandedKind,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+        left: Option<crate::AttemptTokenListId>,
+    ) -> Result<(), ScratchError> {
+        if !matches!(
+            kind,
+            SynchronousExpandedKind::PdfEscapeString
+                | SynchronousExpandedKind::PdfEscapeHex
+                | SynchronousExpandedKind::PdfUnescapeHex
+                | SynchronousExpandedKind::PdfStringCompareLeft
+                | SynchronousExpandedKind::PdfStringCompareRight
+        ) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.driver.push_continuation()?;
+        if let Err(error) =
+            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+                opener,
+                attempt_opening,
+                writer,
+                cursor: crate::scanner_kernel::ScannerCursor::default(),
+                phase: SynchronousExpandedPhase::NeedOpening,
+                kind,
+                left,
+            }))
+        {
+            self.driver
+                .pop_continuation()
+                .expect("failed pdf-string control push restores driver depth");
             return Err(error);
         }
         Ok(())
@@ -1217,6 +1262,11 @@ impl<G> ExpansionWork<G> {
             SynchronousIfNumberPhase::RegisterIndexAwait { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
             }
+            SynchronousIfNumberPhase::FontSelector
+            | SynchronousIfNumberPhase::FontFamily { .. }
+            | SynchronousIfNumberPhase::FontCharacter { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             SynchronousIfNumberPhase::AwaitLeft { .. }
             | SynchronousIfNumberPhase::AwaitRelation { .. }
             | SynchronousIfNumberPhase::AwaitRight { .. } => {
@@ -1270,6 +1320,11 @@ impl<G> ExpansionWork<G> {
                 value,
                 seen_digit,
             },
+            SynchronousIfNumberPhase::FontSelector
+            | SynchronousIfNumberPhase::FontFamily { .. }
+            | SynchronousIfNumberPhase::FontCharacter { .. } => {
+                return Err(ScratchError::InvalidCoordinate);
+            }
             SynchronousIfNumberPhase::NeedLeft
             | SynchronousIfNumberPhase::Left { .. }
             | SynchronousIfNumberPhase::NeedRelation { .. }
@@ -1299,6 +1354,9 @@ impl<G> ExpansionWork<G> {
                 // protocol reaches `Right` first.
                 | SynchronousIfNumberPhase::Left { .. }
                 | SynchronousIfNumberPhase::RegisterIndex { .. }
+                | SynchronousIfNumberPhase::FontSelector
+                | SynchronousIfNumberPhase::FontFamily { .. }
+                | SynchronousIfNumberPhase::FontCharacter { .. }
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -1550,6 +1608,95 @@ impl<G> ExpansionWork<G> {
         self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfUniformDeviate)
     }
 
+    pub(crate) fn push_pdf_margin_kern_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        side: tex_state::node::MarginKernSide,
+    ) -> Result<(), ScratchError> {
+        let purpose = match side {
+            tex_state::node::MarginKernSide::Left => SynchronousNumberPurpose::PdfMarginKernLeft,
+            tex_state::node::MarginKernSide::Right => SynchronousNumberPurpose::PdfMarginKernRight,
+        };
+        self.push_number_purpose_control(opener, purpose)
+    }
+
+    pub(crate) fn push_pdf_insert_height_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfInsertHeight)
+    }
+
+    pub(crate) fn push_pdf_xform_name_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfXFormName)
+    }
+
+    pub(crate) fn push_pdf_page_ref_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfPageRef)
+    }
+
+    pub(crate) fn push_pdf_last_match_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_number_purpose_control(opener, SynchronousNumberPurpose::PdfLastMatch)
+    }
+
+    pub(crate) fn push_mark_class_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        primitive: tex_state::meaning::ExpandablePrimitive,
+    ) -> Result<(), ScratchError> {
+        let purpose = match primitive {
+            tex_state::meaning::ExpandablePrimitive::TopMarks => {
+                SynchronousNumberPurpose::TopMarkClass
+            }
+            tex_state::meaning::ExpandablePrimitive::FirstMarks => {
+                SynchronousNumberPurpose::FirstMarkClass
+            }
+            tex_state::meaning::ExpandablePrimitive::BotMarks => {
+                SynchronousNumberPurpose::BotMarkClass
+            }
+            tex_state::meaning::ExpandablePrimitive::SplitFirstMarks => {
+                SynchronousNumberPurpose::SplitFirstMarkClass
+            }
+            tex_state::meaning::ExpandablePrimitive::SplitBotMarks => {
+                SynchronousNumberPurpose::SplitBotMarkClass
+            }
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        self.push_number_purpose_control(opener, purpose)
+    }
+
+    pub(crate) fn push_pdf_ximage_bbox_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.driver.push_continuation()?;
+        if let Err(error) = self.push_control(ExpansionControl::PdfXImageBBox(
+            SynchronousPdfXImageBBoxControl {
+                opener,
+                phase: SynchronousPdfXImageBBoxPhase::Object {
+                    negative: false,
+                    value: 0,
+                    seen_digit: false,
+                },
+            },
+        )) {
+            self.driver
+                .pop_continuation()
+                .expect("failed ximage-bbox push restores driver depth");
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn push_number_purpose_control(
         &mut self,
         opener: tex_state::token::OriginId,
@@ -1699,10 +1846,43 @@ impl<G> ExpansionWork<G> {
         &mut self,
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
+        self.push_font_control(opener, SynchronousFontPurpose::Name)
+    }
+
+    /// Starts a synchronous `\pdffontsize` operand in the same font-selector
+    /// lane as `\fontname`.  Both primitives consume exactly one expanded
+    /// font identifier; only the final rendering differs.
+    pub(crate) fn push_pdf_font_size_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_font_control(opener, SynchronousFontPurpose::Size)
+    }
+
+    pub(crate) fn push_pdf_font_name_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_font_control(opener, SynchronousFontPurpose::PdfName)
+    }
+
+    pub(crate) fn push_pdf_font_object_number_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.push_font_control(opener, SynchronousFontPurpose::PdfObjectNumber)
+    }
+
+    fn push_font_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        purpose: SynchronousFontPurpose,
+    ) -> Result<(), ScratchError> {
         self.driver.push_continuation()?;
         if let Err(error) =
             self.push_control(ExpansionControl::FontName(SynchronousFontNameControl {
                 opener,
+                purpose,
             }))
         {
             self.driver
@@ -1725,6 +1905,46 @@ impl<G> ExpansionWork<G> {
             ExpansionControl::FontName(control) => Ok(Some(*control)),
             _ => Ok(None),
         }
+    }
+
+    pub(crate) fn top_pdf_ximage_bbox_control(
+        &self,
+    ) -> Result<Option<SynchronousPdfXImageBBoxControl>, ScratchError> {
+        let id = match self.controls.top_id() {
+            Ok(id) => id,
+            Err(ScratchError::InvalidCoordinate) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.controls.get(id)? {
+            ExpansionControl::PdfXImageBBox(control) => Ok(Some(*control)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn set_pdf_ximage_bbox_phase(
+        &mut self,
+        phase: SynchronousPdfXImageBBoxPhase,
+    ) -> Result<(), ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = self.controls.get_mut(id)?;
+        let ExpansionControl::PdfXImageBBox(control) = control else {
+            return Err(ScratchError::InvalidCoordinate);
+        };
+        control.phase = phase;
+        Ok(())
+    }
+
+    pub(crate) fn pop_pdf_ximage_bbox_control(
+        &mut self,
+    ) -> Result<SynchronousPdfXImageBBoxControl, ScratchError> {
+        let id = self.controls.top_id()?;
+        let control = match self.controls.get(id)? {
+            ExpansionControl::PdfXImageBBox(control) => *control,
+            _ => return Err(ScratchError::InvalidCoordinate),
+        };
+        let _ = self.controls.take_top(id)?;
+        self.driver.pop_continuation()?;
+        Ok(control)
     }
 
     pub(crate) fn pop_fontname_control(

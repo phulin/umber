@@ -1,6 +1,8 @@
 //! pdfTeX state and object enquiry expansion primitives.
 
+use crate::command::HotCommand;
 use crate::{CommandError, CurrentCommand};
+use tex_state::token::OriginId;
 
 use super::CommandProcessor;
 use super::expand_render::format_scaled;
@@ -10,6 +12,188 @@ use super::expand_render::format_scaled;
 pub(crate) const TOO_MANY_COLOR_STACKS_DIAGNOSTIC: u64 = 0x7064_6663_7300_0495;
 
 impl<G> CommandProcessor<'_, '_, G> {
+    pub(super) fn begin_pdf_ximage_bbox_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_ximage_bbox_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    /// Consumes one settled integer of `\pdfximagebbox` without entering the
+    /// retained scalar scanner.  The two operands are deliberately kept in a
+    /// copy-small control: object validation happens before the coordinate is
+    /// read, matching pdfTeX's diagnostic order.
+    pub(super) fn advance_pdf_ximage_bbox_continuation(
+        &mut self,
+        command: HotCommand<G>,
+        at_end: bool,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::SynchronousPdfXImageBBoxPhase as Phase;
+
+        let control = self
+            .command
+            .scratch
+            .top_pdf_ximage_bbox_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let character = command.character_token();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        let digit = character
+            .filter(|ch| ch.is_ascii_digit())
+            .map(|ch| i64::from(ch as u8 - b'0'));
+        let accumulate = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let signed = |value: i64, negative: bool| {
+            let value = value.min(i64::from(i32::MAX));
+            if negative { -value } else { value }
+        };
+
+        match control.phase {
+            Phase::Object {
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    return Ok(false);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_pdf_ximage_bbox_phase(Phase::Object {
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(false);
+                }
+                if let Some(digit) = digit {
+                    self.command
+                        .scratch
+                        .set_pdf_ximage_bbox_phase(Phase::Object {
+                            negative,
+                            value: accumulate(value, digit),
+                            seen_digit: true,
+                        })?;
+                    return Ok(false);
+                }
+                if !seen_digit {
+                    if !at_end {
+                        self.back_input(command.materialize())?;
+                    }
+                    self.missing_number_error()?;
+                } else if !at_end && !is_space {
+                    self.back_input(command.materialize())?;
+                }
+                let object = signed(value, negative);
+                let id = u32::try_from(object)
+                    .ok()
+                    .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok())
+                    .filter(|id| self.state.pdf_external_image(*id).is_some())
+                    .ok_or(CommandError::PdfNavigation(
+                        "pdfTeX error (ext1): cannot find referenced object.",
+                    ))?;
+                self.command
+                    .scratch
+                    .set_pdf_ximage_bbox_phase(Phase::Coordinate {
+                        object: id.raw(),
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                Ok(false)
+            }
+            Phase::Coordinate {
+                object,
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    return Ok(false);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_pdf_ximage_bbox_phase(Phase::Coordinate {
+                            object,
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(false);
+                }
+                if let Some(digit) = digit {
+                    self.command
+                        .scratch
+                        .set_pdf_ximage_bbox_phase(Phase::Coordinate {
+                            object,
+                            negative,
+                            value: accumulate(value, digit),
+                            seen_digit: true,
+                        })?;
+                    return Ok(false);
+                }
+                if !seen_digit {
+                    if !at_end {
+                        self.back_input(command.materialize())?;
+                    }
+                    self.missing_number_error()?;
+                } else if !at_end && !is_space {
+                    self.back_input(command.materialize())?;
+                }
+                let coordinate = signed(value, negative);
+                let id = tex_state::PdfExternalImageId::new(object).map_err(|_| {
+                    CommandError::PdfNavigation(
+                        "pdfTeX error (ext1): cannot find referenced object.",
+                    )
+                })?;
+                let metadata =
+                    self.state
+                        .pdf_external_image(id)
+                        .ok_or(CommandError::PdfNavigation(
+                            "pdfTeX error (ext1): cannot find referenced object.",
+                        ))?;
+                let coordinate = u8::try_from(coordinate)
+                    .ok()
+                    .and_then(|index| metadata.bbox_coordinate(index))
+                    .ok_or(CommandError::PdfNavigation(
+                        "pdfTeX error (pdfximagebbox): invalid parameter.",
+                    ))?;
+                let control = self
+                    .command
+                    .scratch
+                    .pop_pdf_ximage_bbox_control()
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+                self.push_rendered_text(&format_scaled(coordinate), control.opener);
+                Ok(true)
+            }
+        }
+    }
+
+    pub(super) fn finish_pdf_ximage_bbox_continuation_at_end(
+        &mut self,
+    ) -> Result<bool, CommandError> {
+        if self
+            .command
+            .scratch
+            .top_pdf_ximage_bbox_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        self.advance_pdf_ximage_bbox_continuation(HotCommand::empty(), true)
+    }
+
     /// pdftex.web §495's `pdf_colorstack_init_code` conversion.
     pub(super) fn expand_pdf_color_stack_init(
         &mut self,
@@ -307,7 +491,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    fn pdftex_match_number_diagnostic(&mut self, value: i32) {
+    pub(super) fn pdftex_match_number_diagnostic(&mut self, value: i32) {
         self.command.semantic_diagnostics.push(
             crate::CommandSemanticDiagnostic::PdfExpansionMessage {
                 text: format!("! Bad match number ({value})."),

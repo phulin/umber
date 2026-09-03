@@ -1588,6 +1588,71 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.push_pdf_uniform_deviate_control(opener)
     }
 
+    pub(crate) fn push_pdf_margin_kern_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        side: tex_state::node::MarginKernSide,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_margin_kern_control(opener, side)
+    }
+
+    pub(crate) fn push_pdf_insert_height_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_insert_height_control(opener)
+    }
+
+    pub(crate) fn push_pdf_xform_name_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_xform_name_control(opener)
+    }
+
+    pub(crate) fn push_pdf_page_ref_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_page_ref_control(opener)
+    }
+
+    pub(crate) fn push_pdf_last_match_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_last_match_control(opener)
+    }
+
+    pub(crate) fn push_mark_class_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        primitive: tex_state::meaning::ExpandablePrimitive,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_mark_class_control(opener, primitive)
+    }
+
+    pub(crate) fn push_pdf_ximage_bbox_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_ximage_bbox_control(opener)
+    }
+
+    pub(crate) fn push_pdf_string_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        kind: crate::expansion_work::control::SynchronousExpandedKind,
+        attempt_opening: crate::attempt::AttemptMark,
+        writer: crate::attempt::AttemptTokenBufferId,
+        left: Option<crate::AttemptTokenListId>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_string_control(opener, kind, attempt_opening, writer, left)
+    }
+
     pub(crate) fn top_number_control(
         &self,
     ) -> Result<Option<crate::expansion_work::control::SynchronousNumberControl>, ScratchError>
@@ -1616,11 +1681,53 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_number_control()
     }
 
+    pub(crate) fn top_pdf_ximage_bbox_control(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::SynchronousPdfXImageBBoxControl>, ScratchError>
+    {
+        self.expansion_work.top_pdf_ximage_bbox_control()
+    }
+
+    pub(crate) fn set_pdf_ximage_bbox_phase(
+        &mut self,
+        phase: crate::expansion_work::control::SynchronousPdfXImageBBoxPhase,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.set_pdf_ximage_bbox_phase(phase)
+    }
+
+    pub(crate) fn pop_pdf_ximage_bbox_control(
+        &mut self,
+    ) -> Result<crate::expansion_work::control::SynchronousPdfXImageBBoxControl, ScratchError> {
+        self.expansion_work.pop_pdf_ximage_bbox_control()
+    }
+
     pub(crate) fn push_fontname_control(
         &mut self,
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
         self.expansion_work.push_fontname_control(opener)
+    }
+
+    pub(crate) fn push_pdf_font_size_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_font_size_control(opener)
+    }
+
+    pub(crate) fn push_pdf_font_name_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.push_pdf_font_name_control(opener)
+    }
+
+    pub(crate) fn push_pdf_font_object_number_control(
+        &mut self,
+        opener: tex_state::token::OriginId,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_font_object_number_control(opener)
     }
 
     pub(crate) fn top_fontname_control(

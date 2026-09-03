@@ -1496,6 +1496,7 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
         "SynchronousIfDimensionControl",
         "SynchronousNumberControl",
         "SynchronousFontNameControl",
+        "SynchronousPdfXImageBBoxControl",
         "SynchronousExpandedControl",
     ] {
         assert!(
@@ -1511,6 +1512,7 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
     assert!(controls.contains("size_of::<SynchronousNumberControl>() <= 48"));
     assert!(controls.contains("size_of::<SynchronousExpandedControl>() <= 128"));
     assert!(controls.contains("size_of::<SynchronousFontNameControl>() <= 32"));
+    assert!(controls.contains("size_of::<SynchronousPdfXImageBBoxControl>() <= 32"));
 }
 
 #[test]
@@ -1529,6 +1531,10 @@ fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
         "src/processor/alignment_interception.rs",
         "src/processor/backup.rs",
         "src/processor/expand_structural.rs",
+        "src/processor/expand_convert.rs",
+        "src/processor/expand_input.rs",
+        "src/processor/expand_render.rs",
+        "src/processor/expand_replay.rs",
         "src/processor/expand_pdf.rs",
         "src/processor/expand_pdf_file.rs",
         "src/processor/expand_pdf_string.rs",

@@ -181,6 +181,11 @@ pub(crate) enum SynchronousExpandedKind {
     Expanded,
     Unexpanded,
     Detokenize,
+    PdfEscapeString,
+    PdfEscapeHex,
+    PdfUnescapeHex,
+    PdfStringCompareLeft,
+    PdfStringCompareRight,
 }
 
 /// Copy-small state for one synchronous `\expanded` token collector.
@@ -196,6 +201,7 @@ pub(crate) struct SynchronousExpandedControl {
     pub(crate) cursor: ScannerCursor,
     pub(crate) phase: SynchronousExpandedPhase,
     pub(crate) kind: SynchronousExpandedKind,
+    pub(crate) left: Option<crate::AttemptTokenListId>,
 }
 
 /// Compact synchronous `\csname` state. The accumulated spelling lives in
@@ -321,6 +327,23 @@ pub(crate) enum SynchronousIfNumberPhase {
     },
     RegisterIndexAwait {
         target: Meaning,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    /// `\iffontchar` first consumes one expanded font identifier.  A family
+    /// selector stores the tiny math-size bank while its four-bit index is
+    /// being consumed; the selected font is then carried into the character
+    /// code phase below.
+    FontSelector,
+    FontFamily {
+        size: u8,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    FontCharacter {
+        font: tex_state::ids::FontId,
         negative: bool,
         value: i64,
         seen_digit: bool,
@@ -458,6 +481,17 @@ pub(crate) enum SynchronousNumberPurpose {
     Decimal,
     Roman,
     PdfUniformDeviate,
+    PdfMarginKernLeft,
+    PdfMarginKernRight,
+    PdfInsertHeight,
+    PdfXFormName,
+    PdfPageRef,
+    PdfLastMatch,
+    TopMarkClass,
+    FirstMarkClass,
+    BotMarkClass,
+    SplitFirstMarkClass,
+    SplitBotMarkClass,
 }
 
 /// Compact operand state for `\fontname`.
@@ -467,8 +501,46 @@ pub(crate) enum SynchronousNumberPurpose {
 /// nested `\fontname` pushes another copy-small record and therefore never
 /// retains a rich command on the Rust stack.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousFontPurpose {
+    /// TeX82 §471's `\fontname` conversion.
+    Name,
+    /// pdfTeX's `\pdffontsize` conversion.
+    Size,
+    /// pdfTeX's `\pdffontname` conversion.
+    PdfName,
+    /// pdfTeX's `\pdffontobjnum` conversion.
+    PdfObjectNumber,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SynchronousFontNameControl {
     pub(crate) opener: OriginId,
+    pub(crate) purpose: SynchronousFontPurpose,
+}
+
+/// Compact two-integer state for `\pdfximagebbox`.  The object number is
+/// validated before the one-based bounding-box coordinate is consumed, so a
+/// nested expansion can return to the exact stage without retaining a rich
+/// PDF object or metadata value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronousPdfXImageBBoxPhase {
+    Object {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    Coordinate {
+        object: u32,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronousPdfXImageBBoxControl {
+    pub(crate) opener: OriginId,
+    pub(crate) phase: SynchronousPdfXImageBBoxPhase,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -523,6 +595,7 @@ pub(crate) enum ExpansionControl<G> {
     IfDimension(SynchronousIfDimensionControl),
     Number(SynchronousNumberControl),
     FontName(SynchronousFontNameControl),
+    PdfXImageBBox(SynchronousPdfXImageBBoxControl),
     Expanded(SynchronousExpandedControl),
     Primitive(PrimitiveControl<G>),
 }
@@ -535,5 +608,6 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
     assert!(core::mem::size_of::<SynchronousFontNameControl>() <= 32);
+    assert!(core::mem::size_of::<SynchronousPdfXImageBBoxControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousExpandedControl>() <= 128);
 };

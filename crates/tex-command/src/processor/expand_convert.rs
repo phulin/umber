@@ -641,6 +641,39 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    /// Starts the compact `\pdffontsize` operand protocol.  It shares the
+    /// expanded font-selector request and differs only in the rendering step,
+    /// so a nested selector follows the same generation-owned control lane.
+    pub(super) fn begin_pdf_font_size_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_font_size_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_font_name_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_font_name_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_font_object_number_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_font_object_number_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
     /// Completes one compact `\fontname` operand from the command currently
     /// owned by the expanded-delivery loop.  Only a valid font selector is
     /// rendered directly; the invalid-selector branch materializes once at
@@ -683,7 +716,32 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.push_font_name(tex_state::font::NULL_FONT, control.opener)?;
             return Ok(());
         };
-        self.push_font_name(font, control.opener)
+        match control.purpose {
+            crate::expansion_work::control::SynchronousFontPurpose::Name => {
+                self.push_font_name(font, control.opener)
+            }
+            crate::expansion_work::control::SynchronousFontPurpose::Size => {
+                let size = format_scaled(self.state.tracked_font_size(font));
+                self.push_rendered_text(&size, control.opener);
+                Ok(())
+            }
+            crate::expansion_work::control::SynchronousFontPurpose::PdfName => {
+                let name = self.state.font_name(font);
+                self.push_rendered_text(&name, control.opener);
+                Ok(())
+            }
+            crate::expansion_work::control::SynchronousFontPurpose::PdfObjectNumber => {
+                let object = self
+                    .state
+                    .ensure_pdf_font_resource(font)
+                    .map_err(|_| {
+                        CommandError::PdfNavigation("pdfTeX error (font): too many PDF objects")
+                    })?
+                    .object_number();
+                self.push_rendered_text(&object.to_string(), control.opener);
+                Ok(())
+            }
+        }
     }
 
     fn push_font_name(
@@ -726,12 +784,96 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
+    pub(super) fn begin_pdf_margin_kern_continuation(
+        &mut self,
+        opener: OriginId,
+        side: tex_state::node::MarginKernSide,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_margin_kern_control(opener, side)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_insert_height_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_insert_height_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_xform_name_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_xform_name_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_page_ref_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_page_ref_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_pdf_last_match_continuation(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_pdf_last_match_control(opener)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
+    pub(super) fn begin_mark_class_continuation(
+        &mut self,
+        opener: OriginId,
+        primitive: ExpandablePrimitive,
+    ) -> Result<(), CommandError> {
+        self.command
+            .scratch
+            .push_mark_class_control(opener, primitive)
+            .map_err(crate::scan_toks::scratch_command_error)
+    }
+
     fn finish_number_output(
         &mut self,
         control: crate::expansion_work::control::SynchronousNumberControl,
         value: i32,
-    ) {
+    ) -> Result<(), CommandError> {
         use crate::expansion_work::control::SynchronousNumberPurpose;
+
+        let mark_primitive = match control.purpose {
+            SynchronousNumberPurpose::TopMarkClass => Some(ExpandablePrimitive::TopMarks),
+            SynchronousNumberPurpose::FirstMarkClass => Some(ExpandablePrimitive::FirstMarks),
+            SynchronousNumberPurpose::BotMarkClass => Some(ExpandablePrimitive::BotMarks),
+            SynchronousNumberPurpose::SplitFirstMarkClass => {
+                Some(ExpandablePrimitive::SplitFirstMarks)
+            }
+            SynchronousNumberPurpose::SplitBotMarkClass => Some(ExpandablePrimitive::SplitBotMarks),
+            _ => None,
+        };
+        if let Some(primitive) = mark_primitive {
+            let class = u16::try_from(value.clamp(0, 32_767)).unwrap_or(0);
+            if let Some(tokens) = self
+                .state
+                .page_mark_class_value(page_mark(primitive), class)
+                .copied()
+            {
+                self.push_mark_text(&tokens);
+            }
+            return Ok(());
+        }
 
         let text = match control.purpose {
             SynchronousNumberPurpose::Decimal => value.to_string(),
@@ -739,8 +881,63 @@ impl<G> CommandProcessor<'_, '_, G> {
             SynchronousNumberPurpose::PdfUniformDeviate => {
                 self.state.pdf_uniform_deviate(value).to_string()
             }
+            SynchronousNumberPurpose::PdfInsertHeight => {
+                let class = u16::try_from(value.clamp(0, 32_767)).unwrap_or(0);
+                self.state
+                    .page_insertion(class)
+                    .map(|insertion| insertion.height())
+                    .map_or_else(|| "0pt".to_owned(), format_scaled)
+            }
+            SynchronousNumberPurpose::PdfXFormName => u32::try_from(value)
+                .ok()
+                .and_then(|object| self.state.pdf_form_resource(object))
+                .unwrap_or(0)
+                .to_string(),
+            SynchronousNumberPurpose::PdfPageRef => {
+                if value <= 0 {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (pageref): invalid page number",
+                    ));
+                }
+                u32::try_from(value)
+                    .ok()
+                    .and_then(|page| self.state.pdf_page_object(page))
+                    .unwrap_or(0)
+                    .to_string()
+            }
+            SynchronousNumberPurpose::PdfLastMatch => {
+                let mut index = value;
+                if index < 0 {
+                    self.pdftex_match_number_diagnostic(index);
+                    index = 1;
+                }
+                let mut rendered = String::new();
+                if let Some((offset, bytes)) = u32::try_from(index)
+                    .ok()
+                    .and_then(|index| self.state.pdf_match_capture(index))
+                {
+                    use std::fmt::Write as _;
+                    write!(rendered, "{offset}->").expect("writing to String cannot fail");
+                    rendered.extend(bytes.iter().copied().map(char::from));
+                } else {
+                    rendered.push_str("-1->");
+                }
+                rendered
+            }
+            SynchronousNumberPurpose::PdfMarginKernLeft
+            | SynchronousNumberPurpose::PdfMarginKernRight => {
+                unreachable!("margin-kern controls use their scaled output path")
+            }
+            SynchronousNumberPurpose::TopMarkClass
+            | SynchronousNumberPurpose::FirstMarkClass
+            | SynchronousNumberPurpose::BotMarkClass
+            | SynchronousNumberPurpose::SplitFirstMarkClass
+            | SynchronousNumberPurpose::SplitBotMarkClass => {
+                unreachable!("mark-class controls use their token-list output path")
+            }
         };
         self.push_rendered_text(&text, control.opener);
+        Ok(())
     }
 
     /// Consumes one settled character of a hot number conversion.  A nested
@@ -749,6 +946,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn advance_number_continuation(
         &mut self,
         command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        self.advance_number_continuation_impl(command, false)
+    }
+
+    fn advance_number_continuation_impl(
+        &mut self,
+        command: HotCommand<G>,
+        at_end: bool,
     ) -> Result<bool, CommandError> {
         use crate::expansion_work::control::SynchronousNumberPhase as Phase;
         let control = self
@@ -769,6 +974,114 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .unwrap_or(i64::from(i32::MAX))
                 .min(i64::from(i32::MAX))
         };
+
+        // pdfTeX's margin-kern conversions use the e-TeX extended register
+        // selector grammar.  Keep the selector in this existing compact
+        // integer lane; the only operation-specific work is the final box
+        // lookup and scaled rendering.
+        if matches!(
+            control.purpose,
+            crate::expansion_work::control::SynchronousNumberPurpose::PdfMarginKernLeft
+                | crate::expansion_work::control::SynchronousNumberPurpose::PdfMarginKernRight
+        ) {
+            let finish_margin_kern =
+                |this: &mut Self,
+                 control: crate::expansion_work::control::SynchronousNumberControl,
+                 value: i64,
+                 negative: bool|
+                 -> Result<(), CommandError> {
+                    let value = if negative {
+                        value.saturating_neg()
+                    } else {
+                        value
+                    };
+                    let index = u16::try_from(value.clamp(0, 32_767)).unwrap_or(0);
+                    let side = match control.purpose {
+                    crate::expansion_work::control::SynchronousNumberPurpose::PdfMarginKernLeft => {
+                        tex_state::node::MarginKernSide::Left
+                    }
+                    crate::expansion_work::control::SynchronousNumberPurpose::PdfMarginKernRight => {
+                        tex_state::node::MarginKernSide::Right
+                    }
+                    _ => unreachable!("margin-kern branch validates its purpose"),
+                };
+                    let Some(amount) = this.state.box_margin_kern(index, side) else {
+                        return Err(CommandError::PdfNavigation(
+                            "pdfTeX error (marginkern): a non-empty hbox expected",
+                        ));
+                    };
+                    let _ = this
+                        .command
+                        .scratch
+                        .pop_number_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    this.push_rendered_text(&format_scaled(amount), control.opener);
+                    Ok(())
+                };
+
+            match control.phase {
+                Phase::Need => {
+                    if is_space {
+                        return Ok(false);
+                    }
+                    if character == Some('+') || character == Some('-') {
+                        self.command.scratch.set_number_phase(Phase::Accumulating {
+                            negative: character == Some('-'),
+                            value: 0,
+                            seen_digit: false,
+                        })?;
+                        return Ok(false);
+                    }
+                    if let Some(digit) = digit {
+                        self.command.scratch.set_number_phase(Phase::Accumulating {
+                            negative: false,
+                            value: digit,
+                            seen_digit: true,
+                        })?;
+                        return Ok(false);
+                    }
+                    if !at_end {
+                        self.back_input(command.materialize())?;
+                    }
+                    self.missing_number_error()?;
+                    finish_margin_kern(self, control, 0, false)?;
+                    return Ok(true);
+                }
+                Phase::Accumulating {
+                    negative,
+                    value,
+                    seen_digit,
+                } => {
+                    if let Some(digit) = digit {
+                        self.command.scratch.set_number_phase(Phase::Accumulating {
+                            negative,
+                            value: saturating_digit(value, digit),
+                            seen_digit: true,
+                        })?;
+                        return Ok(false);
+                    }
+                    if !seen_digit {
+                        if !at_end {
+                            self.back_input(command.materialize())?;
+                        }
+                        self.missing_number_error()?;
+                        finish_margin_kern(self, control, 0, negative)?;
+                    } else {
+                        if !at_end && !is_space {
+                            self.back_input(command.materialize())?;
+                        }
+                        finish_margin_kern(self, control, value, negative)?;
+                    }
+                    return Ok(true);
+                }
+                Phase::Await { .. }
+                | Phase::RegisterIndex { .. }
+                | Phase::RegisterIndexAwait { .. } => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+        }
+
         let finish = |this: &mut Self,
                       control: crate::expansion_work::control::SynchronousNumberControl,
                       value: i64,
@@ -788,8 +1101,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .pop_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            this.finish_number_output(control, value);
-            Ok(())
+            this.finish_number_output(control, value)
         };
 
         // A register primitive is itself the first operand token of
@@ -874,7 +1186,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .pop_number_control()
                     .map_err(crate::scan_toks::scratch_command_error)?;
-                self.finish_number_output(control, value);
+                self.finish_number_output(control, value)?;
                 return Ok(true);
             }
         }
@@ -911,8 +1223,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .pop_number_control()
                         .map_err(crate::scan_toks::scratch_command_error)?;
-                    this.finish_number_output(control, number);
-                    Ok(())
+                    this.finish_number_output(control, number)
                 };
             match character {
                 _ if is_space && !seen_digit => {
@@ -954,13 +1265,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 _ if !seen_digit => {
-                    self.back_input(command.materialize())?;
+                    if !at_end {
+                        self.back_input(command.materialize())?;
+                    }
                     self.missing_number_error()?;
                     finish_register(self, control, target, 0, false)?;
                     return Ok(true);
                 }
                 _ => {
-                    if !is_space {
+                    if !at_end && !is_space {
                         self.back_input(command.materialize())?;
                     }
                     finish_register(self, control, target, value, negative)?;
@@ -989,7 +1302,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(false);
                 }
-                self.back_input(command.materialize())?;
+                if !at_end {
+                    self.back_input(command.materialize())?;
+                }
                 self.missing_number_error()?;
                 finish(self, control, 0, false)?;
                 Ok(true)
@@ -1011,11 +1326,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 if !seen_digit {
-                    self.back_input(command.materialize())?;
+                    if !at_end {
+                        self.back_input(command.materialize())?;
+                    }
                     self.missing_number_error()?;
                     finish(self, control, 0, negative)?;
                 } else {
-                    if !is_space {
+                    if !at_end && !is_space {
                         self.back_input(command.materialize())?;
                     }
                     finish(self, control, value, negative)?;
@@ -1023,6 +1340,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(true)
             }
         }
+    }
+
+    /// Lets a pending integer conversion observe end-of-input as the
+    /// scanner's implicit terminator.  TeX's integer scanner accepts a
+    /// completed value immediately before EOF; the ordinary delivery loop
+    /// otherwise has no settled command to hand to the hot accumulator.
+    pub(super) fn finish_number_continuation_at_end(&mut self) -> Result<bool, CommandError> {
+        let Some(control) = self
+            .command
+            .scratch
+            .top_number_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+        else {
+            return Ok(false);
+        };
+        if matches!(
+            control.phase,
+            crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
+                | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndexAwait { .. }
+        ) {
+            return Ok(false);
+        }
+        self.advance_number_continuation_impl(HotCommand::empty(), true)
     }
 
     fn compact_number_register_target(meaning: Meaning) -> bool {
@@ -1242,6 +1582,43 @@ impl<G> CommandProcessor<'_, '_, G> {
             .arena_mut()
             .finish_token_buffer(control.writer)
             .map_err(crate::scan_toks::attempt_command_error)?;
+        if control.kind
+            == crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareLeft
+        {
+            let writer = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_buffer()
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            self.command
+                .scratch
+                .push_pdf_string_control(
+                    control.opener,
+                    crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareRight,
+                    control.attempt_opening,
+                    writer,
+                    Some(list),
+                )
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            return Ok(true);
+        }
+        if control.kind
+            == crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareRight
+        {
+            let left = control.left.ok_or_else(CommandError::input_invariant)?;
+            self.finish_pdf_string_compare_continuation(left, list, control.opener)?;
+            return Ok(true);
+        }
+        if matches!(
+            control.kind,
+            crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString
+                | crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex
+                | crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex
+        ) {
+            self.finish_pdf_string_continuation(control.kind, list, control.opener)?;
+            return Ok(true);
+        }
         let len = self
             .command
             .attempt_token_words(list)

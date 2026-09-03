@@ -495,6 +495,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             ConditionalKind::IfNum
                 | ConditionalKind::IfPdfAbsNum
                 | ConditionalKind::IfDim
+                | ConditionalKind::IfVoid
+                | ConditionalKind::IfHBox
+                | ConditionalKind::IfVBox
+                | ConditionalKind::IfEof
+                | ConditionalKind::IfFontChar
                 | ConditionalKind::IfOdd
                 | ConditionalKind::IfCase
         ) {
@@ -1110,6 +1115,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => None,
         });
 
+        // `\iffontchar` has the same expanded-delivery ownership as the
+        // integer conditionals, but its first operand is a font selector and
+        // its second is a restricted character number. Keeping both small
+        // phases in this control avoids handing the nested selector back to
+        // the legacy scanner (and therefore avoids a second delivery loop).
+        if control.kind == ConditionalKind::IfFontChar {
+            return self
+                .advance_if_font_char_continuation(control, command, character, is_space, digit);
+        }
+
         // A register primitive is the first token of a `scan_int` operand;
         // its selector is the only remaining input. Keep that selector in
         // the compact conditional record so a macro-valued index returns to
@@ -1133,7 +1148,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 if matches!(
                     control.kind,
-                    ConditionalKind::IfOdd | ConditionalKind::IfCase
+                    ConditionalKind::IfOdd
+                        | ConditionalKind::IfCase
+                        | ConditionalKind::IfVoid
+                        | ConditionalKind::IfHBox
+                        | ConditionalKind::IfVBox
+                        | ConditionalKind::IfEof
                 ) {
                     let _ = self
                         .command
@@ -1142,6 +1162,28 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map_err(crate::scan_toks::scratch_command_error)?;
                     if control.kind == ConditionalKind::IfCase {
                         self.complete_ifcase(control.condition, value)?;
+                    } else if matches!(
+                        control.kind,
+                        ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox
+                    ) {
+                        let limit = if self.command.profile().capabilities().supports_etex() {
+                            32_767
+                        } else {
+                            i32::from(u8::MAX)
+                        };
+                        let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
+                        let box_kind = self.state.box_kind(index);
+                        let result = match control.kind {
+                            ConditionalKind::IfVoid => box_kind.is_none(),
+                            ConditionalKind::IfHBox => {
+                                box_kind == Some(tex_state::CommandBoxKind::Horizontal)
+                            }
+                            ConditionalKind::IfVBox => {
+                                box_kind == Some(tex_state::CommandBoxKind::Vertical)
+                            }
+                            _ => unreachable!("box conditional branch validates its kind"),
+                        };
+                        self.complete_boolean(control.condition, result ^ control.inverted)?;
                     } else {
                         self.complete_boolean(
                             control.condition,
@@ -1162,7 +1204,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // conditionals take the exact same iterative route as `\ifnum`.
         if matches!(
             control.kind,
-            ConditionalKind::IfOdd | ConditionalKind::IfCase
+            ConditionalKind::IfOdd
+                | ConditionalKind::IfCase
+                | ConditionalKind::IfVoid
+                | ConditionalKind::IfHBox
+                | ConditionalKind::IfVBox
+                | ConditionalKind::IfEof
         ) {
             return self.advance_if_number_unary(control, command, character, is_space, digit);
         }
@@ -1406,6 +1453,235 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(IfNumberAdvance::Complete)
             }
+            Phase::FontSelector | Phase::FontFamily { .. } | Phase::FontCharacter { .. } => {
+                Err(CommandError::input_invariant())
+            }
+        }
+    }
+
+    fn advance_if_font_char_continuation(
+        &mut self,
+        control: crate::expansion_work::control::SynchronousIfNumberControl,
+        command: HotCommand<G>,
+        character: Option<char>,
+        is_space: bool,
+        digit: Option<i64>,
+    ) -> Result<IfNumberAdvance, CommandError> {
+        use crate::expansion_work::control::SynchronousIfNumberPhase as Phase;
+
+        let saturating_digit = |value: i64, digit: i64| {
+            value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX))
+        };
+        let signed = |value: i64, negative: bool| {
+            let value = value.min(i64::from(i32::MAX));
+            if negative { -value } else { value }
+        };
+        let finish = |this: &mut Self,
+                      font: tex_state::ids::FontId,
+                      value: i64,
+                      negative: bool,
+                      control: crate::expansion_work::control::SynchronousIfNumberControl|
+         -> Result<(), CommandError> {
+            let value = signed(value, negative);
+            let result = u8::try_from(value)
+                .ok()
+                .is_some_and(|code| this.state.font_char_metrics(font, code).is_some());
+            let _ = this
+                .command
+                .scratch
+                .pop_if_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            this.complete_boolean(control.condition, result ^ control.inverted)
+        };
+
+        match control.phase {
+            Phase::NeedLeft | Phase::FontSelector => {
+                if is_space {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                let meaning = match command.resolved_meaning() {
+                    ResolvedMeaning::Static(meaning) => Some(meaning),
+                    ResolvedMeaning::Macro { .. } => None,
+                };
+                let Some(meaning) = meaning else {
+                    return Err(CommandError::input_invariant());
+                };
+                let font = match meaning {
+                    Meaning::Font(font) => Some(font),
+                    Meaning::UnexpandablePrimitive(
+                        tex_state::meaning::UnexpandablePrimitive::Font,
+                    ) => Some(self.state.current_font()),
+                    Meaning::UnexpandablePrimitive(primitive)
+                        if crate::scanners::MathFamilySize::of_primitive(primitive).is_some() =>
+                    {
+                        let size = match crate::scanners::MathFamilySize::of_primitive(primitive)
+                            .expect("family primitive was recognized")
+                        {
+                            crate::scanners::MathFamilySize::Text => 0,
+                            crate::scanners::MathFamilySize::Script => 1,
+                            crate::scanners::MathFamilySize::ScriptScript => 2,
+                        };
+                        self.command
+                            .scratch
+                            .set_if_number_phase(Phase::FontFamily {
+                                size,
+                                negative: false,
+                                value: 0,
+                                seen_digit: false,
+                            })?;
+                        return Ok(IfNumberAdvance::Continue);
+                    }
+                    _ => None,
+                };
+                let font = match font {
+                    Some(font) => font,
+                    None => {
+                        // §577's missing-font recovery backs the rejected
+                        // command up and substitutes `nullfont`; the
+                        // character scanner can then continue in the same
+                        // compact control.
+                        self.back_input(command.materialize())?;
+                        let deferred = {
+                            let mut report = self.state.print_err("Missing font identifier");
+                            report.help(&[
+                                "I was looking for a control sequence whose",
+                                "current meaning has been defined by \\font.",
+                            ]);
+                            report.defer()
+                        };
+                        let context = self.command.output_open_context(self.state);
+                        let mut report = self.state.resume_error_report(deferred);
+                        report.context(context);
+                        let outcome = report.error();
+                        self.finish_error_outcome(outcome)?;
+                        tex_state::font::NULL_FONT
+                    }
+                };
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::FontCharacter {
+                        font,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::FontFamily {
+                size,
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::FontFamily {
+                            size,
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::FontFamily {
+                            size,
+                            negative,
+                            value: saturating_digit(value, digit),
+                            seen_digit: true,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                let family = signed(value, negative).clamp(0, 15) as u8;
+                let font = match size {
+                    0 => self
+                        .state
+                        .math_family_font(tex_state::math::MathFontSize::Text, family),
+                    1 => self
+                        .state
+                        .math_family_font(tex_state::math::MathFontSize::Script, family),
+                    2 => self
+                        .state
+                        .math_family_font(tex_state::math::MathFontSize::ScriptScript, family),
+                    _ => return Err(CommandError::input_invariant()),
+                };
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                } else if !is_space {
+                    self.back_input(command.materialize())?;
+                }
+                self.command
+                    .scratch
+                    .set_if_number_phase(Phase::FontCharacter {
+                        font,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                Ok(IfNumberAdvance::Continue)
+            }
+            Phase::FontCharacter {
+                font,
+                negative,
+                value,
+                seen_digit,
+            } => {
+                if is_space && !seen_digit {
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if (character == Some('+') || character == Some('-')) && !seen_digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::FontCharacter {
+                            font,
+                            negative: character == Some('-'),
+                            value,
+                            seen_digit,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if let Some(digit) = digit {
+                    self.command
+                        .scratch
+                        .set_if_number_phase(Phase::FontCharacter {
+                            font,
+                            negative,
+                            value: saturating_digit(value, digit),
+                            seen_digit: true,
+                        })?;
+                    return Ok(IfNumberAdvance::Continue);
+                }
+                if !seen_digit {
+                    self.back_input(command.materialize())?;
+                    self.report_missing_number_for_hot_conditional()?;
+                    finish(self, font, 0, false, control)?;
+                } else if !is_space {
+                    self.back_input(command.materialize())?;
+                    finish(self, font, value, negative, control)?;
+                } else {
+                    finish(self, font, value, negative, control)?;
+                }
+                Ok(IfNumberAdvance::Complete)
+            }
+            Phase::AwaitLeft { .. }
+            | Phase::AwaitRelation { .. }
+            | Phase::AwaitRight { .. }
+            | Phase::Left { .. }
+            | Phase::NeedRelation { .. }
+            | Phase::Right { .. }
+            | Phase::RegisterIndex { .. }
+            | Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
         }
     }
 
@@ -1493,11 +1769,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scratch
                 .pop_if_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
-            if control.kind == ConditionalKind::IfCase {
-                this.complete_ifcase(control.condition, value)
-            } else {
-                this.complete_boolean(control.condition, ((value & 1) != 0) ^ control.inverted)
-            }
+            let result = match control.kind {
+                ConditionalKind::IfCase => return this.complete_ifcase(control.condition, value),
+                ConditionalKind::IfOdd => (value & 1) != 0,
+                ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
+                    let limit = if this.command.profile().capabilities().supports_etex() {
+                        32_767
+                    } else {
+                        i32::from(u8::MAX)
+                    };
+                    let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
+                    let box_kind = this.state.box_kind(index);
+                    match control.kind {
+                        ConditionalKind::IfVoid => box_kind.is_none(),
+                        ConditionalKind::IfHBox => {
+                            box_kind == Some(tex_state::CommandBoxKind::Horizontal)
+                        }
+                        ConditionalKind::IfVBox => {
+                            box_kind == Some(tex_state::CommandBoxKind::Vertical)
+                        }
+                        _ => unreachable!("box conditional branch validates its kind"),
+                    }
+                }
+                ConditionalKind::IfEof => {
+                    let index = u8::try_from(value.clamp(0, 15)).unwrap_or(0);
+                    this.state
+                        .read_stream_at_eof(tex_state::world::StreamSlot::new(index))
+                }
+                _ => unreachable!("unary conditional branch validates its kind"),
+            };
+            this.complete_boolean(control.condition, result ^ control.inverted)
         };
 
         if let Phase::RegisterIndex {
@@ -1625,7 +1926,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             | Phase::AwaitRight { .. }
             | Phase::Right { .. }
             | Phase::RegisterIndex { .. }
-            | Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
+            | Phase::RegisterIndexAwait { .. }
+            | Phase::FontSelector
+            | Phase::FontFamily { .. }
+            | Phase::FontCharacter { .. } => Err(CommandError::input_invariant()),
         }
     }
 

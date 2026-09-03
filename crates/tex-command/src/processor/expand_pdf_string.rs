@@ -93,6 +93,82 @@ fn unescape_pdf_hex(bytes: &[u8]) -> String {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Starts a balanced expanded-text collector for one of pdfTeX's string
+    /// projections. The body is consumed by the canonical expanded-delivery
+    /// loop; only the finished attempt buffer crosses into the byte renderer.
+    pub(super) fn begin_pdf_string_continuation(
+        &mut self,
+        opener: OriginId,
+        kind: crate::expansion_work::control::SynchronousExpandedKind,
+    ) -> Result<(), CommandError> {
+        let attempt_opening = self.command.attempt.arena().mark();
+        let writer = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        if let Err(error) = self.command.scratch.push_pdf_string_control(
+            opener,
+            kind,
+            attempt_opening,
+            writer,
+            None,
+        ) {
+            self.command
+                .attempt
+                .arena_mut()
+                .truncate(attempt_opening)
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            return Err(crate::scan_toks::scratch_command_error(error));
+        }
+        Ok(())
+    }
+
+    /// Projects a completed hot pdf-string collector and inserts the result
+    /// as category-12/space character tokens. This is the same semantic
+    /// boundary as the legacy `expand_pdf_escape_*` methods, but no scanner
+    /// call or second delivery loop is entered while the body is active.
+    pub(super) fn finish_pdf_string_continuation(
+        &mut self,
+        kind: crate::expansion_work::control::SynchronousExpandedKind,
+        list: crate::AttemptTokenListId,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let text = self.attempt_token_list_string_text(list)?;
+        let rendered = match kind {
+            crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString => {
+                escape_pdf_literal_string(&text)
+            }
+            crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex => {
+                escape_pdf_hex(&self.attempt_token_list_bytes(list)?)
+            }
+            crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex => {
+                unescape_pdf_hex(&self.attempt_token_list_bytes(list)?)
+            }
+            _ => return Err(CommandError::input_invariant()),
+        };
+        self.push_rendered_text(&rendered, opener);
+        Ok(())
+    }
+
+    pub(super) fn finish_pdf_string_compare_continuation(
+        &mut self,
+        left: crate::AttemptTokenListId,
+        right: crate::AttemptTokenListId,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let left = self.attempt_token_list_string_text(left)?;
+        let right = self.attempt_token_list_string_text(right)?;
+        let value = match left.as_bytes().cmp(right.as_bytes()) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        };
+        self.push_rendered_text(&value.to_string(), opener);
+        Ok(())
+    }
+
     /// pdftex.web §§495 and 1535's `compare_strings` conversion.
     ///
     /// Both operands are independently collected by `scan_pdf_ext_toks`,

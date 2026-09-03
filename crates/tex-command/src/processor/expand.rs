@@ -259,6 +259,7 @@ fn is_ranked_fused_expansion(dispatch: ExpansionDispatch) -> bool {
                     | ExpandablePrimitive::Number
                     | ExpandablePrimitive::The
                     | ExpandablePrimitive::PdfUniformDeviate
+                    | ExpandablePrimitive::PdfXImageBBox
             )
     )
 }
@@ -917,6 +918,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
                                 ResidentColdOutcome::End => {
+                                    if self.finish_number_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
+                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
                                     if self.command.scratch.driver_continuation_depth() != 0 {
                                         self.command
                                             .scratch
@@ -950,6 +957,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
                                 ResidentColdOutcome::End => {
+                                    if self.finish_number_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
+                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
                                     if self.command.scratch.driver_continuation_depth() != 0 {
                                         self.command
                                             .scratch
@@ -1002,6 +1015,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             match cold {
                                 ResidentColdOutcome::Retry => continue 'fetch,
                                 ResidentColdOutcome::End => {
+                                    if self.finish_number_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
+                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
+                                        continue 'fetch;
+                                    }
                                     if self.command.scratch.driver_continuation_depth() != 0 {
                                         self.command
                                             .scratch
@@ -1438,6 +1457,28 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
 
+            let ximage_bbox_control = self
+                .command
+                .scratch
+                .top_pdf_ximage_bbox_control()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            if ximage_bbox_control.is_some()
+                && matches!(
+                    action,
+                    ExpandedCommandAction::Return
+                        | ExpandedCommandAction::EndTemplate
+                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            ExpandablePrimitive::Else
+                                | ExpandablePrimitive::Or
+                                | ExpandablePrimitive::Fi,
+                        ))
+                )
+            {
+                let _ = self.advance_pdf_ximage_bbox_continuation(command, false)?;
+                fetch = true;
+                continue;
+            }
+
             // `\fontname` consumes one expanded font identifier.  Keep its
             // opener in the compact control lane so nested conversions are
             // reduced by this loop rather than by recursively re-entering a
@@ -1450,9 +1491,26 @@ impl<G> CommandProcessor<'_, '_, G> {
             if fontname_control.is_some() {
                 match action {
                     ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::FontName,
+                        primitive @ (ExpandablePrimitive::FontName
+                        | ExpandablePrimitive::PdfFontSize
+                        | ExpandablePrimitive::PdfFontName
+                        | ExpandablePrimitive::PdfFontObjectNumber),
                     )) => {
-                        self.begin_fontname_continuation(command.origin())?;
+                        match primitive {
+                            ExpandablePrimitive::FontName => {
+                                self.begin_fontname_continuation(command.origin())?;
+                            }
+                            ExpandablePrimitive::PdfFontSize => {
+                                self.begin_pdf_font_size_continuation(command.origin())?;
+                            }
+                            ExpandablePrimitive::PdfFontName => {
+                                self.begin_pdf_font_name_continuation(command.origin())?;
+                            }
+                            ExpandablePrimitive::PdfFontObjectNumber => {
+                                self.begin_pdf_font_object_number_continuation(command.origin())?;
+                            }
+                            _ => unreachable!("font control branch validates its primitive"),
+                        }
                         fetch = true;
                         continue;
                     }
@@ -1477,7 +1535,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | ExpandablePrimitive::IfDim
                 | ExpandablePrimitive::IfPdfAbsDim
                 | ExpandablePrimitive::IfOdd
-                | ExpandablePrimitive::IfCase),
+                | ExpandablePrimitive::IfCase
+                | ExpandablePrimitive::IfVoid
+                | ExpandablePrimitive::IfHBox
+                | ExpandablePrimitive::IfVBox
+                | ExpandablePrimitive::IfEof
+                | ExpandablePrimitive::IfFontChar),
             )) = action
             {
                 let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
@@ -1502,10 +1565,107 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::FontName,
+                primitive @ (ExpandablePrimitive::FontName
+                | ExpandablePrimitive::PdfFontSize
+                | ExpandablePrimitive::PdfFontName
+                | ExpandablePrimitive::PdfFontObjectNumber),
             )) = action
             {
-                self.begin_fontname_continuation(command.origin())?;
+                match primitive {
+                    ExpandablePrimitive::FontName => {
+                        self.begin_fontname_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfFontSize => {
+                        self.begin_pdf_font_size_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfFontName => {
+                        self.begin_pdf_font_name_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfFontObjectNumber => {
+                        self.begin_pdf_font_object_number_continuation(command.origin())?;
+                    }
+                    _ => unreachable!("font primitive branch validates its primitive"),
+                }
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::PdfInsertHeight
+                | ExpandablePrimitive::PdfXFormName
+                | ExpandablePrimitive::PdfPageRef
+                | ExpandablePrimitive::PdfLastMatch),
+            )) = action
+            {
+                match primitive {
+                    ExpandablePrimitive::PdfInsertHeight => {
+                        self.begin_pdf_insert_height_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfXFormName => {
+                        self.begin_pdf_xform_name_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfPageRef => {
+                        self.begin_pdf_page_ref_continuation(command.origin())?;
+                    }
+                    ExpandablePrimitive::PdfLastMatch => {
+                        self.begin_pdf_last_match_continuation(command.origin())?;
+                    }
+                    _ => unreachable!("PDF integer branch validates its primitive"),
+                }
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                ExpandablePrimitive::PdfXImageBBox,
+            )) = action
+            {
+                self.begin_pdf_ximage_bbox_continuation(command.origin())?;
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::PdfEscapeString
+                | ExpandablePrimitive::PdfEscapeHex
+                | ExpandablePrimitive::PdfUnescapeHex
+                | ExpandablePrimitive::StringCompare),
+            )) = action
+            {
+                let kind = match primitive {
+                    ExpandablePrimitive::PdfEscapeString => crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString,
+                    ExpandablePrimitive::PdfEscapeHex => crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex,
+                    ExpandablePrimitive::PdfUnescapeHex => crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex,
+                    ExpandablePrimitive::StringCompare => crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareLeft,
+                    _ => unreachable!("PDF string branch validates its primitive"),
+                };
+                self.begin_pdf_string_continuation(command.origin(), kind)?;
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::TopMark
+                | ExpandablePrimitive::FirstMark
+                | ExpandablePrimitive::BotMark
+                | ExpandablePrimitive::SplitFirstMark
+                | ExpandablePrimitive::SplitBotMark),
+            )) = action
+            {
+                self.expand_mark(primitive)?;
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::TopMarks
+                | ExpandablePrimitive::FirstMarks
+                | ExpandablePrimitive::BotMarks
+                | ExpandablePrimitive::SplitFirstMarks
+                | ExpandablePrimitive::SplitBotMarks),
+            )) = action
+            {
+                self.begin_mark_class_continuation(command.origin(), primitive)?;
                 fetch = true;
                 continue;
             }
@@ -1531,6 +1691,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             )) = action
             {
                 self.begin_pdf_uniform_deviate_continuation(command.origin())?;
+                fetch = true;
+                continue;
+            }
+
+            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                primitive @ (ExpandablePrimitive::LeftMarginKern
+                | ExpandablePrimitive::RightMarginKern),
+            )) = action
+            {
+                let side = if primitive == ExpandablePrimitive::LeftMarginKern {
+                    tex_state::node::MarginKernSide::Left
+                } else {
+                    tex_state::node::MarginKernSide::Right
+                };
+                self.begin_pdf_margin_kern_continuation(command.origin(), side)?;
                 fetch = true;
                 continue;
             }
