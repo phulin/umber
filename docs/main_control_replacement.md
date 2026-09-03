@@ -136,10 +136,14 @@ complete permanent-symbol domain. The existing 8-byte `TracedTokenWord` is now
 the exact composition of this token-only word and its 4-byte origin coordinate,
 so introducing the packed word does not create a second token meaning.
 
-`CommandWord` is a fixed-width decoded command containing an opcode, operand,
-control-sequence index, and compact origin coordinate. It replaces the rich
-`CurrentCommand` on the ordinary path. A diagnostic or observer can materialize
-the existing public command value at a cold boundary.
+`HotToken` contains the packed `TokenWord`, `OriginId`, and compact delivery
+site. Its paired 16-byte `CommandWord<G>` contains the directly branchable
+command class, flags, and opaque fixed-width operand. Static meanings remain
+packed through dense resolution; the operand instead carries the one typed
+font or macro coordinate when required. Together they replace the rich
+`CurrentCommand` on the ordinary raw and macro-expansion path. Execution,
+scanners, backup, observation/diagnosis, suspension, and exceptional recovery
+materialize the existing public command value at their boundary.
 
 The exact layout is versioned and asserted with size tests. It is runtime
 state, not format ABI.

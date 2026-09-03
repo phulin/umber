@@ -179,29 +179,27 @@ Raw `get_next`/`get_token` and expanded `get_x_token`/`x_token` enter one
 concrete destination loop. Replay-aware, main-loop, protected,
 undefined-preserving, and alignment entries select their semantic branches
 before entering it; resident advancement is shared, and the raw-versus-expanded
-decision occurs only after the resolved command already occupies its final slot.
+decision occurs after packed resolution has populated the hot command word.
 Control-sequence creation remains a source-tokenization fact: every token
 reaching either loop is already a character or a packed stable
 control-sequence identity.
 
 The loop is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. The raw entry
-and expanded entries initialize it once or readmit
-the exact command supplied by `x_token` or genuine suspension. Each entry then
-keeps one direct mutable borrow of that initialized value through its complete
-ordinary loop. It neither probes vacancy, reinstalls a placeholder, recovers
-the command through repeated `as_ref`/`as_mut`, nor takes it on successful
-return. Each concrete
+`Option<CurrentCommand<G>>` slot for that active request. The entry converts an
+already-supplied `x_token` or resumed command into one `HotToken` plus
+`CommandWord<G>`, or initializes that compact pair for raw delivery. It keeps
+that owner through its complete ordinary loop and materializes the rich return
+value only at a semantic boundary. Each concrete
 source arm retains the separate lexer transition. The delivery loop selects a
 non-source resident frame's lifetime-specific storage once and keeps its one
 authoritative cursor through read, increment, parameter
 interception, resolution, and expansion-or-return. Exhaustion leaves through a
 cold handler; there is no runtime call/result carrier or second storage
 dispatch. After that borrow ends, one branch-independent
-`EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
-and delivery facts into the caller's address and returns only the scalar packed-
-resolution fact. The same frame-owned loop then applies one-delivery
-suppression, reuses the dense resolver's already-decoded literal catcode for
+`HotCommand::write_resolved_delivery` call writes spelling, packed command,
+and delivery facts and returns only the scalar packed-resolution fact. The
+same frame-owned loop then applies one-delivery suppression and reuses the
+dense resolver's literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
 can require it. That transition reads the semantic top index once, matches the
 authoritative input row directly, advances its resident cursor once, and
@@ -211,8 +209,8 @@ the reusable destination through at most one dense meaning lookup. EOF, line acq
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
 Raw and expanded entries select branches of the same delivery loop. Their
-ordinary command branches leave the already-resident result directly in the
-caller's return slot, without an eager `CommandError`, error slot, zero-sized failure
+ordinary command branches materialize the result directly in the caller's
+return slot, without an eager `CommandError`, error slot, zero-sized failure
 relay, or general internal status carrier. Only cold failure and resident-
 cold-transition helpers construct a rich error. The expanded entry restores parked
 continuation state through a separate cold helper only when a genuine resource
@@ -301,19 +299,19 @@ row's replay explanation. It neither clears nor reconstructs the caller-owned
 
 Control-sequence resolution performs one direct probe of the already-admitted
 dense meaning row through the live `CommandContext`. The packed-token resolver
-accepts the actual caller-owned `CurrentCommand` as its in-place target; the
-canonical row decodes its tag once and writes the final static payload and
-command identity, or acquires the one generation-branded macro-definition
-owner directly into that slot. It constructs no projection carrier,
-intermediate resolved-meaning carrier, whole-row copy, or second command. The row
+accepts the actual hot command as its in-place target; the canonical row writes
+the validated static meaning word, font id, or one generation-branded
+macro-definition coordinate directly into `CommandWord<G>`. It constructs no
+projection carrier, intermediate `ResolvedMeaning`, whole-row copy, or second
+command. The row
 borrow ends with that write, before outer recovery, alignment handling,
 expansion, execution, assignment, replay, or suspension can mutate state.
 Assignment level remains solely in the dense bank, so delivered-command
 ownership does not duplicate journaling or reinterpret a meaning after
 delivery.
 
-Consuming a reborrow in `EmptyCommand::write_resolved_delivery` writes and
-resolves the resident packed spelling directly in the caller destination and
+`HotCommand::write_resolved_delivery` writes and resolves the resident packed
+spelling directly in the frame-owned destination and
 returns only the meaning-lookup and literal-catcode scalars already decided by
 dense resolution. The enclosing `CommandState` transition reclaims its
 original destination immediately: it applies `\noexpand`, identifies the

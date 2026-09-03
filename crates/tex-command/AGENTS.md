@@ -132,15 +132,16 @@ collector (see `src/conditionals.rs`).
 - `src/scalar_journal.rs` and `src/scalar_journal/tests.rs`: reusable fixed-chunk
   bidirectional command-root journal, scalar marks, two-lineage suffix
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
-- `src/command.rs`: public opaque, ephemeral current-command representation;
-  resident input writes its packed spelling and resolved meaning together
-  through one reborrow of the caller's `EmptyCommand`. The packed-token
-  resolver receives that actual command as its in-place target, indexes the
-  canonical dense eqtb row once, and writes the final static payload or sole
-  macro owner without a projection carrier. The processor's frame-owned loop
-  keeps the authoritative resident cursor from indexed read through resolution,
-  suppression, alignment treatment, and expansion-or-return; there is no hot
-  resident helper, interception enum, or result handoff. Exact source geometry remains behind the spelling's
+- `src/command.rs`: compact internal `HotToken { word, origin, site }`, fixed
+  16-byte `CommandWord<G>`, and public opaque, ephemeral `CurrentCommand`.
+  Resident input writes packed spelling and meaning directly into the hot
+  pair. The dense resolver preserves a validated static meaning word or writes
+  the one macro/font owner without first decoding `ResolvedMeaning`; the
+  command class and primitive operand are directly branchable. The
+  frame-owned expanded loop retains only this pair through synchronous macro
+  chains and materializes `CurrentCommand` at execution/scanner, backup,
+  observation/diagnosis, suspension, and exceptional recovery boundaries.
+  Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
@@ -151,10 +152,10 @@ collector (see `src/conditionals.rs`).
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
 - `src/processor/expand.rs`: canonical destination-directed command-delivery
-  state machine and static primitive dispatch. Its singular entry initializes
-  the caller's final slot once, keeps one direct mutable
-  command borrow across ordinary fetch, settlement, classification, expansion,
-  and return, and overwrites that same value for retries. Raw consumers return
+  state machine and static primitive dispatch. Its singular entry admits an
+  optional rich boundary value once, then keeps one direct mutable hot-command
+  owner across ordinary fetch, settlement, classification, macro expansion,
+  and return. Raw consumers return
   after settlement; expanded consumers classify and dispatch in that same
   loop. Only cold
   end/replay/failure exits clear the slot, and only genuine suspension replaces
@@ -284,8 +285,8 @@ collector (see `src/conditionals.rs`).
   Replay, macro
   replacement/argument, attempt, and durable sources adapt once at level
   creation; ordinary delivery writes through that lifetime tag into the
-  caller's final `CurrentCommand` through a reference-only `EmptyCommand`
-  reborrow, resolves the resident packed word directly, returns only the
+  frame-owned `HotToken` and `CommandWord`, resolves the resident packed word
+  directly, returns only the
   scalar packed-resolution fact,
   reuses the resolver's literal-catcode classification for brace treatment,
   and advances only the common frame position. All resident storage domains

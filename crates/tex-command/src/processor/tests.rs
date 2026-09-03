@@ -125,7 +125,7 @@ fn one_and_4096_resident_retirements_skip_source_checks_and_reuse_one_command_sl
     assert_eq!(one.top_source_checks, 0);
     assert_eq!(many.top_source_checks, 0);
     for evidence in [one, many] {
-        assert_eq!(evidence.slot_initializations, 1);
+        assert_eq!(evidence.slot_initializations, 0);
         assert_eq!(evidence.resolved_writes, 1);
         assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.backup_copies, 0);

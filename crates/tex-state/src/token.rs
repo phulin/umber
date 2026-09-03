@@ -197,7 +197,8 @@ pub struct PackedMeaningResolution {
 #[doc(hidden)]
 pub trait PackedCommandTarget<G> {
     fn write_control_sequence(&mut self, control_sequence: Option<Symbol>);
-    fn write_static_meaning(&mut self, meaning: crate::meaning::Meaning);
+    fn write_static_meaning_word(&mut self, word: u64);
+    fn write_font_meaning(&mut self, font: crate::ids::FontId);
     fn write_macro_meaning(
         &mut self,
         flags: crate::meaning::MeaningFlags,
@@ -369,12 +370,12 @@ impl<G> crate::CommandContext<'_, G> {
                         self.compact_control_sequence_meaning_word(symbol)
                             .write_command_into(target);
                     } else {
-                        target.write_static_meaning(Meaning::Undefined);
+                        target.write_static_meaning_word(Meaning::Undefined.encode());
                     }
                     true
                 } else {
                     target.write_control_sequence(None);
-                    target.write_static_meaning(Meaning::CharToken { ch, cat });
+                    target.write_static_meaning_word(Meaning::CharToken { ch, cat }.encode());
                     false
                 };
                 PackedMeaningResolution {
@@ -394,7 +395,7 @@ impl<G> crate::CommandContext<'_, G> {
             }
             TokenWord::KIND_PARAM => {
                 target.write_control_sequence(None);
-                target.write_static_meaning(Meaning::Undefined);
+                target.write_static_meaning_word(Meaning::Undefined.encode());
                 PackedMeaningResolution {
                     meaning_lookup: false,
                     literal_catcode: None,
@@ -404,20 +405,23 @@ impl<G> crate::CommandContext<'_, G> {
                 let frozen = FrozenToken::from_raw(payload as u16);
                 target.write_control_sequence(None);
                 if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
-                    target.write_static_meaning(Meaning::Undefined);
+                    target.write_static_meaning_word(Meaning::Undefined.encode());
                 } else if frozen == FrozenToken::END_TEMPLATE {
-                    target.write_static_meaning(Meaning::ExpandablePrimitive(
-                        crate::meaning::ExpandablePrimitive::EndTemplate,
-                    ));
+                    target.write_static_meaning_word(
+                        Meaning::ExpandablePrimitive(
+                            crate::meaning::ExpandablePrimitive::EndTemplate,
+                        )
+                        .encode(),
+                    );
                 } else if frozen == FrozenToken::END_V {
-                    target.write_static_meaning(Meaning::EndV);
+                    target.write_static_meaning_word(Meaning::EndV.encode());
                 } else if frozen == FrozenToken::RELAX {
-                    target.write_static_meaning(Meaning::Relax);
+                    target.write_static_meaning_word(Meaning::Relax.encode());
                 } else if let Some(row) = self.frozen_primitive_meaning_word(Token::Frozen(frozen))
                 {
                     row.write_command_into(target);
                 } else {
-                    target.write_static_meaning(Meaning::Undefined);
+                    target.write_static_meaning_word(Meaning::Undefined.encode());
                 }
                 PackedMeaningResolution {
                     meaning_lookup: false,

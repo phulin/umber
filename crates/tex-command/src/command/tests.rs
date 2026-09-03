@@ -5,20 +5,55 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CurrentCommand, DeliveryStamp, EmptyCommand};
+use super::{CommandClass, CommandWord, CurrentCommand, DeliveryStamp, HotCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
+    assert_eq!(std::mem::size_of::<CommandWord<()>>(), 16);
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 32);
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
     // Decoded source geometry lives behind the packed origin coordinate, not
     // in every command.
     assert!(std::mem::size_of::<CurrentCommand<()>>() <= 96);
     assert!(std::mem::size_of::<crate::DeliveryStatus>() <= 16);
-    assert_eq!(
-        std::mem::size_of::<EmptyCommand<'_, ()>>(),
-        std::mem::size_of::<&mut CurrentCommand<()>>()
-    );
+}
+
+#[test]
+fn packed_meaning_resolution_stays_hot_until_materialization() {
+    crate::test_harness::with_universe(|universe| {
+        let symbol = universe.intern("hotmacro").expect("intern");
+        let definition = universe.allocate_definition(&[], &[]).expect("definition");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                AssignmentScope::Global,
+            )
+            .expect("meaning");
+        let mut hot = HotCommand::empty();
+        let context = universe.command_context().expect("command context");
+        hot.write_resolved_delivery(
+            TokenWord::pack(Token::Cs(symbol.symbol())),
+            OriginId::UNKNOWN,
+            1,
+            2,
+            None,
+            false,
+            None,
+            false,
+            &context,
+        );
+        assert_eq!(hot.command_word().class(), CommandClass::Macro);
+        assert_eq!(hot.command_word().flags(), MeaningFlags::LONG);
+        assert_eq!(hot.macro_parts(), Some((MeaningFlags::LONG, definition)));
+        assert_eq!(
+            hot.materialize().meaning(),
+            ResolvedMeaning::Macro {
+                flags: MeaningFlags::LONG,
+                definition,
+            }
+        );
+    });
 }
 
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
@@ -83,9 +118,9 @@ fn ordinary_character_is_resolved_without_a_state_handle() {
 }
 
 #[test]
-fn packed_input_resolution_and_execution_borrow_one_command_address() {
+fn packed_input_resolution_materializes_only_at_execution() {
     crate::test_harness::with_universe(|universe| {
-        let mut command = CurrentCommand::empty();
+        let mut command = HotCommand::empty();
         let spelling = TracedTokenWord::pack(
             Token::Char {
                 ch: 'x',
@@ -95,7 +130,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         );
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
-        let resolution = command.empty_for_raw_delivery().write_resolved_delivery(
+        let resolution = command.write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
             17,
@@ -110,14 +145,7 @@ fn packed_input_resolution_and_execution_borrow_one_command_address() {
         assert_eq!(resolution.literal_catcode(), Some(Catcode::Letter));
         assert_eq!(core::ptr::from_ref(&command), slot);
 
-        fn prepare<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
-            core::ptr::from_ref(command)
-        }
-        fn execute<G>(command: &CurrentCommand<G>) -> *const CurrentCommand<G> {
-            core::ptr::from_ref(command)
-        }
-        assert_eq!(prepare(&command), slot);
-        assert_eq!(execute(&command), slot);
+        let command = command.materialize();
         assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23));
         assert_eq!(
             command.meaning_ref(),
@@ -140,13 +168,13 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
                 AssignmentScope::Global,
             )
             .expect("meaning");
-        let mut command = CurrentCommand::empty();
+        let mut command = HotCommand::empty();
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
         #[cfg(feature = "profiling")]
         let before = tex_state::meaning::direct_command_delivery_counters();
 
-        let resolution = command.empty_for_raw_delivery().write_resolved_delivery(
+        let resolution = command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
             31,
@@ -172,10 +200,8 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
                 0
             );
         }
-        assert_eq!(
-            command.meaning_ref(),
-            &ResolvedMeaning::Static(Meaning::CountRegister(32_767))
-        );
+        let command = command.materialize();
+        assert_eq!(command.meaning(), Meaning::CountRegister(32_767));
         assert_eq!(command.control_sequence(), Some(symbol.symbol()));
     });
 }
@@ -253,10 +279,10 @@ fn packed_input_resolution_copies_only_the_definition_key() {
             )
             .expect("macro meaning");
         let baseline = definition.semantic_owner_count();
-        let mut command = CurrentCommand::empty();
+        let mut command = HotCommand::empty();
 
         let context = universe.command_context().expect("command context");
-        let _ = command.empty_for_raw_delivery().write_resolved_delivery(
+        let _ = command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
             3,
@@ -269,7 +295,7 @@ fn packed_input_resolution_copies_only_the_definition_key() {
         );
         assert_eq!(definition.semantic_owner_count(), baseline);
 
-        let _ = command.empty_for_raw_delivery().write_resolved_delivery(
+        let _ = command.write_resolved_delivery(
             TokenWord::pack(Token::Char {
                 ch: 'x',
                 cat: Catcode::Letter,

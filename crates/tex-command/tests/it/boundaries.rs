@@ -173,8 +173,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("*destination = Some(CurrentCommand::empty());"));
-    assert!(expansion.contains("delivery entry owns one initialized command destination"));
+    assert!(expansion.contains("(HotCommand::empty(), true)"));
     let delivery_entry = expansion
         .split("fn command_delivery_entry(")
         .nth(1)
@@ -193,17 +192,19 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         );
     }
     assert!(!delivery_entry.contains("destination.as_ref()"));
-    assert_eq!(delivery_entry.matches(".as_mut()").count(), 1);
+    assert_eq!(delivery_entry.matches("destination.as_mut()").count(), 0);
     assert!(!expansion.contains(".advance_resident_row_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
-    assert!(delivery_entry.contains("roots.alignment.classify_delivery("));
+    assert!(delivery_entry.contains("roots.alignment.classify_hot_delivery("));
     assert!(delivery_entry.contains("resolution.literal_catcode()"));
     assert!(input_history.contains("true"));
     assert!(!input_history.contains("fn advance_resident_top_into("));
     assert!(!levels.contains("let frame = self.frame;"));
-    assert!(command.contains("struct EmptyCommand<'slot, G>"));
+    assert!(command.contains("struct HotToken"));
+    assert!(command.contains("struct CommandWord<G>"));
+    assert!(!command.contains("struct EmptyCommand"));
     assert!(!command.contains("ResolvedCommand"));
-    assert!(delivery_entry.contains("command.empty_for_raw_delivery()"));
+    assert!(delivery_entry.contains("command.write_resolved_delivery("));
     assert!(!input_stack.contains("enum InputTopTransition {"));
     assert!(!input_history.contains("InputTopTransition"));
     assert!(!input_history.contains("fn select_resident_top("));
@@ -519,9 +520,9 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(history.contains("fn pop_resident("));
     assert!(!stack.contains("RetiredInputLevel"));
     assert!(!history.contains("pop_resident_project"));
-    assert!(expansion.contains("raw_destination.reborrow()"));
+    assert!(expansion.contains("command.write_resolved_delivery("));
     assert!(!history.contains("self.retire_input_top("));
-    assert!(expansion.contains("self.check_outer_validity_entry(command)"));
+    assert!(expansion.contains("self.check_outer_validity_entry(&mut rich)"));
 }
 
 #[test]
@@ -705,11 +706,11 @@ fn command_delivery_has_one_fused_typed_loop_and_direct_input_mutation() {
         expansion_dispatch.contains("match dispatch"),
         "the borrowed classification must drive exact expansion dispatch"
     );
-    assert!(expansion.contains("let _activated = self.macro_call(command)?;"));
+    assert!(expansion.contains("let _activated = self.macro_call_hot(command)?;"));
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("*destination = Some(CurrentCommand::empty());"));
+    assert!(expansion.contains("(HotCommand::empty(), true)"));
     assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
@@ -1116,22 +1117,19 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
             .count(),
         1
     );
-    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
+    assert_eq!(alignment.matches("fn classify_hot_delivery(").count(), 1);
     assert_eq!(next.matches(".classify_alignment_delivery(").count(), 0);
     assert_eq!(
         expansion
-            .matches("roots.alignment.classify_delivery(")
+            .matches("roots.alignment.classify_hot_delivery(")
             .count(),
         1
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment
-        .split("fn classify_delivery(")
+        .split("fn classify_hot_delivery(")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("pub(crate) const fn back_input_adjustment")
-                .next()
-        })
+        .and_then(|tail| tail.split("/// Applies TeX82 §1127").next())
         .expect("locate the singular alignment delivery classifier");
     assert_eq!(classifier.matches("semantic_token()").count(), 0);
     assert!(classifier.contains("match literal_catcode"));

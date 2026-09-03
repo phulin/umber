@@ -9,7 +9,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
-use crate::command::{CurrentCommand, command_ownership_counters};
+use crate::command::{HotCommand, command_ownership_counters};
 
 const MIXED_MEANINGS: usize = 9;
 const MACROS_PER_ROUND: u64 = 2;
@@ -17,7 +17,7 @@ const MACROS_PER_ROUND: u64 = 2;
 /// Focused mixed-meaning fixture for direct dense-row command delivery.
 pub struct DirectCommandDeliveryBenchmark<G> {
     words: [TokenWord; MIXED_MEANINGS],
-    command: CurrentCommand<G>,
+    command: HotCommand<G>,
     sequence: u64,
 }
 
@@ -108,7 +108,7 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
         });
         Self {
             words,
-            command: CurrentCommand::empty(),
+            command: HotCommand::empty(),
             sequence: 0,
         }
     }
@@ -125,22 +125,20 @@ impl<G> DirectCommandDeliveryBenchmark<G> {
         for _ in 0..rounds {
             for (index, word) in self.words.iter().copied().enumerate() {
                 self.sequence = self.sequence.wrapping_add(1);
-                let resolution = self
-                    .command
-                    .empty_for_raw_delivery()
-                    .write_resolved_delivery(
-                        std::hint::black_box(word),
-                        OriginId::UNKNOWN,
-                        1,
-                        self.sequence,
-                        None,
-                        false,
-                        None,
-                        false,
-                        state,
-                    );
+                let resolution = self.command.write_resolved_delivery(
+                    std::hint::black_box(word),
+                    OriginId::UNKNOWN,
+                    1,
+                    self.sequence,
+                    None,
+                    false,
+                    None,
+                    false,
+                    state,
+                );
                 assert!(resolution.meaning_lookup());
-                let semantic = match (index, self.command.meaning_ref()) {
+                let meaning = self.command.command_word().resolved_meaning();
+                let semantic = match (index, &meaning) {
                     (0, ResolvedMeaning::Static(Meaning::Undefined)) => 1,
                     (
                         1,

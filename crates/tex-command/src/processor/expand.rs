@@ -3,7 +3,7 @@
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::DeliveryStamp;
+use crate::command::{CommandClass, DeliveryStamp, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
     InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
@@ -142,6 +142,42 @@ fn classify_expanded_command<G>(
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
         }
         ResolvedMeaning::Static(_) => ExpandedCommandAction::Return,
+    }
+}
+
+#[inline(always)]
+fn classify_hot_command<G>(
+    command: &HotCommand<G>,
+    protected: ProtectedMacroHandling,
+    undefined: UndefinedHandling,
+) -> ExpandedCommandAction {
+    #[cfg(test)]
+    EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
+
+    let word = command.command_word();
+    match word.class() {
+        CommandClass::Macro
+            if protected == ProtectedMacroHandling::Preserve
+                && word.flags().contains(MeaningFlags::PROTECTED) =>
+        {
+            ExpandedCommandAction::Return
+        }
+        CommandClass::Macro => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
+        CommandClass::Expandable => match word.expandable_primitive() {
+            Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
+            Some(ExpandablePrimitive::EndCsName) => ExpandedCommandAction::Return,
+            Some(primitive) => {
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive))
+            }
+            None => ExpandedCommandAction::Return,
+        },
+        CommandClass::Undefined
+            if undefined == UndefinedHandling::Diagnose
+                && command.spelling_word().out_parameter_slot().is_none() =>
+        {
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+        }
+        _ => ExpandedCommandAction::Return,
     }
 }
 
@@ -754,7 +790,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn settle_resident_cold_transition(
         &mut self,
         cold: ResidentBoundary,
-        command: &mut CurrentCommand<G>,
+        command: &mut HotCommand<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         match cold {
             ResidentBoundary::CharacterRunEnd => {
@@ -885,7 +921,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         Ok(ResidentColdOutcome::ReplayCompleted(episode))
                     }
                     RetirementHandoff::EndV(level) => {
-                        let _resolution = command.empty_for_raw_delivery().write_resolved_delivery(
+                        let _resolution = command.write_resolved_delivery(
                             TokenWord::pack(self.state.frozen_end_template_token()),
                             OriginId::UNKNOWN,
                             level.0,
@@ -946,26 +982,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .as_ref()
                     .is_some_and(crate::ScannerFrameKey::is_expansion));
         let mut delivery_expanded = false;
-        let mut fetch = if resuming {
+        let (mut command, mut fetch) = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
                 Ok((command, resumed_expanded)) => {
-                    *destination = Some(command);
                     delivery_expanded = resumed_expanded;
-                    false
+                    (HotCommand::from_current(command), false)
                 }
                 Err(failure) => {
                     return self.fail_expanded_delivery(destination, depth, failure);
                 }
             }
-        } else if destination.is_some() {
-            false
+        } else if let Some(command) = destination.take() {
+            (HotCommand::from_current(command), false)
         } else {
-            *destination = Some(CurrentCommand::empty());
-            true
+            (HotCommand::empty(), true)
         };
-        let command = destination
-            .as_mut()
-            .expect("delivery entry owns one initialized command destination");
         let Some(active_depth) = depth.checked_add(u32::from(expanding)) else {
             return self.fail_expanded_delivery(
                 destination,
@@ -991,7 +1022,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ($frame:lifetime, $boundary:expr) => {{
                             let settled = match self.settle_resident_cold_transition(
                                 $boundary,
-                                command,
+                                &mut command,
                             ) {
                                 Ok(settled) => settled,
                                 Err(failure) => {
@@ -1674,8 +1705,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         .saturating_add(1);
                             }
                         }
-                        let mut raw_destination = command.empty_for_raw_delivery();
-                        let resolution = raw_destination.reborrow().write_resolved_delivery(
+                        let resolution = command.write_resolved_delivery(
                             word,
                             origin,
                             identity,
@@ -1698,7 +1728,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             command_state.roots.scanner.status(),
                             crate::processor::ScannerStatus::Normal
                         );
-                        let command = raw_destination.into_resident();
                         if command.suppresses_expandable_control_sequence() {
                             command.suppress_expandable();
                         }
@@ -1711,9 +1740,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let outer = if command.is_outer() && scanner_active {
                             true
                         } else {
-                            command_state.roots.alignment.classify_delivery(
+                            command_state.roots.alignment.classify_hot_delivery(
                                 &mut command_state.timeline,
-                                command,
+                                &mut command,
                                 resolution.literal_catcode(),
                             );
                             false
@@ -1727,11 +1756,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     self.publish_resident_delivery();
                 }
-                if outer && let Err(failure) = self.check_outer_validity_entry(command) {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                if outer {
+                    let mut rich = command.materialize();
+                    if let Err(failure) = self.check_outer_validity_entry(&mut rich) {
+                        return self.fail_expanded_delivery(destination, depth, failure);
+                    }
+                    command = HotCommand::from_current(rich);
                 }
                 if self.is_observed() {
-                    self.observe_resident_command(command);
+                    self.observe_resident_command(&command.materialize());
                 }
                 if character_run.is_some() {
                     break 'delivery DeliveryStatus::CharacterRunBoundary;
@@ -1746,7 +1779,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     )
                 {
-                    if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
+                    if let Err(failure) =
+                        self.begin_scalar_alignment_v_template(&command.materialize())
+                    {
                         return self.fail_expanded_delivery(destination, depth, failure);
                     }
                     fetch = true;
@@ -1755,14 +1790,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 break 'delivery DeliveryStatus::Command;
             }
-            let action = classify_expanded_command(command, protected_macros, undefined);
+            let action = classify_hot_command(&command, protected_macros, undefined);
             if first && first_command == FirstCommandPolicy::MainLoopCharacter {
-                if is_main_loop_character(command.meaning_ref()) {
+                if matches!(command.command_word().class(), CommandClass::Character) {
                     break 'delivery DeliveryStatus::Command;
                 }
                 if action == ExpandedCommandAction::Return {
                     debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
-                    self.observe_expanded_delivery(command);
+                    self.observe_expanded_delivery(&command.materialize());
                     break 'delivery DeliveryStatus::Command;
                 }
             }
@@ -1771,7 +1806,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 && action == ExpandedCommandAction::Return
             {
                 debug_assert_eq!(observation, ExpandedObservationPolicy::Commit);
-                self.observe_expanded_delivery(command);
+                self.observe_expanded_delivery(&command.materialize());
                 break 'delivery DeliveryStatus::Command;
             }
             match action {
@@ -1795,7 +1830,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         command.alignment_adjustment(),
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     ) {
-                        if let Err(failure) = self.begin_scalar_alignment_v_template(command) {
+                        if let Err(failure) =
+                            self.begin_scalar_alignment_v_template(&command.materialize())
+                        {
                             return self.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
@@ -1815,7 +1852,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     command.convert_end_template_to_endv(self.state.frozen_endv_token());
                     break 'delivery self.finish_expanded_delivery(
-                        command,
+                        &command,
                         observation,
                         delivery_expanded,
                         alignment_interception,
@@ -1823,7 +1860,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ExpandedCommandAction::Return => {
                     break 'delivery self.finish_expanded_delivery(
-                        command,
+                        &command,
                         observation,
                         delivery_expanded,
                         alignment_interception,
@@ -1839,7 +1876,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
                     let mut command_parked = false;
                     let failure = match self.expand_classified_occupied(
-                        command,
+                        &mut command,
                         dispatch,
                         report_trace,
                         delivery_expanded,
@@ -1880,13 +1917,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
         ) {
             destination.take();
+        } else {
+            *destination = Some(command.materialize());
         }
         Ok(status)
     }
 
     fn finish_expanded_delivery(
         &mut self,
-        command: &CurrentCommand<G>,
+        command: &HotCommand<G>,
         observation: ExpandedObservationPolicy,
         delivery_expanded: bool,
         alignment: AlignmentInterceptionPolicy,
@@ -1895,13 +1934,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.record_expanded_delivery();
         let pending =
             observation == ExpandedObservationPolicy::DeferIfExpanded && delivery_expanded;
-        if observation == ExpandedObservationPolicy::Commit
-            || (observation == ExpandedObservationPolicy::DeferIfExpanded && !pending)
+        if (observation == ExpandedObservationPolicy::Commit
+            || (observation == ExpandedObservationPolicy::DeferIfExpanded && !pending))
+            && self.is_observed()
         {
-            self.observe_expanded_delivery(command);
+            self.observe_expanded_delivery(&command.materialize());
         }
         if alignment == AlignmentInterceptionPolicy::Surface
-            && self.command.alignment.needs_closing_brace_recovery(command)
+            && self
+                .command
+                .alignment
+                .needs_hot_closing_brace_recovery(command)
         {
             return DeliveryStatus::AlignmentClosingBrace;
         }
@@ -2058,7 +2101,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .ok_or_else(CommandError::input_invariant)?;
         let mut command_parked = false;
-        let result = self.expand_classified_occupied(
+        let result = self.expand_classified_rich_occupied(
             &mut command,
             dispatch,
             report_trace,
@@ -2075,6 +2118,45 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// command destination. Only a real resource suspension moves that value
     /// into parked work; every synchronous arm retains the same owner.
     fn expand_classified_occupied(
+        &mut self,
+        command: &mut HotCommand<G>,
+        dispatch: ExpansionDispatch,
+        report_trace: bool,
+        delivery_expanded: bool,
+        command_parked: &mut bool,
+    ) -> Result<(), CommandError> {
+        if dispatch == ExpansionDispatch::Macro {
+            if self.resumed_expansion.is_some() || self.scanner_resume.is_some() {
+                return Err(CommandError::input_invariant());
+            }
+            #[cfg(feature = "profiling")]
+            {
+                tex_state::measurement::record_hot_core_macro_expansion();
+                if self.write_expansion_depth != 0 {
+                    self.record_write_expansion();
+                }
+            }
+            let _activated = self.macro_call_hot(command)?;
+            return Ok(());
+        }
+
+        // Primitive scanners, diagnostics, and genuine suspension are rich
+        // semantic boundaries. Macro-to-macro chains never enter this arm.
+        let mut rich = command.materialize();
+        let result = self.expand_classified_rich_occupied(
+            &mut rich,
+            dispatch,
+            report_trace,
+            delivery_expanded,
+            command_parked,
+        );
+        if !*command_parked {
+            *command = HotCommand::from_current(rich);
+        }
+        result
+    }
+
+    fn expand_classified_rich_occupied(
         &mut self,
         command: &mut CurrentCommand<G>,
         dispatch: ExpansionDispatch,
@@ -2527,18 +2609,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// These are exactly the three commands §1034's inner loop can continue on
 /// without expanding, so they are the only ones the lookahead delivers
 /// straight out of `get_next`.
-pub(crate) fn is_main_loop_character<G>(meaning: &ResolvedMeaning<G>) -> bool {
-    matches!(
-        meaning,
-        ResolvedMeaning::Static(
-            Meaning::CharToken {
-                cat: Catcode::Letter | Catcode::Other,
-                ..
-            } | Meaning::CharGiven(_)
-        )
-    )
-}
-
 /// TeX82 §366's `cur_cmd>max_command` test for Umber's resolved command.
 ///
 /// `Meaning::Undefined` normally represents §207's `undefined_cs` command,

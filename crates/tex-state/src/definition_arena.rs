@@ -285,6 +285,17 @@ impl<G> core::fmt::Debug for DefinitionRef<G> {
 }
 
 impl<G> DefinitionRef<G> {
+    pub(crate) const fn runtime_word(self) -> NonZeroU64 {
+        self.packed
+    }
+
+    pub(crate) const fn from_runtime_word(packed: NonZeroU64) -> Self {
+        Self {
+            packed,
+            _brand: PhantomData,
+        }
+    }
+
     fn new(region: u32, row: NonZeroU32) -> Self {
         let packed = (u64::from(region) << 32) | u64::from(row.get());
         Self {

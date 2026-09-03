@@ -401,19 +401,20 @@ the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
 Raw and expanded command delivery uses one concrete destination loop. Each
-active request owns one caller-provided `Option<CurrentCommand<G>>`. The raw
-entry initializes that option once; expanded delivery initializes it or
-readmits the exact `x_token`/suspension owner once. The loop then holds one direct
-mutable borrow across ordinary resident retries, classification, and return.
+active request admits its caller-provided `Option<CurrentCommand<G>>` only at
+the boundary, then owns one compact `HotToken { word, origin, site }` and one
+fixed 16-byte `CommandWord<G>` across resident retries, classification, and
+synchronous macro expansion.
 Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
-scalars. One branch-independent `EmptyCommand::write_resolved_delivery` call
-then writes only that caller-owned slot. The frame-owned processor loop keeps
-that destination, consumes the resolver's already-decoded literal catcode for
+scalars. One branch-independent `HotCommand::write_resolved_delivery` call
+then writes that compact owner. The frame-owned processor loop keeps it and
+consumes the resolver's literal catcode for
 required brace handling, and applies one-delivery suppression before it makes
 the expansion-or-return decision. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
-final meaning and control-sequence fields before returning; warm resident
+validated packed static meaning or one macro/font operand without first
+decoding `ResolvedMeaning`; warm resident
 delivery has no command/interception result handoff. Attempt-list storage is
 authenticated with its exact extent when the row is admitted, so a resident
 word read does not repeat the attempt key/row validation or recreate a list
@@ -423,27 +424,28 @@ those physical boundaries. A macro `Param` pushes its
 admitted argument and continues inside the resident loop. Only EOF, line,
 retirement, replay, diagnostic, checkpoint, or failure paths materialize a cold
 status; no semantic-token value or raw-command phase crosses into a result
-relay. Nested delivery has its own slot. The expanded fetch/inspect loop
-keeps the initialized value in place while synchronous expansion mutates input, then raw delivery
-overwrites that same value for the next token; it does not clear the `Option`,
-probe its vacancy, reconstruct an empty command, recover repeated option
-borrows, take the value on success, or redispatch the prior meaning between
-expansions. The expanded loop also keeps its one has-expanded bit on the stack;
+relay. Nested delivery has its own compact pair. The expanded fetch/inspect
+loop keeps that value in place while synchronous expansion mutates input, then
+raw delivery overwrites it for the next token. It does not construct a rich
+`CurrentCommand` between macros or redispatch through `ResolvedMeaning`. The
+expanded loop also keeps its one has-expanded bit on the stack;
 only the genuinely suspended expansion frame retains that bit so a resumed
 TeX82 alignment lookahead preserves its deferred-observation decision. Each
 concrete loop returns only its final compact status. Cold end, replay, and
 failure clear the provisional destination; only a genuine typed resource
-suspension replaces the initialized command and parks its prior owner. The
-raw and expanded branches both write ordinary command/end results directly into
-their caller's return slot. Neither owns a stack-local error slot or returns an
+suspension materializes and parks the rich owner. The raw and expanded
+branches materialize an ordinary result directly into their caller's return
+slot. Backup, observation/diagnosis, exceptional outer/alignment recovery, and
+scanner or primitive entry are the other explicit rich boundaries. Neither
+loop owns a stack-local error slot or returns an
 internal failure marker. A real failure reaches a cold helper that clears the
 destination and freshness, restores expansion depth when applicable, and
 constructs the rich result. Parked command and resume state are decoded only by
 the cold expanded-resume helper after a genuine resource suspension. Thus an
 ordinary successful token neither copies nor reconstructs an error or
 continuation envelope.
-The command slot is neither global nor a mailbox and never survives
-independently of its request. `CurrentCommand` retains only its compact
+The hot pair is neither global nor a mailbox and never survives independently
+of its request. A materialized `CurrentCommand` retains only its compact
 immediate-delivery coordinate and the `OriginId` already packed in its
 spelling. Physical ranges, active source identity, macro ancestry, and
 observation payloads are resolved from immutable source/provenance owners only
@@ -493,17 +495,17 @@ no numbered parameters is matched directly and never creates a `MacroMatch`,
 collector, argument block, or `ArgumentSet`.
 
 An admitted control-sequence spelling probes and borrows its dense meaning row
-once. The packed-token resolver accepts the actual caller-owned
-`CurrentCommand`; the canonical row decodes its tag once and writes the final
-static payload and command identity, or the sole macro owner, directly into
-that slot. No meaning-projection carrier, intermediate resolved meaning,
-whole-row copy, or second command is reconstructed. The same token
+once. The packed-token resolver accepts the actual hot command; the canonical
+row writes its validated packed static word, typed font id, or sole macro
+owner directly into `CommandWord<G>`. No meaning-projection carrier,
+intermediate `ResolvedMeaning`, whole-row copy, or second command is
+reconstructed. The same token
 classification reports the work ledger's meaning-lookup fact, and no second
 spelling decode precedes resolution. A macro row writes one compact
-`DefinitionRef<G>` key into the final `CurrentCommand`; it acquires no definition
-owner. Trace eligibility and expanded-loop classification borrow that resolved
-meaning without a lifetime operation.
-The expanded loop classifies that meaning once into return, `end_template`,
+`DefinitionRef<G>` key into `CommandWord<G>`; it acquires no definition owner.
+Trace eligibility and expanded-loop classification read the direct command
+class and operand without a lifetime operation.
+The expanded loop classifies that word once into return, `end_template`,
 macro activation, undefined recovery, or the exact primitive dispatch. That
 borrowed decision drives the expansion call, tracing, and work accounting;
 policy and primitive dispatch do not repeat the meaning match.

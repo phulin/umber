@@ -5,6 +5,90 @@ use crate::ids::FontId;
 use crate::page::{PageDimension, PageInteger};
 use crate::token::Catcode;
 
+/// Opaque fixed-width operand word used by the hot command boundary.
+///
+/// The command class decides whether these bits are a packed static meaning,
+/// a font id, or an admitted macro-definition coordinate. Safe constructors
+/// prevent a caller from manufacturing the latter coordinate.
+#[repr(transparent)]
+pub struct CommandOperandWord<G> {
+    raw: u64,
+    _brand: core::marker::PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> Clone for CommandOperandWord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for CommandOperandWord<G> {}
+
+impl<G> core::fmt::Debug for CommandOperandWord<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("CommandOperandWord(..)")
+    }
+}
+
+impl<G> PartialEq for CommandOperandWord<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl<G> Eq for CommandOperandWord<G> {}
+
+impl<G> core::hash::Hash for CommandOperandWord<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state);
+    }
+}
+
+impl<G> CommandOperandWord<G> {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn scalar(raw: u64) -> Self {
+        Self {
+            raw,
+            _brand: core::marker::PhantomData,
+        }
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn definition(definition: DefinitionRef<G>) -> Self {
+        Self::scalar(definition.runtime_word().get())
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn font(font: FontId) -> Self {
+        Self::scalar(font.raw() as u64)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn scalar_value(self) -> u64 {
+        self.raw
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn definition_value(self) -> DefinitionRef<G> {
+        DefinitionRef::from_runtime_word(
+            core::num::NonZeroU64::new(self.raw).expect("definition operand is nonzero"),
+        )
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn font_value(self) -> FontId {
+        FontId::new(self.raw as u32)
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<CommandOperandWord<()>>() == 8);
+
 const OPCODE_SHIFT: u32 = 56;
 const FLAGS_SHIFT: u32 = 48;
 const OPERAND_MASK: u64 = (1 << FLAGS_SHIFT) - 1;
@@ -32,6 +116,22 @@ const OP_MU_GLUE_PARAM: u8 = 19;
 const OP_CHAR_TOKEN: u8 = 20;
 const OP_INTERNAL_INTEGER: u8 = 21;
 const OP_END_V: u8 = 22;
+
+/// Direct command class carried by a validated packed static meaning.
+///
+/// This is intentionally coarser than [`Meaning`]: the hot command loop needs
+/// only TeX's command-class branch, while scanners and execution materialize
+/// the full semantic value at their boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum StaticCommandClass {
+    Undefined,
+    Relax,
+    Character,
+    Expandable,
+    EndV,
+    Unexpandable,
+    Value,
+}
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -308,9 +408,9 @@ impl<G> MeaningWord<G> {
         });
         match self {
             MeaningWord::Static(word) => {
-                target.write_static_meaning(Meaning::decode_stored(*word));
+                target.write_static_meaning_word(*word);
             }
-            MeaningWord::Font(font) => target.write_static_meaning(Meaning::Font(*font)),
+            MeaningWord::Font(font) => target.write_font_meaning(*font),
             MeaningWord::Macro { flags, definition } => {
                 #[cfg(any(test, feature = "profiling"))]
                 update_direct_command_delivery_counters(|counters| {
@@ -1654,6 +1754,40 @@ impl RawMeaning {
 }
 
 impl Meaning {
+    /// Classifies a validated runtime word without decoding a [`Meaning`].
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn runtime_word_class(word: u64) -> StaticCommandClass {
+        match (word >> OPCODE_SHIFT) as u8 {
+            OP_UNDEFINED => StaticCommandClass::Undefined,
+            OP_RELAX => StaticCommandClass::Relax,
+            OP_CHAR_GIVEN | OP_CHAR_TOKEN => StaticCommandClass::Character,
+            OP_EXPANDABLE_PRIMITIVE => StaticCommandClass::Expandable,
+            OP_END_V => StaticCommandClass::EndV,
+            OP_UNEXPANDABLE_PRIMITIVE => StaticCommandClass::Unexpandable,
+            _ => StaticCommandClass::Value,
+        }
+    }
+
+    /// Returns the operand of a validated runtime word without semantic decode.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn runtime_word_operand(word: u64) -> u64 {
+        word & OPERAND_MASK
+    }
+
+    /// Decodes a validated runtime static-meaning word.
+    ///
+    /// Command delivery deliberately retains this word until a rich semantic
+    /// boundary. The packed word was produced by [`Meaning::encode`] or read
+    /// from a validated meaning cell, so callers do not use this as a format
+    /// or arbitrary-integer constructor.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn from_runtime_word(word: u64) -> Self {
+        Self::decode_stored(word)
+    }
+
     /// Encodes this meaning into `opcode:8 | flags:8 | operand:48`.
     #[must_use]
     pub const fn encode(self) -> u64 {

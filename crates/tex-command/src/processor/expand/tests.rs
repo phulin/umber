@@ -92,10 +92,62 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
     });
 }
 
+#[test]
+fn one_hundred_macros_materialize_only_the_final_command() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("empty definition");
+        let symbol = universe.intern("hotchain").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let terminal = Token::Char {
+            ch: 'Z',
+            cat: Catcode::Letter,
+        };
+        let mut input = vec![Token::Cs(symbol.symbol()); 100];
+        input.push(terminal);
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let before = crate::command::command_ownership_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let delivered = processor
+            .get_x_token()
+            .expect("expanded chain")
+            .expect("terminal command");
+        let after = crate::command::command_ownership_counters();
+        assert_eq!(delivered.spelling().semantic_token(), terminal);
+        assert_eq!(
+            after.rich_materializations - before.rich_materializations,
+            1
+        );
+        assert_eq!(after.slot_initializations - before.slot_initializations, 0);
+    });
+}
+
 #[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OrdinaryDeliveryEvidence {
     slot_initializations: u64,
+    rich_materializations: u64,
     resolved_writes: u64,
     expanded_classifications: u64,
     command_clones: u64,
@@ -208,6 +260,8 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         OrdinaryDeliveryEvidence {
             slot_initializations: after_ownership.slot_initializations
                 - before_ownership.slot_initializations,
+            rich_materializations: after_ownership.rich_materializations
+                - before_ownership.rich_materializations,
             resolved_writes: after_ownership.resolved_writes - before_ownership.resolved_writes,
             expanded_classifications: super::expanded_classifications() - classifications_before,
             command_clones: after_ownership.clones - before_ownership.clones,
@@ -229,7 +283,8 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     let many = empty_macro_delivery_evidence(4_096);
 
     for (expansions, evidence) in [(1, one), (4_096, many)] {
-        assert_eq!(evidence.slot_initializations, 1);
+        assert_eq!(evidence.slot_initializations, 0);
+        assert_eq!(evidence.rich_materializations, 1);
         assert_eq!(evidence.resolved_writes, expansions + 1);
         assert_eq!(evidence.expanded_classifications, expansions + 1);
         assert_eq!(evidence.command_clones, 0);
@@ -365,7 +420,7 @@ fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
         );
         assert_eq!(
             ownership_after.slot_initializations - ownership_before.slot_initializations,
-            1
+            0
         );
         assert_eq!(ownership_after.clones - ownership_before.clones, 0);
     });

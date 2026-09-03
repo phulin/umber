@@ -65,11 +65,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &mut crate::CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
-        let ResolvedMeaning::Macro { flags, definition } = call.meaning_ref() else {
+        let mut hot = crate::command::HotCommand::from_current_ref(call);
+        self.macro_call_hot(&mut hot)
+    }
+
+    pub(crate) fn macro_call_hot(
+        &mut self,
+        call: &mut crate::command::HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        let Some((flags, definition)) = call.macro_parts() else {
             return Err(CommandError::input_invariant());
         };
-        let flags = *flags;
-        let definition = *definition;
         let macro_name = call
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
@@ -141,7 +147,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         context,
                     },
                 );
-                self.observe_command_diagnostic("macro_prefix_mismatch", call);
+                let observed_call = call.materialize();
+                self.observe_command_diagnostic("macro_prefix_mismatch", &observed_call);
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }

@@ -451,13 +451,59 @@ impl<G> crate::CommandState<G> {
         command: &mut CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) {
+        let mut hot = crate::command::HotCommand::from_current_ref(command);
         self.roots
             .alignment
-            .classify_delivery(&mut self.timeline, command, literal_catcode);
+            .classify_hot_delivery(&mut self.timeline, &mut hot, literal_catcode);
+        *command = hot.materialize();
     }
 }
 
 impl<G> AlignmentDeliveryState<G> {
+    #[inline(always)]
+    pub(crate) fn classify_hot_delivery(
+        &mut self,
+        timeline: &mut crate::snapshot::CommandTimeline<G>,
+        command: &mut crate::command::HotCommand<G>,
+        literal_catcode: Option<Catcode>,
+    ) {
+        let adjustment = match literal_catcode {
+            Some(Catcode::BeginGroup) => {
+                timeline.record_delivery_align_state(self.align_state);
+                self.align_state += 1;
+                AlignmentDeliveryAdjustment::BeginGroup
+            }
+            Some(Catcode::EndGroup) => {
+                timeline.record_delivery_align_state(self.align_state);
+                self.align_state -= 1;
+                AlignmentDeliveryAdjustment::EndGroup
+            }
+            _ if self.active_cell.is_some()
+                && self.align_state == CELL_ALIGN_STATE
+                && command.command_word().character_catcode() == Some(Catcode::AlignmentTab) =>
+            {
+                command.convert_to_end_template();
+                AlignmentDeliveryAdjustment::Delimiter(AlignmentDelimiter::Tab)
+            }
+            _ if self.active_cell.is_some() && self.align_state == CELL_ALIGN_STATE => {
+                let delimiter = match command.command_word().unexpandable_primitive() {
+                    Some(UnexpandablePrimitive::Span) => Some(AlignmentDelimiter::Span),
+                    Some(UnexpandablePrimitive::Cr) => Some(AlignmentDelimiter::Cr),
+                    Some(UnexpandablePrimitive::CrCr) => Some(AlignmentDelimiter::CrCr),
+                    _ => None,
+                };
+                if let Some(delimiter) = delimiter {
+                    command.convert_to_end_template();
+                    AlignmentDeliveryAdjustment::Delimiter(delimiter)
+                } else {
+                    AlignmentDeliveryAdjustment::None
+                }
+            }
+            _ => AlignmentDeliveryAdjustment::None,
+        };
+        command.set_alignment_adjustment(adjustment);
+    }
+
     /// Applies TeX82 §1127 `align_error`'s pre-insertion correction.
     ///
     /// `None` selects §1128's `@<Express consternation over the fact that no
@@ -508,16 +554,13 @@ impl<G> AlignmentDeliveryState<G> {
         }
     }
 
-    pub(crate) fn needs_closing_brace_recovery(&self, command: &CurrentCommand<G>) -> bool {
+    pub(crate) fn needs_hot_closing_brace_recovery(
+        &self,
+        command: &crate::command::HotCommand<G>,
+    ) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1
-            && matches!(
-                command.meaning(),
-                tex_state::ResolvedMeaning::Static(Meaning::CharToken {
-                    cat: Catcode::EndGroup,
-                    ..
-                })
-            )
+            && command.command_word().character_catcode() == Some(Catcode::EndGroup)
     }
     /// TeX82 §774's `init_align` prologue: `push_alignment` (§772) saves the
     /// running `align_state`, then `align_state:=-1000000` enters the new
@@ -788,68 +831,6 @@ impl<G> AlignmentDeliveryState<G> {
 }
 
 impl<G> AlignmentDeliveryState<G> {
-    /// Classifies and commits one TeX82 §§341--342 alignment delivery.
-    ///
-    /// Literal braces are the only ordinary deliveries which mutate
-    /// `align_state`, so they alone first-touch its rollback scalar. Delimiter
-    /// interception remains owned by [`AlignmentDeliveryState`] and records no
-    /// delivery-owned scalar undo.
-    #[inline(always)]
-    pub(crate) fn classify_delivery(
-        &mut self,
-        timeline: &mut crate::snapshot::CommandTimeline<G>,
-        command: &mut CurrentCommand<G>,
-        literal_catcode: Option<Catcode>,
-    ) {
-        let adjustment = match literal_catcode {
-            Some(Catcode::BeginGroup) => {
-                timeline.record_delivery_align_state(self.align_state);
-                self.align_state += 1;
-                AlignmentDeliveryAdjustment::BeginGroup
-            }
-            Some(Catcode::EndGroup) => {
-                timeline.record_delivery_align_state(self.align_state);
-                self.align_state -= 1;
-                AlignmentDeliveryAdjustment::EndGroup
-            }
-            _ if self.active_cell.is_some()
-                && self.align_state == CELL_ALIGN_STATE
-                && is_character_command(command, Catcode::AlignmentTab) =>
-            {
-                self.intercept_delimiter(command, AlignmentDelimiter::Tab)
-            }
-            _ if self.active_cell.is_some()
-                && self.align_state == CELL_ALIGN_STATE
-                && matches!(
-                    command.meaning(),
-                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Cr
-                            | UnexpandablePrimitive::CrCr
-                            | UnexpandablePrimitive::Span
-                    ))
-                ) =>
-            {
-                let delimiter = match command.meaning() {
-                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Span,
-                    )) => AlignmentDelimiter::Span,
-                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Cr,
-                    )) => AlignmentDelimiter::Cr,
-                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::CrCr,
-                    )) => AlignmentDelimiter::CrCr,
-                    _ => unreachable!("alignment delimiter was classified above"),
-                };
-                self.intercept_delimiter(command, delimiter)
-            }
-            _ => AlignmentDeliveryAdjustment::None,
-        };
-        command.set_alignment_adjustment(adjustment);
-    }
-}
-
-impl<G> AlignmentDeliveryState<G> {
     /// TeX82 §325's own brace rule, stated over `cur_tok` alone:
     /// `if cur_tok<right_brace_limit then if cur_tok<left_brace_limit then
     /// decr(align_state) else incr(align_state)`.
@@ -893,19 +874,6 @@ impl<G> AlignmentDeliveryState<G> {
 
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
         self.align_state -= 1;
-    }
-
-    fn intercept_delimiter(
-        &mut self,
-        command: &mut CurrentCommand<G>,
-        delimiter: AlignmentDelimiter,
-    ) -> AlignmentDeliveryAdjustment {
-        // The typed v-template start owns the matching `align_state :=
-        // 1000000` lifecycle and its rollback journal. Classification only
-        // converts the resident command and preserves the cell-body scalar
-        // until that transition commits.
-        command.convert_to_end_template();
-        AlignmentDeliveryAdjustment::Delimiter(delimiter)
     }
 
     fn require_alignment(
