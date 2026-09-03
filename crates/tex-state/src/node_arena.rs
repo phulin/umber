@@ -3222,6 +3222,26 @@ impl<'a> DirectNodeView<'a> {
     }
 
     #[must_use]
+    pub(crate) fn tex_memory_words(self, etex_node_sizes: bool) -> (usize, usize) {
+        match self.source {
+            DirectNodeSource::Owned(node) => NodeView::from(node).tex_memory_words(etex_node_sizes),
+            DirectNodeSource::Page(node) => node.tex_memory_words(etex_node_sizes),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn retains_node_list(self) -> bool {
+        match self.source {
+            DirectNodeSource::Owned(node) => {
+                let mut retains = false;
+                NodeView::from(node).visit_semantic_node_lists(|list| retains |= !list.is_empty());
+                retains
+            }
+            DirectNodeSource::Page(node) => node.retains_node_list(),
+        }
+    }
+
+    #[must_use]
     pub fn character(self) -> Option<(crate::ids::FontId, char, crate::token::OriginId)> {
         match self.source {
             DirectNodeSource::Owned(Node::Char { font, ch, origin }) => Some((*font, *ch, *origin)),

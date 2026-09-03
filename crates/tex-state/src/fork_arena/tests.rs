@@ -610,6 +610,37 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
 }
 
 #[test]
+fn admitted_root_reopens_views_and_chunk_walks_without_endpoint_readmission() {
+    let mut pool = ChunkPool::<u32>::with_packed_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let root = {
+        let mut builder = arena.begin_builder(&mut pool).expect("builder");
+        for value in 0..4_096 {
+            builder.push(value).expect("packed value");
+        }
+        builder.finish()
+    };
+    let admitted = arena
+        .admit_owned_root(&pool, root)
+        .expect("admit root once");
+    let validations = pool.payload.validation_reads();
+    let links = pool.payload.previous_link_reads();
+
+    let view = arena
+        .admitted_view(&pool, root, admitted)
+        .expect("borrow admitted view");
+    assert_eq!(view.first(), Some(&0));
+    assert_eq!(view.last(), Some(&4_095));
+    let tail = arena
+        .admitted_tail_chunk_from_root(&pool, root, admitted)
+        .expect("borrow admitted chunk walk")
+        .expect("root is nonempty");
+    assert_eq!(tail.logical_start() + tail.len(), root.len());
+    assert_eq!(pool.payload.validation_reads(), validations);
+    assert_eq!(pool.payload.previous_link_reads(), links);
+}
+
+#[test]
 fn unsealed_sequential_append_admits_only_at_packed_block_boundaries() {
     const ALLOCATION_OWNER: usize = 15;
     const VALUES: u32 = 4_096;

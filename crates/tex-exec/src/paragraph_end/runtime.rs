@@ -26,7 +26,7 @@ struct ArenaPostLineMaterializer {
 }
 
 struct ArenaPostLineChannel {
-    source: tex_state::page_node_arena::PageListSpan,
+    source: tex_state::page_node_arena::AdmittedPageList,
     position: usize,
     lineages: Vec<tex_state::node_sequence::DirectHighCellLineages>,
     pending_post: tex_state::node_arena::PageListId,
@@ -54,11 +54,11 @@ impl ArenaPostLineMaterializer {
             .into_arena_materialization()
             .expect("production paragraph tape remains arena-backed");
         let semantic = stores
-            .admit_page_node_span(arena.semantic)
+            .admit_page_node_list(arena.semantic)
             .expect("semantic paragraph crosses one live page-region boundary");
         let diagnostic = arena.diagnostic.map(|diagnostic| {
             stores
-                .admit_page_node_span(diagnostic)
+                .admit_page_node_list(diagnostic)
                 .expect("diagnostic paragraph crosses one live page-region boundary")
         });
         Self {
@@ -138,7 +138,7 @@ impl ArenaPostLineMaterializer {
 
 impl ArenaPostLineChannel {
     fn new(
-        source: tex_state::page_node_arena::PageListSpan,
+        source: tex_state::page_node_arena::AdmittedPageList,
         lineages: Vec<tex_state::node_sequence::DirectHighCellLineages>,
     ) -> Self {
         assert_eq!(source.len(), lineages.len());
@@ -168,7 +168,7 @@ impl ArenaPostLineChannel {
             && par_fill_override.is_none()
             && {
                 let nodes = stores
-                    .page_node_span(self.source)
+                    .admitted_page_nodes(self.source)
                     .expect("paragraph source remains live")
                     .nodes();
                 nodes
@@ -195,7 +195,7 @@ impl ArenaPostLineChannel {
             for absolute in self.position..end {
                 output_lineages.extend(self.lineages[absolute].iter().cloned());
             }
-            let retained = stores.slice_page_node_span(self.source, self.position..end);
+            let retained = stores.slice_page_node_span(self.source.span(), self.position..end);
             self.position = end;
             let suffix = stores.publish_unique_page_nodes(vec![Node::Glue {
                 spec: params.right_skip,
@@ -203,7 +203,12 @@ impl ArenaPostLineChannel {
                 leader: None,
             }]);
             let output = stores.append_unique_page_nodes(retained, suffix).list();
-            self.position = skip_post_line_discardable(stores, self.source, self.position);
+            self.position = skip_post_line_discardable(
+                stores
+                    .admitted_page_nodes(self.source)
+                    .expect("paragraph source remains live"),
+                self.position,
+            );
             return output;
         }
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
@@ -221,24 +226,35 @@ impl ArenaPostLineChannel {
         }
         if !self.pending_post.is_empty() {
             let pending_post = stores
-                .admit_page_node_span(self.pending_post)
+                .admit_page_node_list(self.pending_post)
                 .expect("pending discretionary post list remains live");
-            append_direction_evidence(stores, pending_post, &mut self.active_directions);
-            stores.append_page_active_span(&mut output, pending_post);
+            append_direction_evidence(
+                stores
+                    .admitted_page_nodes(pending_post)
+                    .expect("pending discretionary post list remains live"),
+                &mut self.active_directions,
+            );
+            stores.append_page_active_span(&mut output, pending_post.span());
             output_lineages.append(&mut self.pending_post_lineages);
             self.pending_post = tex_state::node_arena::PageListId::empty();
         }
 
         while self.position < end {
             let run_start = self.position;
+            let source_nodes = stores
+                .admitted_page_nodes(self.source)
+                .expect("paragraph source remains live");
             let Some((absolute, node_action, action)) = next_post_line_event(
-                stores,
-                self.source,
+                source_nodes,
                 self.position..end,
                 actions,
                 par_fill_override.is_some(),
             ) else {
-                stores.append_page_active_span_range(&mut output, self.source, run_start..end);
+                stores.append_page_active_span_range(
+                    &mut output,
+                    self.source.span(),
+                    run_start..end,
+                );
                 for index in run_start..end {
                     output_lineages.extend(self.lineages[index].iter().cloned());
                 }
@@ -254,7 +270,7 @@ impl ArenaPostLineChannel {
             if run_start < retained_end {
                 stores.append_page_active_span_range(
                     &mut output,
-                    self.source,
+                    self.source.span(),
                     run_start..retained_end,
                 );
             }
@@ -276,24 +292,29 @@ impl ArenaPostLineChannel {
                         );
                     });
                     let pre_span = stores
-                        .admit_page_node_span(pre)
+                        .admit_page_node_list(pre)
                         .expect("discretionary pre list remains live");
-                    append_direction_evidence(stores, pre_span, &mut self.active_directions);
-                    stores.append_page_active_span(&mut output, pre_span);
+                    let pre_nodes = stores
+                        .admitted_page_nodes(pre_span)
+                        .expect("discretionary pre list remains live");
+                    append_direction_evidence(pre_nodes, &mut self.active_directions);
                     extend_frozen_lineages(
-                        stores,
-                        pre_span,
+                        pre_span.list(),
+                        pre_nodes,
                         tex_state::node_sequence::FrozenListRole::Pre,
                         output_lineages,
                     );
+                    stores.append_page_active_span(&mut output, pre_span.span());
                     self.pending_post = post;
                     self.pending_post_lineages.clear();
                     let post_span = stores
-                        .admit_page_node_span(post)
+                        .admit_page_node_list(post)
                         .expect("discretionary post list remains live");
                     extend_frozen_lineages(
-                        stores,
-                        post_span,
+                        post_span.list(),
+                        stores
+                            .admitted_page_nodes(post_span)
+                            .expect("discretionary post list remains live"),
                         tex_state::node_sequence::FrozenListRole::Post,
                         &mut self.pending_post_lineages,
                     );
@@ -301,16 +322,19 @@ impl ArenaPostLineChannel {
                 }
                 PostLineNode::Discretionary { replace, .. } => {
                     let replace_span = stores
-                        .admit_page_node_span(replace)
+                        .admit_page_node_list(replace)
                         .expect("discretionary replacement list remains live");
-                    append_direction_evidence(stores, replace_span, &mut self.active_directions);
-                    stores.append_page_active_span(&mut output, replace_span);
+                    let replace_nodes = stores
+                        .admitted_page_nodes(replace_span)
+                        .expect("discretionary replacement list remains live");
+                    append_direction_evidence(replace_nodes, &mut self.active_directions);
                     extend_frozen_lineages(
-                        stores,
-                        replace_span,
+                        replace_span.list(),
+                        replace_nodes,
                         tex_state::node_sequence::FrozenListRole::Replace,
                         output_lineages,
                     );
+                    stores.append_page_active_span(&mut output, replace_span.span());
                 }
                 PostLineNode::ParFillGlue if par_fill_override.is_some() => {
                     stores.construct_page_active_list(&mut output, |destination| {
@@ -354,7 +378,12 @@ impl ArenaPostLineChannel {
         stores.construct_page_active_list(&mut output, |destination| {
             destination.glue(params.right_skip, GlueKind::RightSkip, None);
         });
-        self.position = skip_post_line_discardable(stores, self.source, self.position);
+        self.position = skip_post_line_discardable(
+            stores
+                .admitted_page_nodes(self.source)
+                .expect("paragraph source remains live"),
+            self.position,
+        );
         stores.finalize_page_active_list(&mut output)
     }
 }
@@ -375,9 +404,8 @@ enum PostLineNode {
     Other,
 }
 
-fn next_post_line_event<G>(
-    stores: &CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
+fn next_post_line_event(
+    source: tex_state::node_arena::NodeCursor<'_>,
     selected: core::ops::Range<usize>,
     actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
     has_par_fill_override: bool,
@@ -389,27 +417,23 @@ fn next_post_line_event<G>(
     let end = selected.end;
     let source_len = source.len();
     let mut event = None;
-    let _ = stores
-        .page_node_span(source)
-        .expect("paragraph source remains live")
-        .nodes()
-        .try_for_each_direct_range(selected, |absolute, node| {
-            let node_action = classify_post_line_node_value(node);
-            let action = actions.and_then(|actions| actions.get(absolute)).copied();
-            if post_line_event_is_exceptional(
-                node_action,
-                absolute,
-                end,
-                source_len,
-                action,
-                has_par_fill_override,
-            ) {
-                event = Some((absolute, node_action, action));
-                core::ops::ControlFlow::Break(())
-            } else {
-                core::ops::ControlFlow::Continue(())
-            }
-        });
+    let _ = source.try_for_each_direct_range(selected, |absolute, node| {
+        let node_action = classify_post_line_node_value(node);
+        let action = actions.and_then(|actions| actions.get(absolute)).copied();
+        if post_line_event_is_exceptional(
+            node_action,
+            absolute,
+            end,
+            source_len,
+            action,
+            has_par_fill_override,
+        ) {
+            event = Some((absolute, node_action, action));
+            core::ops::ControlFlow::Break(())
+        } else {
+            core::ops::ControlFlow::Continue(())
+        }
+    });
     event
 }
 
@@ -470,41 +494,31 @@ fn classify_post_line_node_value(node: tex_state::node_arena::DirectNodeView<'_>
     }
 }
 
-fn skip_post_line_discardable<G>(
-    stores: &CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
+fn skip_post_line_discardable(
+    source: tex_state::node_arena::NodeCursor<'_>,
     start: usize,
 ) -> usize {
     let mut next = start;
-    let _ = stores
-        .page_node_span(source)
-        .expect("paragraph source remains live")
-        .nodes()
-        .try_for_each_direct_range(start..source.len(), |index, node| {
-            if post_line_discardable(node) {
-                next = index + 1;
-                core::ops::ControlFlow::Continue(())
-            } else {
-                core::ops::ControlFlow::Break(())
-            }
-        });
+    let _ = source.try_for_each_direct_range(start..source.len(), |index, node| {
+        if post_line_discardable(node) {
+            next = index + 1;
+            core::ops::ControlFlow::Continue(())
+        } else {
+            core::ops::ControlFlow::Break(())
+        }
+    });
     next
 }
 
-fn append_direction_evidence<G>(
-    stores: &CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
+fn append_direction_evidence(
+    source: tex_state::node_arena::NodeCursor<'_>,
     active: &mut Vec<Direction>,
 ) {
-    stores
-        .page_node_span(source)
-        .expect("paragraph branch remains live")
-        .nodes()
-        .for_each_direct(|node| {
-            if let Some(direction) = node.direction() {
-                update_direction(direction, active);
-            }
-        });
+    source.for_each_direct(|node| {
+        if let Some(direction) = node.direction() {
+            update_direction(direction, active);
+        }
+    });
 }
 
 fn update_direction(direction: Direction, active: &mut Vec<Direction>) {
@@ -529,22 +543,18 @@ const fn matching_direction_end(direction: Direction) -> Direction {
     }
 }
 
-fn extend_frozen_lineages<G>(
-    stores: &CommandContext<'_, G>,
-    span: tex_state::page_node_arena::PageListSpan,
+fn extend_frozen_lineages(
+    list: tex_state::node_arena::PageListId,
+    nodes: tex_state::node_arena::NodeCursor<'_>,
     role: tex_state::node_sequence::FrozenListRole,
     output: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
 ) {
-    let nodes = stores
-        .page_node_span(span)
-        .expect("frozen discretionary branch remains live")
-        .nodes();
     let mut row = 0_usize;
     nodes.for_each_direct(|node| {
         let count = node.lineage_cell_count();
         for unit in 0..count {
             output.push(tex_state::node_sequence::DirectHighCellLineage::Frozen {
-                list: span.list(),
+                list,
                 row: u32::try_from(row).expect("frozen list exceeds u32 rows"),
                 unit: u32::try_from(unit).expect("ligature source exceeds u32 cells"),
                 role,
@@ -1297,12 +1307,12 @@ fn normalize_paragraph_infinite_shrink<G>(
         &mut reported,
     )?;
     let source = stores
-        .admit_page_node_span(nodes)
+        .admit_page_node_list(nodes)
         .expect("paragraph belongs to the live page arena");
     let mut output = None;
     let mut retained_start = 0;
     if let Some(tail) = stores
-        .page_node_span_tail_chunk(source)
+        .admitted_page_tail_chunk(source)
         .expect("paragraph source remains admitted")
     {
         normalize_paragraph_chunk_prefix(
@@ -1321,7 +1331,11 @@ fn normalize_paragraph_infinite_shrink<G>(
         return Ok(nodes);
     };
     if retained_start < source.len() {
-        stores.append_page_active_span_range(&mut output, source, retained_start..source.len());
+        stores.append_page_active_span_range(
+            &mut output,
+            source.span(),
+            retained_start..source.len(),
+        );
     }
     Ok(stores.finalize_page_active_list(&mut output))
 }
@@ -1329,7 +1343,7 @@ fn normalize_paragraph_infinite_shrink<G>(
 #[allow(clippy::too_many_arguments)] // The direct walk keeps diagnostic and output ownership explicit.
 fn normalize_paragraph_chunk_prefix<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
+    source: tex_state::page_node_arena::AdmittedPageList,
     mut chunk: tex_state::page_node_arena::PageListChunkCursor,
     tracing: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
@@ -1374,7 +1388,7 @@ fn normalize_paragraph_chunk_prefix<G>(
             .as_mut()
             .expect("offending glue opens the normalized paragraph builder");
         if *retained_start < index {
-            stores.append_page_active_span_range(output, source, *retained_start..index);
+            stores.append_page_active_span_range(output, source.span(), *retained_start..index);
         }
         normalize_paragraph_glue(
             stores,

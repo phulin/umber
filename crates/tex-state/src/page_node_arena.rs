@@ -169,6 +169,53 @@ impl<'a> PageMaterialNodeRef<'a> {
     ) -> Option<crate::ids::FontId> {
         self.record.visit_ligature_source(self.annex, visit)
     }
+
+    #[must_use]
+    pub(crate) fn tex_memory_words(self, etex_node_sizes: bool) -> (usize, usize) {
+        use crate::node::NodeKind;
+
+        let synctex_extra = usize::from(etex_node_sizes) * 2;
+        let Some(kind) = self.kind() else {
+            return (0, 0);
+        };
+        let variable = match kind {
+            NodeKind::Char => return (0, 1),
+            NodeKind::Lig => {
+                let mut length = 0;
+                let _ = self.visit_ligature_source(|_, _| length += 1);
+                return (2, length);
+            }
+            NodeKind::HList | NodeKind::VList | NodeKind::Unset => 7 + synctex_extra,
+            NodeKind::Rule => 4 + synctex_extra,
+            NodeKind::Ins => 5,
+            NodeKind::MathNoad => self.record.math_noad_memory_words(self.annex).unwrap_or(4),
+            NodeKind::FractionNoad => 6,
+            NodeKind::MathStyle | NodeKind::MathChoice | NodeKind::MarginKern => 3,
+            NodeKind::Kern
+            | NodeKind::Glue
+            | NodeKind::Penalty
+            | NodeKind::MathOn
+            | NodeKind::MathOff
+            | NodeKind::Nonscript => 2 + synctex_extra,
+            NodeKind::Direction if etex_node_sizes => 2 + synctex_extra,
+            NodeKind::Disc
+            | NodeKind::Mark
+            | NodeKind::Whatsit
+            | NodeKind::Direction
+            | NodeKind::MathList
+            | NodeKind::Adjust => 2,
+        };
+        (variable, 0)
+    }
+
+    #[must_use]
+    pub(crate) fn retains_node_list(self) -> bool {
+        let mut retains = false;
+        let _ = self
+            .record
+            .visit_node_lists(self.annex, |list| retains |= !list.is_empty());
+        retains
+    }
 }
 
 /// Scalar publication evidence derived from the completed resident node.
@@ -404,14 +451,23 @@ impl Hash for PageListId {
 
 const _: () = assert!(core::mem::size_of::<PageListId>() <= 40);
 
-/// Checked owner-local page-list span for repeated traversal and retention.
+/// Checked owner-local page-list span for retention in page and mode state.
 ///
-/// The constructor is private to [`PageMaterialArena`]. A span carries the
-/// constant-time direct-root admission proven from its opaque construction
-/// facts and never owns or copies node payload. Full chain audits remain at
-/// cold region-transfer and test ingress seams.
+/// The constructor is private to [`PageMaterialArena`]. Operations which
+/// traverse repeatedly promote this compact retained root to
+/// [`AdmittedPageList`] once rather than inflating every durable root with an
+/// endpoint proof. Full chain audits remain at cold transfer and test ingress.
 pub struct PageListSpan {
     list: PageListId,
+}
+
+/// Operation-local page-list admission. Unlike retained [`PageListSpan`]
+/// roots, this value carries the resolved compact endpoint proof through one
+/// traversal without inflating mode, page, or rollback state.
+#[derive(Clone, Copy)]
+pub struct AdmittedPageList {
+    span: PageListSpan,
+    admission: crate::fork_arena::AdmittedListRoot<PageMaterialLane>,
 }
 
 /// Stack-resident continuation for direct traversal of one admitted page span.
@@ -524,6 +580,28 @@ impl PageListSpan {
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.list.is_empty()
+    }
+}
+
+impl AdmittedPageList {
+    #[must_use]
+    pub const fn span(self) -> PageListSpan {
+        self.span
+    }
+
+    #[must_use]
+    pub const fn list(self) -> PageListId {
+        self.span.list()
+    }
+
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.span.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.span.is_empty()
     }
 }
 
@@ -1971,6 +2049,17 @@ impl<'a> PageMaterialArena<'a> {
         Ok(PageListSpan { list })
     }
 
+    pub fn admit_page_list(&self, list: PageListId) -> Result<AdmittedPageList, ForkArenaError> {
+        let admission = self
+            .region
+            .pub_arena
+            .admit_owned_root(&self.pool.chunks, list.coordinate())?;
+        Ok(AdmittedPageList {
+            span: PageListSpan { list },
+            admission,
+        })
+    }
+
     pub fn span_list(&self, span: PageListSpan) -> Result<PageMaterialListView, ForkArenaError> {
         let view = self
             .region
@@ -2001,6 +2090,21 @@ impl<'a> PageMaterialArena<'a> {
             .map(|view| crate::node_arena::NodeCursor::fork_arena(view, self.annex_view()))
     }
 
+    pub fn admitted_node_cursor(
+        &self,
+        list: AdmittedPageList,
+    ) -> Result<crate::node_arena::NodeCursor<'_>, ForkArenaError> {
+        let view = self.region.pub_arena.admitted_view(
+            &self.pool.chunks,
+            list.span.list.coordinate(),
+            list.admission,
+        )?;
+        Ok(crate::node_arena::NodeCursor::fork_arena(
+            view,
+            self.annex_view(),
+        ))
+    }
+
     /// Starts a mutation-compatible direct chunk walk after one span admission.
     pub fn span_tail_chunk(
         &self,
@@ -2010,6 +2114,25 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .admitted_tail_chunk(&self.pool.chunks, span.list.coordinate())
             .map(|cursor| cursor.map(|inner| PageListChunkCursor { span, inner }))
+    }
+
+    pub fn admitted_tail_chunk(
+        &self,
+        list: AdmittedPageList,
+    ) -> Result<Option<PageListChunkCursor>, ForkArenaError> {
+        self.region
+            .pub_arena
+            .admitted_tail_chunk_from_root(
+                &self.pool.chunks,
+                list.span.list.coordinate(),
+                list.admission,
+            )
+            .map(|cursor| {
+                cursor.map(|inner| PageListChunkCursor {
+                    span: list.span,
+                    inner,
+                })
+            })
     }
 
     /// Returns the preceding source chunk through its sole persistent edge.

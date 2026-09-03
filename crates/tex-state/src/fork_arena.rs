@@ -6119,7 +6119,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.admit_owned_root(pool, list).map(drop)
     }
 
-    fn admit_owned_root(
+    pub(crate) fn admit_owned_root(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
@@ -6127,10 +6127,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.validate_pool(pool)?;
         if list.is_empty() {
             return (list == ArenaListId::empty())
-                .then_some(AdmittedListRoot {
-                    head: AdmittedChunkCursor::EMPTY,
-                    tail: AdmittedChunkCursor::EMPTY,
-                })
+                .then_some(AdmittedListRoot::EMPTY)
                 .ok_or(ForkArenaError::InvalidRange);
         }
         if list.space != pool.payload.logical_space() {
@@ -6184,6 +6181,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .ok_or(ForkArenaError::InvalidRange)?
         };
         Ok(AdmittedListRoot {
+            owner: self.owner,
             head: AdmittedChunkCursor::new(
                 u32::try_from(head_position).map_err(|_| ForkArenaError::CapacityOverflow)?,
                 head_block,
@@ -6542,7 +6540,8 @@ impl<Lane> AdmittedChunkCursor<Lane> {
     }
 }
 
-struct AdmittedListRoot<Lane> {
+pub(crate) struct AdmittedListRoot<Lane> {
+    owner: u32,
     head: AdmittedChunkCursor<Lane>,
     tail: AdmittedChunkCursor<Lane>,
 }
@@ -6554,6 +6553,14 @@ impl<Lane> Clone for AdmittedListRoot<Lane> {
 }
 
 impl<Lane> Copy for AdmittedListRoot<Lane> {}
+
+impl<Lane> AdmittedListRoot<Lane> {
+    pub(crate) const EMPTY: Self = Self {
+        owner: 0,
+        head: AdmittedChunkCursor::EMPTY,
+        tail: AdmittedChunkCursor::EMPTY,
+    };
+}
 
 /// One borrowed contiguous payload run from a direct list chain.
 ///
@@ -6934,25 +6941,72 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
 }
 
 impl<T, Lane> ForkArena<T, Lane> {
+    /// Reconstitutes a borrowed view from a root admitted at the span
+    /// boundary. The immutable pool borrow keeps that owner-relative proof
+    /// live for the complete view traversal.
+    pub(crate) fn admitted_view<'a>(
+        &'a self,
+        pool: &'a ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        root: AdmittedListRoot<Lane>,
+    ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
+        self.validate_admitted_root(pool, list, root)?;
+        Ok(ArenaListView {
+            arena: self,
+            pool,
+            list,
+            root,
+            payload: self.logical_payload_view(pool),
+        })
+    }
+
+    /// Rechecks only the region and endpoint incarnations carried by an
+    /// admitted root. It deliberately does not re-resolve compact positions,
+    /// payload blocks, or offsets.
+    fn validate_admitted_root(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        root: AdmittedListRoot<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        if list.is_empty() {
+            return (list == ArenaListId::empty() && root.owner == 0)
+                .then_some(())
+                .ok_or(ForkArenaError::InvalidRange);
+        }
+        if root.owner != self.owner
+            || list.space != pool.payload.logical_space()
+            || self.live_key_at(root.head.position as usize) != Some(list.head.raw)
+            || self.live_key_at(root.tail.position as usize) != Some(list.tail.raw)
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        Ok(())
+    }
+
     /// Admits a list once and returns its tail packed-chunk continuation.
+    #[allow(dead_code)] // Retained by direct ForkArena controls; page spans carry the proof.
     pub(crate) fn admitted_tail_chunk(
         &self,
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
         let root = self.admit_owned_root(pool, list)?;
-        Ok(self.admitted_tail_chunk_from_root(list, root))
+        self.admitted_tail_chunk_from_root(pool, list, root)
     }
 
     /// Starts traversal from the direct root resolved by an earlier integer
     /// admission. The owner/incarnation/range proof is carried, not replayed.
-    fn admitted_tail_chunk_from_root(
+    pub(crate) fn admitted_tail_chunk_from_root(
         &self,
+        pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
         root: AdmittedListRoot<Lane>,
-    ) -> Option<AdmittedListChunkCursor<Lane>> {
+    ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
+        self.validate_admitted_root(pool, list, root)?;
         if list.is_empty() {
-            return None;
+            return Ok(None);
         }
         let start = if root.tail.position == root.head.position {
             root.head.offset
@@ -6960,7 +7014,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             0
         };
         let chunk_len = (root.tail.offset - start) as usize;
-        Some(AdmittedListChunkCursor {
+        Ok(Some(AdmittedListChunkCursor {
             key: list.tail.raw,
             block: root.tail.block,
             position: root.tail.position as usize,
@@ -6971,7 +7025,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             head_position: root.head.position as usize,
             head_offset: root.head.offset,
             _lane: PhantomData,
-        })
+        }))
     }
 
     /// Follows the sole predecessor edge without resolving a logical index.

@@ -1388,8 +1388,9 @@ fn copy_list_recursive<Source, Destination>(
     if stack.contains(&list) {
         return Err(ForkArenaError::InvalidRegion);
     }
+    let admitted = source.admit_owned_root(pool, list.coordinate())?;
     let mut source_children = Vec::new();
-    if let Some(tail) = source.admitted_tail_chunk(pool, list.coordinate())? {
+    if let Some(tail) = source.admitted_tail_chunk_from_root(pool, list.coordinate(), admitted)? {
         collect_copy_children(
             pool,
             annex_pool,
@@ -1428,7 +1429,7 @@ fn copy_list_recursive<Source, Destination>(
     let mut copied_children = source_children.into_iter();
     let mut builder = ActiveListBuilder::vacant();
     destination.open_active_list(pool, &mut builder)?;
-    if let Some(tail) = source.admitted_tail_chunk(pool, list.coordinate())? {
+    if let Some(tail) = source.admitted_tail_chunk_from_root(pool, list.coordinate(), admitted)? {
         copy_record_chunk_prefix(
             pool,
             annex_pool,

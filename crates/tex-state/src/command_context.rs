@@ -4177,6 +4177,35 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| NodeArenaError::InvalidList)
     }
 
+    /// Admits one operation-local page list and retains its resolved compact
+    /// endpoint proof for all traversal helpers in that operation.
+    pub fn admit_page_node_list(
+        &self,
+        list: PageListId,
+    ) -> Result<crate::page_node_arena::AdmittedPageList, NodeArenaError> {
+        self.page_nodes
+            .admit_page_list(list)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    pub fn admitted_page_nodes(
+        &self,
+        list: crate::page_node_arena::AdmittedPageList,
+    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
+        self.page_nodes
+            .admitted_node_cursor(list)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
+    pub fn admitted_page_tail_chunk(
+        &self,
+        list: crate::page_node_arena::AdmittedPageList,
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
+        self.page_nodes
+            .admitted_tail_chunk(list)
+            .map_err(|_| NodeArenaError::InvalidList)
+    }
+
     /// Resolves a previously admitted span without rescanning its topology.
     pub fn page_node_span(
         &self,

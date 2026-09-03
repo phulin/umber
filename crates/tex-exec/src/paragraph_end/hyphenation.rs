@@ -77,7 +77,7 @@ impl HyphenationWalk<'_, '_> {
     fn visit_chunk_prefix<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        source: tex_state::page_node_arena::PageListSpan,
+        source: tex_state::page_node_arena::AdmittedPageList,
         chunk: tex_state::page_node_arena::PageListChunkCursor,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Result<(), ExecError> {
@@ -94,7 +94,7 @@ impl HyphenationWalk<'_, '_> {
     fn visit_chunk<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        source: tex_state::page_node_arena::PageListSpan,
+        source: tex_state::page_node_arena::AdmittedPageList,
         mut chunk: tex_state::page_node_arena::PageListChunkCursor,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Result<(), ExecError> {
@@ -119,7 +119,7 @@ impl HyphenationWalk<'_, '_> {
                     let start = index + 1;
                     stores.append_page_active_span_range(
                         self.out,
-                        source,
+                        source.span(),
                         self.retained_start..start,
                     );
                     self.output_len += start - self.retained_start;
@@ -215,7 +215,7 @@ fn hyphenated_hlist_with_projections<G>(
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
     let source = stores
-        .admit_page_node_span(source)
+        .admit_page_node_list(source)
         .expect("hyphenation source crosses one live page-region boundary");
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
@@ -239,7 +239,7 @@ fn hyphenated_hlist_with_projections<G>(
             right,
         };
         if let Some(tail) = stores
-            .page_node_span_tail_chunk(source)
+            .admitted_page_tail_chunk(source)
             .expect("hyphenation source remains admitted")
         {
             walk.visit_chunk_prefix(stores, source, tail, diagnostic_effects)?;
@@ -247,7 +247,7 @@ fn hyphenated_hlist_with_projections<G>(
         (walk.retained_start, walk.language, walk.left, walk.right)
     };
     if retained_start < source.len() {
-        stores.append_page_active_span_range(&mut out, source, retained_start..source.len());
+        stores.append_page_active_span_range(&mut out, source.span(), retained_start..source.len());
     }
     let tail = stores.finalize_page_active_list(&mut out);
     if !tail.is_empty() {
@@ -324,7 +324,7 @@ fn project_physical_hlist<G>(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let semantic = stores
-        .admit_page_node_span(semantic)
+        .admit_page_node_list(semantic)
         .expect("hyphenated paragraph crosses one live page-region boundary");
     let mut physical = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut physical);
@@ -332,7 +332,7 @@ fn project_physical_hlist<G>(
     let mut override_index = 0usize;
     let mut retained_start = 0usize;
     if let Some(tail) = stores
-        .page_node_span_tail_chunk(semantic)
+        .admitted_page_tail_chunk(semantic)
         .expect("hyphenated paragraph remains admitted")
     {
         let _ = project_physical_chunk_prefix(
@@ -351,7 +351,7 @@ fn project_physical_hlist<G>(
     if retained_start < semantic.len() {
         stores.append_page_active_span_range(
             &mut physical,
-            semantic,
+            semantic.span(),
             retained_start..semantic.len(),
         );
     }
@@ -370,7 +370,7 @@ fn project_physical_hlist<G>(
 fn project_physical_chunk_prefix<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    semantic: tex_state::page_node_arena::PageListSpan,
+    semantic: tex_state::page_node_arena::AdmittedPageList,
     chunk: tex_state::page_node_arena::PageListChunkCursor,
     post_overrides: &[(usize, tex_state::node_arena::PageListId)],
     override_index: &mut usize,
@@ -405,7 +405,7 @@ fn project_physical_chunk_prefix<G>(
         .then(|| post_overrides[*override_index].1);
         let pre_pending = physical_pre_break_pending(stores, previous.as_ref(), &chunk, offset);
         if (post_override.is_some() || pre_pending.is_some()) && *retained_start < index {
-            stores.append_page_active_span_range(physical, semantic, *retained_start..index);
+            stores.append_page_active_span_range(physical, semantic.span(), *retained_start..index);
         }
         let pre_projection = if let Some(pending) = pre_pending {
             // TeX82 §§914--918 builds a discretionary's child closures before
@@ -534,10 +534,10 @@ fn compacted_physical_boundaries<G>(
     physical_len: usize,
 ) -> Vec<usize> {
     let semantic = stores
-        .admit_page_node_span(semantic)
+        .admit_page_node_list(semantic)
         .expect("shaped paragraph crosses one live page-region boundary");
     let nodes = stores
-        .page_node_span(semantic)
+        .admitted_page_nodes(semantic)
         .expect("shaped paragraph belongs to the live page arena");
     let mut boundary = 0usize;
     let mut boundaries = Vec::with_capacity(nodes.len() + 1);
@@ -577,7 +577,7 @@ fn update_hyphenation_context(
 fn hyphenate_candidate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    source: tex_state::page_node_arena::PageListSpan,
+    source: tex_state::page_node_arena::AdmittedPageList,
     start: usize,
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
@@ -600,15 +600,15 @@ fn hyphenate_candidate_after_glue<G>(
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
     let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
     if positions.is_empty() {
-        stores.append_page_active_span_range(out, source, start..index);
+        stores.append_page_active_span_range(out, source.span(), start..index);
         *output_len += index - start;
         return Ok(index);
     }
 
-    stores.append_page_active_span_range(out, source, start..word_start);
+    stores.append_page_active_span_range(out, source.span(), start..word_start);
     *output_len += word_start - start;
     let trailing_font_kern = stores
-        .page_node_span(source)
+        .admitted_page_nodes(source)
         .expect("hyphenation source belongs to the live page arena")
         .get(index - 1)
         .is_some_and(|node| {
@@ -622,7 +622,7 @@ fn hyphenate_candidate_after_glue<G>(
         });
     let no_left_boundary = word_start != 0
         && stores
-            .page_node_span(source)
+            .admitted_page_nodes(source)
             .expect("hyphenation source belongs to the live page arena")
             .get(word_start - 1)
             .is_some_and(|node| {
@@ -660,7 +660,7 @@ fn hyphenate_candidate_after_glue<G>(
         stores.push_page_active_list(out, node);
     }
     if trailing_font_kern && !matches!(right_boundary, HyphenationRightBoundary::Character(_)) {
-        stores.append_page_active_span_range(out, source, index - 1..index);
+        stores.append_page_active_span_range(out, source.span(), index - 1..index);
         *output_len += 1;
     }
     Ok(index)
@@ -687,11 +687,11 @@ enum HyphenationRightBoundary {
 /// potentially hyphenatable part begins through the same-font letter span.
 fn find_hyphenation_candidate<G>(
     stores: &CommandContext<'_, G>,
-    source: tex_state::page_node_arena::PageListSpan,
+    source: tex_state::page_node_arena::AdmittedPageList,
     start: usize,
     context: (u8, usize, usize),
 ) -> Option<HyphenationCandidate> {
-    let nodes = stores.page_node_span(source).ok()?;
+    let nodes = stores.admitted_page_nodes(source).ok()?;
     if start > nodes.len() {
         return None;
     }
@@ -1471,7 +1471,7 @@ mod tests {
     ) -> Option<HyphenationCandidate> {
         let source = stores.publish_page_nodes(nodes.to_vec());
         let source = stores
-            .admit_page_node_span(source)
+            .admit_page_node_list(source)
             .expect("test paragraph source remains live");
         find_hyphenation_candidate(stores, source, 0, (0, 1, 1))
     }
@@ -2101,10 +2101,10 @@ mod tests {
                     .expect("parameter");
                 let source = stores.publish_page_nodes(vec![character(font, 'a'); values]);
                 let source = stores
-                    .admit_page_node_span(source)
+                    .admit_page_node_list(source)
                     .expect("test paragraph source remains live");
                 let nodes = stores
-                    .page_node_span(source)
+                    .admitted_page_nodes(source)
                     .expect("test paragraph span remains admitted");
 
                 let before = nodes.testing_traversal_counters();

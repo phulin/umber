@@ -333,7 +333,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   component framing; no page COW root is retained for hash reuse.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime
   page-material facade pairing the canonical coarse-arena coordinate with its
-  checked traversal span and demand-maintained semantic identity scalar,
+  checked retained span, operation-local admitted endpoint cursor, and
+  demand-maintained semantic identity scalar,
   including span-native zero-allocation compose/slice, coordinate-only direct
   chunk continuation across append-interleaved walks, zero-hash disabled
   execution, identity-preserving split/compose/fork settlement, and exact

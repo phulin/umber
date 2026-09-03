@@ -4481,10 +4481,10 @@ fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenList) -> u64 {
 fn list_dynamic_usage(nodes: NodeCursor<'_>) -> ((usize, usize), usize) {
     let mut words = (0_usize, 0_usize);
     let mut roots = 0_usize;
-    nodes.for_each(|node| {
+    nodes.for_each_direct(|node| {
         words.0 = words.0.saturating_add(node.tex_memory_words(false).1);
         words.1 = words.1.saturating_add(node.tex_memory_words(true).1);
-        roots = roots.saturating_add(usize::from(node_retains_page_handle(node)));
+        roots = roots.saturating_add(usize::from(node.retains_node_list()));
     });
     (words, roots)
 }

@@ -1,6 +1,16 @@
 use super::*;
 
 impl NodeRecord<PageMaterialLane> {
+    pub(crate) fn math_noad_memory_words(self, annex: NodeAnnexView<'_>) -> Option<usize> {
+        if self.kind()? != NodeKind::MathNoad || self.subtype() != 0 || self.flags() != 0 {
+            return None;
+        }
+        annex.inspect_fixed(key_from_record::<MathNoadPayload>(self), 36, |payload| {
+            let tag = *payload.get(1)? >> 8;
+            Some(if matches!(tag, 2 | 3) { 5 } else { 4 })
+        })
+    }
+
     pub(crate) fn visit_node_lists(
         self,
         annex: NodeAnnexView<'_>,

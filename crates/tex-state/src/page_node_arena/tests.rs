@@ -106,9 +106,11 @@ fn page_root_readmission_rejects_rollback_and_reused_pool_slots() {
     let source = arena
         .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
         .expect("publish cursor source");
-    let span = arena.admit_span(source).expect("admit cursor source");
+    let admitted = arena
+        .admit_page_list(source)
+        .expect("admit cursor source once");
     let _tail = arena
-        .span_tail_chunk(span)
+        .admitted_tail_chunk(admitted)
         .expect("resolve direct tail")
         .expect("source is nonempty");
     arena
@@ -120,6 +122,16 @@ fn page_root_readmission_rejects_rollback_and_reused_pool_slots() {
     let warmed_reuse_bytes = arena.allocated_heap_bytes();
 
     assert_eq!(replacement.len(), source.len());
+    assert_eq!(
+        arena.admitted_node_cursor(admitted).map(|_| ()),
+        Err(ForkArenaError::InvalidRange),
+        "a cached admission rejects its truncated source incarnation"
+    );
+    assert_eq!(
+        arena.admitted_tail_chunk(admitted).map(|_| ()),
+        Err(ForkArenaError::InvalidRange),
+        "a cached chunk cursor cannot reopen a truncated source incarnation"
+    );
     assert_eq!(
         arena.admit_span(source).map(|_| ()),
         Err(ForkArenaError::InvalidRange),
